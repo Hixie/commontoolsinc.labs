@@ -27,6 +27,7 @@ import {
   setJsonEncodingConfig,
 } from "@commontools/memory/json-encoding-dispatch";
 import { PatternEnvironment, setPatternEnvironment } from "./builder/env.ts";
+import { AsyncSemaphoreQueue, type QueueConfig } from "./queue.ts";
 import type {
   ChangeGroup,
   CommitError,
@@ -189,6 +190,7 @@ export class Runtime {
   readonly apiUrl: URL;
   readonly userIdentityDID: DID;
   private defaultFrame?: Frame;
+  private queues = new Map<string, AsyncSemaphoreQueue>();
 
   constructor(options: RuntimeOptions) {
     this.experimental = {
@@ -320,6 +322,30 @@ export class Runtime {
   }
 
   /**
+   * Get or create a named async queue for throttling concurrent operations.
+   * Queues are shared across all builtins that reference the same name.
+   */
+  getOrCreateQueue(
+    name: string,
+    config?: QueueConfig,
+  ): AsyncSemaphoreQueue {
+    let q = this.queues.get(name);
+    if (!q) {
+      q = new AsyncSemaphoreQueue(config ?? { maxConcurrency: 2 });
+      this.queues.set(name, q);
+    }
+    return q;
+  }
+
+  /**
+   * Configure a named queue's concurrency. Creates the queue if it doesn't exist.
+   */
+  configureQueue(name: string, config: QueueConfig): void {
+    const q = this.getOrCreateQueue(name, config);
+    q.setMaxConcurrency(config.maxConcurrency);
+  }
+
+  /**
    * Clean up resources and cancel all operations.
    *
    * NOTE: This does not wait for in-flight transactions to settle.
@@ -328,6 +354,13 @@ export class Runtime {
    * should await all pending commits before calling dispose().
    */
   async dispose(): Promise<void> {
+    // Abort any pending (not-yet-started) queued jobs so they don't start
+    // after storage is torn down.
+    for (const queue of this.queues.values()) {
+      queue.abortPending();
+    }
+    this.queues.clear();
+
     // Stop all running docs
     this.runner.stopAll();
 
