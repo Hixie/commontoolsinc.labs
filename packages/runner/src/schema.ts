@@ -60,7 +60,6 @@ const logger = getLogger("validateAndTransform", {
 
 export function resolveSchema(
   schema: JSONSchema | undefined,
-  filterAsCell = false,
 ): JSONSchema | undefined {
   // Treat undefined/null/{} or any other non-object as no schema
   // We don't use ContextualFlowControl.isTrueSchema here, since we want to
@@ -81,20 +80,6 @@ export function resolveSchema(
       return undefined;
     }
     resolvedSchema = resolved;
-  }
-
-  // Remove asCell flag from schema, so it's describing the destination
-  // schema. That means we can't describe a schema that points to top-level
-  // references, but that's on purpose.
-  if (schema.asCell && resolvedSchema?.asCell && filterAsCell) {
-    resolvedSchema = { ...resolvedSchema };
-    delete (resolvedSchema as any).asCell;
-  }
-
-  // Same for asStream
-  if (schema.asStream && resolvedSchema?.asStream && filterAsCell) {
-    resolvedSchema = { ...resolvedSchema };
-    delete (resolvedSchema as any).asStream;
   }
 
   // Return no schema if all it said is that this was a reference or an
@@ -135,10 +120,24 @@ export function processDefaultValue(
   const schema = link.schema;
   if (!schema) return defaultValue;
 
-  const resolvedSchema = resolveSchema(schema, true);
+  let resolvedSchema = resolveSchema(schema);
+  let asCell = false;
+  let asStream = false;
+  if (isObject(resolvedSchema)) {
+    asCell = resolvedSchema.asCell === true;
+    asStream = resolvedSchema.asStream === true;
+    if (
+      resolvedSchema.asCell !== undefined ||
+      resolvedSchema.asStream !== undefined
+    ) {
+      const { asCell: _asCell, asStream: _asStream, ...restSchema } =
+        resolvedSchema;
+      resolvedSchema = restSchema;
+    }
+  }
 
   // If schema indicates this should be a cell
-  if (isObject(schema) && schema.asCell) {
+  if (asCell) {
     // If the cell itself has a default value, make it its own (immutable)
     // doc, to emulate the behavior of .get() returning a different underlying
     // document when the value is changed. A classic example is
@@ -166,7 +165,7 @@ export function processDefaultValue(
     }
   }
 
-  if (isObject(schema) && schema.asStream) {
+  if (asStream) {
     logger.warn(
       "Created asStream as a default value, but this is likely unintentional",
     );
@@ -190,9 +189,12 @@ export function processDefaultValue(
 
     // Process properties defined in both the schema and default value
     if (resolvedSchema?.properties) {
-      for (
-        const [key, propSchema] of Object.entries(resolvedSchema.properties)
-      ) {
+      for (const key of Object.keys(resolvedSchema.properties)) {
+        const rawPropSchema = runtime.cfc.schemaAtPath(resolvedSchema, [key]);
+        const propSchema =
+          (isObject(rawPropSchema) && typeof rawPropSchema.$ref === "string")
+            ? ContextualFlowControl.resolveSchemaRefs(rawPropSchema)
+            : rawPropSchema;
         if (key in defaultValue) {
           result[key] = processDefaultValue(
             runtime,
