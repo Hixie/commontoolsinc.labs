@@ -1508,7 +1508,9 @@ export type PatternToolFunction = <
   E extends object = Record<PropertyKey, never>,
 >(
   fnOrPattern:
-    | ((input: OpaqueRef<RequireDefaults<T>>) => any)
+    | ((
+      input: OpaqueRef<RequireDefaults<T>> & { [SELF]: OpaqueRef<any> },
+    ) => any)
     | PatternFactory<T, any>,
   // Validate that E (after stripping cells) is a subset of T
   extraParams?: StripCell<E> extends Partial<T> ? Opaque<E> : never,

@@ -39,15 +39,13 @@ export default pattern((state) => {
                 type: "object",
                 properties: {
                     showArchived: {
-                        type: "boolean",
-                        asOpaque: true
+                        type: "boolean"
                     },
                     projects: {
                         type: "array",
                         items: {
                             $ref: "#/$defs/Project"
-                        },
-                        asOpaque: true
+                        }
                     }
                 },
                 required: ["showArchived", "projects"]
@@ -98,8 +96,7 @@ export default pattern((state) => {
     } as const satisfies __ctHelpers.JSONSchema, {
         type: "array",
         items: {
-            $ref: "#/$defs/Project",
-            asOpaque: true
+            $ref: "#/$defs/Project"
         },
         $defs: {
             Project: {
@@ -155,17 +152,14 @@ export default pattern((state) => {
             visibleProjects: {
                 type: "array",
                 items: {
-                    $ref: "#/$defs/Project",
-                    asOpaque: true
-                },
-                asOpaque: true
+                    $ref: "#/$defs/Project"
+                }
             },
             state: {
                 type: "object",
                 properties: {
                     prefix: {
-                        type: "string",
-                        asOpaque: true
+                        type: "string"
                     }
                 },
                 required: ["prefix"]
@@ -225,7 +219,6 @@ export default pattern((state) => {
         items: {
             $ref: "#/$defs/UIRenderable"
         },
-        asOpaque: true,
         $defs: {
             UIRenderable: {
                 type: "object",
@@ -263,7 +256,6 @@ export default pattern((state) => {
                 }]
         } as const satisfies __ctHelpers.JSONSchema, {
             $ref: "#/$defs/UIRenderable",
-            asOpaque: true,
             $defs: {
                 UIRenderable: {
                     type: "object",
@@ -309,8 +301,7 @@ export default pattern((state) => {
                                 type: "object",
                                 properties: {
                                     name: {
-                                        type: "string",
-                                        asOpaque: true
+                                        type: "string"
                                     }
                                 },
                                 required: ["name"]
@@ -327,8 +318,7 @@ export default pattern((state) => {
                         type: "object",
                         properties: {}
                     }, {
-                        $ref: "#/$defs/UIRenderable",
-                        asOpaque: true
+                        $ref: "#/$defs/UIRenderable"
                     }],
                 $defs: {
                     UIRenderable: {
@@ -434,8 +424,7 @@ export default pattern((state) => {
                     type: "object",
                     properties: {}
                 }, {
-                    $ref: "#/$defs/UIRenderable",
-                    asOpaque: true
+                    $ref: "#/$defs/UIRenderable"
                 }]
         },
         UIRenderable: {

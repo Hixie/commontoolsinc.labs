@@ -2,6 +2,7 @@ import ts from "typescript";
 
 import { classifyReactiveContext, detectCallKind } from "../../../ast/mod.ts";
 import type { TransformationContext } from "../../../core/mod.ts";
+import { unwrapExpression } from "../../../utils/expression.ts";
 import { isSimpleOpaqueRefAccess } from "../opaque-ref.ts";
 import type { AnalyzeFn } from "../types.ts";
 
@@ -19,6 +20,13 @@ function isTransparentWrapContainer(node: ts.Expression): boolean {
     ts.isJsxFragment(node) ||
     ts.isJsxSelfClosingElement(node)
   );
+}
+
+export function isJsxLocalRewriteContainer(node: ts.Expression): boolean {
+  const current = unwrapExpression(node);
+  return ts.isJsxElement(current) ||
+    ts.isJsxFragment(current) ||
+    ts.isJsxSelfClosingElement(current);
 }
 
 function isHelperRewriteBoundary(
@@ -166,11 +174,27 @@ export function findPendingComputeWrapCandidate(
   expr: ts.Expression,
   analyze: AnalyzeFn,
   context: TransformationContext,
+  excludeSubtree?: ts.Node,
 ): ts.Expression | undefined {
   let pending: ts.Expression | undefined;
+  const excludedOriginal = excludeSubtree
+    ? ts.getOriginalNode(excludeSubtree)
+    : undefined;
 
   const visit = (node: ts.Node): void => {
     if (pending) return;
+
+    if (
+      excludeSubtree &&
+      (
+        node === excludeSubtree ||
+        ts.getOriginalNode(node) === excludeSubtree ||
+        (excludedOriginal && node === excludedOriginal) ||
+        (excludedOriginal && ts.getOriginalNode(node) === excludedOriginal)
+      )
+    ) {
+      return;
+    }
 
     if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
       // Nested callbacks establish their own rewrite boundaries.
@@ -192,13 +216,18 @@ export function findPendingComputeWrapCandidate(
       return;
     }
 
-    const nodeAnalysis = analyze(node);
-    if (!nodeAnalysis.containsOpaqueRef || !nodeAnalysis.requiresRewrite) {
-      ts.forEachChild(node, visit);
+    // Helper-owned calls (builder invocations, authored ifElse/when/unless,
+    // array-method boundaries, derive) own rewrite decisions for their
+    // subtrees even when the call expression itself does not need wrapping.
+    // Stop before descending so we do not leak pending-wrap candidates from
+    // captured arguments like `handler({ id: msg.id })` or `lift({ piece })`.
+    if (isHelperRewriteBoundary(node, context)) {
       return;
     }
 
-    if (isHelperRewriteBoundary(node, context)) {
+    const nodeAnalysis = analyze(node);
+    if (!nodeAnalysis.containsOpaqueRef || !nodeAnalysis.requiresRewrite) {
+      ts.forEachChild(node, visit);
       return;
     }
 

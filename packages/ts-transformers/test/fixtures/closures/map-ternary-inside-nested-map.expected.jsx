@@ -80,14 +80,12 @@ export default pattern((__ct_pattern_input) => {
     return {
         [UI]: (<div>
         {__ctHelpers.ifElse({
-            type: "boolean",
-            asOpaque: true
+            type: "boolean"
         } as const satisfies __ctHelpers.JSONSchema, {
             type: "array",
             items: {
                 $ref: "#/$defs/UIRenderable"
             },
-            asOpaque: true,
             $defs: {
                 UIRenderable: {
                     type: "object",
@@ -114,8 +112,7 @@ export default pattern((__ct_pattern_input) => {
                     type: "array",
                     items: {
                         $ref: "#/$defs/UIRenderable"
-                    },
-                    asOpaque: true
+                    }
                 }],
             $defs: {
                 UIRenderable: {
@@ -136,8 +133,7 @@ export default pattern((__ct_pattern_input) => {
               <strong>{__ctHelpers.ifElse({
                 type: "boolean"
             } as const satisfies __ctHelpers.JSONSchema, {
-                type: "string",
-                asOpaque: true
+                type: "string"
             } as const satisfies __ctHelpers.JSONSchema, {
                 type: "string"
             } as const satisfies __ctHelpers.JSONSchema, {
@@ -176,11 +172,9 @@ export default pattern((__ct_pattern_input) => {
                     return (<li>
                     {/* This ternary should be transformed to ifElse */}
                     {__ctHelpers.ifElse({
-                        type: "boolean",
-                        asOpaque: true
+                        type: "boolean"
                     } as const satisfies __ctHelpers.JSONSchema, {
-                        type: "string",
-                        asOpaque: true
+                        type: "string"
                     } as const satisfies __ctHelpers.JSONSchema, {
                         type: "string"
                     } as const satisfies __ctHelpers.JSONSchema, {
@@ -189,15 +183,13 @@ export default pattern((__ct_pattern_input) => {
                         type: "object",
                         properties: {
                             showInactive: {
-                                type: "boolean",
-                                asOpaque: true
+                                type: "boolean"
                             },
                             tag: {
                                 type: "object",
                                 properties: {
                                     name: {
-                                        type: "string",
-                                        asOpaque: true
+                                        type: "string"
                                     }
                                 },
                                 required: ["name"]
@@ -223,8 +215,7 @@ export default pattern((__ct_pattern_input) => {
                             type: "object",
                             properties: {
                                 showInactive: {
-                                    type: "boolean",
-                                    asOpaque: true
+                                    type: "boolean"
                                 }
                             },
                             required: ["showInactive"]
@@ -252,8 +243,7 @@ export default pattern((__ct_pattern_input) => {
                             type: "object",
                             properties: {}
                         }, {
-                            $ref: "#/$defs/UIRenderable",
-                            asOpaque: true
+                            $ref: "#/$defs/UIRenderable"
                         }],
                     $defs: {
                         UIRenderable: {
@@ -281,8 +271,7 @@ export default pattern((__ct_pattern_input) => {
                     type: "object",
                     properties: {
                         showInactive: {
-                            type: "boolean",
-                            asOpaque: true
+                            type: "boolean"
                         }
                     },
                     required: ["showInactive"]
@@ -325,8 +314,7 @@ export default pattern((__ct_pattern_input) => {
                     type: "object",
                     properties: {}
                 }, {
-                    $ref: "#/$defs/UIRenderable",
-                    asOpaque: true
+                    $ref: "#/$defs/UIRenderable"
                 }],
             $defs: {
                 UIRenderable: {
@@ -405,8 +393,7 @@ export default pattern((__ct_pattern_input) => {
                     type: "object",
                     properties: {}
                 }, {
-                    $ref: "#/$defs/UIRenderable",
-                    asOpaque: true
+                    $ref: "#/$defs/UIRenderable"
                 }]
         },
         UIRenderable: {

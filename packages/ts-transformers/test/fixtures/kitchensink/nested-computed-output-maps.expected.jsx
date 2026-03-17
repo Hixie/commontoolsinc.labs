@@ -85,12 +85,10 @@ export default pattern((state) => {
                         type: "array",
                         items: {
                             $ref: "#/$defs/Thread"
-                        },
-                        asOpaque: true
+                        }
                     },
                     showFlagged: {
-                        type: "boolean",
-                        asOpaque: true
+                        type: "boolean"
                     }
                 },
                 required: ["threads", "showFlagged"]
@@ -147,24 +145,20 @@ export default pattern((state) => {
             type: "object",
             properties: {
                 thread: {
-                    $ref: "#/$defs/Thread",
-                    asOpaque: true
+                    $ref: "#/$defs/Thread"
                 },
                 outerIndex: {
-                    type: "number",
-                    asOpaque: true
+                    type: "number"
                 },
                 visibleComments: {
                     type: "array",
                     items: {
-                        $ref: "#/$defs/Comment",
-                        asOpaque: true
+                        $ref: "#/$defs/Comment"
                     }
                 }
             },
             required: ["thread", "outerIndex", "visibleComments"]
         },
-        asOpaque: true,
         $defs: {
             Comment: {
                 type: "object",
@@ -231,24 +225,20 @@ export default pattern((state) => {
                     type: "object",
                     properties: {
                         thread: {
-                            $ref: "#/$defs/Thread",
-                            asOpaque: true
+                            $ref: "#/$defs/Thread"
                         },
                         outerIndex: {
-                            type: "number",
-                            asOpaque: true
+                            type: "number"
                         },
                         visibleComments: {
                             type: "array",
                             items: {
-                                $ref: "#/$defs/Comment",
-                                asOpaque: true
+                                $ref: "#/$defs/Comment"
                             }
                         }
                     },
                     required: ["thread", "outerIndex", "visibleComments"]
-                },
-                asOpaque: true
+                }
             },
             selectedCommentId: {
                 type: ["string", "undefined"],
@@ -258,8 +248,7 @@ export default pattern((state) => {
                 type: "object",
                 properties: {
                     lane: {
-                        type: "string",
-                        asOpaque: true
+                        type: "string"
                     }
                 },
                 required: ["lane"]
@@ -315,7 +304,6 @@ export default pattern((state) => {
         items: {
             $ref: "#/$defs/UIRenderable"
         },
-        asOpaque: true,
         $defs: {
             UIRenderable: {
                 type: "object",
@@ -346,10 +334,8 @@ export default pattern((state) => {
                 visibleComments: {
                     type: "array",
                     items: {
-                        $ref: "#/$defs/Comment",
-                        asOpaque: true
-                    },
-                    asOpaque: true
+                        $ref: "#/$defs/Comment"
+                    }
                 }
             },
             required: ["visibleComments"],
@@ -379,10 +365,8 @@ export default pattern((state) => {
         } as const satisfies __ctHelpers.JSONSchema, {
             type: "array",
             items: {
-                $ref: "#/$defs/Comment",
-                asOpaque: true
+                $ref: "#/$defs/Comment"
             },
-            asOpaque: true,
             $defs: {
                 Comment: {
                     type: "object",
@@ -422,8 +406,7 @@ export default pattern((state) => {
                 {comment.flagged
                     ? <strong>{comment.text}</strong>
                     : /* [TRANSFORM] ifElse: schema-injected authored ifElse(thread.muted, ..., ...) */ ifElse({
-                        type: "boolean",
-                        asOpaque: true
+                        type: "boolean"
                     } as const satisfies __ctHelpers.JSONSchema, {
                         anyOf: [{}, {
                                 type: "object",
@@ -436,7 +419,6 @@ export default pattern((state) => {
                             }]
                     } as const satisfies __ctHelpers.JSONSchema, {
                         $ref: "#/$defs/UIRenderable",
-                        asOpaque: true,
                         $defs: {
                             UIRenderable: {
                                 type: "object",
@@ -473,8 +455,7 @@ export default pattern((state) => {
                 type: "object",
                 properties: {
                     element: {
-                        $ref: "#/$defs/Comment",
-                        asOpaque: true
+                        $ref: "#/$defs/Comment"
                     },
                     index: {
                         type: "number"
@@ -483,15 +464,13 @@ export default pattern((state) => {
                         type: "object",
                         properties: {
                             outerIndex: {
-                                type: "number",
-                                asOpaque: true
+                                type: "number"
                             },
                             state: {
                                 type: "object",
                                 properties: {
                                     lane: {
-                                        type: "string",
-                                        asOpaque: true
+                                        type: "string"
                                     }
                                 },
                                 required: ["lane"]
@@ -531,8 +510,7 @@ export default pattern((state) => {
                         type: "object",
                         properties: {}
                     }, {
-                        $ref: "#/$defs/UIRenderable",
-                        asOpaque: true
+                        $ref: "#/$defs/UIRenderable"
                     }],
                 $defs: {
                     UIRenderable: {
@@ -574,15 +552,13 @@ export default pattern((state) => {
                         type: "object",
                         properties: {
                             outerIndex: {
-                                type: "number",
-                                asOpaque: true
+                                type: "number"
                             },
                             state: {
                                 type: "object",
                                 properties: {
                                     lane: {
-                                        type: "string",
-                                        asOpaque: true
+                                        type: "string"
                                     }
                                 },
                                 required: ["lane"]
@@ -599,8 +575,7 @@ export default pattern((state) => {
                         type: "object",
                         properties: {}
                     }, {
-                        $ref: "#/$defs/UIRenderable",
-                        asOpaque: true
+                        $ref: "#/$defs/UIRenderable"
                     }],
                 $defs: {
                     UIRenderable: {
@@ -637,16 +612,14 @@ export default pattern((state) => {
                 } as const satisfies __ctHelpers.JSONSchema, {
                     type: "string"
                 } as const satisfies __ctHelpers.JSONSchema, {
-                    type: "string",
-                    asOpaque: true
+                    type: "string"
                 } as const satisfies __ctHelpers.JSONSchema, {
                     type: "string"
                 } as const satisfies __ctHelpers.JSONSchema, __ctHelpers.derive({
                     type: "object",
                     properties: {
                         labelIndex: {
-                            type: "number",
-                            asOpaque: true
+                            type: "number"
                         }
                     },
                     required: ["labelIndex"]
@@ -659,15 +632,13 @@ export default pattern((state) => {
                             type: "object",
                             properties: {
                                 lane: {
-                                    type: "string",
-                                    asOpaque: true
+                                    type: "string"
                                 }
                             },
                             required: ["lane"]
                         },
                         label: {
-                            type: "string",
-                            asOpaque: true
+                            type: "string"
                         }
                     },
                     required: ["state", "label"]
@@ -696,8 +667,7 @@ export default pattern((state) => {
                                 type: "object",
                                 properties: {
                                     lane: {
-                                        type: "string",
-                                        asOpaque: true
+                                        type: "string"
                                     }
                                 },
                                 required: ["lane"]
@@ -714,8 +684,7 @@ export default pattern((state) => {
                         type: "object",
                         properties: {}
                     }, {
-                        $ref: "#/$defs/UIRenderable",
-                        asOpaque: true
+                        $ref: "#/$defs/UIRenderable"
                     }],
                 $defs: {
                     UIRenderable: {
@@ -767,8 +736,7 @@ export default pattern((state) => {
                         type: "object",
                         properties: {}
                     }, {
-                        $ref: "#/$defs/UIRenderable",
-                        asOpaque: true
+                        $ref: "#/$defs/UIRenderable"
                     }],
                 $defs: {
                     UIRenderable: {
@@ -861,8 +829,7 @@ export default pattern((state) => {
                     type: "object",
                     properties: {}
                 }, {
-                    $ref: "#/$defs/UIRenderable",
-                    asOpaque: true
+                    $ref: "#/$defs/UIRenderable"
                 }]
         },
         UIRenderable: {

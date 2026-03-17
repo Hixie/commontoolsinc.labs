@@ -178,6 +178,93 @@ const p = pattern<Record<string, never>>(() => {
 );
 
 Deno.test(
+  "Capability-first: local generateText alias in JSX keeps ternary reactive",
+  async () => {
+    const source = `/// <cts-enable />
+import { generateText, h, pattern, UI } from "commontools";
+
+export default pattern(() => {
+  const text = generateText({ prompt: "hi" });
+  return {
+    [UI]: <div>{text.pending ? "Loading" : text.result}</div>,
+  };
+});
+`;
+
+    const output = await transformSource(source, {
+      types: COMMONTOOLS_TYPES,
+    });
+
+    assertStringIncludes(output, "__ctHelpers.ifElse(");
+    assert(!output.includes('text.pending ? "Loading" : text.result'));
+  },
+);
+
+Deno.test(
+  "Capability-first: ternary JSX branch keeps local JSX rewrite without branch derive",
+  async () => {
+    const source = `/// <cts-enable />
+import { Cell, computed, Default, pattern, UI, Writable } from "commontools";
+
+interface Person {
+  name: string;
+  rank: number;
+}
+
+interface PatternInput {
+  people?: Cell<Default<Person[], []>>;
+}
+
+export default pattern<PatternInput>(({ people }) => {
+  const showAdmin = Writable.of(false);
+
+  const adminData = computed(() =>
+    [...people.get()]
+      .sort((a, b) => a.rank - b.rank)
+      .map((p) => ({ name: p.name, rank: p.rank, isFirst: p.rank === 1 }))
+  );
+
+  const count = computed(() => people.get().length);
+
+  return {
+    [UI]: (
+      <div>
+        {showAdmin
+          ? (
+            <div>
+              <span>{count + " people"}</span>
+              <ul>
+                {adminData.map((entry) => (
+                  <li>
+                    {entry.isFirst ? "★ " : ""}
+                    {entry.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+          : null}
+      </div>
+    ),
+  };
+});
+`;
+
+    const output = await transformSource(source, {
+      types: COMMONTOOLS_TYPES,
+    });
+
+    assertStringIncludes(output, "__ctHelpers.ifElse(");
+    assertStringIncludes(output, "adminData.mapWithPattern(");
+    assertMatch(output, /\(\{\s*count\s*\}\)\s*=>\s*count \+ " people"/);
+    assert(
+      !/\(\{\s*count,\s*adminData\s*\}\)\s*=>\s*\(<div>/.test(output),
+      "expected JSX branch to keep local JSX derives instead of wrapping the whole branch",
+    );
+  },
+);
+
+Deno.test(
   "Capability-first: transformed filter output alias inside computed regains mapWithPattern",
   async () => {
     const source = `/// <cts-enable />
@@ -668,7 +755,10 @@ const p = pattern((input: Writable<{ foo: string; bar: string }>) => input.key("
       types: COMMONTOOLS_TYPES,
     });
 
-    assertStringIncludes(output, "asOpaque: true");
+    assert(
+      !output.includes("asOpaque: true"),
+      "output should not contain asOpaque: true",
+    );
     assertStringIncludes(output, '"foo"');
     assertStringIncludes(output, '"bar"');
   },
@@ -709,7 +799,10 @@ const p = pattern<Writable<{ foo: string; bar: string }>, { foo: string }>((inpu
       types: COMMONTOOLS_TYPES,
     });
 
-    assertStringIncludes(output, "asOpaque: true");
+    assert(
+      !output.includes("asOpaque: true"),
+      "output should not contain asOpaque: true",
+    );
     assertStringIncludes(output, '"foo"');
     assertStringIncludes(output, '"bar"');
   },
@@ -814,7 +907,10 @@ const fn = lift((input: Writable<{ foo: string; bar: string }>) => input);
       types: COMMONTOOLS_TYPES,
     });
 
-    assertStringIncludes(output, "asOpaque: true");
+    assert(
+      !output.includes("asOpaque: true"),
+      "output should not contain asOpaque: true",
+    );
     assertStringIncludes(output, '"foo"');
     assertStringIncludes(output, '"bar"');
   },
@@ -859,7 +955,10 @@ const p = pattern((input: Writable<{ foo: string; bar: string }>) => helper(inpu
       types: COMMONTOOLS_TYPES,
     });
 
-    assertStringIncludes(output, "asOpaque: true");
+    assert(
+      !output.includes("asOpaque: true"),
+      "output should not contain asOpaque: true",
+    );
     assertStringIncludes(output, '"foo"');
     assertStringIncludes(output, '"bar"');
   },
@@ -921,7 +1020,10 @@ const p = pattern((input: Writable<{ foo: string; bar: string }>) => {
       types: COMMONTOOLS_TYPES,
     });
 
-    assertStringIncludes(output, "asOpaque: true");
+    assert(
+      !output.includes("asOpaque: true"),
+      "output should not contain asOpaque: true",
+    );
     assertStringIncludes(output, "asCell: true");
     assertStringIncludes(output, '"foo"');
     assertStringIncludes(output, 'required: ["foo"]');
@@ -1626,6 +1728,62 @@ export default pattern<{ items: Item[] }>((state) => {
 );
 
 Deno.test(
+  "Capability-first: hoisted branch computation keeps computed array map plain",
+  async () => {
+    const source = `/// <cts-enable />
+import { computed, pattern, UI, Writable } from "commontools";
+
+interface Item {
+  name: string;
+  value: number;
+}
+
+export default pattern<{ items: Item[] }>((state) => {
+  const showList = Writable.of(true);
+
+  const sorted = computed(() =>
+    [...state.items].sort((a, b) => a.value - b.value)
+  );
+
+  const count = computed(() => state.items.length);
+
+  return {
+    [UI]: (
+      <div>
+        {showList
+          ? (() => {
+            const itemCount = count + " items";
+            return (
+              <div>
+                <span>{itemCount}</span>
+                {sorted.map((item: Item) => (
+                  <span>{item.name}</span>
+                ))}
+              </div>
+            );
+          })()
+          : <span>Hidden</span>}
+      </div>
+    ),
+  };
+});
+`;
+
+    const output = await transformSource(source, {
+      types: COMMONTOOLS_TYPES,
+    });
+
+    assertStringIncludes(output, "__ctHelpers.derive(");
+    assertStringIncludes(output, 'const itemCount = count + " items";');
+    assertStringIncludes(output, "sorted.map((item: Item) =>");
+    assert(
+      !output.includes("sorted.mapWithPattern("),
+      "expected computed array map to stay plain once the whole branch is compute-wrapped",
+    );
+  },
+);
+
+Deno.test(
   "Capability-first: ternary branch derive does not nest inner arithmetic derives",
   async () => {
     const source = `/// <cts-enable />
@@ -1837,7 +1995,7 @@ export default pattern<{
     );
     assertMatch(
       output,
-      /__ctHelpers\.derive\([\s\S]*validationIssue: f\.validationIssue[\s\S]*\(\{ f \}\) => f\.validationIssue !== undefined\)/,
+      /__ctHelpers\.derive\([\s\S]*validationIssue: f(?:\.validationIssue|\.key\("validationIssue"\))[\s\S]*\(\{ f \}\) => f\.validationIssue !== undefined\)/,
     );
   },
 );
@@ -2283,6 +2441,94 @@ export default pattern<{ items: Item[]; limit: number }>(({ items, limit }) => (
       !output.includes("items.map((item: Item) =>"),
       "expected authored ifElse branch map to stay pattern-lowered",
     );
+  },
+);
+
+Deno.test(
+  "Capability-first: authored ifElse condition factory call keeps captured property access inside factory boundary",
+  async () => {
+    const source = `/// <cts-enable />
+import { ifElse, lift, pattern, UI } from "commontools";
+
+const moduleHasSettings = lift(({ piece }: { piece: { settingsUI?: string } }) =>
+  !!piece?.settingsUI
+);
+
+interface Entry {
+  piece: { settingsUI?: string };
+}
+
+export default pattern<{ entries: Entry[] }>(({ entries }) => ({
+  [UI]: (
+    <div>
+      {entries.map((entry) =>
+        ifElse(
+          moduleHasSettings({ piece: entry.piece }),
+          <span>settings</span>,
+          null,
+        )
+      )}
+    </div>
+  ),
+}));
+`;
+
+    const output = await transformSource(source, {
+      types: COMMONTOOLS_TYPES,
+    });
+
+    assertStringIncludes(output, "entries.mapWithPattern(");
+    assertStringIncludes(output, "moduleHasSettings({");
+    assertStringIncludes(output, 'piece: entry.key("piece")');
+  },
+);
+
+Deno.test(
+  "Capability-first: authored ifElse branch handler call keeps captured property access inside factory boundary",
+  async () => {
+    const source = `/// <cts-enable />
+import { handler, ifElse, pattern, UI, Writable } from "commontools";
+
+const selectMessage = handler<
+  unknown,
+  { selectedId: Writable<string>; msgId: string }
+>((_event, { selectedId, msgId }) => {
+  selectedId.set(msgId);
+});
+
+interface Message {
+  id: string;
+  type: "chat" | "system";
+}
+
+export default pattern<{ messages: Message[] }>(({ messages }) => {
+  const selectedId = Writable.of("");
+
+  return {
+    [UI]: (
+      <div>
+        {messages.map((msg) =>
+          ifElse(
+            msg.type === "system",
+            <span>{msg.id}</span>,
+            <button onClick={selectMessage({ selectedId, msgId: msg.id })}>
+              open
+            </button>,
+          )
+        )}
+      </div>
+    ),
+  };
+});
+`;
+
+    const output = await transformSource(source, {
+      types: COMMONTOOLS_TYPES,
+    });
+
+    assertStringIncludes(output, "messages.mapWithPattern(");
+    assertStringIncludes(output, "selectMessage({");
+    assertStringIncludes(output, 'msgId: msg.key("id")');
   },
 );
 

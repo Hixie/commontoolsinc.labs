@@ -99,9 +99,11 @@ const goToCharm = handler<unknown, { charm: any }>(
 );
 
 // FIXTURE: opaque-ref-cell-map
-// Verifies: OpaqueRef<any[]>.map() inside ifElse is transformed to mapWithPattern()
-//   typedCellRef.map((charm, index) => <li>...)  → typedCellRef.mapWithPattern(pattern(...), {})
-//   ifElse(!typedCellRef?.length, <div>, <ul>)   → ifElse(schema..., derive(...), <div>, <ul>)
+// Verifies: a reactive factory result still rewrites JSX ifElse predicates after
+//           the forbidden OpaqueRef cast is removed
+//   ifElse(!cellRef?.length, <div>, <ul>) → ifElse(schema..., derive(...), <div>, <ul>)
+//   cellRef.map((charm, index) => <li>...) → mapWithPattern(...) even with
+//     `as { cellRef: any[] }`, because the cast does not change the reactive origin
 // Context: Real-world pattern using Cell.for<any[]>(), handler, lift, and navigateTo
 // create the named cell inside the pattern body, so we do it just once
 export default pattern(() => {

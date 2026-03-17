@@ -1,4 +1,9 @@
-export { type CallKind, detectCallKind } from "./call-kind.ts";
+export {
+  type CallKind,
+  detectCallKind,
+  detectDirectBuilderCall,
+  isReactiveOriginCall,
+} from "./call-kind.ts";
 export * from "./dataflow.ts";
 export {
   classifyReactiveContext,
@@ -27,6 +32,7 @@ export {
   getMemberSymbol,
   getMethodCallTarget,
   getTypeAtLocationWithFallback,
+  getVariableInitializer,
   isFunctionParameter,
   isMethodCall,
   isOptionalMemberSymbol,

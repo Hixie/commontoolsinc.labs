@@ -5,18 +5,12 @@ interface State {
 }
 // FIXTURE: handler-unused-event
 // Verifies: inline handler with an unused event param (_) still generates an event schema placeholder
-//   onClick={(_) => state.counter.set(...)) → handler(event schema with detail, capture schema, (_, { state }) => ...)({ state })
-// Context: Event param is named _ (unused); transformer still emits event schema with { detail: true }
+//   onClick={(_: unknown) => state.counter.set(...)) → handler(event schema, capture schema, (_, { state }) => ...)({ state })
+// Context: Event param is named _ (unused); transformer emits a generic event schema placeholder
 export default pattern((state) => {
     return {
         [UI]: (<button type="button" onClick={__ctHelpers.handler({
-            type: "object",
-            properties: {
-                detail: {
-                    type: "unknown"
-                }
-            },
-            required: ["detail"]
+            type: "unknown"
         } as const satisfies __ctHelpers.JSONSchema, {
             type: "object",
             properties: {
@@ -65,8 +59,7 @@ export default pattern((state) => {
                     type: "object",
                     properties: {}
                 }, {
-                    $ref: "#/$defs/UIRenderable",
-                    asOpaque: true
+                    $ref: "#/$defs/UIRenderable"
                 }]
         },
         UIRenderable: {

@@ -880,6 +880,60 @@ Deno.test("Pattern Context Validation - Builder Placement", async (t) => {
     assertEquals(errors[0]!.type, "pattern-context:builder-placement");
   });
 
+  await t.step(
+    "does not report builder placement for shadowed lift helper",
+    async () => {
+      const source = `/// <cts-enable />
+      import { pattern, h } from "commontools";
+
+      const lift = (fn: () => number) => fn();
+
+      export default pattern(() => {
+        const doubled = lift(() => 1);
+        return <div>{doubled}</div>;
+      });
+    `;
+      const { diagnostics } = await validateSource(source, {
+        types: COMMONTOOLS_TYPES,
+      });
+      const errors = getErrors(diagnostics);
+      assertEquals(
+        errors.some((error) =>
+          error.type === "pattern-context:builder-placement"
+        ),
+        false,
+        "shadowed local helpers named lift should not be treated as builder calls",
+      );
+    },
+  );
+
+  await t.step("errors on aliased lift() inside pattern body", async () => {
+    const source = `/// <cts-enable />
+      import { pattern, lift, h } from "commontools";
+
+      interface Item { price: number; }
+
+      const alias = lift;
+
+      export default pattern<{ item: Item }>(({ item }) => {
+        const doubled = alias(({ x }: { x: number }) => x * 2)({ x: item.price });
+        return <div>{doubled}</div>;
+      });
+    `;
+    const { diagnostics } = await validateSource(source, {
+      types: COMMONTOOLS_TYPES,
+    });
+    const errors = getErrors(diagnostics);
+    assertGreater(errors.length, 0, "Expected at least one error");
+    assertEquals(
+      errors.some((error) =>
+        error.type === "pattern-context:builder-placement"
+      ),
+      true,
+      "aliases to lift() should still obey module-scope placement rules",
+    );
+  });
+
   await t.step("allows lift() at module scope", async () => {
     const source = `/// <cts-enable />
       import { pattern, lift, h } from "commontools";
@@ -1105,6 +1159,123 @@ Deno.test("OpaqueRef .get() Validation", async (t) => {
         errors.length,
         0,
         "Direct access on computed result should be allowed",
+      );
+    },
+  );
+
+  await t.step(
+    "does not report opaque-get on Cell lift callback input",
+    async () => {
+      const source = `/// <cts-enable />
+      import { lift, Cell } from "commontools";
+
+      const readCount = lift<{ count: Cell<number> }>(({ count }) => {
+        return count.get();
+      });
+
+      export default readCount;
+    `;
+      const { diagnostics } = await validateSource(source, {
+        types: COMMONTOOLS_TYPES,
+      });
+      const errors = getErrors(diagnostics);
+      assertEquals(
+        errors.some((error) => error.type === "opaque-get:invalid-call"),
+        false,
+        "lift() callback inputs should keep their declared Cell semantics",
+      );
+    },
+  );
+
+  await t.step(
+    "does not report opaque-get on Cell handler callback state",
+    async () => {
+      const source = `/// <cts-enable />
+      import { handler, Cell } from "commontools";
+
+      const increment = handler<unknown, { count: Cell<number> }>((
+        _,
+        { count },
+      ) => {
+        count.set(count.get() + 1);
+      });
+
+      export default increment;
+    `;
+      const { diagnostics } = await validateSource(source, {
+        types: COMMONTOOLS_TYPES,
+      });
+      const errors = getErrors(diagnostics);
+      assertEquals(
+        errors.some((error) => error.type === "opaque-get:invalid-call"),
+        false,
+        "handler() callback state should keep declared Cell semantics",
+      );
+    },
+  );
+
+  await t.step(
+    "errors on .get() called on lifted factory result",
+    async () => {
+      const source = `/// <cts-enable />
+      import { lift } from "commontools";
+
+      const addOne = lift<{ count: number }>(({ count }) => count + 1);
+      const result = addOne({ count: 1 });
+      const value = result.get();
+
+      export default value;
+    `;
+      const { diagnostics } = await validateSource(source, {
+        types: COMMONTOOLS_TYPES,
+      });
+      const errors = getErrors(diagnostics);
+      assertGreater(errors.length, 0, "Expected at least one error");
+      assertEquals(errors[0]!.type, "opaque-get:invalid-call");
+    },
+  );
+
+  await t.step(
+    "errors on .get() called on generateText result",
+    async () => {
+      const source = `/// <cts-enable />
+      import { generateText } from "commontools";
+
+      const text = generateText({ prompt: "hi" });
+      const value = text.get();
+
+      export default value;
+    `;
+      const { diagnostics } = await validateSource(source, {
+        types: COMMONTOOLS_TYPES,
+      });
+      const errors = getErrors(diagnostics);
+      assertGreater(errors.length, 0, "Expected at least one error");
+      assertEquals(errors[0]!.type, "opaque-get:invalid-call");
+    },
+  );
+
+  await t.step(
+    "does not report opaque-get on same-named local helper result",
+    async () => {
+      const source = `/// <cts-enable />
+      function generateText() {
+        return { get: () => "hi" };
+      }
+
+      const text = generateText();
+      const value = text.get();
+
+      export default value;
+    `;
+      const { diagnostics } = await validateSource(source, {
+        types: COMMONTOOLS_TYPES,
+      });
+      const errors = getErrors(diagnostics);
+      assertEquals(
+        errors.some((error) => error.type === "opaque-get:invalid-call"),
+        false,
+        "local helpers should not be classified as reactive origins by name",
       );
     },
   );

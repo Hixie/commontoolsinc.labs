@@ -5,11 +5,13 @@ import {
   getTypeAtLocationWithFallback,
   getTypeFromTypeNodeWithFallback,
   getTypeReferenceArgument,
+  getVariableInitializer,
   inferContextualType,
   inferParameterType,
   inferReturnType,
   isAnyOrUnknownType,
   isFunctionLikeExpression,
+  registerSyntheticCallType,
   typeToSchemaTypeNode,
   unwrapOpaqueLikeType,
   widenLiteralType,
@@ -545,6 +547,49 @@ function collectFunctionSchemaTypeNodes(
     resultType = undefined;
   }
 
+  const needsResultRecovery = !resultNode ||
+    containsAnyOrUnknownTypeNode(resultNode) ||
+    shouldDropFallbackTypeForSchema(
+      resultNode,
+      resultType,
+      checker,
+      sourceFile,
+    );
+
+  if (needsResultRecovery) {
+    const returnExpr = getCallbackReturnExpression(fn);
+    if (context && returnExpr && ts.isObjectLiteralExpression(returnExpr)) {
+      const recoveredNode = buildObjectLiteralReturnTypeNode(
+        returnExpr,
+        checker,
+        sourceFile,
+        factory,
+        typeRegistry,
+        capabilityRegistry,
+        context,
+      );
+      if (recoveredNode) {
+        resultNode = recoveredNode;
+        resultType = undefined;
+      }
+    }
+
+    if (!resultNode || containsAnyOrUnknownTypeNode(resultNode)) {
+      const projectedResult = recoverProjectedResultSchema(
+        fn,
+        checker,
+        sourceFile,
+        argumentNode,
+        argumentType ?? fallbackArgType,
+        typeRegistry,
+      );
+      if (projectedResult?.result) {
+        resultNode = projectedResult.result;
+        resultType = projectedResult.resultType;
+      }
+    }
+  }
+
   // 3. If we couldn't infer a type, we can't transform at all
   // Both types are required for derive/lift to work
   if (!argumentNode && !resultNode) {
@@ -650,6 +695,385 @@ function getTypeFromRegistryOrFallback(
     return typeRegistry.get(typeNode);
   }
   return fallbackType;
+}
+
+function registerInjectedCallResultType(
+  originalCall: ts.CallExpression,
+  updatedCall: ts.CallExpression,
+  resultTypeNode: ts.TypeNode,
+  resultTypeValue: ts.Type | undefined,
+  checker: ts.TypeChecker,
+  typeRegistry?: TypeRegistry,
+): void {
+  if (!typeRegistry) return;
+
+  const resolvedType = getTypeFromRegistryOrFallback(
+    resultTypeNode,
+    resultTypeValue,
+    typeRegistry,
+  ) ?? getTypeFromTypeNodeWithFallback(resultTypeNode, checker, typeRegistry);
+
+  if (!resolvedType || isAnyOrUnknownType(resolvedType)) {
+    return;
+  }
+
+  registerSyntheticCallType(updatedCall, resolvedType, typeRegistry);
+  registerSyntheticCallType(originalCall, resolvedType, typeRegistry);
+}
+
+function inferLiftFactoryResultType(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  factory: ts.NodeFactory,
+  typeRegistry?: TypeRegistry,
+  capabilityRegistry?: CapabilitySummaryRegistry,
+  context?: TransformationContext,
+): ts.Type | undefined {
+  const valueInitializer = getVariableInitializer(node, checker);
+  if (!valueInitializer || !ts.isCallExpression(valueInitializer)) {
+    return undefined;
+  }
+
+  const factoryInitializer = getVariableInitializer(
+    valueInitializer.expression,
+    checker,
+  );
+  if (!factoryInitializer || !ts.isCallExpression(factoryInitializer)) {
+    return undefined;
+  }
+
+  const callKind = detectCallKind(factoryInitializer, checker);
+  if (callKind?.kind !== "builder" || callKind.builderName !== "lift") {
+    return undefined;
+  }
+
+  const callback = factoryInitializer.arguments[0];
+  if (!callback || !isFunctionLikeExpression(callback)) {
+    return undefined;
+  }
+
+  let fallbackArgType: ts.Type | undefined;
+  if (factoryInitializer.typeArguments?.length) {
+    const [argumentType] = factoryInitializer.typeArguments;
+    if (argumentType) {
+      fallbackArgType = getTypeFromTypeNodeWithFallback(
+        argumentType,
+        checker,
+        typeRegistry,
+      );
+    }
+  }
+
+  const inferred = collectFunctionSchemaTypeNodes(
+    callback,
+    checker,
+    sourceFile,
+    factory,
+    fallbackArgType,
+    typeRegistry,
+    capabilityRegistry,
+    "full",
+    context,
+  );
+  const resultType = getTypeFromRegistryOrFallback(
+    inferred.result,
+    inferred.resultType,
+    typeRegistry,
+  ) ?? (inferred.result
+    ? getTypeFromTypeNodeWithFallback(inferred.result, checker, typeRegistry)
+    : undefined);
+
+  if (!resultType || isAnyOrUnknownType(resultType)) {
+    return undefined;
+  }
+
+  return resultType;
+}
+
+function getCallbackReturnExpression(
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+): ts.Expression | undefined {
+  if (ts.isExpression(fn.body)) {
+    return fn.body;
+  }
+
+  for (const statement of fn.body.statements) {
+    if (ts.isReturnStatement(statement) && statement.expression) {
+      return statement.expression;
+    }
+  }
+
+  return undefined;
+}
+
+function getDirectProjectionPropertyName(
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+): string | undefined {
+  const parameter = fn.parameters[0];
+  if (!parameter || !ts.isIdentifier(parameter.name)) {
+    return undefined;
+  }
+
+  const body = getCallbackReturnExpression(fn);
+  if (!body) {
+    return undefined;
+  }
+
+  if (
+    ts.isPropertyAccessExpression(body) &&
+    ts.isIdentifier(body.expression) &&
+    body.expression.text === parameter.name.text
+  ) {
+    return body.name.text;
+  }
+
+  if (
+    ts.isElementAccessExpression(body) &&
+    ts.isIdentifier(body.expression) &&
+    body.expression.text === parameter.name.text &&
+    body.argumentExpression &&
+    ts.isStringLiteralLike(body.argumentExpression)
+  ) {
+    return body.argumentExpression.text;
+  }
+
+  return undefined;
+}
+
+function findTypeLiteralPropertyTypeNode(
+  argumentNode: ts.TypeNode,
+  propertyName: string,
+): ts.TypeNode | undefined {
+  if (!ts.isTypeLiteralNode(argumentNode)) {
+    return undefined;
+  }
+
+  const member = argumentNode.members.find((member) =>
+    ts.isPropertySignature(member) &&
+    member.type &&
+    ((ts.isIdentifier(member.name) && member.name.text === propertyName) ||
+      (ts.isStringLiteralLike(member.name) &&
+        member.name.text === propertyName))
+  );
+
+  if (!member || !ts.isPropertySignature(member) || !member.type) {
+    return undefined;
+  }
+
+  return member.type;
+}
+
+function recoverProjectedResultSchema(
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  argumentNode: ts.TypeNode | undefined,
+  argumentType: ts.Type | undefined,
+  typeRegistry?: TypeRegistry,
+): { result?: ts.TypeNode; resultType?: ts.Type } | undefined {
+  const propertyName = getDirectProjectionPropertyName(fn);
+  if (!propertyName) {
+    return undefined;
+  }
+
+  if (argumentType && !isAnyOrUnknownType(argumentType)) {
+    const property = argumentType.getProperty(propertyName);
+    if (property) {
+      const propertyType = getSymbolTypeAtSource(property, checker, sourceFile);
+      if (!isAnyOrUnknownType(propertyType)) {
+        const propertyTypeNode = typeToSchemaTypeNode(
+          propertyType,
+          checker,
+          sourceFile,
+        );
+        if (propertyTypeNode) {
+          typeRegistry?.set(propertyTypeNode, propertyType);
+          return { result: propertyTypeNode, resultType: propertyType };
+        }
+      }
+    }
+  }
+
+  if (!argumentNode) {
+    return undefined;
+  }
+
+  const propertyTypeNode = findTypeLiteralPropertyTypeNode(
+    argumentNode,
+    propertyName,
+  );
+  if (propertyTypeNode) {
+    return { result: propertyTypeNode };
+  }
+
+  return undefined;
+}
+
+function inferDeriveResultTypeFromInitializer(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  factory: ts.NodeFactory,
+  typeRegistry?: TypeRegistry,
+  capabilityRegistry?: CapabilitySummaryRegistry,
+  context?: TransformationContext,
+): ts.Type | undefined {
+  const initializer = getVariableInitializer(node, checker);
+  if (!initializer || !ts.isCallExpression(initializer)) {
+    return undefined;
+  }
+
+  const callKind = detectCallKind(initializer, checker);
+  if (callKind?.kind !== "derive") {
+    return undefined;
+  }
+
+  const firstArg = initializer.arguments[0];
+  const callback = initializer.arguments[1];
+  if (!firstArg || !callback || !isFunctionLikeExpression(callback)) {
+    return undefined;
+  }
+
+  let argumentType =
+    getTypeAtLocationWithFallback(firstArg, checker, typeRegistry) ??
+      checker.getTypeAtLocation(firstArg);
+  if (isAnyOrUnknownType(argumentType)) {
+    const recoveredArgumentType = inferLiftFactoryResultType(
+      firstArg,
+      checker,
+      sourceFile,
+      factory,
+      typeRegistry,
+      capabilityRegistry,
+      context,
+    );
+    if (recoveredArgumentType && !isAnyOrUnknownType(recoveredArgumentType)) {
+      argumentType = recoveredArgumentType;
+    }
+  }
+
+  const inferred = collectFunctionSchemaTypeNodes(
+    callback,
+    checker,
+    sourceFile,
+    factory,
+    argumentType,
+    typeRegistry,
+    capabilityRegistry,
+    "full",
+    context,
+  );
+  const resultType = getTypeFromRegistryOrFallback(
+    inferred.result,
+    inferred.resultType,
+    typeRegistry,
+  ) ?? (inferred.result
+    ? getTypeFromTypeNodeWithFallback(inferred.result, checker, typeRegistry)
+    : undefined);
+  if (resultType && !isAnyOrUnknownType(resultType)) {
+    return resultType;
+  }
+
+  return undefined;
+}
+
+function inferExpressionTypeWithInitializerFallback(
+  expr: ts.Expression,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  factory: ts.NodeFactory,
+  typeRegistry?: TypeRegistry,
+  capabilityRegistry?: CapabilitySummaryRegistry,
+  context?: TransformationContext,
+): ts.Type | undefined {
+  const type = getTypeAtLocationWithFallback(expr, checker, typeRegistry) ??
+    checker.getTypeAtLocation(expr);
+  if (!isAnyOrUnknownType(type)) {
+    return type;
+  }
+
+  const fromLift = inferLiftFactoryResultType(
+    expr,
+    checker,
+    sourceFile,
+    factory,
+    typeRegistry,
+    capabilityRegistry,
+    context,
+  );
+  if (fromLift && !isAnyOrUnknownType(fromLift)) {
+    return fromLift;
+  }
+
+  const fromDerive = inferDeriveResultTypeFromInitializer(
+    expr,
+    checker,
+    sourceFile,
+    factory,
+    typeRegistry,
+    capabilityRegistry,
+    context,
+  );
+  if (fromDerive && !isAnyOrUnknownType(fromDerive)) {
+    return fromDerive;
+  }
+
+  return type;
+}
+
+function buildObjectLiteralReturnTypeNode(
+  expr: ts.ObjectLiteralExpression,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  factory: ts.NodeFactory,
+  typeRegistry?: TypeRegistry,
+  capabilityRegistry?: CapabilitySummaryRegistry,
+  context?: TransformationContext,
+): ts.TypeNode | undefined {
+  const members: ts.TypeElement[] = [];
+
+  for (const property of expr.properties) {
+    if (
+      !ts.isPropertyAssignment(property) &&
+      !ts.isShorthandPropertyAssignment(property)
+    ) {
+      return undefined;
+    }
+
+    const valueExpr = ts.isPropertyAssignment(property)
+      ? property.initializer
+      : property.name;
+    const valueType = inferExpressionTypeWithInitializerFallback(
+      valueExpr,
+      checker,
+      sourceFile,
+      factory,
+      typeRegistry,
+      capabilityRegistry,
+      context,
+    );
+    if (!valueType || isAnyOrUnknownType(valueType)) {
+      return undefined;
+    }
+
+    const valueTypeNode = typeToSchemaTypeNode(valueType, checker, sourceFile);
+    if (!valueTypeNode) {
+      return undefined;
+    }
+    typeRegistry?.set(valueTypeNode, valueType);
+
+    members.push(
+      factory.createPropertySignature(
+        undefined,
+        property.name,
+        undefined,
+        valueTypeNode,
+      ),
+    );
+  }
+
+  return factory.createTypeLiteralNode(members);
 }
 
 /**
@@ -1274,6 +1698,14 @@ export class SchemaInjectionTransformer extends Transformer {
             typeRegistry,
             checker,
           );
+          registerInjectedCallResultType(
+            node,
+            updated,
+            resultType,
+            resultTypeValue,
+            checker,
+            typeRegistry,
+          );
           // Visit children to catch any pattern calls created by ClosureTransformer
           // inside the derive callback (e.g., from map transformations)
           return ts.visitEachChild(updated, visit, transformation);
@@ -1346,6 +1778,7 @@ export class SchemaInjectionTransformer extends Transformer {
           // Special case: detect empty object literal {} and generate specific schema
           let argNode: ts.TypeNode | undefined;
           let argType: ts.Type | undefined;
+          let fallbackArgType: ts.Type | undefined;
 
           if (
             ts.isObjectLiteralExpression(firstArg) &&
@@ -1360,40 +1793,47 @@ export class SchemaInjectionTransformer extends Transformer {
             // Apply literal widening so `const x = 5; derive(x, fn)` produces `number`, not `5`
             // Use getTypeAtLocationWithFallback to handle synthetic nodes (e.g., mapWithPattern calls)
             // which have their types registered in the typeRegistry by ClosureTransformer
-            const argumentType = widenLiteralType(
+            fallbackArgType = widenLiteralType(
               getTypeAtLocationWithFallback(firstArg, checker, typeRegistry) ??
                 checker.getTypeAtLocation(firstArg),
               checker,
             );
-            const inferred = collectFunctionSchemaTypeNodes(
-              callback,
-              checker,
-              sourceFile,
-              factory,
-              argumentType,
-              typeRegistry,
-              capabilityRegistry,
-              "full",
-              context,
-            );
-            // Use inferred type or fallback to never/unknown refinement
-            argNode = inferred.argument ??
-              getParameterSchemaType(factory, callback.parameters[0]);
-            argType = inferred.argumentType;
+            if (isAnyOrUnknownType(fallbackArgType)) {
+              const recoveredArgumentType = inferLiftFactoryResultType(
+                firstArg,
+                checker,
+                sourceFile,
+                factory,
+                typeRegistry,
+                capabilityRegistry,
+                context,
+              );
+              if (
+                recoveredArgumentType &&
+                !isAnyOrUnknownType(recoveredArgumentType)
+              ) {
+                fallbackArgType = recoveredArgumentType;
+              }
+            }
           }
 
-          // Always infer return type
           const inferred = collectFunctionSchemaTypeNodes(
             callback,
             checker,
             sourceFile,
             factory,
-            undefined,
+            fallbackArgType,
             typeRegistry,
             capabilityRegistry,
             "full",
             context,
           );
+          if (!argNode) {
+            // Use inferred type or fallback to never/unknown refinement
+            argNode = inferred.argument ??
+              getParameterSchemaType(factory, callback.parameters[0]);
+            argType = inferred.argumentType;
+          }
 
           // Always transform - use unknown for missing types
           const finalArgNode = argNode ??
@@ -1426,6 +1866,14 @@ export class SchemaInjectionTransformer extends Transformer {
             resultTypeValue,
             typeRegistry,
             checker,
+          );
+          registerInjectedCallResultType(
+            node,
+            updated,
+            resultType,
+            resultTypeValue,
+            checker,
+            typeRegistry,
           );
           // Visit children to catch any pattern calls created by ClosureTransformer
           // inside the derive callback (e.g., from map transformations)
