@@ -1,4 +1,15 @@
-import { type JSONSchema, type Pattern } from "../builder/types.ts";
+import { type Pattern } from "../builder/types.ts";
+import { toDeepFrozenSchema } from "@commontools/data-model/schema-utils";
+
+const MAP_INPUT_SCHEMA = toDeepFrozenSchema({
+  type: "object",
+  properties: {
+    // type: "unknown" is ignored by the asCell code path (no type validation)
+    list: { type: "array", items: { asCell: true, type: "unknown" } },
+    op: { asCell: true },
+  },
+  required: ["op"],
+});
 
 import { type Cell } from "../cell.ts";
 import { type Action } from "../scheduler.ts";
@@ -70,17 +81,8 @@ export function map(
       sendResult(tx, result);
     }
     const resultWithLog = result.withTx(tx);
-    const { list, op } = inputsCell.asSchema(
-      {
-        type: "object",
-        properties: {
-          // type: "unknown" is ignored by the asCell code path (no type validation)
-          list: { type: "array", items: { asCell: true, type: "unknown" } },
-          op: { asCell: true },
-        },
-        required: ["op"],
-      } as const satisfies JSONSchema,
-    ).withTx(tx).get();
+    const { list, op } = inputsCell.asSchema(MAP_INPUT_SCHEMA)
+      .withTx(tx).get();
 
     // .getRaw() because we want the pattern itself and avoid following the
     // aliases in the pattern

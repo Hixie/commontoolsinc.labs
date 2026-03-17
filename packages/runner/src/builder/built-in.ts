@@ -1,4 +1,5 @@
 import { BuiltInLLMDialogState } from "@commontools/api";
+import { toDeepFrozenSchema } from "@commontools/data-model/schema-utils";
 import { createNodeFactory, lift } from "./module.ts";
 import { pattern } from "./pattern.ts";
 import { isPattern } from "./types.ts";
@@ -29,6 +30,17 @@ import type {
 } from "commontools";
 import { isRecord } from "@commontools/utils/types";
 import { isCell } from "../cell.ts";
+
+const WISH_ARGUMENT_SCHEMA = toDeepFrozenSchema({
+  type: "object",
+  properties: {
+    query: { type: "string" },
+    path: { type: "array", items: { type: "string" } },
+    schema: { type: "object" },
+    context: { type: "object", additionalProperties: { asCell: true } },
+    scope: { type: "array", items: { type: "string" } },
+  },
+});
 
 /**
  * Signature detection for ifElse/when/unless backward compatibility.
@@ -308,16 +320,7 @@ export function wish<T = unknown>(
   return createNodeFactory({
     type: "ref",
     implementation: "wish",
-    argumentSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string" },
-        path: { type: "array", items: { type: "string" } },
-        schema: { type: "object" },
-        context: { type: "object", additionalProperties: { asCell: true } },
-        scope: { type: "array", items: { type: "string" } },
-      },
-    } as const satisfies JSONSchema,
+    argumentSchema: WISH_ARGUMENT_SCHEMA,
     resultSchema,
   })(param);
 }
