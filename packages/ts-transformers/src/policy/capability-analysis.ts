@@ -456,6 +456,17 @@ export function analyzeFunctionCapabilities(
       return empty;
     }
 
+    // Track .get() CallExpression nodes whose result was resolved with a more
+    // specific path (e.g. notes.get().length → ["length"]).  When the
+    // READER_METHODS handler encounters these, it skips the blanket [] read.
+    const resolvedGetCalls = new Set<ts.Node>();
+
+    // Track alias names (e.g. "notes") that were resolved with specific
+    // property paths through a .get() chain.  When the identifier handler
+    // encounters a synthetic identifier with no parent pointer, it can skip
+    // the blanket read if the alias already has a more specific path.
+    const aliasesWithSpecificPaths = new Set<string>();
+
     const resolveFromAccess = (
       expression: ts.Expression,
     ): SourceRef | undefined => {
@@ -476,6 +487,43 @@ export function analyzeFunctionCapabilities(
       const current = unwrapExpression(expression);
       const byAccess = resolveFromAccess(current);
       if (byAccess) return byAccess;
+
+      // Handle property/element access on resolved call expressions.
+      // e.g. notes.get().length → resolve notes.get() then append "length"
+      if (
+        ts.isPropertyAccessExpression(current) ||
+        ts.isElementAccessExpression(current)
+      ) {
+        const innerExpr = current.expression;
+        const innerRef = resolveSourceRef(innerExpr);
+        if (innerRef) {
+          // Mark the inner .get() call so the READER_METHODS handler skips it.
+          if (ts.isCallExpression(innerExpr)) {
+            resolvedGetCalls.add(innerExpr);
+          }
+          if (ts.isPropertyAccessExpression(current)) {
+            return {
+              root: innerRef.root,
+              path: [...innerRef.path, current.name.text],
+              dynamic: innerRef.dynamic,
+            };
+          }
+          if (
+            ts.isElementAccessExpression(current) &&
+            isLiteralElement(current.argumentExpression)
+          ) {
+            return {
+              root: innerRef.root,
+              path: [
+                ...innerRef.path,
+                getLiteralElementText(current.argumentExpression),
+              ],
+              dynamic: innerRef.dynamic,
+            };
+          }
+          return { ...innerRef, dynamic: true };
+        }
+      }
 
       if (
         ts.isCallExpression(current) &&
@@ -765,6 +813,11 @@ export function analyzeFunctionCapabilities(
               // Preserve narrowed-path reads while avoiding false root-read expansion.
               if (!source.dynamic && source.path.length === 0) {
                 markPassthrough(source.root);
+              } else if (aliasesWithSpecificPaths.has(node.text)) {
+                // This alias was already resolved with specific property paths
+                // (e.g. notes.get().length → ["notes", "length"]).  The blanket
+                // read from the detached identifier is redundant.
+                markPassthrough(source.root);
               } else {
                 trackReadRef(source);
               }
@@ -819,6 +872,38 @@ export function analyzeFunctionCapabilities(
             const ref = resolveSourceRef(node);
             if (ref) {
               trackReadRef(ref);
+              // If this resolution went through a .get() call, record the
+              // alias name so the identifier handler can skip redundant
+              // blanket reads.  Only suppress for actual .get() bases —
+              // ordinary member reads (e.g. state.foo) must not be tagged.
+              // Walk through intermediate member accesses to find the .get()
+              // call (handles chains like notes.get().meta.length).
+              let getBaseExpr: ts.Expression = node.expression;
+              while (
+                ts.isPropertyAccessExpression(getBaseExpr) ||
+                ts.isElementAccessExpression(getBaseExpr)
+              ) {
+                getBaseExpr = getBaseExpr.expression;
+              }
+              if (
+                ts.isCallExpression(getBaseExpr) &&
+                resolvedGetCalls.has(getBaseExpr)
+              ) {
+                // Unwrap the .get() call to find the root identifier:
+                // notes.get() → notes.get (PropertyAccess) → notes (Identifier)
+                const calleeExpr = getBaseExpr.expression;
+                let rootExpr: ts.Expression = ts.isPropertyAccessExpression(
+                    calleeExpr,
+                  )
+                  ? calleeExpr.expression
+                  : calleeExpr;
+                while (ts.isPropertyAccessExpression(rootExpr)) {
+                  rootExpr = rootExpr.expression;
+                }
+                if (ts.isIdentifier(rootExpr) && aliases.has(rootExpr.text)) {
+                  aliasesWithSpecificPaths.add(rootExpr.text);
+                }
+              }
             }
           }
         }
@@ -879,7 +964,12 @@ export function analyzeFunctionCapabilities(
             } else if (WRITER_METHODS.has(methodName)) {
               trackWriteRef(receiver);
             } else if (READER_METHODS.has(methodName)) {
-              trackReadRef(receiver);
+              // If the .get() result was already resolved with a more specific
+              // path by the member-access handler (e.g. notes.get().length →
+              // ["notes", "length"]), skip the blanket read.
+              if (!resolvedGetCalls.has(node)) {
+                trackReadRef(receiver);
+              }
             } else {
               // Unknown method call over a tracked source reads at least the receiver path.
               trackReadRef(receiver);

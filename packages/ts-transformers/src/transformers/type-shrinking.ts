@@ -16,6 +16,22 @@ import { isAnyOrUnknownType, typeToSchemaTypeNode } from "../ast/mod.ts";
 
 export type CapabilitySummaryApplicationMode = "full" | "defaults_only";
 
+/**
+ * Properties on array-like types that don't require item-level data.
+ * When all accessed paths are in this set, array items can be shrunk
+ * to `unknown` to avoid fetching full item schemas.
+ *
+ * Includes Cell/reactive method names that leak through capability
+ * analysis when parent pointers are absent on synthetic AST nodes.
+ */
+const NON_ITEM_PROPS = new Set([
+  "length",
+  "get",
+  "set",
+  "key",
+  "update",
+]);
+
 // ---------------------------------------------------------------------------
 // Utility helpers
 // ---------------------------------------------------------------------------
@@ -131,6 +147,9 @@ function buildShrunkTypeNodeFromType(
 
   // Keep array-like roots as arrays. Narrowing `T[]` to `{ length: number }`
   // breaks runtime schema matching for downstream derives/lifts.
+  // However, when only array-intrinsic properties like `length` are accessed
+  // (no item-level access), shrink the item type to `unknown` to avoid
+  // fetching full item schemas unnecessarily.
   const typeChecker = checker as ts.TypeChecker & {
     isArrayType?: (type: ts.Type) => boolean;
     isTupleType?: (type: ts.Type) => boolean;
@@ -139,6 +158,17 @@ function buildShrunkTypeNodeFromType(
     typeChecker.isTupleType?.(type) ||
     !!checker.getIndexTypeOfType(type, ts.IndexKind.Number);
   if (isArrayLike) {
+    const allNonItem = normalized.every(
+      (path) =>
+        path.length === 1 && path[0] !== undefined &&
+        NON_ITEM_PROPS.has(path[0]),
+    );
+    if (allNonItem) {
+      // No item access — emit unknown[] to avoid fetching item schemas.
+      return factory.createArrayTypeNode(
+        factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword),
+      );
+    }
     return checker.typeToTypeNode(type, sourceFile, typeToNodeFlags) ??
       factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword);
   }
@@ -273,7 +303,76 @@ function buildShrunkTypeNodeFromTypeNode(
   }
 
   if (normalized.some((path) => path.length === 0)) {
+    // For Cell-like types, an empty path typically comes from `.get()` being
+    // tracked as a full read.  If there are also longer paths (e.g. from
+    // `.get().length`), try shrinking the inner type using those paths.
+    if (
+      ts.isTypeReferenceNode(node) &&
+      isCellLikeTypeNode(node) &&
+      node.typeArguments &&
+      node.typeArguments.length > 0
+    ) {
+      const nonEmptyPaths = normalized.filter((path) => path.length > 0);
+      if (nonEmptyPaths.length > 0) {
+        const [inner, ...rest] = node.typeArguments;
+        if (inner) {
+          const shrunkInner = buildShrunkTypeNodeFromTypeNode(
+            inner,
+            nonEmptyPaths,
+            factory,
+            checker,
+          );
+          if (shrunkInner && shrunkInner !== inner) {
+            return factory.updateTypeReferenceNode(
+              node,
+              node.typeName,
+              factory.createNodeArray([shrunkInner, ...rest]),
+            );
+          }
+        }
+      }
+    }
     return node;
+  }
+
+  // Shrink array types: when only array-intrinsic properties (e.g. `length`)
+  // are accessed, replace the item type with `unknown` to avoid fetching full
+  // item schemas.  The result stays array-shaped for runtime schema matching.
+  // Handles `Item[]` (ArrayTypeNode), `Array<Item>` (TypeReferenceNode), and
+  // type aliases that resolve to arrays (via the type checker).
+  {
+    let isArray = ts.isArrayTypeNode(node) ||
+      // readonly T[]  →  TypeOperator(readonly, ArrayTypeNode)
+      (ts.isTypeOperatorNode(node) &&
+        node.operator === ts.SyntaxKind.ReadonlyKeyword &&
+        ts.isArrayTypeNode(node.type)) ||
+      (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) &&
+        (node.typeName.text === "Array" ||
+          node.typeName.text === "ReadonlyArray"));
+    // Fall back to the checker for type aliases that resolve to arrays
+    // (but not tuples or numeric-indexed objects, which have different
+    // schema semantics).
+    if (!isArray && checker && ts.isTypeReferenceNode(node)) {
+      const resolvedType = checker.getTypeFromTypeNode(node);
+      const tc = checker as ts.TypeChecker & {
+        isArrayType?: (t: ts.Type) => boolean;
+      };
+      isArray = !!tc.isArrayType?.(resolvedType);
+    }
+    if (isArray) {
+      const allNonItem = normalized.every(
+        (path) =>
+          path.length === 1 && path[0] !== undefined &&
+          NON_ITEM_PROPS.has(path[0]),
+      );
+      if (allNonItem) {
+        return factory.createArrayTypeNode(
+          factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword),
+        );
+      }
+      // Item access or other paths — keep full array type.
+      return node;
+    }
   }
 
   // Shrink object type literals by filtering to only the accessed members.
@@ -977,15 +1076,26 @@ export function applyShrinkAndWrap(
         checker,
       );
       shrunk = typeDriven ?? nodeDriven;
-      if (
-        typeDriven &&
-        nodeDriven &&
-        containsAnyOrUnknownTypeNode(typeDriven) &&
-        !containsAnyOrUnknownTypeNode(nodeDriven)
-      ) {
-        // Prefer node-driven shrinking when type-driven rebuilding widens nested
-        // members to `any`/`unknown` (e.g. array items or optional fields).
-        shrunk = nodeDriven;
+      if (typeDriven && nodeDriven) {
+        if (
+          containsAnyOrUnknownTypeNode(typeDriven) &&
+          !containsAnyOrUnknownTypeNode(nodeDriven)
+        ) {
+          // Prefer node-driven shrinking when type-driven rebuilding widens
+          // nested members to `any`/`unknown` (e.g. array items or optional
+          // fields).
+          shrunk = nodeDriven;
+        } else if (
+          nodeDriven !== baseTypeNode &&
+          containsAnyOrUnknownTypeNode(nodeDriven) &&
+          !containsAnyOrUnknownTypeNode(typeDriven)
+        ) {
+          // Prefer node-driven when it intentionally shrunk array items to
+          // `unknown` (e.g. Cell<Item[]> where only .length is accessed).
+          // Type-driven can't shrink through Cell wrappers since it operates
+          // on ts.Type which doesn't expose the Cell's inner type.
+          shrunk = nodeDriven;
+        }
       }
     } else {
       // Source-authored nodes preserve exact unions/aliases; keep them first.
