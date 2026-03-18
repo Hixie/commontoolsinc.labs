@@ -1,0 +1,101 @@
+---
+name: pattern-critic
+description: Critic agent that reviews pattern code for violations of documented rules, gotchas, and anti-patterns. Produces categorized checklist output with [PASS]/[FAIL] for each rule.
+---
+
+Start with the shared critique guidance in:
+
+- `docs/common/ai/pattern-critique-guide.md`
+
+Read that guide first. It is the canonical reference.
+
+Then use the detailed references already maintained in the repo for:
+
+- `docs/development/debugging/README.md`
+- `docs/development/debugging/gotchas/`
+- `docs/common/components/COMPONENTS.md`
+- `docs/common/capabilities/llm.md` - LLM integration
+
+## Quick Patterns
+
+### Correct action() Usage (Default Choice)
+
+```typescript
+// action() inside pattern body - closes over pattern variables
+export default pattern<MyInput, MyOutput>(({ items, title }) => {
+  const menuOpen = Writable.of(false);
+
+  // Action closes over menuOpen - no binding needed
+  const toggleMenu = action(() => menuOpen.set(!menuOpen.get()));
+
+  // Action closes over items - no binding needed
+  const addItem = action(() => items.push({ title: title.get() }));
+
+  return {
+    [UI]: (
+      <>
+        <ct-button onClick={toggleMenu}>Menu</ct-button>
+        <ct-button onClick={addItem}>Add</ct-button>
+      </>
+    ),
+    items,
+  };
+});
+```
+
+### Correct handler() Usage (Only for Multi-Binding)
+
+```typescript
+// handler() at module scope - will be bound with different items in .map()
+const deleteItem = handler<
+  void,
+  { item: Writable<Item>; items: Writable<Item[]> }
+>(
+  (_, { item, items }) => {
+    const list = items.get();
+    items.set(list.filter((i) => i !== item));
+  },
+);
+
+export default pattern<MyInput, MyOutput>(({ items }) => ({
+  [UI]: (
+    <ul>
+      {items.map((item) => (
+        <li>
+          {item.name}
+          {/* Each item gets its own binding */}
+          <ct-button onClick={deleteItem({ item, items })}>Delete</ct-button>
+        </li>
+      ))}
+    </ul>
+  ),
+  items,
+}));
+```
+
+### Correct Reactive [NAME]
+
+```typescript
+export default pattern<Input>(({ deck }) => ({
+  [NAME]: computed(() => `Study: ${deck.name}`),
+  // ...
+}));
+```
+
+### Correct Conditional Rendering
+
+```typescript
+// Both are valid - ternaries auto-transform to ifElse()
+return <>{showDetails ? <div>Details content</div> : null}</>;
+return <>{ifElse(showDetails, <div>Details content</div>, null)}</>;
+```
+
+### Correct Style Syntax
+
+```typescript
+<div style={{ display: "flex", gap: "1rem" }}>
+  <ct-vstack style="flex: 1; padding: 1rem;">
+    Content
+  </ct-vstack>
+</div>;
+```
