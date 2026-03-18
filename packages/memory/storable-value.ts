@@ -17,6 +17,7 @@ export type { CloneOptions } from "./storable-value-modern.ts";
 import { nativeFromStorableValueRich } from "./storable-native-instances.ts";
 import {
   canBeStoredLegacy,
+  cloneIfNecessaryLegacy,
   isStorableValueLegacy,
   shallowStorableFromNativeValueLegacy,
   storableFromNativeValueLegacy,
@@ -132,22 +133,22 @@ export function nativeFromStorableValue(
  * @param value - An already-valid `StorableValue`.
  * @param options - See `CloneOptions`. Defaults: `{ frozen: true, deep: true }`.
  */
-export function cloneIfNecessary(
-  value: StorableValue,
+export function cloneIfNecessary<T extends StorableValue>(
+  value: T,
   options?: CloneOptions & { frozen?: true },
-): Immutable<StorableValue>;
-export function cloneIfNecessary(
-  value: StorableValue,
+): Immutable<T>;
+export function cloneIfNecessary<T extends StorableValue>(
+  value: T,
   options: CloneOptions & { frozen: false },
-): StorableValue;
-export function cloneIfNecessary(
-  value: StorableValue,
+): T;
+export function cloneIfNecessary<T extends StorableValue>(
+  value: T,
   options?: CloneOptions,
-): StorableValue;
-export function cloneIfNecessary(
-  value: StorableValue,
+): T;
+export function cloneIfNecessary<T extends StorableValue>(
+  value: T,
   options?: CloneOptions,
-): StorableValue {
+): T {
   const frozen = options?.frozen ?? true;
   const deep = options?.deep ?? true;
   const force = options?.force ?? (frozen ? false : true);
@@ -166,9 +167,9 @@ export function cloneIfNecessary(
     );
   }
 
-  if (!currentConfig.richStorableValues) return value;
-
-  return cloneIfNecessaryRich(value, frozen, deep, force);
+  return (currentConfig.richStorableValues
+    ? cloneIfNecessaryRich(value, frozen, deep, force)
+    : cloneIfNecessaryLegacy(value, frozen, deep, force)) as T;
 }
 
 // ---------------------------------------------------------------------------
