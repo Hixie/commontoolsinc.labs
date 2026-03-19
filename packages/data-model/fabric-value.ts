@@ -1,5 +1,10 @@
-import type { FabricInstance } from "./fabric-instance.ts";
-import type { FabricEpochDays, FabricEpochNsec } from "./fabric-epoch.ts";
+import {
+  type FabricInstance,
+  isFabricInstance,
+  RECONSTRUCT,
+} from "./fabric-instance.ts";
+export { isFabricInstance };
+import type { FabricPrimitive } from "./fabric-primitive.ts";
 import { deepEqual } from "@commontools/utils/deep-equal";
 import type { Immutable } from "@commontools/utils/types";
 import {
@@ -22,7 +27,7 @@ import {
 export {
   isArrayIndexPropertyName,
   isArrayWithOnlyIndexProperties,
-} from "./fabric-value-utils.ts";
+} from "./array-utils.ts";
 
 // ===========================================================================
 // Type definitions
@@ -48,9 +53,10 @@ export type FabricValue = FabricDatum | undefined;
  *
  * Most native JS object types (`Error`, `Map`, `Set`, `Uint8Array`) enter the
  * fabric layer via wrapper classes that implement `FabricInstance`. However,
- * temporal types (`FabricEpochNsec`, `FabricEpochDays`) and `bigint` are
- * direct members of `FabricDatum` without implementing `FabricInstance`.
- * Native `Date` is converted to `FabricEpochNsec` during conversion.
+ * fabric primitives (`FabricEpochNsec`, `FabricEpochDays`, `FabricHash`) and
+ * `bigint` are direct members of `FabricDatum` without implementing
+ * `FabricInstance`. Native `Date` is converted to `FabricEpochNsec` during
+ * conversion.
  *
  * `undefined` is preserved when the `modernDataModel` flag is ON. When the
  * flag is OFF, `undefined` in arrays is converted to `null` and `undefined`
@@ -63,9 +69,8 @@ export type FabricDatum =
   | number
   | string
   | bigint
-  // -- Temporal primitives --
-  | FabricEpochNsec
-  | FabricEpochDays
+  // -- Fabric primitives (FabricEpochNsec, FabricEpochDays, FabricHash) --
+  | FabricPrimitive
   // -- Containers --
   | FabricArray
   | FabricObject
@@ -131,6 +136,77 @@ export type FabricNativeObject =
   | { toJSON(): unknown };
 
 // ===========================================================================
+// Fabric protocol interfaces
+// ===========================================================================
+
+/**
+ * A class that can reconstruct fabric instances from essential state. The
+ * static `[RECONSTRUCT]` method is separate from the constructor to support
+ * reconstruction-specific context and instance interning.
+ * See Section 2.4 of the formal spec.
+ */
+export interface FabricClass<T extends FabricInstance> {
+  /**
+   * Reconstruct an instance from essential state. Nested values in `state`
+   * have already been reconstructed by the serialization system. May return
+   * an existing instance (interning) rather than creating a new one.
+   */
+  [RECONSTRUCT](state: FabricValue, context: ReconstructionContext): T;
+}
+
+/**
+ * A converter that can reconstruct arbitrary values (not necessarily
+ * `FabricInstance`s) from essential state. Used for built-in JS types like
+ * `Error` that participate in the serialization protocol but don't implement
+ * `FabricInstance`. See Section 1.4.1 of the formal spec.
+ */
+export interface FabricValueConverter<T> {
+  /**
+   * Reconstruct a value from essential state. Nested values in `state`
+   * have already been reconstructed by the serialization system.
+   */
+  [RECONSTRUCT](state: FabricValue, context: ReconstructionContext): T;
+}
+
+/**
+ * The minimal interface that `[RECONSTRUCT]` implementations may depend on.
+ * Provided by the `Runtime` in practice, but defined as an interface here to
+ * avoid a circular dependency between the fabric protocol and the runner.
+ * See Section 2.5 of the formal spec.
+ */
+export interface ReconstructionContext {
+  /** Resolve a cell reference. Used by types that need to intern or look up
+   *  existing instances during reconstruction. */
+  getCell(
+    ref: { id: string; path: string[]; space: string },
+  ): FabricInstance;
+}
+
+/**
+ * Public boundary interface for serialization contexts. Encodes fabric
+ * values into a serialized form and decodes them back. The type parameter
+ * `SerializedForm` is the boundary type: `string` for JSON contexts,
+ * `Uint8Array` for binary contexts.
+ *
+ * This is the only interface external callers need. Internal tree-walking
+ * machinery is private to the context implementation.
+ */
+export interface SerializationContext<SerializedForm = unknown> {
+  /** Whether failed reconstructions produce `ProblematicValue` instead of
+   *  throwing. @default false */
+  readonly lenient: boolean;
+
+  /** Encode a fabric value into serialized form for boundary crossing. */
+  encode(value: FabricValue): SerializedForm;
+
+  /** Decode a serialized form back into a fabric value. */
+  decode(
+    data: SerializedForm,
+    runtime: ReconstructionContext,
+  ): FabricValue;
+}
+
+// ===========================================================================
 // Experimental data model configuration
 // ===========================================================================
 
@@ -165,7 +241,7 @@ export function setDataModelConfig(
 }
 
 /** Returns the current experimental data model configuration. */
-export function getExperimentalDataModelConfig(): ExperimentalDataModelConfig {
+export function getDataModelConfig(): ExperimentalDataModelConfig {
   return currentConfig;
 }
 

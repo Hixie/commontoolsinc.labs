@@ -10,9 +10,8 @@ affecting users who haven't opted in.
 | Flag | Env Var | Description |
 |------|---------|-------------|
 | `modernDataModel` | `EXPERIMENTAL_MODERN_DATA_MODEL` | Enables the new fabric value type system (`bigint`, `Map`, `Set`, `Uint8Array`, `Date`, `FabricInstance`). |
-| `dataModelProtocol` | `EXPERIMENTAL_DATA_MODEL_PROTOCOL` | Enables the fabric protocol (`[DECONSTRUCT]`/`[RECONSTRUCT]`) and `SerializationContext`-based boundary serialization. |
 | `unifiedJsonEncoding` | `EXPERIMENTAL_UNIFIED_JSON_ENCODING` | Enables a unified JSON encoding scheme for all fabric values. |
-| `canonicalHashing` | `EXPERIMENTAL_CANONICAL_HASHING` | Enables canonical hashing, replacing merkle-reference CID-based hashing (see Section 6 of the formal spec). |
+| `modernHash` | `EXPERIMENTAL_MODERN_HASH` | Enables canonical hashing, replacing merkle-reference CID-based hashing (see Section 6 of the formal spec). |
 
 All flags default to `false`. Setting any flag to `true` activates the
 corresponding experimental behavior.
@@ -29,7 +28,7 @@ EXPERIMENTAL_MODERN_DATA_MODEL=true deno task dev
 
 # Enable multiple flags
 EXPERIMENTAL_MODERN_DATA_MODEL=true \
-EXPERIMENTAL_DATA_MODEL_PROTOCOL=true \
+EXPERIMENTAL_UNIFIED_JSON_ENCODING=true \
 deno task dev
 ```
 
@@ -62,7 +61,7 @@ Server Process (Deno)
   |
   +-- toolshed/env.ts        --> Zod parses env vars
   +-- toolshed/index.ts      --> new Runtime({ experimental: { ... } })
-                                    +-- setStorableValueConfig(...)
+                                    +-- setDataModelConfig(...)
                                     +-- setCanonicalHashConfig(...)
 ```
 
@@ -93,12 +92,12 @@ Browser Web Worker
   |
   +-- RuntimeProcessor.initialize(data)
         +-- new Runtime({ ..., experimental: data.experimental })
-              +-- setStorableValueConfig(...)
+              +-- setDataModelConfig(...)
               |    +-- currentConfig.modernDataModel = true
               |         +-- fabricFromNativeValue() checks currentConfig
               +-- setCanonicalHashConfig(...)
                    +-- canonicalHashingEnabled = true
-                        +-- refer() dispatches to canonicalHash()
+                        +-- hashOf() dispatches to modernHash()
 ```
 
 Key points:
@@ -108,7 +107,7 @@ Key points:
 2. The **shell build** bakes the flags into the JS bundle via esbuild defines.
 3. The **IPC protocol** carries the flags from the main thread to the Web Worker
    via `InitializationData`.
-4. The **Runtime constructor** calls `setStorableValueConfig()`, which
+4. The **Runtime constructor** calls `setDataModelConfig()`, which
    sets the module-level ambient config used by `fabricFromNativeValue()` and related
    functions.
 
@@ -137,7 +136,7 @@ When any experimental flags are enabled, the `Runtime` constructor logs them on
 startup. Look for a line like:
 
 ```
-Experimental flags enabled: modernDataModel, unifiedJsonEncoding, canonicalHashing
+Experimental flags enabled: modernDataModel, unifiedJsonEncoding, modernHash
 ```
 
 - **Server-side (toolshed):** Check `packages/toolshed/local-dev-toolshed.log`.
@@ -168,9 +167,9 @@ with defaults (all `false`) and stores the resolved result as
 `runtime.experimental` (type `Required<ExperimentalOptions>`).
 
 The memory layer uses module-level ambient config variables:
-`currentConfig` in `packages/memory/fabric-value.ts` (set by
-`setStorableValueConfig()`) and `canonicalHashingEnabled` in
-`packages/memory/reference.ts` (set by `setCanonicalHashConfig()`). This means:
+`currentConfig` in `packages/data-model/fabric-value.ts` (set by
+`setDataModelConfig()`) and `canonicalHashingEnabled` in
+`packages/data-model/value-hash.ts` (set by `setCanonicalHashConfig()`). This means:
 
 - Only one set of experimental flags is active per JavaScript context at a time.
 - In the browser, the Web Worker is a separate JS context, so its flags are

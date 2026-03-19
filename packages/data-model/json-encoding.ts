@@ -4,7 +4,7 @@ import {
   type FabricClass,
   type ReconstructionContext,
   type SerializationContext,
-} from "./fabric-protocol.ts";
+} from "./fabric-value.ts";
 import { ExplicitTagValue } from "./explicit-tag-value.ts";
 import { deepFreeze } from "./deep-freeze.ts";
 import { UnknownValue } from "./unknown-value.ts";
@@ -22,7 +22,7 @@ import {
   FabricSet,
   FabricUint8Array,
 } from "./fabric-native-instances.ts";
-import { TAGS } from "./type-tags.ts";
+import { TAGS } from "./fabric-type-tags.ts";
 
 /** Shared default handler registry, created once. */
 const defaultRegistry: TypeHandlerRegistry = createDefaultRegistry();

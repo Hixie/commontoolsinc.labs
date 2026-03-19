@@ -40,14 +40,11 @@ const config: Config = {
       "$EXPERIMENTAL_MODERN_DATA_MODEL": Deno.env.get(
         "EXPERIMENTAL_MODERN_DATA_MODEL",
       ),
-      "$EXPERIMENTAL_DATA_MODEL_PROTOCOL": Deno.env.get(
-        "EXPERIMENTAL_DATA_MODEL_PROTOCOL",
-      ),
       "$EXPERIMENTAL_UNIFIED_JSON_ENCODING": Deno.env.get(
         "EXPERIMENTAL_UNIFIED_JSON_ENCODING",
       ),
-      "$EXPERIMENTAL_CANONICAL_HASHING": Deno.env.get(
-        "EXPERIMENTAL_CANONICAL_HASHING",
+      "$EXPERIMENTAL_MODERN_HASH": Deno.env.get(
+        "EXPERIMENTAL_MODERN_HASH",
       ),
       "$COMPILATION_CACHE_CLIENT": Deno.env.get(
         "COMPILATION_CACHE_CLIENT",

@@ -3,7 +3,7 @@ import { DECONSTRUCT, type FabricInstance } from "./fabric-instance.ts";
 import {
   isFabricInstance,
   type ReconstructionContext,
-} from "./fabric-protocol.ts";
+} from "./fabric-value.ts";
 import { ExplicitTagValue } from "./explicit-tag-value.ts";
 import { ProblematicValue } from "./problematic-value.ts";
 
@@ -20,7 +20,7 @@ export type JsonWireValue =
   | JsonWireValue[]
   | { [key: string]: JsonWireValue };
 import { FabricEpochDays, FabricEpochNsec } from "./fabric-epoch.ts";
-import { TAGS } from "./type-tags.ts";
+import { TAGS } from "./fabric-type-tags.ts";
 import {
   bigintFromMinimalTwosComplement,
   bigintToMinimalTwosComplement,

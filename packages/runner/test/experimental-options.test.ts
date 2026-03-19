@@ -5,7 +5,7 @@ import { StorageManager } from "@commontools/runner/storage/cache.deno";
 import { Runtime } from "../src/runtime.ts";
 import {
   fabricFromNativeValue,
-  getExperimentalDataModelConfig,
+  getDataModelConfig,
   isFabricValue,
   resetDataModelConfig,
   setDataModelConfig,
@@ -41,9 +41,8 @@ describe("ExperimentalOptions", () => {
       });
       expect(runtime.experimental).toEqual({
         modernDataModel: false,
-        dataModelProtocol: false,
         unifiedJsonEncoding: false,
-        canonicalHashing: false,
+        modernHash: false,
       });
       await runtime.dispose();
       await sm.close();
@@ -56,14 +55,13 @@ describe("ExperimentalOptions", () => {
         storageManager: sm,
         experimental: {
           modernDataModel: true,
-          canonicalHashing: true,
+          modernHash: true,
         },
       });
       expect(runtime.experimental).toEqual({
         modernDataModel: true,
-        dataModelProtocol: false,
         unifiedJsonEncoding: false,
-        canonicalHashing: true,
+        modernHash: true,
       });
       await runtime.dispose();
       await sm.close();
@@ -272,11 +270,11 @@ describe("ExperimentalOptions", () => {
         storageManager: sm,
         experimental: {
           modernDataModel: true,
-          canonicalHashing: true,
+          modernHash: true,
         },
       });
 
-      const config = getExperimentalDataModelConfig();
+      const config = getDataModelConfig();
       expect(config.modernDataModel).toBe(true);
 
       await runtime.dispose();
@@ -290,7 +288,7 @@ describe("ExperimentalOptions", () => {
         storageManager: sm,
       });
 
-      const config = getExperimentalDataModelConfig();
+      const config = getDataModelConfig();
       expect(config.modernDataModel).toBe(false);
 
       await runtime.dispose();
@@ -304,28 +302,28 @@ describe("ExperimentalOptions", () => {
         storageManager: sm,
         experimental: {
           modernDataModel: true,
-          canonicalHashing: true,
+          modernHash: true,
         },
       });
 
-      expect(getExperimentalDataModelConfig().modernDataModel).toBe(true);
+      expect(getDataModelConfig().modernDataModel).toBe(true);
 
       await runtime.dispose();
       await sm.close();
 
-      expect(getExperimentalDataModelConfig().modernDataModel).toBe(false);
+      expect(getDataModelConfig().modernDataModel).toBe(false);
     });
   });
 
-  describe("hashOf() with canonicalHashing flag", () => {
-    it("works normally when canonicalHashing is false", () => {
+  describe("hashOf() with modernHash flag", () => {
+    it("works normally when modernHash is false", () => {
       setCanonicalHashConfig(false);
       const ref = hashOf("hello");
       expect(ref).toBeDefined();
       expect(typeof ref.toString()).toBe("string");
     });
 
-    it("produces a valid reference when canonicalHashing is true", () => {
+    it("produces a valid reference when modernHash is true", () => {
       setCanonicalHashConfig(true);
       const ref = hashOf("hello");
       expect(ref).toBeDefined();
@@ -340,13 +338,13 @@ describe("ExperimentalOptions", () => {
     });
   });
 
-  describe("Runtime sets and resets canonicalHashing config", () => {
-    it("constructing Runtime with canonicalHashing enables canonical hashOf()", async () => {
+  describe("Runtime sets and resets modernHash config", () => {
+    it("constructing Runtime with modernHash enables canonical hashOf()", async () => {
       const sm = StorageManager.emulate({ as: signer });
       const runtime = new Runtime({
         apiUrl: new URL(import.meta.url),
         storageManager: sm,
-        experimental: { canonicalHashing: true },
+        experimental: { modernHash: true },
       });
 
       const ref = hashOf("test");
@@ -357,12 +355,12 @@ describe("ExperimentalOptions", () => {
       await sm.close();
     });
 
-    it("disposing Runtime resets canonicalHashing so hashOf() uses default path", async () => {
+    it("disposing Runtime resets modernHash so hashOf() uses default path", async () => {
       const sm = StorageManager.emulate({ as: signer });
       const runtime = new Runtime({
         apiUrl: new URL(import.meta.url),
         storageManager: sm,
-        experimental: { canonicalHashing: true },
+        experimental: { modernHash: true },
       });
 
       const canonicalRef = hashOf("test");

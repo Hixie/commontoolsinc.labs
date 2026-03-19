@@ -19,9 +19,8 @@ export function experimentalOptionsFromEnv(): ExperimentalOptions {
   const read = (name: string) => Deno.env.get(name) === "true";
   const opts: ExperimentalOptions = {
     modernDataModel: read("EXPERIMENTAL_MODERN_DATA_MODEL"),
-    dataModelProtocol: read("EXPERIMENTAL_DATA_MODEL_PROTOCOL"),
     unifiedJsonEncoding: read("EXPERIMENTAL_UNIFIED_JSON_ENCODING"),
-    canonicalHashing: read("EXPERIMENTAL_CANONICAL_HASHING"),
+    modernHash: read("EXPERIMENTAL_MODERN_HASH"),
   };
   const active = Object.entries(opts).filter(([, v]) => v);
   if (active.length > 0) {
@@ -49,7 +48,7 @@ export async function awaitSyncWithTimeout(
         new Error(
           `Sync timed out after ${timeoutMs / 1000}s. ` +
             `This often indicates a client/server configuration mismatch ` +
-            `(e.g., EXPERIMENTAL_CANONICAL_HASHING enabled on the server but not the CLI). ` +
+            `(e.g., EXPERIMENTAL_MODERN_HASH enabled on the server but not the CLI). ` +
             `Check toolshed logs for AuthorizationError details.`,
         ),
       );

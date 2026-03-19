@@ -5,8 +5,8 @@ import type {
   FabricValueLayer,
 } from "./fabric-value.ts";
 import type { FabricInstance } from "./fabric-instance.ts";
-import { isFabricInstance } from "./fabric-protocol.ts";
-import { SpecialPrimitiveValue } from "./special-primitive-value.ts";
+import { isFabricInstance } from "./fabric-instance.ts";
+import { FabricPrimitive } from "./fabric-primitive.ts";
 import { FabricEpochNsec } from "./fabric-epoch.ts";
 import {
   FabricError,
@@ -14,8 +14,8 @@ import {
   isConvertibleNativeInstance,
   UNSAFE_KEYS,
 } from "./fabric-native-instances.ts";
-import { NATIVE_TAGS, tagFromNativeValue } from "./type-tags.ts";
-import { isArrayWithOnlyIndexProperties } from "./fabric-value-utils.ts";
+import { NATIVE_TAGS, tagFromNativeValue } from "./native-type-tags.ts";
+import { isArrayWithOnlyIndexProperties } from "./array-utils.ts";
 
 /** Reject native objects with extra enumerable properties. */
 function rejectExtraProperties(value: object, typeName: string): void {
@@ -253,7 +253,7 @@ function isDeepFrozenStorableValue(value: unknown): boolean {
   }
 
   // Special primitives are simple frozen value wrappers.
-  if (value instanceof SpecialPrimitiveValue) {
+  if (value instanceof FabricPrimitive) {
     return true;
   }
 
@@ -340,7 +340,7 @@ function storableFromNativeValueRichInternal(
 
   // Special primitives are direct FabricDatum members -- always frozen,
   // pass through as-is regardless of the `freeze` argument.
-  if (value instanceof SpecialPrimitiveValue) {
+  if (value instanceof FabricPrimitive) {
     if (isOriginalRecord) {
       converted.set(original, value);
     }
@@ -484,7 +484,7 @@ export function isFabricValueModern(
         return true;
       }
       // Special primitives are direct FabricDatum members.
-      if (value instanceof SpecialPrimitiveValue) {
+      if (value instanceof FabricPrimitive) {
         return true;
       }
       // FabricInstance values (including FabricError, UnknownValue,
