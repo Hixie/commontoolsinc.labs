@@ -1,14 +1,12 @@
 import { isRecord } from "@commontools/utils/types";
 import {
+  type FabricObject,
+  type FabricValue,
   isArrayIndexPropertyName,
-  shallowStorableFromNativeValue,
-} from "@commontools/data-model/storable-value";
+  shallowFabricFromNativeValue,
+} from "@commontools/data-model/fabric-value";
 import { getLogger } from "@commontools/utils/logger";
 import { ID, ID_FIELD, type JSONSchema } from "./builder/types.ts";
-import type {
-  FabricObject,
-  FabricValue,
-} from "@commontools/data-model/fabric-value";
 import { createRef } from "./create-ref.ts";
 import { CellImpl, isCell } from "./cell.ts";
 import { resolveLink } from "./link-resolution.ts";
@@ -441,7 +439,7 @@ export function normalizeAndDiff(
   // Convert the (top level of) the value to something JSON-encodable if not
   // already JSON-encodable, or throw if it's neither already valid nor
   // convertible.
-  const storableValue = shallowStorableFromNativeValue(newValue);
+  const storableValue = shallowFabricFromNativeValue(newValue);
   if (storableValue !== newValue) {
     diffLogger.debug(
       "diff",

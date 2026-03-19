@@ -6,11 +6,11 @@ import {
 } from "@commontools/utils/types";
 import {
   cloneIfNecessary,
+  type FabricValue,
   isArrayIndexPropertyName,
-  shallowStorableFromNativeValue,
-} from "@commontools/data-model/storable-value";
+  shallowFabricFromNativeValue,
+} from "@commontools/data-model/fabric-value";
 import type { MemorySpace } from "@commontools/memory/interface";
-import type { FabricValue } from "@commontools/data-model/fabric-value";
 import { getTopFrame, pattern } from "./builder/pattern.ts";
 import { createNodeFactory, lift } from "./builder/module.ts";
 import {
@@ -186,7 +186,7 @@ declare module "@commontools/api" {
     ): SigilWriteRedirectLink;
     getRaw(options?: IReadOptions): Immutable<T> | undefined;
     /**
-     * Reads the cell's raw storable value as `FabricValue`, bypassing the
+     * Reads the cell's raw fabric value as `FabricValue`, bypassing the
      * cell's type parameter `T`. Use this when the stored data may not
      * conform to `T` (e.g., `SigilLink` references, stream markers).
      *
@@ -206,7 +206,7 @@ declare module "@commontools/api" {
     setRaw(value: (NoInfer<T> & FabricValue) | undefined): void;
     /**
      * Sets the raw cell value to any `FabricValue`, bypassing the cell's
-     * type parameter `T`. Use this when writing pre-formed storable data
+     * type parameter `T`. Use this when writing pre-formed fabric data
      * (e.g., `SigilLink` references, stream markers) that is valid at the
      * storage layer but does not conform to the cell's schema type.
      *
@@ -1228,7 +1228,7 @@ export class CellImpl<T extends FabricValue>
       options,
     );
     // Deep-copy with desired frozenness, without native unwrapping — getRaw()
-    // and getRawUntyped() return storable-layer values, not native ("wild
+    // and getRawUntyped() return fabric-layer values, not native ("wild
     // west") values.
     return cloneIfNecessary(value, { frozen });
   }
@@ -1979,7 +1979,7 @@ export function recursivelyAddIDIfNeeded<T>(
   if (!frame) return value;
 
   // Already seen, return previously annotated result. Check this before
-  // shallowStorableFromNativeValue() to handle circular references properly.
+  // shallowFabricFromNativeValue() to handle circular references properly.
   if (seen.has(value)) return seen.get(value) as T;
 
   // Cell links pass through unchanged.
@@ -1987,12 +1987,12 @@ export function recursivelyAddIDIfNeeded<T>(
     return value;
   }
 
-  // Convert value to storable form. This handles:
+  // Convert value to fabric form. This handles:
   // - Primitives (e.g., -0 → 0, reject NaN/Infinity/Symbol/BigInt)
   // - Instances (e.g., Error → @Error wrapper)
   // - Objects/arrays with toJSON() methods
   // - Sparse arrays (densified with null in holes)
-  const converted = shallowStorableFromNativeValue(value);
+  const converted = shallowFabricFromNativeValue(value);
   const convertedIsRecord = isRecord(converted);
 
   // If conversion changed the value, cache the result so shared references
@@ -2094,11 +2094,11 @@ export function convertCellsToLinks(
   // Convert the (top level of) the value to something JSON-encodable if not
   // already JSON-encodable, or throw if it's neither already valid nor
   // convertible.
-  value = shallowStorableFromNativeValue(value);
+  value = shallowFabricFromNativeValue(value);
 
   // Recursively process arrays and objects, if we ended up with one of those.
   if (!isRecord(value)) {
-    // `shallowStorableFromNativeValue()` converted this into a primitive value of some sort.
+    // `shallowFabricFromNativeValue()` converted this into a primitive value of some sort.
     return value;
   } else if (Array.isArray(value)) {
     return value.map((value, index) =>

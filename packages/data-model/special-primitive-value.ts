@@ -1,12 +1,12 @@
 /**
- * Abstract base class for "special primitive" storable types -- values that
- * behave like primitives in the storable type system but are represented as
+ * Abstract base class for "special primitive" fabric types -- values that
+ * behave like primitives in the fabric type system but are represented as
  * class instances for type safety and dispatch. Currently covers temporal
  * types (`FabricEpochNsec`, `FabricEpochDays`) and content IDs
  * (`FabricHash`).
  *
- * Analogous to `ExplicitTagStorable` (which unifies `UnknownStorable` and
- * `ProblematicStorable`), this class enables a single `instanceof` check
+ * Analogous to `ExplicitTagValue` (which unifies `UnknownValue` and
+ * `ProblematicValue`), this class enables a single `instanceof` check
  * where code needs to handle any special primitive uniformly.
  *
  * Instances are always frozen (like true primitives, they are immutable).

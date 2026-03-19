@@ -47,12 +47,12 @@ import { cellConstructorFactory } from "../cell.ts";
 import { getEntityId } from "../create-ref.ts";
 import { getPatternEnvironment } from "./env.ts";
 import type { RuntimeProgram } from "../harness/types.ts";
-import { FabricInstance } from "@commontools/data-model/storable-instance";
+import { FabricInstance } from "@commontools/data-model/fabric-instance";
 import { SpecialPrimitiveValue } from "@commontools/data-model/special-primitive-value";
 import {
   FabricEpochDays,
   FabricEpochNsec,
-} from "@commontools/data-model/storable-epoch";
+} from "@commontools/data-model/fabric-epoch";
 
 // Runtime implementation of toSchema - this should never be called
 // The TypeScript transformer should replace all calls at compile time
@@ -152,7 +152,7 @@ export const createBuilder = (): {
       // Render utils
       h,
 
-      // Storable value classes -- runtime values backing the type declarations
+      // Fabric value classes -- runtime values backing the type declarations
       // in api/index.ts. Enables `new FabricEpochNsec(...)` and `instanceof`
       // checks in patterns.
       FabricInstance,

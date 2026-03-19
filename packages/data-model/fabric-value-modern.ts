@@ -4,18 +4,18 @@ import type {
   FabricValue,
   FabricValueLayer,
 } from "./fabric-value.ts";
-import type { FabricInstance } from "./storable-instance.ts";
-import { isFabricInstance } from "./storable-protocol.ts";
+import type { FabricInstance } from "./fabric-instance.ts";
+import { isFabricInstance } from "./fabric-protocol.ts";
 import { SpecialPrimitiveValue } from "./special-primitive-value.ts";
-import { FabricEpochNsec } from "./storable-epoch.ts";
+import { FabricEpochNsec } from "./fabric-epoch.ts";
 import {
+  FabricError,
+  FabricRegExp,
   isConvertibleNativeInstance,
-  StorableError,
-  StorableRegExp,
   UNSAFE_KEYS,
-} from "./storable-native-instances.ts";
+} from "./fabric-native-instances.ts";
 import { NATIVE_TAGS, tagFromNativeValue } from "./type-tags.ts";
-import { isArrayWithOnlyIndexProperties } from "./storable-value-utils.ts";
+import { isArrayWithOnlyIndexProperties } from "./fabric-value-utils.ts";
 
 /** Reject native objects with extra enumerable properties. */
 function rejectExtraProperties(value: object, typeName: string): void {
@@ -28,21 +28,21 @@ function rejectExtraProperties(value: object, typeName: string): void {
 
 /**
  * Shallow conversion from JS values to `FabricValue`. Wraps `Error`
- * instances into `StorableError`; preserves `undefined`; optionally freezes
+ * instances into `FabricError`; preserves `undefined`; optionally freezes
  * the result if it is an object or array. If the value is already a frozen
  * `FabricValue`, returns it as-is (identity optimization).
  *
- * This function is self-contained (does not delegate back to `shallowStorableFromNativeValue`)
- * to avoid circular dispatch when the `richStorableValues` flag is ON.
+ * This function is self-contained (does not delegate back to `shallowFabricFromNativeValue`)
+ * to avoid circular dispatch when the `modernDataModel` flag is ON.
  *
- * Used when the `richStorableValues` flag is ON.
+ * Used when the `modernDataModel` flag is ON.
  *
  * @param value - The value to convert.
  * @param freeze - When `true` (default), freezes the result if it is an
  *   object or array. When `false`, wrapping and validation still occur but
  *   the result is left mutable.
  */
-export function shallowStorableFromNativeValueRich(
+export function shallowFabricFromNativeValueModern(
   value: unknown,
   freeze = true,
 ): FabricValueLayer {
@@ -60,7 +60,7 @@ export function shallowStorableFromNativeValueRich(
       return value as FabricValueLayer;
 
     case NATIVE_TAGS.Error: {
-      const wrapped = new StorableError(value as Error);
+      const wrapped = new FabricError(value as Error);
       if (freeze) Object.freeze(wrapped);
       return wrapped;
     }
@@ -77,12 +77,12 @@ export function shallowStorableFromNativeValueRich(
     }
 
     case NATIVE_TAGS.RegExp: {
-      // RegExp instances are wrapped in StorableRegExp. Extra enumerable
+      // RegExp instances are wrapped in FabricRegExp. Extra enumerable
       // properties cause rejection ("death before confusion"). The
-      // rejectExtraProperties check is done inside StorableRegExp's
+      // rejectExtraProperties check is done inside FabricRegExp's
       // DECONSTRUCT, but we also reject eagerly here at conversion time.
       rejectExtraProperties(value as object, "RegExp");
-      const wrappedRegExp = new StorableRegExp(value as RegExp);
+      const wrappedRegExp = new FabricRegExp(value as RegExp);
       if (freeze) Object.freeze(wrappedRegExp);
       return wrappedRegExp;
     }
@@ -102,9 +102,9 @@ export function shallowStorableFromNativeValueRich(
       // Objects (or arrays/class instances) with a toJSON() method.
       // Call toJSON() and validate the result.
       const converted = (value as { toJSON: () => unknown }).toJSON();
-      if (!isStorableValueRich(converted)) {
+      if (!isFabricValueModern(converted)) {
         throw new Error(
-          `\`toJSON()\` on ${typeof value} returned something other than a storable value`,
+          `\`toJSON()\` on ${typeof value} returned something other than a fabric value`,
         );
       }
       return cloneHelper(
@@ -117,7 +117,7 @@ export function shallowStorableFromNativeValueRich(
     }
 
     case NATIVE_TAGS.FabricInstance: {
-      // FabricInstance values (StorableError, UnknownStorable, etc.)
+      // FabricInstance values (FabricError, UnknownValue, etc.)
       // are already valid FabricValue members. Delegate frozenness
       // handling to cloneHelper.
       return cloneHelper(
@@ -153,9 +153,9 @@ export function shallowStorableFromNativeValueRich(
         case "function":
           if (hasToJSONMethod(value)) {
             const converted = value.toJSON();
-            if (!isStorableValueRich(converted)) {
+            if (!isFabricValueModern(converted)) {
               throw new Error(
-                `\`toJSON()\` on function returned something other than a storable value`,
+                `\`toJSON()\` on function returned something other than a fabric value`,
               );
             }
             return converted;
@@ -179,7 +179,7 @@ export function shallowStorableFromNativeValueRich(
       throw new Error(
         `Cannot store ${
           (value as object).constructor?.name ?? typeof value
-        } (not a recognized storable type)`,
+        } (not a recognized fabric type)`,
       );
   }
 }
@@ -207,19 +207,19 @@ const PROCESSING = Symbol("PROCESSING");
 
 /**
  * Recursive conversion from JS values to `FabricValue`. Single-pass:
- * wraps `Error` instances into `StorableError`, preserves `undefined`, and
+ * wraps `Error` instances into `FabricError`, preserves `undefined`, and
  * deep-freezes each node as it's built (no separate freeze pass). If the
  * input is already a deep-frozen `FabricValue`, returns it as-is (identity
  * optimization).
  *
- * Used when the `richStorableValues` flag is ON.
+ * Used when the `modernDataModel` flag is ON.
  *
  * @param value - The value to convert.
  * @param freeze - When `true` (default), deep-freezes the result tree.
  *   When `false`, wrapping and validation still occur but the result is
  *   left mutable.
  */
-export function storableFromNativeValueRich(
+export function fabricFromNativeValueModern(
   value: unknown,
   freeze = true,
 ): FabricValue {
@@ -298,7 +298,7 @@ function storableFromNativeValueRichInternal(
   // results; the shallow converter should not freeze anything.
   let value: FabricValueLayer;
   try {
-    value = shallowStorableFromNativeValueRich(original, false);
+    value = shallowFabricFromNativeValueModern(original, false);
   } catch (e) {
     if (isOriginalRecord) {
       converted.delete(original);
@@ -314,23 +314,23 @@ function storableFromNativeValueRichInternal(
     return value as FabricValue;
   }
 
-  // TODO(danfuzz): Look into avoiding this special case for StorableError.
+  // TODO(danfuzz): Look into avoiding this special case for FabricError.
   // Ideally the recursive internals conversion would be handled generically
   // rather than requiring a type-specific branch here.
   //
-  // StorableError wraps a raw Error whose internals (cause, custom
+  // FabricError wraps a raw Error whose internals (cause, custom
   // properties) may contain raw native types that aren't FabricValue.
   // We must recursively convert those internals NOW so that when
   // [DECONSTRUCT] runs at serialization time, all nested values are
   // already FabricValue. See spec: the conversion layer (not the
   // serializer) is responsible for ensuring this.
-  if (value instanceof StorableError) {
+  if (value instanceof FabricError) {
     const convertedError = convertErrorInternals(
       value.error,
       converted,
       freeze,
     );
-    const result = new StorableError(convertedError);
+    const result = new FabricError(convertedError);
     if (freeze) Object.freeze(result);
     if (isOriginalRecord) {
       converted.set(original, result);
@@ -347,7 +347,7 @@ function storableFromNativeValueRichInternal(
     return value as FabricValue;
   }
 
-  // Other FabricInstance values (Cell, Stream, UnknownStorable, etc.)
+  // Other FabricInstance values (Cell, Stream, UnknownValue, etc.)
   // don't need recursion -- their [DECONSTRUCT] implementations return
   // proper FabricValue. We do not freeze protocol objects; they are
   // managed by the caller.
@@ -405,7 +405,7 @@ function storableFromNativeValueRichInternal(
 /**
  * Creates a new Error with the same class and properties as the original,
  * but with `cause` and custom enumerable properties recursively converted
- * to `FabricValue`. This ensures that when `StorableError[DECONSTRUCT]`
+ * to `FabricValue`. This ensures that when `FabricError[DECONSTRUCT]`
  * runs at serialization time, all nested values are already `FabricValue`.
  *
  * We create a new Error rather than mutating the original because the
@@ -456,16 +456,16 @@ function convertErrorInternals(
 
 /**
  * Type guard that accepts `FabricInstance` values, `undefined`, and arrays
- * with `undefined` elements or sparse holes -- in addition to the base storable
+ * with `undefined` elements or sparse holes -- in addition to the base fabric
  * types (null, boolean, number, string, plain objects, dense arrays).
  *
  * MUST be self-contained (inline base-type checks, does NOT delegate back to
- * `isStorableValue()`) to avoid circular dispatch when the `richStorableValues`
+ * `isFabricValue()`) to avoid circular dispatch when the `modernDataModel`
  * flag is ON. See session 2 notes about the stack overflow this caused.
  *
- * Used when the `richStorableValues` flag is ON.
+ * Used when the `modernDataModel` flag is ON.
  */
-export function isStorableValueRich(
+export function isFabricValueModern(
   value: unknown,
 ): value is FabricValueLayer {
   switch (typeof value) {
@@ -487,7 +487,7 @@ export function isStorableValueRich(
       if (value instanceof SpecialPrimitiveValue) {
         return true;
       }
-      // FabricInstance values (including StorableError, UnknownStorable,
+      // FabricInstance values (including FabricError, UnknownValue,
       // etc.) are accepted -- they are valid FabricValue members via the
       // FabricInstance arm of FabricDatum.
       if (isFabricInstance(value)) {
@@ -521,19 +521,19 @@ export function isStorableValueRich(
 // ---------------------------------------------------------------------------
 
 /**
- * Returns `true` if `storableFromNativeValue()` would succeed on the value --
+ * Returns `true` if `fabricFromNativeValue()` would succeed on the value --
  * i.e., the value is a `FabricValue`, a `FabricNativeObject`, or a deep
  * tree thereof.
  *
- * The distinction from `isStorableValue()` / `isStorableValueRich()`:
- * - `isStorableValueRich(x)` -- "is x already a `FabricValue`?"
+ * The distinction from `isFabricValue()` / `isFabricValueModern()`:
+ * - `isFabricValueModern(x)` -- "is x already a `FabricValue`?"
  * - `canBeStored(x)` -- "could x be converted to a `FabricValue` via
- *   `storableFromNativeValue()`?"
+ *   `fabricFromNativeValue()`?"
  *
  * `canBeStored` additionally accepts `FabricNativeObject` types (Error, Map,
  * Set, Date, Uint8Array, Blob) and objects/functions with `toJSON()` methods
- * that return storable values. It checks recursively, so all nested values in
- * arrays and objects must also be storable or convertible.
+ * that return fabric values. It checks recursively, so all nested values in
+ * arrays and objects must also be fabric-compatible or convertible.
  */
 export function canBeStoredRich(
   value: unknown,
@@ -575,12 +575,12 @@ export interface CloneOptions {
  * Clone an already-valid `FabricValue` to achieve a desired frozenness,
  * with control over depth and copy semantics.
  *
- * Unlike `storableFromNativeValue` (which converts native JS values into
- * storable wrappers), this function assumes the input is already a valid
+ * Unlike `fabricFromNativeValue` (which converts native JS values into
+ * fabric wrappers), this function assumes the input is already a valid
  * `FabricValue` and only adjusts frozenness by cloning where necessary.
  *
  * Callers must resolve `CloneOptions` defaults and validate before calling;
- * the dispatcher in `storable-value.ts` handles that.
+ * the dispatcher in `fabric-value.ts` handles that.
  *
  * @param value - An already-valid `FabricValue`.
  * @param frozen - Whether the result should be frozen.
@@ -730,7 +730,7 @@ function canBeStoredInternal(value: unknown, seen: Set<object>): boolean {
 
     case "symbol":
     case "function": {
-      // Functions are only storable if they have toJSON().
+      // Functions are only fabric-compatible if they have toJSON().
       if (typeof value === "function" && hasToJSONMethod(value)) {
         const converted = value.toJSON();
         return canBeStoredInternal(converted, seen);
@@ -743,7 +743,7 @@ function canBeStoredInternal(value: unknown, seen: Set<object>): boolean {
       if (isFabricInstance(value)) return true;
 
       // FabricNativeObject types: Error, Map, Set, Date, Uint8Array.
-      // These would be wrapped by storableFromNativeValue().
+      // These would be wrapped by fabricFromNativeValue().
       if (isConvertibleNativeInstance(value)) {
         return true;
       }
@@ -777,7 +777,7 @@ function canBeStoredInternal(value: unknown, seen: Set<object>): boolean {
         return result;
       }
 
-      // Class instances without toJSON() are not storable.
+      // Class instances without toJSON() are not fabric-compatible.
       if (isInstance(value)) {
         seen.delete(value);
         return false;

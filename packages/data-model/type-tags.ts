@@ -1,6 +1,6 @@
-import { FabricEpochDays, FabricEpochNsec } from "./storable-epoch.ts";
-import { FabricHash } from "./storable-content-id.ts";
-import { isFabricInstance } from "./storable-protocol.ts";
+import { FabricEpochDays, FabricEpochNsec } from "./fabric-epoch.ts";
+import { FabricHash } from "./fabric-hash.ts";
+import { isFabricInstance } from "./fabric-protocol.ts";
 
 /**
  * Canonical type tags for the `/<Type>@<Version>` wire format. Collected in a
@@ -40,9 +40,9 @@ export const TAGS = Object.freeze(
 // ---------------------------------------------------------------------------
 
 /**
- * Tags identifying classes that the storable system recognizes for dispatch.
+ * Tags identifying classes that the fabric system recognizes for dispatch.
  * These are distinct from wire-format `TAGS` -- they identify *what the value
- * is*, not what storable type it becomes after conversion.
+ * is*, not what fabric type it becomes after conversion.
  *
  * Covers two categories:
  * - **Native JS builtins**: Array, Object, Error, Map, Set, Date, Uint8Array.

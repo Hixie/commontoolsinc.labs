@@ -2,16 +2,16 @@
 
 `ExperimentalOptions` are feature flags that gate incremental rollout of
 space-model data-layer changes. Each flag independently enables a piece of the
-new storable-value pipeline so features can be activated one at a time without
+new fabric-value pipeline so features can be activated one at a time without
 affecting users who haven't opted in.
 
 ## Available Flags
 
 | Flag | Env Var | Description |
 |------|---------|-------------|
-| `richStorableValues` | `EXPERIMENTAL_RICH_STORABLE_VALUES` | Enables the new storable value type system (`bigint`, `Map`, `Set`, `Uint8Array`, `Date`, `StorableInstance`). |
-| `storableProtocol` | `EXPERIMENTAL_STORABLE_PROTOCOL` | Enables the storable protocol (`[DECONSTRUCT]`/`[RECONSTRUCT]`) and `SerializationContext`-based boundary serialization. |
-| `unifiedJsonEncoding` | `EXPERIMENTAL_UNIFIED_JSON_ENCODING` | Enables a unified JSON encoding scheme for all storable values. |
+| `modernDataModel` | `EXPERIMENTAL_MODERN_DATA_MODEL` | Enables the new fabric value type system (`bigint`, `Map`, `Set`, `Uint8Array`, `Date`, `FabricInstance`). |
+| `dataModelProtocol` | `EXPERIMENTAL_DATA_MODEL_PROTOCOL` | Enables the fabric protocol (`[DECONSTRUCT]`/`[RECONSTRUCT]`) and `SerializationContext`-based boundary serialization. |
+| `unifiedJsonEncoding` | `EXPERIMENTAL_UNIFIED_JSON_ENCODING` | Enables a unified JSON encoding scheme for all fabric values. |
 | `canonicalHashing` | `EXPERIMENTAL_CANONICAL_HASHING` | Enables canonical hashing, replacing merkle-reference CID-based hashing (see Section 6 of the formal spec). |
 
 All flags default to `false`. Setting any flag to `true` activates the
@@ -25,11 +25,11 @@ and when **running the server** (for server-side flags):
 
 ```bash
 # Enable a single flag (build + run)
-EXPERIMENTAL_RICH_STORABLE_VALUES=true deno task dev
+EXPERIMENTAL_MODERN_DATA_MODEL=true deno task dev
 
 # Enable multiple flags
-EXPERIMENTAL_RICH_STORABLE_VALUES=true \
-EXPERIMENTAL_STORABLE_PROTOCOL=true \
+EXPERIMENTAL_MODERN_DATA_MODEL=true \
+EXPERIMENTAL_DATA_MODEL_PROTOCOL=true \
 deno task dev
 ```
 
@@ -58,7 +58,7 @@ directly to `new Runtime({ experimental: { ... } })`.
 ```
 Server Process (Deno)
   |
-  +-- ENV: EXPERIMENTAL_RICH_STORABLE_VALUES=true
+  +-- ENV: EXPERIMENTAL_MODERN_DATA_MODEL=true
   |
   +-- toolshed/env.ts        --> Zod parses env vars
   +-- toolshed/index.ts      --> new Runtime({ experimental: { ... } })
@@ -74,10 +74,10 @@ via the IPC protocol:
 ```
 Build Time (shell)
   |
-  +-- ENV: EXPERIMENTAL_RICH_STORABLE_VALUES=true
+  +-- ENV: EXPERIMENTAL_MODERN_DATA_MODEL=true
   |
-  +-- felt.config.ts          --> esbuild define: $EXPERIMENTAL_RICH_STORABLE_VALUES
-  +-- src/lib/env.ts           --> EXPERIMENTAL.richStorableValues = true
+  +-- felt.config.ts          --> esbuild define: $EXPERIMENTAL_MODERN_DATA_MODEL
+  +-- src/lib/env.ts           --> EXPERIMENTAL.modernDataModel = true
   |
 Browser (Main Thread)
   |
@@ -86,7 +86,7 @@ Browser (Main Thread)
   +-- RuntimeClient.initialize(transport, { ..., experimental: EXPERIMENTAL })
         |
         | postMessage (IPC)
-        | InitializationData { ..., experimental: { richStorableValues: true } }
+        | InitializationData { ..., experimental: { modernDataModel: true } }
         |
         v
 Browser Web Worker
@@ -94,8 +94,8 @@ Browser Web Worker
   +-- RuntimeProcessor.initialize(data)
         +-- new Runtime({ ..., experimental: data.experimental })
               +-- setStorableValueConfig(...)
-              |    +-- currentConfig.richStorableValues = true
-              |         +-- toStorableValue() checks currentConfig
+              |    +-- currentConfig.modernDataModel = true
+              |         +-- fabricFromNativeValue() checks currentConfig
               +-- setCanonicalHashConfig(...)
                    +-- canonicalHashingEnabled = true
                         +-- refer() dispatches to canonicalHash()
@@ -109,7 +109,7 @@ Key points:
 3. The **IPC protocol** carries the flags from the main thread to the Web Worker
    via `InitializationData`.
 4. The **Runtime constructor** calls `setStorableValueConfig()`, which
-   sets the module-level ambient config used by `toStorableValue()` and related
+   sets the module-level ambient config used by `fabricFromNativeValue()` and related
    functions.
 
 ## Background Charm Service
@@ -137,7 +137,7 @@ When any experimental flags are enabled, the `Runtime` constructor logs them on
 startup. Look for a line like:
 
 ```
-Experimental flags enabled: richStorableValues, unifiedJsonEncoding, canonicalHashing
+Experimental flags enabled: modernDataModel, unifiedJsonEncoding, canonicalHashing
 ```
 
 - **Server-side (toolshed):** Check `packages/toolshed/local-dev-toolshed.log`.
@@ -157,8 +157,8 @@ deno test --allow-ffi --allow-env --allow-read test/experimental-options.test.ts
 ```
 
 These tests verify that `Runtime` construction correctly sets and resets the
-ambient config, and that `toStorableValue()` dispatches based on the
-`richStorableValues` flag.
+ambient config, and that `fabricFromNativeValue()` dispatches based on the
+`modernDataModel` flag.
 
 ## Implementation Details
 
@@ -168,7 +168,7 @@ with defaults (all `false`) and stores the resolved result as
 `runtime.experimental` (type `Required<ExperimentalOptions>`).
 
 The memory layer uses module-level ambient config variables:
-`currentConfig` in `packages/memory/storable-value.ts` (set by
+`currentConfig` in `packages/memory/fabric-value.ts` (set by
 `setStorableValueConfig()`) and `canonicalHashingEnabled` in
 `packages/memory/reference.ts` (set by `setCanonicalHashConfig()`). This means:
 

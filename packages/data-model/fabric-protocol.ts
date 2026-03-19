@@ -1,14 +1,14 @@
 import type { FabricValue } from "./fabric-value.ts";
 
-import { FabricInstance, RECONSTRUCT } from "./storable-instance.ts";
+import { FabricInstance, RECONSTRUCT } from "./fabric-instance.ts";
 
 /**
- * A class that can reconstruct storable instances from essential state. The
+ * A class that can reconstruct fabric instances from essential state. The
  * static `[RECONSTRUCT]` method is separate from the constructor to support
  * reconstruction-specific context and instance interning.
  * See Section 2.4 of the formal spec.
  */
-export interface StorableClass<T extends FabricInstance> {
+export interface FabricClass<T extends FabricInstance> {
   /**
    * Reconstruct an instance from essential state. Nested values in `state`
    * have already been reconstructed by the serialization system. May return
@@ -23,7 +23,7 @@ export interface StorableClass<T extends FabricInstance> {
  * `Error` that participate in the serialization protocol but don't implement
  * `FabricInstance`. See Section 1.4.1 of the formal spec.
  */
-export interface StorableConverter<T> {
+export interface FabricValueConverter<T> {
   /**
    * Reconstruct a value from essential state. Nested values in `state`
    * have already been reconstructed by the serialization system.
@@ -34,7 +34,7 @@ export interface StorableConverter<T> {
 /**
  * The minimal interface that `[RECONSTRUCT]` implementations may depend on.
  * Provided by the `Runtime` in practice, but defined as an interface here to
- * avoid a circular dependency between the storable protocol and the runner.
+ * avoid a circular dependency between the fabric protocol and the runner.
  * See Section 2.5 of the formal spec.
  */
 export interface ReconstructionContext {
@@ -46,7 +46,7 @@ export interface ReconstructionContext {
 }
 
 /**
- * Type guard: checks whether a value implements the storable protocol.
+ * Type guard: checks whether a value implements the fabric protocol.
  * See Section 2.6 of the formal spec.
  */
 export function isFabricInstance(value: unknown): value is FabricInstance {
@@ -54,7 +54,7 @@ export function isFabricInstance(value: unknown): value is FabricInstance {
 }
 
 /**
- * Public boundary interface for serialization contexts. Encodes storable
+ * Public boundary interface for serialization contexts. Encodes fabric
  * values into a serialized form and decodes them back. The type parameter
  * `SerializedForm` is the boundary type: `string` for JSON contexts,
  * `Uint8Array` for binary contexts.
@@ -63,14 +63,14 @@ export function isFabricInstance(value: unknown): value is FabricInstance {
  * machinery is private to the context implementation.
  */
 export interface SerializationContext<SerializedForm = unknown> {
-  /** Whether failed reconstructions produce `ProblematicStorable` instead of
+  /** Whether failed reconstructions produce `ProblematicValue` instead of
    *  throwing. @default false */
   readonly lenient: boolean;
 
-  /** Encode a storable value into serialized form for boundary crossing. */
+  /** Encode a fabric value into serialized form for boundary crossing. */
   encode(value: FabricValue): SerializedForm;
 
-  /** Decode a serialized form back into a storable value. */
+  /** Decode a serialized form back into a fabric value. */
   decode(
     data: SerializedForm,
     runtime: ReconstructionContext,

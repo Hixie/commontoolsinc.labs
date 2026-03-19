@@ -7,10 +7,10 @@
  * (value-hash-legacy.ts) based on a runtime flag.
  *
  * Follows the same dispatch + modern/legacy split pattern used by
- * `storable-value.ts` / `storable-value-modern.ts` / `storable-value-legacy.ts`.
+ * `fabric-value.ts` / `fabric-value-modern.ts` / `fabric-value-legacy.ts`.
  */
 import { canonicalHash } from "./value-hash-modern.ts";
-import { FabricHash } from "./storable-content-id.ts";
+import { FabricHash } from "./fabric-hash.ts";
 import { fromBase64url } from "./bigint-encoding.ts";
 import {
   contentIdFromJSONLegacy,

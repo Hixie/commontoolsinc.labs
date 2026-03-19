@@ -1,13 +1,13 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { FabricEpochDays, FabricEpochNsec } from "../storable-epoch.ts";
+import { FabricEpochDays, FabricEpochNsec } from "../fabric-epoch.ts";
 import { SpecialPrimitiveValue } from "../special-primitive-value.ts";
-import { isFabricInstance } from "../storable-protocol.ts";
+import { isFabricInstance } from "../fabric-protocol.ts";
 import {
-  resetStorableValueConfig,
-  setStorableValueConfig,
-  shallowStorableFromNativeValue,
-} from "../storable-value.ts";
+  resetDataModelConfig,
+  setDataModelConfig,
+  shallowFabricFromNativeValue,
+} from "../fabric-value.ts";
 
 describe("FabricEpochNsec", () => {
   it("wraps a bigint value", () => {
@@ -93,17 +93,17 @@ describe("FabricEpochDays (protocol)", () => {
   });
 });
 
-describe("SpecialPrimitiveValue (storable-value integration)", () => {
-  it("passes through shallowStorableFromNativeValue unchanged even with freeze=false", () => {
-    setStorableValueConfig({ richStorableValues: true });
+describe("SpecialPrimitiveValue (fabric-value integration)", () => {
+  it("passes through shallowFabricFromNativeValue unchanged even with freeze=false", () => {
+    setDataModelConfig({ modernDataModel: true });
     try {
       const nsec = new FabricEpochNsec(123n);
       const days = new FabricEpochDays(456n);
       // freeze=false should still return the same instance (not a copy).
-      expect(shallowStorableFromNativeValue(nsec, false)).toBe(nsec);
-      expect(shallowStorableFromNativeValue(days, false)).toBe(days);
+      expect(shallowFabricFromNativeValue(nsec, false)).toBe(nsec);
+      expect(shallowFabricFromNativeValue(days, false)).toBe(days);
     } finally {
-      resetStorableValueConfig();
+      resetDataModelConfig();
     }
   });
 });
