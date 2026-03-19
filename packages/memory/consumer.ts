@@ -41,17 +41,17 @@ import type {
   Selection,
   Selector,
   Signer,
-  StorableDatum,
   Transaction,
   TransactionResult,
   UCAN,
   URI,
   UTCUnixTimestampInSeconds,
 } from "./interface.ts";
+import type { FabricDatum } from "@commontools/data-model/fabric-value";
 import {
   type ContentId,
   contentIdFromJSON,
-  refer,
+  hashOf,
 } from "@commontools/data-model/value-hash";
 import * as Socket from "./socket.ts";
 import {
@@ -619,7 +619,7 @@ class ConsumerInvocation<Ability extends string, Protocol extends Proto> {
     this.source = storableFromNativeValue(
       source,
     ) as ConsumerInvocationFor<Ability, Protocol>;
-    this.#reference = refer(this.source);
+    this.#reference = hashOf(this.source);
     let receive;
     this.promise = new Promise<ConsumerResultFor<Ability, Protocol>>(
       (resolve) => (receive = resolve),
@@ -830,7 +830,7 @@ class QuerySubscriptionInvocation<
   override perform(commit: EnhancedCommit<Space>) {
     const selection = this.selection[this.space];
     // Here we will collect subset of changes that match the query.
-    const differential: OfTheCause<{ is?: StorableDatum; since: number }> = {};
+    const differential: OfTheCause<{ is?: FabricDatum; since: number }> = {};
 
     // A revision-only commit (empty commit payload) carries deferred schema
     // traversal results. Skip commit parsing — just deliver revisions.

@@ -1,4 +1,5 @@
-import type { StorableDatum, URI } from "./interface.ts";
+import type { URI } from "./interface.ts";
+import type { FabricDatum } from "@commontools/data-model/fabric-value";
 import {
   Assertion,
   Fact,
@@ -14,8 +15,8 @@ import {
   ContentId,
   contentIdFromJSON,
   fromString,
+  hashOf,
   isContentId,
-  refer,
 } from "@commontools/data-model/value-hash";
 
 /**
@@ -50,11 +51,11 @@ export const unclaimedRef = (
     frozen = Object.freeze({ the, of });
     frozenUnclaimedCache.set(key, frozen);
   }
-  return refer(frozen);
+  return hashOf(frozen);
 };
 
 export const assert = <
-  Is extends StorableDatum,
+  Is extends FabricDatum,
   T extends MIME,
   Of extends URI,
 >({
@@ -76,7 +77,7 @@ export const assert = <
       ? cause
       : cause == null
       ? unclaimedRef({ the, of })
-      : refer({
+      : hashOf({
         the: cause.the,
         of: cause.of,
         cause: cause.cause,
@@ -87,19 +88,19 @@ export const assert = <
 export const retract = (assertion: Assertion): Retraction => ({
   the: assertion.the,
   of: assertion.of,
-  cause: refer(normalizeFact(assertion)),
+  cause: hashOf(normalizeFact(assertion)),
 });
 
 export const claim = (fact: Fact): Invariant => ({
   the: fact.the,
   of: fact.of,
-  fact: refer(normalizeFact(fact)),
+  fact: hashOf(normalizeFact(fact)),
 });
 
 export const claimState = (state: State): Invariant => ({
   the: state.the,
   of: state.of,
-  fact: refer(state.cause ? normalizeFact(state) : unclaimed(state)),
+  fact: hashOf(state.cause ? normalizeFact(state) : unclaimed(state)),
 });
 
 export const iterate = function* (
@@ -128,7 +129,7 @@ export const iterate = function* (
 export function normalizeFact<
   T extends MIME,
   Of extends URI,
-  Is extends StorableDatum,
+  Is extends FabricDatum,
 >(
   arg: {
     the: T;
@@ -146,7 +147,7 @@ export function normalizeFact<
 export function normalizeFact<
   T extends MIME,
   Of extends URI,
-  Is extends StorableDatum,
+  Is extends FabricDatum,
 >(
   arg: {
     the: T;
@@ -163,7 +164,7 @@ export function normalizeFact<
 export function normalizeFact<
   T extends MIME,
   Of extends URI,
-  Is extends StorableDatum,
+  Is extends FabricDatum,
 >(
   arg: {
     the: T;
@@ -183,7 +184,7 @@ export function normalizeFact<
     ? unclaimedRef({ the: arg.the, of: arg.of })
     : "/" in arg.cause
     ? contentIdFromJSON(arg.cause as unknown as { "/": string })
-    : refer({
+    : hashOf({
       the: arg.cause.the,
       of: arg.cause.of,
       cause: arg.cause.cause,
@@ -206,5 +207,5 @@ export function normalizeFact<
 }
 
 export const factReference = (fact: Fact): ContentId<Fact> => {
-  return refer(normalizeFact(fact));
+  return hashOf(normalizeFact(fact));
 };

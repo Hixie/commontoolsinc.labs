@@ -1,9 +1,23 @@
-import * as Reference from "merkle-reference";
-import { LRUCache } from "@commontools/utils/cache";
-import { canonicalHash } from "./canonical-hash.ts";
-import { sha256 } from "./hash-impl.ts";
-import { StorableContentId } from "./storable-content-id.ts";
+/**
+ * Content identifier dispatch layer.
+ *
+ * Provides the public API for content identification (hashing): `hashOf`,
+ * `isContentId`, `contentIdFromJSON`, `fromString`. Dispatches between
+ * canonical hashing (value-hash-modern.ts) and legacy merkle-reference
+ * (value-hash-legacy.ts) based on a runtime flag.
+ *
+ * Follows the same dispatch + modern/legacy split pattern used by
+ * `storable-value.ts` / `storable-value-modern.ts` / `storable-value-legacy.ts`.
+ */
+import { canonicalHash } from "./value-hash-modern.ts";
+import { FabricHash } from "./storable-content-id.ts";
 import { fromBase64url } from "./bigint-encoding.ts";
+import {
+  contentIdFromJSONLegacy,
+  fromStringLegacy,
+  Reference,
+  referLegacyCached,
+} from "./value-hash-legacy.ts";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -20,15 +34,15 @@ export type DefinedReferent = NonNullable<unknown> | null;
  * Content identifier -- a hash-based reference to a value.
  *
  * Union of `Reference.View` (legacy merkle-reference) and
- * `StorableContentId` (canonical hashing). Both branches provide `.bytes`,
+ * `FabricHash` (canonical hashing). Both branches provide `.bytes`,
  * `.toString()`, `.toJSON()`, and `"/"`.
  *
  * The phantom type parameter `T` is kept for compatibility with generic call
- * sites; `StorableContentId` ignores it (no phantom member).
+ * sites; `FabricHash` ignores it (no phantom member).
  */
 export type ContentId<
   T extends DefinedReferent = DefinedReferent,
-> = Reference.View<T> | StorableContentId;
+> = Reference.View<T> | FabricHash;
 
 // ---------------------------------------------------------------------------
 // Flag-dispatched public API
@@ -42,7 +56,7 @@ export type ContentId<
 
 /**
  * Type guard: returns true if the value is a content identifier
- * (`Reference.View` or `StorableContentId`).
+ * (`Reference.View` or `FabricHash`).
  */
 export let isContentId: <T extends DefinedReferent>(
   value: unknown | ContentId<T>,
@@ -63,7 +77,7 @@ export let fromString: (source: string) => ContentId;
  * In browsers, uses hash-wasm (WASM, ~3x faster than pure JS).
  * Falls back to @noble/hashes if neither is available.
  */
-export let refer: <T extends DefinedReferent>(
+export let hashOf: <T extends DefinedReferent>(
   source: T,
 ) => ContentId<T>;
 
@@ -80,18 +94,26 @@ export let refer: <T extends DefinedReferent>(
 let canonicalHashingEnabled = false;
 
 /**
- * Parse a `StorableContentId` from its string representation
+ * Parse a `FabricHash` from its string representation
  * (`<algorithmTag>:<base64urlHash>`).
  */
-function contentIdFromString(source: string): StorableContentId {
+function contentIdFromString(source: string): FabricHash {
   const colonIndex = source.indexOf(":");
   if (colonIndex === -1) {
     throw new ReferenceError(`Invalid content ID string: ${source}`);
   }
   const algorithmTag = source.substring(0, colonIndex);
   const hashBase64url = source.substring(colonIndex + 1);
-  return new StorableContentId(fromBase64url(hashBase64url), algorithmTag);
+  return new FabricHash(fromBase64url(hashBase64url), algorithmTag);
 }
+
+/** Shared `isContentId` implementation (same for both modes). */
+const isContentIdImpl = (<T extends DefinedReferent>(
+  value: unknown | ContentId<T>,
+): value is ContentId<T> => {
+  if (value instanceof FabricHash) return true;
+  return Reference.is(value);
+}) as typeof isContentId;
 
 /**
  * Reassign the public API symbols based on the current value of
@@ -99,15 +121,10 @@ function contentIdFromString(source: string): StorableContentId {
  * changes.
  */
 function configureDispatch(): void {
+  isContentId = isContentIdImpl;
+
   if (canonicalHashingEnabled) {
     // ----- Canonical hashing implementations -----
-
-    isContentId = (<T extends DefinedReferent>(
-      value: unknown | ContentId<T>,
-    ): value is ContentId<T> => {
-      if (value instanceof StorableContentId) return true;
-      return Reference.is(value);
-    }) as typeof isContentId;
 
     contentIdFromJSON = (source) => {
       return contentIdFromString(source["/"]);
@@ -117,39 +134,15 @@ function configureDispatch(): void {
       return contentIdFromString(source);
     };
 
-    refer = (source) => {
+    hashOf = (source) => {
       return canonicalHash(source);
     };
   } else {
     // ----- Legacy merkle-reference implementations -----
 
-    isContentId = (<T extends DefinedReferent>(
-      value: unknown | ContentId<T>,
-    ): value is ContentId<T> => {
-      if (value instanceof StorableContentId) return true;
-      return Reference.is(value);
-    }) as typeof isContentId;
-
-    contentIdFromJSON = Reference.fromJSON;
-
-    fromString = Reference.fromString as (
-      source: string,
-    ) => ContentId;
-
-    refer = <T extends DefinedReferent>(
-      source: T,
-    ): ContentId<T> => {
-      // Cache {the, of} patterns (unclaimed facts)
-      if (isUnclaimed(source)) {
-        const key = `${source.the}\0${source.of}`;
-        const cached = unclaimedCache.get(key);
-        if (cached) return cached as ContentId<T>;
-        const result = referImpl(source);
-        unclaimedCache.put(key, result);
-        return result;
-      }
-      return referImpl(source);
-    };
+    contentIdFromJSON = contentIdFromJSONLegacy;
+    fromString = fromStringLegacy;
+    hashOf = referLegacyCached;
   }
 }
 
@@ -172,105 +165,6 @@ export function resetCanonicalHashConfig(): void {
   canonicalHashingEnabled = false;
   configureDispatch();
 }
-
-// ---------------------------------------------------------------------------
-// Merkle-reference tree builder (used by legacy `refer` path)
-// ---------------------------------------------------------------------------
-
-/**
- * Get the default nodeBuilder from merkle-reference, then wrap it to intercept
- * all toTree calls for caching of primitives.
- */
-const defaultNodeBuilder = Reference.Tree.createBuilder(Reference.sha256)
-  .nodeBuilder;
-
-type TreeBuilder = ReturnType<typeof Reference.Tree.createBuilder>;
-type Node = ReturnType<typeof defaultNodeBuilder.toTree>;
-
-/**
- * LRU cache for primitive toTree results. Primitives can't be cached by
- * merkle-reference's internal WeakMap, but they repeat constantly in facts.
- * Ad-hoc testing shows 97%+ hit rate for primitives.
- */
-const primitiveCache = new LRUCache<unknown, Node>({ capacity: 50_000 });
-
-const isPrimitive = (value: unknown): boolean =>
-  value === null || typeof value !== "object";
-
-const wrappedNodeBuilder = {
-  toTree(source: unknown, builder: TreeBuilder) {
-    if (isPrimitive(source)) {
-      const cached = primitiveCache.get(source);
-      if (cached) return cached;
-      const node = defaultNodeBuilder.toTree(source, builder);
-      primitiveCache.put(source, node);
-      return node;
-    }
-
-    // merkle-reference can't hash sparse array holes (undefined type).
-    // Densify by converting holes to null before hashing.
-    if (Array.isArray(source)) {
-      let hasSparseHole = false;
-      for (let i = 0; i < source.length; i++) {
-        if (!(i in source)) {
-          hasSparseHole = true;
-          break;
-        }
-      }
-      if (hasSparseHole) {
-        const dense = new Array(source.length);
-        source.forEach((v, i) => {
-          dense[i] = v;
-        });
-        for (let i = 0; i < dense.length; i++) {
-          if (!(i in dense)) dense[i] = null;
-        }
-        return defaultNodeBuilder.toTree(dense, builder);
-      }
-    }
-
-    return defaultNodeBuilder.toTree(source, builder);
-  },
-};
-
-/**
- * Build the merkle-reference tree builder using the best available SHA-256.
- */
-const treeBuilder = Reference.Tree.createBuilder(
-  sha256,
-  wrappedNodeBuilder,
-);
-
-const referImpl = <T extends DefinedReferent>(
-  source: T,
-): ContentId<T> => {
-  return treeBuilder.refer(source) as unknown as ContentId<T>;
-};
-
-/**
- * Cache for {the, of} references (unclaimed facts).
- * These patterns repeat constantly in claims, so caching avoids redundant hashing.
- * Bounded with LRU eviction to prevent unbounded memory growth.
- */
-const unclaimedCache = new LRUCache<string, ContentId<NonNullable<unknown>>>({
-  // ~50KB overhead (small string keys + refs)
-  capacity: 50_000,
-});
-
-/**
- * Check if source is exactly {the, of} with string values and no other keys.
- */
-const isUnclaimed = (
-  source: unknown,
-): source is { the: string; of: string } => {
-  if (source === null || typeof source !== "object" || Array.isArray(source)) {
-    return false;
-  }
-  const keys = Object.keys(source);
-  if (keys.length !== 2) return false;
-  const obj = source as Record<string, unknown>;
-  return typeof obj.the === "string" && typeof obj.of === "string";
-};
 
 // ---------------------------------------------------------------------------
 // Initialize dispatch to legacy mode at module load.

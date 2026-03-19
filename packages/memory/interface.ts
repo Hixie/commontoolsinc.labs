@@ -4,21 +4,7 @@ import type {
 } from "@commontools/data-model/value-hash";
 import type { JSONSchema, JSONValue } from "@commontools/api";
 
-// Canonical definitions of StorableValue and related types now live in
-// `@commontools/data-model/fabric-value`. Re-exported here for backward
-// compatibility -- many files in memory and runner import these from this module.
-// TODO(@danfuzz): Migrate consumers to import directly from `@commontools/data-model`.
-export type {
-  StorableArray,
-  StorableDatum,
-  StorableNativeObject,
-  StorableObject,
-  StorableValue,
-  StorableValueLayer,
-} from "@commontools/data-model/fabric-value";
-
-// Re-import for use in local type definitions within this file.
-import type { StorableDatum } from "@commontools/data-model/fabric-value";
+import type { FabricDatum } from "@commontools/data-model/fabric-value";
 
 export type SchemaPathSelector = {
   path: readonly string[];
@@ -582,7 +568,7 @@ export interface Unclaimed<T extends string = MIME, Of extends string = URI> {
 
 /**
  * `Assertion` is just like a {@link Statement} except the value MUST be inline
- * {@link StorableDatum} as opposed to reference to one. {@link Assertion}s are
+ * {@link FabricDatum} as opposed to reference to one. {@link Assertion}s are
  * used to assert facts, while {@link Statement}s are used to retract them. This
  * allows retracting over the wire without having to send JSON values back and
  * forth.
@@ -590,7 +576,7 @@ export interface Unclaimed<T extends string = MIME, Of extends string = URI> {
 export interface Assertion<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > {
   the: T;
   of: Of;
@@ -608,7 +594,7 @@ export interface Assertion<
 export interface Retraction<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > {
   the: T;
   of: Of;
@@ -619,7 +605,7 @@ export interface Retraction<
 export interface Invariant<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > {
   the: T;
   of: Of;
@@ -637,13 +623,13 @@ export interface Invariant<
 export type Fact<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > = Assertion<T, Of, Is> | Retraction<T, Of, Is>;
 
 export type Statement<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > = Assertion<T, Of, Is> | Retraction<T, Of, Is> | Invariant<T, Of, Is>;
 
 export type State = Fact | Unclaimed;
@@ -700,10 +686,10 @@ export type CommitFact<Subject extends MemorySpace = MemorySpace> = Assertion<
 export type ClaimFact = true;
 
 // ⚠️ Note we use `void` as opposed to `undefined` because the latter makes it
-// incompatible with the `Is` type parameter (which defaults to `StorableDatum`
+// incompatible with the `Is` type parameter (which defaults to `FabricDatum`
 // and previously defaulted to `JSONValue`).
 export type RetractFact = { is?: void };
-export type AssertFact<Is extends StorableDatum = StorableDatum> = { is: Is };
+export type AssertFact<Is extends FabricDatum = FabricDatum> = { is: Is };
 // This is the structure of a bunch of our objects
 export type OfTheCause<T> = {
   [of in URI]: {
@@ -716,7 +702,7 @@ export type OfTheCause<T> = {
 export type Changes<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > = {
   [of in Of]: {
     [the in T]: {
@@ -728,7 +714,7 @@ export type Changes<
 export type FactSelection<
   T extends string = MIME,
   Of extends string = URI,
-  Is extends StorableDatum = StorableDatum,
+  Is extends FabricDatum = FabricDatum,
 > = {
   [of in Of]: {
     [the in T]: {
@@ -770,7 +756,7 @@ export type URI = `${string}:${string}`;
 // Mime type or Media Type -- often called 'the'
 export type MIME = `${string}/${string}`;
 // TODO(danfuzz): Clean up after canonical hashing flag graduates. The `fid1:`
-// branch was added for StorableContentId; once the experiment is permanent,
+// branch was added for FabricHash; once the experiment is permanent,
 // the `b`-prefixed format can be removed.
 export type CauseString = `b${string}` | `fid1:${string}`;
 

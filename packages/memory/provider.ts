@@ -28,18 +28,18 @@ import {
   Revision,
   SchemaQuery,
   Selection,
-  StorableDatum,
   Subscribe,
   Subscriber,
   Transaction,
   UCAN,
 } from "./interface.ts";
+import { FabricDatum } from "@commontools/data-model/fabric-value";
 import * as SelectionBuilder from "./selection.ts";
 import * as Memory from "./memory.ts";
 import {
   type ContentId,
   fromString as causeFromString,
-  refer,
+  hashOf,
 } from "@commontools/data-model/value-hash";
 import {
   redactCommitData,
@@ -489,14 +489,14 @@ class MemoryProviderSession<
       );
       return this.perform({
         the: "task/return",
-        of: `job:${refer(invocation)}` as InvocationURL<
+        of: `job:${hashOf(invocation)}` as InvocationURL<
           ContentId<ConsumerCommandInvocation<MemoryProtocol>>
         >,
         is: { error },
       });
     }
 
-    const of = `job:${refer(invocation)}` as InvocationURL<
+    const of = `job:${hashOf(invocation)}` as InvocationURL<
       ContentId<ConsumerCommandInvocation<Protocol>>
     >;
 
@@ -833,7 +833,7 @@ class MemoryProviderSession<
 
   private toSelection(factVersions: Revision<Fact>[]) {
     const selection: Memory.OfTheCause<
-      { is?: StorableDatum; since: number }
+      { is?: FabricDatum; since: number }
     > = {};
     for (const fact of factVersions) {
       setRevision(

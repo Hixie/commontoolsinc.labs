@@ -11,7 +11,7 @@ import { unclaimedRef } from "./fact.ts";
 import {
   type ContentId,
   fromString,
-  refer,
+  hashOf,
 } from "@commontools/data-model/value-hash";
 import { addMemoryAttributes, traceAsync, traceSync } from "./telemetry.ts";
 import type {
@@ -70,7 +70,7 @@ export type {
   SelectSchemaResult,
   SelectSchemaStats,
 } from "./space-schema.ts";
-import { StorableDatum, StorableValue } from "./interface.ts";
+import { FabricDatum, FabricValue } from "@commontools/data-model/fabric-value";
 import { isRecord } from "../utils/src/types.ts";
 import {
   jsonFromValue,
@@ -567,14 +567,14 @@ const recall = <Space extends MemorySpace>(
         ? fromString(row.cause)
         : unclaimedRef({ the, of })) as ContentId<Assertion>,
       since: row.since,
-      fact: row.fact, // Include stored hash to avoid recomputing with refer()
+      fact: row.fact, // Include stored hash to avoid recomputing with hashOf()
     };
 
     if (row.is) {
       // `revision.is` is typed `undefined` in some union members, but at
       // runtime the storage row can carry a value. Before the encoding
       // dispatch, `JSON.parse` returned `any` which silently satisfied the
-      // type; `valueFromJson` returns `StorableValue`, so we need a cast.
+      // type; `valueFromJson` returns `FabricValue`, so we need a cast.
       // deno-lint-ignore no-explicit-any
       (revision as any).is = valueFromJson(
         row.is,
@@ -710,7 +710,7 @@ export type SelectedFact = {
   the: MIME;
   of: URI;
   cause: CauseString;
-  is?: StorableDatum;
+  is?: FabricDatum;
   since: number;
 };
 
@@ -722,7 +722,7 @@ const toFact = function (row: StateRow): SelectedFact {
       ? row.cause as CauseString
       : unclaimedRef(row as FactAddress).toString() as CauseString,
     is: row.is
-      ? valueFromJson(row.is, storageReconstructionContext) as StorableDatum
+      ? valueFromJson(row.is, storageReconstructionContext) as FabricDatum
       : undefined,
     since: row.since,
   };
@@ -782,12 +782,12 @@ export const selectFact = function <Space extends MemorySpace>(
  */
 const importDatum = <Space extends MemorySpace>(
   session: Session<Space>,
-  datum: StorableValue,
+  datum: FabricValue,
 ): string => {
   if (datum === undefined) {
     return "undefined";
   } else {
-    const is = refer(datum).toString();
+    const is = hashOf(datum).toString();
     const stmt = getPreparedStatement(
       session.store,
       "importDatum",
@@ -848,15 +848,15 @@ const swap = <Space extends MemorySpace>(
   // successful update. If we have an assertion or retraction we derive fact
   // from it, but if it is a confirmation `cause` is the fact itself.
   //
-  // IMPORTANT: Compute fact hash BEFORE importing datum. When refer() traverses
+  // IMPORTANT: Compute fact hash BEFORE importing datum. When hashOf() traverses
   // the assertion/retraction, it computes and caches the hash of all sub-objects
   // including the datum (payload). By hashing the fact first, the subsequent
-  // refer(datum) call in importDatum() becomes a ~300ns cache hit instead of a
-  // ~50-100µs full hash computation. This saves ~25% on refer() time.
+  // hashOf(datum) call in importDatum() becomes a ~300ns cache hit instead of a
+  // ~50-100µs full hash computation. This saves ~25% on hashOf() time.
   const fact = source.assert
-    ? refer(source.assert).toString()
+    ? hashOf(source.assert).toString()
     : source.retract
-    ? refer(source.retract).toString()
+    ? hashOf(source.retract).toString()
     : source.claim.fact.toString();
 
   // Import datum AFTER computing fact reference - the datum hash is now cached
@@ -923,7 +923,7 @@ const swap = <Space extends MemorySpace>(
     // If actual state matches desired state it either was inserted by the
     // `IMPORT_MEMORY` or this was a duplicate call. Either way we do not treat
     // it as a conflict as current state is the asserted one.
-    // Use stored fact hash directly instead of recomputing with refer().
+    // Use stored fact hash directly instead of recomputing with hashOf().
     if (revision?.fact !== fact) {
       // Disable including history tracking for performance.
       // Re-enable this if you need to debug cause chains.
@@ -1216,7 +1216,7 @@ export const querySchemaWithTracker = <Space extends MemorySpace>(
 };
 
 export const LABEL_TYPE = "application/label+json" as const;
-export type FactSelectionValue = { is?: StorableDatum; since: number };
+export type FactSelectionValue = { is?: FabricDatum; since: number };
 // Get the labels associated with a set of commits.
 // It's possible to get more than one label for a single doc because our
 // includedFacts may include more than one cause for a single doc.

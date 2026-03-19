@@ -18,9 +18,9 @@ import type {
   State,
 } from "../interface.ts";
 import type {
-  StorableDatum,
-  StorableValue,
-} from "@commontools/memory/interface";
+  FabricDatum,
+  FabricValue,
+} from "@commontools/data-model/fabric-value";
 import * as Address from "./address.ts";
 import {
   attest,
@@ -33,7 +33,7 @@ import {
   UnsupportedMediaTypeError,
   write,
 } from "./attestation.ts";
-import { refer } from "@commontools/data-model/value-hash";
+import { hashOf } from "@commontools/data-model/value-hash";
 import * as Edit from "./edit.ts";
 
 export const open = (replica: ISpaceReplica) => new Chronicle(replica);
@@ -124,7 +124,7 @@ export class Chronicle {
    */
   write(
     address: IMemoryAddress,
-    value?: StorableDatum,
+    value?: FabricDatum,
   ): Result<
     IAttestation,
     | IStorageTransactionInconsistent
@@ -281,11 +281,11 @@ export class Chronicle {
           // Create an assertion referring to the loaded fact in a causal
           // reference.
           const factToRefer = loaded.cause ? normalizeFact(loaded) : loaded;
-          const causeRef = refer(factToRefer);
+          const causeRef = hashOf(factToRefer);
 
           edit.assert({
             ...loaded,
-            is: normalizedMerged as StorableDatum,
+            is: normalizedMerged as FabricDatum,
             cause: causeRef,
           });
         }
@@ -524,7 +524,7 @@ class Changes {
    */
   applyWrite(
     address: IMemoryAddress,
-    value: StorableValue,
+    value: FabricValue,
   ): Result<
     IAttestation,
     IStorageTransactionInconsistent | INotFoundError | ITypeMismatchError

@@ -4,9 +4,9 @@ import type {
   Revision,
   SchemaPathSelector,
   State,
-  StorableDatum,
   URI,
 } from "@commontools/memory/interface";
+import type { FabricDatum } from "@commontools/data-model/fabric-value";
 import {
   IMemorySpaceValueAttestation,
   SchemaObjectTraverser,
@@ -19,7 +19,7 @@ import type { JSONSchema, JSONSchemaTypes } from "../src/builder/types.ts";
 function getTraverser(
   store: Map<string, Revision<State>>,
   selector: SchemaPathSelector,
-): SchemaObjectTraverser<StorableDatum> {
+): SchemaObjectTraverser<FabricDatum> {
   const manager = new StoreObjectManager(store);
   const managedTx = new ManagedStorageTransaction(manager);
   const tx = new ExtendedStorageTransaction(managedTx);
@@ -29,7 +29,7 @@ function getTraverser(
 function makeDoc(
   store: Map<string, Revision<State>>,
   uri: string,
-  value: StorableDatum,
+  value: FabricDatum,
 ): IMemorySpaceValueAttestation {
   const type = "application/json" as const;
   const entity = uri as Entity;
