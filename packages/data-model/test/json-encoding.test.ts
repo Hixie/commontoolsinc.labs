@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { JsonEncodingContext } from "../json-encoding.ts";
-import { DECONSTRUCT, FabricInstance } from "../fabric-instance.ts";
-import { isFabricInstance } from "../fabric-instance.ts";
-import type { ReconstructionContext } from "../fabric-value.ts";
-import type { FabricValue } from "../fabric-value.ts";
+import {
+  DECONSTRUCT,
+  FabricInstance,
+  type FabricValue,
+  type ReconstructionContext,
+} from "../interface.ts";
 import type { JsonWireValue } from "../json-type-handlers.ts";
 import { UnknownValue } from "../unknown-value.ts";
 import { ProblematicValue } from "../problematic-value.ts";
@@ -14,9 +16,8 @@ import {
   FabricError,
   FabricMap,
   FabricSet,
-  nativeFromFabricValueModern,
-  nativeValueFromFabricValue,
 } from "../fabric-native-instances.ts";
+import { nativeFromFabricValueModern } from "../fabric-value-modern.ts";
 import { FrozenMap, FrozenSet } from "../frozen-builtins.ts";
 import {
   canBeStored,
@@ -725,7 +726,7 @@ describe("json encoding", () => {
 
     it("isFabricInstance returns true for FabricError", () => {
       const se = new FabricError(new Error("test"));
-      expect(isFabricInstance(se)).toBe(true);
+      expect(se instanceof FabricInstance).toBe(true);
     });
 
     it("has typeTag property", () => {
@@ -1231,37 +1232,37 @@ describe("json encoding", () => {
   });
 
   // --------------------------------------------------------------------------
-  // data-model-protocol: isFabricInstance type guard
+  // data-model-protocol: FabricInstance instanceof checks
   // --------------------------------------------------------------------------
 
-  describe("isFabricInstance type guard", () => {
+  describe("FabricInstance instanceof checks", () => {
     it("returns false for null", () => {
-      expect(isFabricInstance(null)).toBe(false);
+      expect((null as unknown) instanceof FabricInstance).toBe(false);
     });
 
     it("returns false for undefined", () => {
-      expect(isFabricInstance(undefined)).toBe(false);
+      expect((undefined as unknown) instanceof FabricInstance).toBe(false);
     });
 
     it("returns false for primitives", () => {
-      expect(isFabricInstance(42)).toBe(false);
-      expect(isFabricInstance("hello")).toBe(false);
-      expect(isFabricInstance(true)).toBe(false);
+      expect((42 as unknown) instanceof FabricInstance).toBe(false);
+      expect(("hello" as unknown) instanceof FabricInstance).toBe(false);
+      expect((true as unknown) instanceof FabricInstance).toBe(false);
     });
 
     it("returns false for plain objects", () => {
-      expect(isFabricInstance({})).toBe(false);
-      expect(isFabricInstance({ a: 1 })).toBe(false);
+      expect(({} as unknown) instanceof FabricInstance).toBe(false);
+      expect(({ a: 1 } as unknown) instanceof FabricInstance).toBe(false);
     });
 
     it("returns true for UnknownValue", () => {
       const us = new UnknownValue("Test@1", null);
-      expect(isFabricInstance(us)).toBe(true);
+      expect(us instanceof FabricInstance).toBe(true);
     });
 
     it("returns true for ProblematicValue", () => {
       const ps = new ProblematicValue("Test@1", null, "oops");
-      expect(isFabricInstance(ps)).toBe(true);
+      expect(ps instanceof FabricInstance).toBe(true);
     });
 
     it("returns true for custom FabricInstance subclass", () => {
@@ -1274,12 +1275,12 @@ describe("json encoding", () => {
         }
       }
       const instance = new CustomStorable();
-      expect(isFabricInstance(instance)).toBe(true);
+      expect(instance instanceof FabricInstance).toBe(true);
     });
 
     it("returns true for FabricError", () => {
       const se = new FabricError(new Error("test"));
-      expect(isFabricInstance(se)).toBe(true);
+      expect(se instanceof FabricInstance).toBe(true);
     });
   });
 
@@ -1421,123 +1422,6 @@ describe("json encoding", () => {
     it("lenient can be set to true", () => {
       const ctx = new JsonEncodingContext({ lenient: true });
       expect(ctx.lenient).toBe(true);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // nativeValueFromFabricValue
-  // --------------------------------------------------------------------------
-
-  describe("nativeValueFromFabricValue", () => {
-    it("unwraps FabricError to Error (frozen)", () => {
-      const err = new Error("test");
-      const se = new FabricError(err);
-      const result = nativeValueFromFabricValue(se as FabricValue);
-      expect(result).toBeInstanceOf(Error);
-      expect((result as Error).message).toBe("test");
-      expect(Object.isFrozen(result)).toBe(true);
-    });
-
-    it("unwraps FabricError to Error (unfrozen)", () => {
-      const err = new Error("test");
-      const se = new FabricError(err);
-      const result = nativeValueFromFabricValue(
-        se as FabricValue,
-        false,
-      );
-      expect(result).toBe(err); // same reference when unfrozen
-      expect(result).toBeInstanceOf(Error);
-      expect(Object.isFrozen(result)).toBe(false);
-    });
-
-    it("passes through primitives", () => {
-      expect(nativeValueFromFabricValue(null)).toBe(null);
-      expect(nativeValueFromFabricValue(undefined)).toBe(undefined);
-      expect(nativeValueFromFabricValue(42)).toBe(42);
-      expect(nativeValueFromFabricValue("hello")).toBe("hello");
-      expect(nativeValueFromFabricValue(true)).toBe(true);
-    });
-
-    it("returns frozen copy of unfrozen plain objects (frozen=true)", () => {
-      const obj = { a: 1 } as unknown as FabricValue;
-      const result = nativeValueFromFabricValue(obj);
-      expect(Object.isFrozen(result)).toBe(true);
-      expect((result as Record<string, unknown>).a).toBe(1);
-    });
-
-    it("passes through unfrozen plain objects (frozen=false)", () => {
-      const obj = { a: 1 } as unknown as FabricValue;
-      expect(nativeValueFromFabricValue(obj, false)).toBe(obj);
-    });
-
-    it("passes through frozen plain objects (frozen=true)", () => {
-      const obj = Object.freeze({ a: 1 }) as unknown as FabricValue;
-      expect(nativeValueFromFabricValue(obj, true)).toBe(obj);
-    });
-
-    it("returns unfrozen copy of frozen plain objects (frozen=false)", () => {
-      const obj = Object.freeze({ a: 1 }) as unknown as FabricValue;
-      const result = nativeValueFromFabricValue(obj, false);
-      expect(Object.isFrozen(result)).toBe(false);
-      expect((result as Record<string, unknown>).a).toBe(1);
-    });
-
-    it("returns frozen copy of unfrozen arrays (frozen=true)", () => {
-      const arr = [1, 2, 3] as FabricValue;
-      const result = nativeValueFromFabricValue(arr);
-      expect(Object.isFrozen(result)).toBe(true);
-      expect(result).toEqual([1, 2, 3]);
-    });
-
-    it("passes through unfrozen arrays (frozen=false)", () => {
-      const arr = [1, 2, 3] as FabricValue;
-      expect(nativeValueFromFabricValue(arr, false)).toBe(arr);
-    });
-
-    it("passes through non-native FabricInstance unchanged (frozen=true)", () => {
-      // Non-native FabricInstance values (UnknownValue, Cell, etc.) pass
-      // through as-is -- spreading would strip their prototype/methods.
-      const us = new UnknownValue("Test@1", null);
-      const result = nativeValueFromFabricValue(us as FabricValue);
-      expect(result).toBe(us);
-    });
-
-    it("passes through non-native FabricInstance unchanged (frozen=false)", () => {
-      const us = new UnknownValue("Test@1", null);
-      expect(nativeValueFromFabricValue(
-        us as FabricValue,
-        false,
-      )).toBe(us);
-    });
-
-    it("unwraps FabricMap to FrozenMap", () => {
-      const map = new Map<FabricValue, FabricValue>([
-        ["a", 1],
-        ["b", 2],
-      ] as [FabricValue, FabricValue][]);
-      const sm = new FabricMap(map);
-      const result = nativeValueFromFabricValue(
-        sm as FabricValue,
-      );
-      expect(result).toBeInstanceOf(FrozenMap);
-      expect(result).toBeInstanceOf(Map);
-      expect((result as Map<string, number>).get("a")).toBe(1);
-      expect((result as Map<string, number>).get("b")).toBe(2);
-      expect((result as Map<string, number>).size).toBe(2);
-    });
-
-    it("unwraps FabricSet to FrozenSet", () => {
-      const set = new Set<FabricValue>([1, 2, 3] as FabricValue[]);
-      const ss = new FabricSet(set);
-      const result = nativeValueFromFabricValue(
-        ss as FabricValue,
-      );
-      expect(result).toBeInstanceOf(FrozenSet);
-      expect(result).toBeInstanceOf(Set);
-      expect((result as Set<number>).has(1)).toBe(true);
-      expect((result as Set<number>).has(2)).toBe(true);
-      expect((result as Set<number>).has(3)).toBe(true);
-      expect((result as Set<number>).size).toBe(3);
     });
   });
 
