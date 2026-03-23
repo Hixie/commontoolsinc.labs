@@ -301,45 +301,44 @@ const RECONSTRUCT = Symbol.for('common.reconstruct');
 // If protocol evolution is needed: Symbol.for('common.deconstruct@2')
 
 // Instance protocol: "here's my essential state"
-interface FabricInstance {
-  [DECONSTRUCT](): unknown;
+abstract class FabricInstance {
+  abstract [DECONSTRUCT](): FabricValue;
 }
 
 // Class protocol: "here's how to bring one back"
 interface FabricClass<T extends FabricInstance> {
-  [RECONSTRUCT](state: unknown, runtime: Runtime): T;
+  [RECONSTRUCT](state: FabricValue, context: ReconstructionContext): T;
 }
 ```
 
 `[RECONSTRUCT]` is a dedicated static method rather than using the class
 constructor for two reasons:
 
-1. **Reconstruction-specific context**: It receives the `Runtime` (and
-   potentially other context) which shouldn't be mandated in a regular
+1. **Reconstruction-specific context**: It receives a `ReconstructionContext`
+   (and potentially other context) which shouldn't be mandated in a regular
    constructor's signature.
 2. **Instance interning**: It can return existing instances rather than always
    creating new ones — essential for types like `Cell` where identity matters.
 
-The presence of `[DECONSTRUCT]` doubles as the brand — no separate marker needed:
+Since `FabricInstance` is an abstract class, the natural brand check is
+`instanceof` — no separate type guard function is needed:
 
 ```typescript
-function isFabricInstance(value: unknown): value is FabricInstance {
-  return value != null &&
-         typeof value === 'object' &&
-         DECONSTRUCT in value;
+if (value instanceof FabricInstance) {
+  // value is a FabricInstance
 }
 ```
 
 Example implementation:
 
 ```typescript
-class Cell<T> implements FabricInstance {
+class Cell<T> extends FabricInstance {
   [DECONSTRUCT]() {
     return { id: this.entityId, path: this.path, space: this.space };
   }
 
-  static [RECONSTRUCT](state: CellState, runtime: Runtime): Cell<unknown> {
-    return runtime.getCell(state);
+  static [RECONSTRUCT](state: CellState, context: ReconstructionContext): Cell<unknown> {
+    return context.getCell(state);
   }
 }
 ```
@@ -388,19 +387,19 @@ be **passed through** rather than rejected, preserving forward compatibility.
 This requires a generic `FabricInstance` to hold unrecognized types:
 
 ```typescript
-class UnknownValue implements FabricInstance {
+class UnknownValue extends FabricInstance {
   constructor(
     readonly typeTag: string,   // e.g., "FutureType@2"
-    readonly state: unknown,    // the raw state, already recursively processed
-  ) {}
+    readonly state: FabricValue, // the raw state, already recursively processed
+  ) { super(); }
 
   [DECONSTRUCT]() {
     return { type: this.typeTag, state: this.state };
   }
 
   static [RECONSTRUCT](
-    state: { type: string; state: unknown },
-    _runtime: Runtime,
+    state: { type: string; state: FabricValue },
+    _context: ReconstructionContext,
   ): UnknownValue {
     return new UnknownValue(state.type, state.state);
   }
@@ -460,7 +459,7 @@ Each boundary would use a serialization context:
 ```typescript
 // At boundary exit
 function serialize(value: FabricValue, context: SerializationContext): SerializedForm {
-  if (isFabricInstance(value)) {
+  if (value instanceof FabricInstance) {
     const state = value[DECONSTRUCT]();
     const tag = context.getTagFor(value);
     return context.wrap(tag, state);
