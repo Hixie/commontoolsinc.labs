@@ -1,7 +1,6 @@
 import { AnyCellWrapping } from "@commontools/api";
 import { getLogger } from "@commontools/utils/logger";
 import { Immutable, isRecord } from "@commontools/utils/types";
-import { JSONSchemaMutable } from "@commontools/runner";
 import { ContextualFlowControl } from "./cfc.ts";
 import { type JSONSchema } from "./builder/types.ts";
 import type { JSONValue } from "@commontools/api";
@@ -85,7 +84,9 @@ export function resolveSchema(
 
   // Return no schema if all it said is that this was a reference or an
   // object without properties.
-  return isNontrivialSchema(resolvedSchema) ? resolvedSchema : undefined;
+  return isNontrivialSchema(resolvedSchema)
+    ? toDeepFrozenSchema(resolvedSchema)
+    : undefined;
 }
 
 function filterAsCell(schema: JSONSchema | undefined): JSONSchema | undefined {
@@ -93,7 +94,9 @@ function filterAsCell(schema: JSONSchema | undefined): JSONSchema | undefined {
     return schema;
   }
   const { asCell: _asCell, asStream: _asStream, ...restSchema } = schema;
-  return isNontrivialSchema(restSchema) ? restSchema : undefined;
+  return isNontrivialSchema(restSchema)
+    ? toDeepFrozenSchema(restSchema)
+    : undefined;
 }
 
 /**
@@ -305,24 +308,26 @@ export function mergeDefaults(
   schema: JSONSchema | undefined,
   defaultValue: Readonly<FabricDatum>,
 ): JSONSchema {
-  const result = isNontrivialSchema(schema)
-    ? structuredClone(schema) as JSONSchemaMutable
-    : {};
+  const base = isNontrivialSchema(schema) ? schema : {};
 
   // TODO(seefeld): What's the right thing to do for arrays?
-  const mergedDefault = result.type === "object" && isRecord(result.default) &&
+  const mergedDefault = base.type === "object" && isRecord(base.default) &&
       isRecord(defaultValue)
-    ? { ...result.default, ...defaultValue } as JSONValue
+    ? { ...base.default, ...defaultValue } as JSONValue
     : defaultValue as JSONValue;
 
-  result.default = mergedDefault;
-  return result;
+  return toDeepFrozenSchema({ ...base, default: mergedDefault }, true);
 }
 
 /**
  * This adds appropriate properties to a given `value` to give it an associated
  * cell, if possible. This only takes any action if `value` is an object type
  * and isn't itself a cell-related thing.
+ *
+ * If this function decides to add properties but `value` is either frozen (or
+ * generally non-extensible) or already bound into some (other) context, then it
+ * is first shallow-cloned. It is up to callers to ensure that mutable and
+ * unbound `value`s are indeed appropriate to be mutated.
  */
 function annotateWithBackToCellSymbols(
   value: any,
@@ -331,19 +336,31 @@ function annotateWithBackToCellSymbols(
   tx: IExtendedStorageTransaction | undefined,
   synced = false,
 ) {
-  if (
-    isRecord(value) && !isCell(value) && !isCellResultForDereferencing(value)
-  ) {
-    // Non-enumerable, so that {...obj} won't copy these symbols
-    Object.defineProperty(value, toCell, {
-      // Use getTransactionForChildCells so that if this was called from sample(),
-      // the resulting cell is still reactive
-      value: () =>
-        createCell(runtime, link, getTransactionForChildCells(tx), synced),
-      enumerable: false,
-    });
-    Object.freeze(value);
+  if (!isRecord(value) || isCell(value)) {
+    // We only possibly annotate objects or arrays that _aren't_ cells.
+    return value;
   }
+
+  const extensible = Object.isExtensible(value);
+  if (!extensible || isCellResultForDereferencing(value)) {
+    // We have to do a shallow clone of `value`. See function header comment
+    // for details.
+    value = cloneIfNecessary(value as FabricValue, {
+      frozen: false,
+      deep: false,
+    });
+  }
+
+  // Non-enumerable, so that {...obj} won't copy these symbols
+  Object.defineProperty(value, toCell, {
+    // Use getTransactionForChildCells so that if this was called from sample(),
+    // the resulting cell is still reactive
+    value: () =>
+      createCell(runtime, link, getTransactionForChildCells(tx), synced),
+    enumerable: false,
+  });
+
+  Object.freeze(value);
   return value;
 }
 
