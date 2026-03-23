@@ -45,6 +45,12 @@ const METHOD_TO_WITH_PATTERN: Record<string, string> = {
   flatMap: "flatMapWithPattern",
 };
 
+const WITH_PATTERN_METHOD_NAMES = new Set([
+  "mapWithPattern",
+  "filterWithPattern",
+  "flatMapWithPattern",
+]);
+
 export class ArrayMethodStrategy implements ClosureTransformationStrategy {
   canTransform(
     node: ts.Node,
@@ -113,6 +119,61 @@ function getEnclosingFunctionLike(
   return undefined;
 }
 
+function isConsumedByTerminalChain(
+  expression: ts.Expression,
+): boolean {
+  let current: ts.Expression = expression;
+
+  while (true) {
+    const parent = current.parent;
+    if (!parent) {
+      return false;
+    }
+
+    if (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)
+    ) {
+      current = parent;
+      continue;
+    }
+
+    if (
+      ts.isPropertyAccessExpression(parent) && parent.expression === current
+    ) {
+      const memberName = parent.name.text;
+      if (
+        Object.hasOwn(METHOD_TO_WITH_PATTERN, memberName) ||
+        WITH_PATTERN_METHOD_NAMES.has(memberName)
+      ) {
+        const callParent = parent.parent;
+        if (
+          callParent &&
+          ts.isCallExpression(callParent) &&
+          callParent.expression === parent
+        ) {
+          current = callParent;
+          continue;
+        }
+      }
+      return true;
+    }
+
+    if (ts.isElementAccessExpression(parent) && parent.expression === current) {
+      return true;
+    }
+
+    if (ts.isCallExpression(parent) && parent.expression === current) {
+      return true;
+    }
+
+    return false;
+  }
+}
+
 function createsReactiveCollectionInPlace(
   expression: ts.Expression,
   context: TransformationContext,
@@ -137,7 +198,8 @@ function createsReactiveCollectionInPlace(
     context.options.logger,
   );
   if (
-    classifyReactiveReceiverKind(currentType, context.checker) !== "plain"
+    classifyReactiveReceiverKind(current, currentType, context.checker) ===
+      "celllike_requires_rewrite"
   ) {
     return true;
   }
@@ -275,6 +337,10 @@ function shouldTransformArrayMethod(
     return false;
   }
 
+  if (isConsumedByTerminalChain(methodCall)) {
+    return false;
+  }
+
   const mapTarget = methodCall.expression.expression;
   const contextInfo = classifyReactiveContext(
     methodCall,
@@ -294,6 +360,7 @@ function shouldTransformArrayMethod(
     context.options.logger,
   );
   const receiverKind = classifyReactiveReceiverKind(
+    mapTarget,
     targetType,
     context.checker,
   );
@@ -568,7 +635,9 @@ function isReactiveMapOrigin(
     context.options.typeRegistry,
     context.options.logger,
   );
-  if (classifyReactiveReceiverKind(type, context.checker) !== "plain") {
+  if (
+    classifyReactiveReceiverKind(current, type, context.checker) !== "plain"
+  ) {
     return true;
   }
 
