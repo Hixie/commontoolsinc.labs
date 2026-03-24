@@ -7,10 +7,10 @@ import {
 import * as Reference from "merkle-reference";
 import { FabricHash } from "../fabric-hash.ts";
 import {
-  contentIdFromJSON,
   fromString,
+  hashObjectFromJson,
   hashOf,
-  isContentId,
+  isHashObject,
   resetCanonicalHashConfig,
   setCanonicalHashConfig,
 } from "../value-hash.ts";
@@ -86,13 +86,13 @@ Deno.test("FabricHash", async (t) => {
   // -----------------------------------------------------------------
 
   await t.step(
-    "contentIdFromJSON round-trips through FabricHash when canonical hashing is on",
+    "hashObjectFromJson round-trips through FabricHash when canonical hashing is on",
     () => {
       setCanonicalHashConfig(true);
       try {
         const original = new FabricHash(SAMPLE_HASH, "fid1");
         const json = original.toJSON();
-        const reconstructed = contentIdFromJSON(json);
+        const reconstructed = hashObjectFromJson(json);
 
         // The reconstructed value should be a FabricHash.
         assertInstanceOf(reconstructed, FabricHash);
@@ -134,7 +134,7 @@ Deno.test("FabricHash", async (t) => {
         assertThrows(
           () => fromString("nocolonhere"),
           ReferenceError,
-          "Invalid content ID string",
+          "Invalid content hash string",
         );
       } finally {
         resetCanonicalHashConfig();
@@ -143,20 +143,20 @@ Deno.test("FabricHash", async (t) => {
   );
 
   await t.step(
-    "isContentId returns true for FabricHash instances",
+    "isHashObject returns true for FabricHash instances",
     () => {
       const cid = new FabricHash(SAMPLE_HASH, "fid1");
-      assert(isContentId(cid));
+      assert(isHashObject(cid));
     },
   );
 
   await t.step(
-    "isContentId returns true for Reference.View instances",
+    "isHashObject returns true for Reference.View instances",
     () => {
       const ref = hashOf({ hello: "world" });
       // With canonical hashing off (default), hashOf() returns a Reference.View.
       assert(Reference.is(ref));
-      assert(isContentId(ref));
+      assert(isHashObject(ref));
     },
   );
 
@@ -182,7 +182,7 @@ Deno.test("FabricHash", async (t) => {
         const innerRef = hashOf({ the: "text/plain", of: "entity:123" });
         assertInstanceOf(innerRef, FabricHash);
 
-        // Wrap it in a fact-like structure and hashOf again. modernHash
+        // Wrap it in a fact-like structure and hashOf again. hashOfModern
         // handles FabricHash via TAG_CONTENT_ID, so this must not throw.
         const outerSource = {
           cause: innerRef,

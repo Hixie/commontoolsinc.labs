@@ -7,7 +7,7 @@
 import * as Reference from "merkle-reference";
 import { LRUCache } from "@commontools/utils/cache";
 import { sha256 } from "./sha256-impl.ts";
-import type { ContentId, DefinedReferent } from "./value-hash.ts";
+import type { DefinedReferent, HashObject } from "./value-hash.ts";
 
 // ---------------------------------------------------------------------------
 // Merkle-reference tree builder
@@ -77,10 +77,10 @@ const treeBuilder = Reference.Tree.createBuilder(
   wrappedNodeBuilder,
 );
 
-export const referLegacy = <T extends DefinedReferent>(
+export const hashOfLegacy = <T extends DefinedReferent>(
   source: T,
-): ContentId<T> => {
-  return treeBuilder.refer(source) as unknown as ContentId<T>;
+): HashObject<T> => {
+  return treeBuilder.refer(source) as unknown as HashObject<T>;
 };
 
 /**
@@ -88,7 +88,7 @@ export const referLegacy = <T extends DefinedReferent>(
  * These patterns repeat constantly in claims, so caching avoids redundant hashing.
  * Bounded with LRU eviction to prevent unbounded memory growth.
  */
-const unclaimedCache = new LRUCache<string, ContentId<NonNullable<unknown>>>({
+const unclaimedCache = new LRUCache<string, HashObject<NonNullable<unknown>>>({
   // ~50KB overhead (small string keys + refs)
   capacity: 50_000,
 });
@@ -112,28 +112,35 @@ const isUnclaimed = (
  * Legacy `hashOf` implementation using merkle-reference, with caching for
  * unclaimed {the, of} patterns.
  */
-export const referLegacyCached = <T extends DefinedReferent>(
+export const hashOfLegacyCached = <T extends DefinedReferent>(
   source: T,
-): ContentId<T> => {
+): HashObject<T> => {
   // Cache {the, of} patterns (unclaimed facts)
   if (isUnclaimed(source)) {
     const key = `${source.the}\0${source.of}`;
     const cached = unclaimedCache.get(key);
-    if (cached) return cached as ContentId<T>;
-    const result = referLegacy(source);
+    if (cached) return cached as HashObject<T>;
+    const result = hashOfLegacy(source);
     unclaimedCache.put(key, result);
     return result;
   }
-  return referLegacy(source);
+  return hashOfLegacy(source);
 };
 
-/** Legacy `contentIdFromJSON` using merkle-reference. */
-export const contentIdFromJSONLegacy = Reference.fromJSON;
+/** Legacy `hashObjectFromJson` using merkle-reference. */
+export const hashObjectFromJsonLegacy = Reference.fromJSON;
 
 /** Legacy `fromString` using merkle-reference. */
-export const fromStringLegacy = Reference.fromString as (
+export const hashObjectFromStringLegacy = Reference.fromString as (
   source: string,
-) => ContentId;
+) => HashObject;
 
-/** Legacy `isContentId` using merkle-reference. */
-export { Reference };
+/** Legacy hash object type — the merkle-reference `Reference.View`. */
+export type LegacyHashObject<
+  T extends DefinedReferent = DefinedReferent,
+> = Reference.View<T>;
+
+/** Type guard for legacy hash objects (merkle-reference instances). */
+export function isLegacyHashObject(value: unknown): value is LegacyHashObject {
+  return Reference.is(value);
+}

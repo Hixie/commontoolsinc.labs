@@ -7,10 +7,11 @@
  * WeakMap caching.
  *
  * Used by `schema-hash.ts` as the legacy dispatch target; will be
- * replaced by canonical hashing (via `modernHash`) behind a flag.
+ * replaced by canonical hashing (via `hashOfModern`) behind a flag.
  */
 
-import type { JSONSchema, SchemaPathSelector } from "@commontools/api";
+import type { JSONSchema } from "@commontools/api";
+import type { FabricValue } from "./interface.ts";
 
 const _hashCache = new WeakMap<object, string>();
 
@@ -57,9 +58,7 @@ export function hashSchemaLegacy(schema: JSONSchema): string {
   return stableStringify(schema);
 }
 
-/** Legacy hash of a SchemaPathSelector. */
-export function hashSchemaPathSelectorLegacy(
-  selector: SchemaPathSelector,
-): string {
-  return stableStringify(selector);
+/** Legacy hash of a schema-related item. */
+export function hashSchemaItemLegacy(item: FabricValue): string {
+  return stableStringify(item);
 }

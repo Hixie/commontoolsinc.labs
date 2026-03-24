@@ -42,7 +42,7 @@ const TAG_BYTES = 0x25;
 const TAG_BIGINT = 0x26;
 const TAG_EPOCH_NSEC = 0x27;
 const TAG_EPOCH_DAYS = 0x28;
-const TAG_CONTENT_ID = 0x29;
+const TAG_CONTENT_HASH = 0x29;
 
 // ---------------------------------------------------------------------------
 // Pre-allocated tag byte arrays (avoids per-call allocation)
@@ -63,7 +63,7 @@ const TAG_BYTES_BYTES = new Uint8Array([TAG_BYTES]);
 const TAG_BIGINT_BYTES = new Uint8Array([TAG_BIGINT]);
 const TAG_EPOCH_NSEC_BYTES = new Uint8Array([TAG_EPOCH_NSEC]);
 const TAG_EPOCH_DAYS_BYTES = new Uint8Array([TAG_EPOCH_DAYS]);
-const TAG_CONTENT_ID_BYTES = new Uint8Array([TAG_CONTENT_ID]);
+const TAG_CONTENT_HASH_BYTES = new Uint8Array([TAG_CONTENT_HASH]);
 
 // ---------------------------------------------------------------------------
 // Shared scratch buffer (safe in single-threaded synchronous JS -- see
@@ -103,7 +103,7 @@ function feedValue(hasher: IncrementalHasher, value: unknown): void {
     case "number":
       if (!Number.isFinite(value)) {
         throw new Error(
-          `modernHash: non-finite number not allowed: ${value}`,
+          `hashOfModern: non-finite number not allowed: ${value}`,
         );
       }
       hasher.update(TAG_NUMBER_BYTES);
@@ -142,7 +142,7 @@ function feedValue(hasher: IncrementalHasher, value: unknown): void {
 
     default:
       throw new Error(
-        `modernHash: unsupported type: ${typeof value}`,
+        `hashOfModern: unsupported type: ${typeof value}`,
       );
   }
 }
@@ -191,9 +191,9 @@ function feedObjectValue(
       return;
     }
 
-    case NATIVE_TAGS.ContentId: {
+    case NATIVE_TAGS.ContentHash: {
       const cid = value as FabricHash;
-      hasher.update(TAG_CONTENT_ID_BYTES);
+      hasher.update(TAG_CONTENT_HASH_BYTES);
       const algTagUtf8 = encoder.encode(cid.algorithmTag);
       feedLength(hasher, algTagUtf8.length);
       hasher.update(algTagUtf8);
@@ -216,7 +216,7 @@ function feedObjectValue(
       const typeTag = (value as { typeTag?: unknown }).typeTag;
       if (typeof typeTag !== "string") {
         throw new Error(
-          `modernHash: FabricInstance missing typeTag property`,
+          `hashOfModern: FabricInstance missing typeTag property`,
         );
       }
       const typeTagUtf8 = encoder.encode(typeTag);
@@ -233,7 +233,7 @@ function feedObjectValue(
   }
 
   throw new Error(
-    `modernHash: unsupported object type: ${
+    `hashOfModern: unsupported object type: ${
       value?.constructor?.name ?? typeof value
     }`,
   );
@@ -349,7 +349,7 @@ const frozenObjectHashCache = new WeakMap<object, FabricHash>();
  *
  * Caches results for primitives (LRU) and deep-frozen objects (WeakMap).
  */
-export function modernHash(value: unknown): FabricHash {
+export function hashOfModern(value: unknown): FabricHash {
   switch (typeof value) {
     case "boolean":
       return value ? TRUE_HASH : FALSE_HASH;

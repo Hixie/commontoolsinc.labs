@@ -34,7 +34,8 @@ import { isRecord } from "@commontools/utils/types";
 import type { JSONSchema } from "../builder/types.ts";
 import { ContextualFlowControl } from "../cfc.ts";
 import { deepEqual } from "@commontools/utils/deep-equal";
-import { BaseMemoryAddress, MapSet, stableStringify } from "../traverse.ts";
+import { hashSchema } from "@commontools/data-model/schema-hash";
+import { BaseMemoryAddress, MapSetStringToStrings } from "../traverse.ts";
 import { getJSONFromDataURI } from "../uri-utils.ts";
 import {
   isPrimitiveCellLink,
@@ -344,7 +345,7 @@ class PullQueue {
 // This class helps us maintain a client model of our server side subscriptions
 export class SelectorTracker<T = Result<Unit, Error>> {
   // Map from BaseMemoryAddress key string to set of selectorRef strings
-  private refTracker = new MapSet<string, string>();
+  private refTracker = new MapSetStringToStrings();
   // Map from selectorRef string to selector
   private selectors = new Map<string, SchemaPathSelector>();
   private standardizedSelector = new Map<string, SchemaPathSelector>();
@@ -617,7 +618,7 @@ export class Replica {
   }
 
   // Track the causes of pending nursery changes
-  private pendingNurseryChanges = new MapSet<string, string>();
+  private pendingNurseryChanges = new MapSetStringToStrings();
 
   constructor(
     /**
@@ -1345,7 +1346,7 @@ export class Replica {
    */
   reset() {
     // Clear nursery tracking
-    this.pendingNurseryChanges = new MapSet<string, string>();
+    this.pendingNurseryChanges = new MapSetStringToStrings();
     // Clear the nursery itself
     this.nursery = new Nursery();
     // Save subscribers before clearing heap
@@ -2118,7 +2119,7 @@ export class StorageManager implements IStorageManager {
   ): Promise<Cell<T>> {
     // Build cache key: data URI + schema hash + path + space
     const pathStr = JSON.stringify(cell.path);
-    const schemaStr = schema ? stableStringify(schema) : "";
+    const schemaStr = schema ? hashSchema(schema) : "";
     const cacheKey = `${id}|${schemaStr}|${pathStr}|${space}`;
 
     const existing = _dataURISyncCache.get(cacheKey);

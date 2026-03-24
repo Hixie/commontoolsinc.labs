@@ -12,11 +12,11 @@ import {
   Unclaimed,
 } from "./interface.ts";
 import {
-  ContentId,
-  contentIdFromJSON,
   fromString,
+  HashObject,
+  hashObjectFromJson,
   hashOf,
-  isContentId,
+  isHashObject,
 } from "@commontools/data-model/value-hash";
 
 /**
@@ -44,7 +44,7 @@ const frozenUnclaimedCache = new Map<
  */
 export const unclaimedRef = (
   { the, of }: { the: MIME; of: URI },
-): ContentId<Unclaimed> => {
+): HashObject<Unclaimed> => {
   const key = `${the}\0${of}`;
   let frozen = frozenUnclaimedCache.get(key);
   if (!frozen) {
@@ -67,13 +67,13 @@ export const assert = <
   the: T;
   of: Of;
   is: Is;
-  cause?: Fact | ContentId<Fact> | null | undefined;
+  cause?: Fact | HashObject<Fact> | null | undefined;
 }) =>
   ({
     the,
     of,
     is,
-    cause: isContentId(cause)
+    cause: isHashObject(cause)
       ? cause
       : cause == null
       ? unclaimedRef({ the, of })
@@ -136,9 +136,9 @@ export function normalizeFact<
     of: Of;
     is: Is;
     cause?:
-      | ContentId<Assertion<T, Of, Is>>
-      | ContentId<Retraction<T, Of, Is>>
-      | ContentId<Unclaimed<T, Of>>
+      | HashObject<Assertion<T, Of, Is>>
+      | HashObject<Retraction<T, Of, Is>>
+      | HashObject<Unclaimed<T, Of>>
       | Fact
       | { "/": string };
   },
@@ -153,9 +153,9 @@ export function normalizeFact<
     the: T;
     of: Of;
     cause?:
-      | ContentId<Assertion<T, Of, Is>>
-      | ContentId<Retraction<T, Of, Is>>
-      | ContentId<Unclaimed<T, Of>>
+      | HashObject<Assertion<T, Of, Is>>
+      | HashObject<Retraction<T, Of, Is>>
+      | HashObject<Unclaimed<T, Of>>
       | Fact
       | { "/": string };
   },
@@ -171,19 +171,19 @@ export function normalizeFact<
     of: Of;
     is?: Is;
     cause?:
-      | ContentId<Assertion<T, Of, Is>>
-      | ContentId<Retraction<T, Of, Is>>
-      | ContentId<Unclaimed<T, Of>>
+      | HashObject<Assertion<T, Of, Is>>
+      | HashObject<Retraction<T, Of, Is>>
+      | HashObject<Unclaimed<T, Of>>
       | Fact
       | { "/": string };
   },
 ): Assertion<T, Of, Is> | Retraction<T, Of, Is> {
-  const newCause = isContentId(arg.cause)
+  const newCause = isHashObject(arg.cause)
     ? arg.cause
     : arg.cause == null
     ? unclaimedRef({ the: arg.the, of: arg.of })
     : "/" in arg.cause
-    ? contentIdFromJSON(arg.cause as unknown as { "/": string })
+    ? hashObjectFromJson(arg.cause as unknown as { "/": string })
     : hashOf({
       the: arg.cause.the,
       of: arg.cause.of,
@@ -206,6 +206,6 @@ export function normalizeFact<
   }
 }
 
-export const factReference = (fact: Fact): ContentId<Fact> => {
+export const factReference = (fact: Fact): HashObject<Fact> => {
   return hashOf(normalizeFact(fact));
 };
