@@ -53,7 +53,10 @@ import { setRevision } from "@commontools/memory/selection";
 import { getLogger } from "@commontools/utils/logger";
 import { ACL_TYPE, isACL } from "./acl.ts";
 import { COMMIT_LOG_TYPE } from "./commit.ts";
-import { createSchemaMemo, MapSet } from "@commontools/runner/traverse";
+import {
+  createSchemaMemo,
+  MapSetStringToPathSelectors,
+} from "@commontools/runner/traverse";
 import type { SchemaPathSelector } from "./consumer.ts";
 
 const logger = getLogger("memory-provider", {
@@ -334,9 +337,8 @@ class MemoryProviderSession<
   // from re-running a query or part of a query when the underlying docs
   // haven't changed. In this cache role, it lets us know that we already
   // have the current information.
-  sharedSchemaTracker: MapSet<string, SchemaPathSelector> = new MapSet(
-    true,
-  );
+  sharedSchemaTracker: MapSetStringToPathSelectors =
+    new MapSetStringToPathSelectors(true);
   // Shared SchemaMemo across all subscription queries on this connection.
   // Traversal results from one subscription are reused by subsequent
   // subscriptions that traverse the same doc+path+schema combos.

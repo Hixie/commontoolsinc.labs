@@ -1,4 +1,8 @@
 import { hashOf } from "@commontools/data-model/value-hash";
+import {
+  hashSchema,
+  hashSchemaPathSelector,
+} from "@commontools/data-model/schema-hash";
 import { MIME } from "@commontools/memory/interface";
 import type { JSONSchemaObj } from "@commontools/api";
 import type {
@@ -94,17 +98,6 @@ export type IMemorySpaceValueAttestation = IMemorySpaceAttestation & {
 };
 
 /**
- * A data structure that maps keys to sets of values, allowing multiple values
- * to be associated with a single key without duplication.
- *
- * While the default behavior is to use object equality, you can provide an
- * `equalFn` parameter to the constructor, which will be used for the value
- * comparisons.
- *
- * @template K The type of keys in the map
- * @template V The type of values stored in the sets
- */
-/**
  * Produces a canonical string representation for use as a hash key.
  * Object keys are sorted for deterministic output so structurally-equal
  * objects always hash identically. Results are cached per object identity
@@ -114,7 +107,7 @@ const _hashCache = new WeakMap<object, string>();
 
 // Schema operation intern caches: memoize merge/combine results so
 // structurally-identical operations return the same object identity.
-// This ensures downstream stableStringify hits the _hashCache WeakMap
+// This ensures downstream hashSchema hits the WeakMap cache
 // (O(1) identity lookup) instead of re-walking the schema tree.
 // Capped to prevent unbounded growth in long-running servers.
 const INTERN_CACHE_MAX = 10_000;
@@ -168,29 +161,30 @@ export function stableStringify(value: unknown): string {
  * A data structure that maps keys to sets of values, allowing multiple values
  * to be associated with a single key without duplication.
  *
- * When `useStableStringify` is true, values are deduped using a canonical hash
- * (stableStringify with WeakMap identity cache) for O(1) add/hasValue.
- * The hash path uses sorted object keys, so structurally-equal values always
- * produce the same hash.
+ * When a `hashFunction` is provided, values are deduped using hash-based
+ * lookup for O(1) add/hasValue. Structurally-equal values (per the hash
+ * function) are treated as duplicates.
  *
- * When `useStableStringify` is false, values are stored in a plain Set using
+ * When no `hashFunction` is provided, values are stored in a plain Set using
  * reference equality.
  *
  * @template K The type of keys in the map
  * @template V The type of values stored in the sets
  */
 export class MapSet<K, V> {
-  // When useStableStringify is true, use hash-based dedup: key → (hash → value)
-  // When false, use plain Set: key → Set<value>
+  // When hashFunction is set, use hash-based dedup: key → (hash → value)
+  // When unset, use plain Set: key → Set<value>
   private hashMap?: Map<K, Map<string, V>>;
   private setMap?: Map<K, Set<V>>;
+  private hashFunction?: (value: V) => string;
 
   // Instrumentation counters (kept for diagnostics)
   deepEqualCalls = 0;
   deepEqualMs = 0;
 
-  constructor(useStableStringify = false) {
-    if (useStableStringify) {
+  constructor(hashFunction?: (value: V) => string) {
+    if (hashFunction) {
+      this.hashFunction = hashFunction;
       this.hashMap = new Map();
     } else {
       this.setMap = new Map();
@@ -229,7 +223,7 @@ export class MapSet<K, V> {
         m = new Map<string, V>();
         this.hashMap.set(key, m);
       }
-      const hash = stableStringify(value);
+      const hash = this.hashFunction!(value);
       if (!m.has(hash)) {
         m.set(hash, value);
       }
@@ -253,7 +247,7 @@ export class MapSet<K, V> {
     if (this.hashMap) {
       const m = this.hashMap.get(key);
       if (!m) return false;
-      return m.has(stableStringify(value));
+      return m.has(this.hashFunction!(value));
     }
     const values = this.setMap!.get(key);
     return values !== undefined && values.has(value);
@@ -263,7 +257,7 @@ export class MapSet<K, V> {
     if (this.hashMap) {
       const m = this.hashMap.get(key);
       if (!m) return false;
-      const hash = stableStringify(value);
+      const hash = this.hashFunction!(value);
       const rv = m.delete(hash);
       if (m.size === 0) this.hashMap.delete(key);
       return rv;
@@ -296,6 +290,21 @@ export class MapSet<K, V> {
         yield [key, values];
       }
     }
+  }
+}
+
+/**
+ * Convenience subclass of `MapSet` specialized for `string` keys and
+ * `SchemaPathSelector` values — the common case throughout traverse/query
+ * code. When `hashValues` is `true`, uses `hashSchemaPathSelector` from
+ * the schema-hash dispatch layer as the hash function.
+ */
+export class MapSetStringToPathSelectors extends MapSet<
+  string,
+  SchemaPathSelector
+> {
+  constructor(hashValues: boolean = false) {
+    super(hashValues ? hashSchemaPathSelector : undefined);
   }
 }
 
@@ -616,10 +625,8 @@ export abstract class BaseObjectTraverser {
       Immutable<FabricDatum>,
       JSONSchema | undefined
     >(),
-    protected schemaTracker: MapSet<string, SchemaPathSelector> = new MapSet<
-      string,
-      SchemaPathSelector
-    >(true),
+    protected schemaTracker: MapSetStringToPathSelectors =
+      new MapSetStringToPathSelectors(true),
     protected cfc: ContextualFlowControl = new ContextualFlowControl(),
     public objectCreator: IObjectCreator<FabricDatum> =
       new StandardObjectCreator(),
@@ -1365,7 +1372,7 @@ function combineOptionalSchema(
 
 // Merge any schema flags like asCell or asStream from flagSchema into schema.
 export function mergeSchemaFlags(flagSchema: JSONSchema, schema: JSONSchema) {
-  const key = stableStringify(flagSchema) + "|" + stableStringify(schema);
+  const key = hashSchema(flagSchema) + "|" + hashSchema(schema);
   const cached = _mergeSchemaFlagsCache.get(key);
   if (cached !== undefined) return cached;
   const result = _mergeSchemaFlagsUncached(flagSchema, schema);
@@ -1425,7 +1432,7 @@ export function combineSchema(
   parentSchema: JSONSchema,
   linkSchema: JSONSchema,
 ): JSONSchema {
-  const key = stableStringify(parentSchema) + "|" + stableStringify(linkSchema);
+  const key = hashSchema(parentSchema) + "|" + hashSchema(linkSchema);
   const cached = _combineSchemaCache.get(key);
   if (cached !== undefined) return cached;
   const result = _combineSchemaUncached(parentSchema, linkSchema);
@@ -1749,10 +1756,8 @@ export class SchemaObjectTraverser<V extends FabricDatum>
       Immutable<FabricDatum>,
       JSONSchema | undefined
     >(),
-    schemaTracker: MapSet<string, SchemaPathSelector> = new MapSet<
-      string,
-      SchemaPathSelector
-    >(true),
+    schemaTracker: MapSetStringToPathSelectors =
+      new MapSetStringToPathSelectors(true),
     cfc: ContextualFlowControl = new ContextualFlowControl(),
     objectCreator?: IObjectCreator<V>,
     traverseCells?: boolean,
@@ -1981,7 +1986,7 @@ export class SchemaObjectTraverser<V extends FabricDatum>
       if (this.traverseCells) {
         const memo = this.activeMemo;
         const memoKey = docId + "|" + doc.address.path.join("/") + "|" +
-          stableStringify(schema);
+          hashSchema(schema);
         const cached = memo.get(memoKey);
         if (cached !== undefined) {
           this.schemaMemoHits++;
@@ -2927,7 +2932,7 @@ function mergeSchemaOption(
   // JSONSchema rules should.
   // For example, `{type: "object", anyOf: [{type: "string"}]}` schema should
   // never match
-  const key = stableStringify(outerSchema) + "|" + stableStringify(innerSchema);
+  const key = hashSchema(outerSchema) + "|" + hashSchema(innerSchema);
   const cached = _mergeSchemaOptionCache.get(key);
   if (cached !== undefined) return cached;
   const result = isRecord(innerSchema)
@@ -3035,8 +3040,8 @@ export function mergeAnyOfBranchSchemas(
 ): JSONSchema | null {
   if (branches.length < 2) return null;
 
-  const key = stableStringify(outerSchema) + "||" +
-    branches.map(stableStringify).join("|");
+  const key = hashSchema(outerSchema) + "||" +
+    branches.map(hashSchema).join("|");
   const cached = _mergeAnyOfBranchCache.get(key);
   if (cached !== undefined) return cached;
 
@@ -3115,10 +3120,10 @@ function _mergeAnyOfBranchSchemasUncached(
   // Build merged properties
   const mergedProperties: Record<string, JSONSchema> = {};
   for (const [propKey, schemas] of allProps) {
-    // Deduplicate schemas using stableStringify
+    // Deduplicate schemas using hashSchema
     const uniqueHashes = new Map<string, JSONSchema>();
     for (const s of schemas) {
-      uniqueHashes.set(stableStringify(s), s);
+      uniqueHashes.set(hashSchema(s), s);
     }
     if (uniqueHashes.size === 1) {
       // All branches agree on this property's schema
