@@ -83,6 +83,8 @@ type WishContext = {
   parentCell: Cell<any>;
   spaceCell?: Cell<unknown>;
   scope?: ("~" | "." | string)[];
+  /** Cached #now cell to avoid non-idempotent re-runs from Date.now() */
+  nowCell?: Cell<unknown>;
 };
 
 type BaseResolution = {
@@ -166,24 +168,35 @@ function searchFavoritesForHashtag(
   return matches.map((match) => ({ cell: match.cell, pathPrefix }));
 }
 
+type MentionableSearchResult = {
+  matches: BaseResolution[];
+  /** true when cell data has loaded (even if empty); false when still pending */
+  loaded: boolean;
+};
+
 /**
  * Search mentionables in current space for pieces matching a hashtag.
+ * Synchronous: reads cell.get() which returns undefined if data isn't loaded
+ * yet. The reactive system will re-trigger wish when the data arrives.
  */
-async function searchMentionablesForHashtag(
+function searchMentionablesForHashtag(
   ctx: WishContext,
   searchTermWithoutHash: string,
   pathPrefix: string[],
   spaceCell?: Cell<unknown>,
-): Promise<BaseResolution[]> {
+): MentionableSearchResult {
   const mentionableCell = (spaceCell ?? getSpaceCell(ctx))
     .key("defaultPattern")
     .key("backlinksIndex")
     .key("mentionable")
     .resolveAsCell()
     .asSchema(mentionableListSchema);
-  // Sync to ensure data is loaded
-  await mentionableCell.sync();
-  const mentionables = (mentionableCell.get() || []) as Cell<any>[];
+  const raw = mentionableCell.get();
+  if (raw === undefined || raw === null) {
+    // Data not loaded yet — reactive system will re-trigger when it arrives
+    return { matches: [], loaded: false };
+  }
+  const mentionables = (raw || []) as Cell<any>[];
 
   const matches = mentionables.filter((pieceCell: Cell<any>) => {
     if (!pieceCell) return false;
@@ -210,16 +223,21 @@ async function searchMentionablesForHashtag(
     return tagMatchesHashtag(tag, searchTermWithoutHash);
   });
 
-  return matches.map((match) => ({ cell: match, pathPrefix }));
+  return {
+    matches: matches.map((match) => ({ cell: match, pathPrefix })),
+    loaded: true,
+  };
 }
 
 /**
  * Search for pieces by hashtag across favorites and/or mentionables based on scope.
+ * Synchronous: relies on cell.get() returning undefined for unloaded data;
+ * the reactive system will re-trigger wish when data arrives.
  */
-async function searchByHashtag(
+function searchByHashtag(
   parsed: ParsedWishTarget,
   ctx: WishContext,
-): Promise<BaseResolution[]> {
+): BaseResolution[] {
   const searchTerm = parsed.key.toLowerCase();
   const searchTermWithoutHash = searchTerm.slice(1);
 
@@ -229,6 +247,7 @@ async function searchByHashtag(
   const searchMentionables = ctx.scope?.includes(".");
 
   const allMatches: BaseResolution[] = [];
+  let allMentionablesLoaded = true;
 
   if (searchFavorites) {
     allMatches.push(
@@ -237,30 +256,35 @@ async function searchByHashtag(
   }
 
   if (searchMentionables) {
-    allMatches.push(
-      ...(await searchMentionablesForHashtag(
-        ctx,
-        searchTermWithoutHash,
-        parsed.path,
-      )),
+    const { matches, loaded } = searchMentionablesForHashtag(
+      ctx,
+      searchTermWithoutHash,
+      parsed.path,
     );
+    allMatches.push(...matches);
+    if (!loaded) allMentionablesLoaded = false;
   }
 
   // Search mentionables in arbitrary DID spaces
   const arbitraryDIDs = getArbitraryDIDs(ctx.scope);
   for (const did of arbitraryDIDs) {
     const didSpaceCell = getSpaceCellForDID(ctx.runtime, did, ctx.tx);
-    allMatches.push(
-      ...(await searchMentionablesForHashtag(
-        ctx,
-        searchTermWithoutHash,
-        parsed.path,
-        didSpaceCell,
-      )),
+    const { matches, loaded } = searchMentionablesForHashtag(
+      ctx,
+      searchTermWithoutHash,
+      parsed.path,
+      didSpaceCell,
     );
+    allMatches.push(...matches);
+    if (!loaded) allMentionablesLoaded = false;
   }
 
   if (allMatches.length === 0) {
+    if (!allMentionablesLoaded) {
+      // Some mentionable data not loaded yet — return empty so the reactive
+      // system re-triggers wish when cell data arrives.
+      return [];
+    }
     const parts: string[] = [];
     if (searchFavorites) parts.push("favorites");
     if (searchMentionables) parts.push("mentionables");
@@ -392,13 +416,17 @@ function resolveSpaceTarget(
         `Wish now target "${formatTarget(parsed)}" is not recognized.`,
       );
     }
-    const nowCell = ctx.runtime.getImmutableCell(
-      ctx.parentCell.space,
-      Date.now(),
-      undefined,
-      ctx.tx,
-    );
-    return [{ cell: nowCell }];
+    // Cache the #now cell per wish instance so that sync re-runs don't
+    // create a new immutable cell each time (Date.now() changes each call).
+    if (!ctx.nowCell) {
+      ctx.nowCell = ctx.runtime.getImmutableCell(
+        ctx.parentCell.space,
+        Date.now(),
+        undefined,
+        ctx.tx,
+      );
+    }
+    return [{ cell: ctx.nowCell }];
   }
 
   const pathForKey: Record<string, readonly string[]> = {
@@ -455,10 +483,10 @@ function resolveSpaceTarget(
  * 2. Well-known home space targets (#favorites, #journal, #learned, #profile)
  * 3. Hashtag search (arbitrary #tags in favorites/mentionables)
  */
-async function resolveBase(
+function resolveBase(
   parsed: ParsedWishTarget,
   ctx: WishContext,
-): Promise<BaseResolution[]> {
+): BaseResolution[] {
   // Try space targets first (most common)
   const spaceResult = resolveSpaceTarget(parsed, ctx);
   if (spaceResult) return spaceResult;
@@ -469,7 +497,7 @@ async function resolveBase(
 
   // Hashtag search
   if (parsed.key.startsWith("#")) {
-    return await searchByHashtag(parsed, ctx);
+    return searchByHashtag(parsed, ctx);
   }
 
   throw new WishError(`Wish target "${parsed.key}" is not recognized.`);
@@ -532,6 +560,10 @@ export function wish(
   parentCell: Cell<any>,
   runtime: Runtime,
 ): Action {
+  // Per-instance cached #now cell — prevents non-idempotent re-runs from
+  // Date.now() producing a different value each time the sync action fires.
+  let nowCell: Cell<unknown> | undefined;
+
   // Per-instance suggestion pattern result cell
   let suggestionPatternInput:
     | {
@@ -574,22 +606,23 @@ export function wish(
           },
         );
       }
-      // Fire-and-forget: errors surface through global unhandled rejection handlers
+      // Once fetch completes, run the pattern without a tx (it creates its own)
       void suggestionPatternFetchPromise.then((pattern) => {
         if (pattern) {
-          return runtime.runSynced(
-            suggestionPatternResultCell!,
+          runtime.run(
+            undefined,
             pattern,
             suggestionPatternInput,
+            suggestionPatternResultCell!,
           );
         }
       });
     } else {
-      // Fire-and-forget: errors surface through global unhandled rejection handlers
-      void runtime.runSynced(
-        suggestionPatternResultCell,
+      runtime.run(
+        tx,
         suggestionPattern,
         suggestionPatternInput,
+        suggestionPatternResultCell,
       );
     }
 
@@ -599,8 +632,10 @@ export function wish(
   }
 
   // Wish action, reactive to changes in inputsCell and any cell we read during
-  // initial resolution
-  return async (tx: IExtendedStorageTransaction) => {
+  // initial resolution. Synchronous: reads cell.get() which triggers sync and
+  // returns undefined if data isn't loaded yet. The reactive system re-triggers
+  // wish when the data arrives.
+  return (tx: IExtendedStorageTransaction) => {
     const inputsWithTx = inputsCell.withTx(tx);
     const targetValue = inputsWithTx.asSchema(TARGET_SCHEMA).get();
 
@@ -629,8 +664,27 @@ export function wish(
         try {
           const parsed = parseWishTarget(query);
           parsed.path = [...parsed.path, ...(path ?? [])];
-          const ctx: WishContext = { runtime, tx, parentCell, scope };
-          const baseResolutions = await resolveBase(parsed, ctx);
+          const ctx: WishContext = { runtime, tx, parentCell, scope, nowCell };
+          const baseResolutions = resolveBase(parsed, ctx);
+          // Persist #now cell across re-runs to avoid non-idempotent loops
+          if (ctx.nowCell) nowCell = ctx.nowCell;
+
+          if (baseResolutions.length === 0) {
+            // No matches yet — data may still be loading. Send a pending
+            // result; the reactive system will re-trigger when cells update
+            // (dependencies were registered by the cell.get() calls in the
+            // search functions).
+            sendResult(
+              tx,
+              {
+                result: undefined,
+                candidates: [],
+                [UI]: undefined,
+              } satisfies WishState<any>,
+            );
+            return;
+          }
+
           const resultCells = baseResolutions.map((baseResolution) => {
             const combinedPath = baseResolution.pathPrefix
               ? [...baseResolution.pathPrefix, ...parsed.path]
@@ -645,12 +699,9 @@ export function wish(
               resultCells.findIndex((c) => c.equals(cell)) === index,
           );
 
-          // Sync all result cells to ensure data is loaded
-          await Promise.all(uniqueResultCells.map((cell) => cell.sync()));
-
           // Unified shape: always return { result, candidates, [UI] }
           // For single result, use fast path (no picker needed)
-          // For multiple results, launch wish pattern for picker
+          // For multiple results, launch suggestion pattern for picker
           const candidatesCell = runtime.getImmutableCell(
             parentCell.space,
             uniqueResultCells,
@@ -668,67 +719,38 @@ export function wish(
               [UI]: resultUI ?? cellLinkUI(uniqueResultCells[0]),
             });
           } else {
-            // Multiple results — await pattern load + run (like the old
-            // launchWishPattern). Fall back to first result on failure.
-            if (!suggestionPatternFetchPromise) {
-              suggestionPatternFetchPromise = fetchSuggestionPattern(
-                runtime,
-              ).then((p) => {
-                suggestionPattern = p;
-                return p;
-              });
-            }
-            await suggestionPatternFetchPromise;
-
-            let pickerReady = false;
+            // Multiple results — if suggestion pattern is already loaded,
+            // launch it and send its result cell so the picker's output
+            // flows through. Otherwise fall back to first result and kick
+            // off the fetch for next time.
             if (suggestionPattern) {
-              if (!suggestionPatternResultCell) {
-                suggestionPatternResultCell = runtime.getCell(
-                  parentCell.space,
+              sendResult(
+                tx,
+                launchSuggestionPattern(
                   {
-                    wish: {
-                      suggestionPattern: cause,
-                      situation: query,
-                    },
+                    situation: query,
+                    context: context ?? {},
+                    initialResults: candidatesCell,
                   },
-                  undefined,
                   tx,
-                );
-                addCancel(
-                  () => runtime.runner.stop(suggestionPatternResultCell!),
-                );
-              }
-              suggestionPatternInput = {
-                situation: query,
-                context: context ?? {},
-                initialResults: candidatesCell,
-              };
-              try {
-                await runtime.runSynced(
-                  suggestionPatternResultCell,
-                  suggestionPattern,
-                  suggestionPatternInput,
-                );
-                pickerReady = true;
-              } catch (e) {
-                console.warn(
-                  "[wish] Failed to run suggestion pattern for picker:",
-                  e,
-                );
-              }
-            }
-
-            if (pickerReady) {
-              sendResult(tx, suggestionPatternResultCell);
+                ),
+              );
             } else {
-              // Pattern unavailable or failed — fall back to first result
-              const fallbackUI = uniqueResultCells[0].key(UI).get() ??
-                cellLinkUI(uniqueResultCells[0]);
+              // Pattern not loaded yet — send first result, start fetch
+              const resultUI = uniqueResultCells[0].key(UI).get();
               sendResult(tx, {
                 result: uniqueResultCells[0],
                 candidates: candidatesCell,
-                [UI]: fallbackUI,
+                [UI]: resultUI ?? cellLinkUI(uniqueResultCells[0]),
               });
+              launchSuggestionPattern(
+                {
+                  situation: query,
+                  context: context ?? {},
+                  initialResults: candidatesCell,
+                },
+                tx,
+              );
             }
           }
         } catch (e) {
