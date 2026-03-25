@@ -45,6 +45,22 @@ function hint(message: string, showQuietTip = true) {
   }
 }
 
+function summarizeForDisplay(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) return `[Array(${value.length})]`;
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith("$")) continue;
+    if (v === null || v === undefined) out[k] = v;
+    else if (typeof v !== "object") out[k] = v;
+    else if (Array.isArray(v)) out[k] = `[Array(${v.length})]`;
+    else out[k] = "[Object]";
+  }
+  return out;
+}
+
 function pieceCallRawArgs(tail: string[], literalArgs: string[]): string[] {
   if (literalArgs.length > 0) {
     if (literalArgs[0] === "--json") {
@@ -324,14 +340,26 @@ export const piece = new Command()
   )
   .option("-c,--piece <piece:string>", "The target piece ID.")
   .option("--json", "Output raw JSON data")
+  .option(
+    "--summary",
+    "Show a compact summary: scalars only, arrays/objects replaced with type descriptors, $-prefixed internal keys omitted",
+  )
   .action(async (options) => {
     const pieceConfig = parsePieceOptions(options);
 
     const pieceData = await inspectPiece(pieceConfig);
 
+    const displayData = options.summary
+      ? {
+        ...pieceData,
+        source: summarizeForDisplay(pieceData.source),
+        result: summarizeForDisplay(pieceData.result),
+      }
+      : pieceData;
+
     if (options.json) {
       // In JSON mode, use render with JSON output
-      render(pieceData, { json: true });
+      render(displayData, { json: true });
       return;
     }
 
@@ -343,20 +371,28 @@ Pattern: ${pieceData.patternName || "<no pattern name>"}
 
 --- Source (Inputs) ---`;
 
-    if (pieceData.source) {
-      output += `\n${safeStringify(pieceData.source)}`;
+    if (displayData.source) {
+      output += `\n${safeStringify(displayData.source)}`;
     } else {
       output += "\n<no source data>";
     }
 
     output += "\n\n--- Result ---";
-    if (pieceData.result) {
-      // Filter out large UI objects that clutter the output
-      const filteredResult = { ...pieceData.result };
-      if (UI in filteredResult && typeof filteredResult[UI] === "object") {
-        filteredResult[UI] = "<large UI object - use --json to see full UI>";
+    if (displayData.result !== null && displayData.result !== undefined) {
+      const isPlainObject = typeof displayData.result === "object" &&
+        !Array.isArray(displayData.result);
+      if (!options.summary && isPlainObject) {
+        // Filter out large UI objects that clutter the non-summary output
+        const filteredResult = {
+          ...(displayData.result as Record<string | symbol, unknown>),
+        };
+        if (UI in filteredResult && typeof filteredResult[UI] === "object") {
+          filteredResult[UI] = "<large UI object - use --json to see full UI>";
+        }
+        output += `\n${safeStringify(filteredResult)}`;
+      } else {
+        output += `\n${safeStringify(displayData.result)}`;
       }
-      output += `\n${safeStringify(filteredResult)}`;
     } else {
       output += "\n<no result data>";
     }
@@ -557,7 +593,7 @@ well-known IDs. See docs/common/concepts/well-known-ids.md for IDs and usage.`,
   /* piece get */
   .command(
     "get",
-    `Get a value from a piece at a specific path.
+    `Get a value from a piece at a specific path. Omit path to return the full result.
 
 PATH FORMAT: Use forward slashes and numeric indices for arrays.
   ✓ items/0/name    ✓ config/db/host    ✗ items[0].name`,
@@ -571,12 +607,16 @@ PATH FORMAT: Use forward slashes and numeric indices for arrays.
     `ct piece get ${EX_ID} ${EX_COMP_PIECE} data/users/0/email --input`,
     `Get a nested field value from piece input "${RAW_EX_COMP.piece!}".`,
   )
+  .example(
+    `ct piece get ${EX_ID} ${EX_COMP_PIECE}`,
+    `Get the full result of piece "${RAW_EX_COMP.piece!}".`,
+  )
   .option("-c,--piece <piece:string>", "The target piece ID.")
   .option("--input", "Read from the piece's input cell instead of result cell")
-  .arguments("<path:string>")
+  .arguments("[path:string]")
   .action(async (options, pathString) => {
     const pieceConfig = parsePieceOptions(options);
-    const pathSegments = parsePath(pathString);
+    const pathSegments = pathString ? parsePath(pathString) : [];
     const value = await getCellValue(pieceConfig, pathSegments, {
       input: options.input,
     });

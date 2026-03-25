@@ -912,6 +912,111 @@ export class CellBridge {
     await subscribeProp("input");
     await subscribeProp("result");
 
+    // Subscribe to the result cell to detect [NAME] changes and rename the
+    // piece directory in the FUSE tree accordingly.
+    // We use the result cell (not the root entity cell) because [NAME] is part
+    // of the pattern's result output, and the scheduler tracks result cell
+    // reads when setting up reactive subscriptions.
+    try {
+      const nameTrackingCell = await piece.result.getCell();
+      const cancelRootSub = nameTrackingCell.sink((_newValue: unknown) => {
+        setTimeout(() => {
+          try {
+            const state = this.spaces.get(spaceName);
+            if (!state) return;
+
+            // Find the piece's current FUSE name by searching pieceMap.
+            let currentName: string | undefined;
+            for (const [name, id] of state.pieceMap) {
+              if (id === piece.id) {
+                currentName = name;
+                break;
+              }
+            }
+            if (currentName === undefined) return;
+
+            const newRawName = piece.name() ?? piece.id;
+
+            // Skip if the raw name hasn't changed.
+            if (newRawName === currentName) return;
+
+            // Collision-resolve the new name. We need to exclude currentName
+            // from the used-name check (the piece is vacating it), but we
+            // must NOT mutate usedNames until after tree.rename() succeeds —
+            // a thrown rename would otherwise leave tracking inconsistent.
+            let newName = newRawName;
+            if (state.usedNames.has(newName) && newName !== currentName) {
+              let suffix = 2;
+              while (
+                state.usedNames.has(`${newName}-${suffix}`) &&
+                `${newName}-${suffix}` !== currentName
+              ) suffix++;
+              newName = `${newName}-${suffix}`;
+            }
+
+            // Skip if the resolved name is unchanged.
+            if (newName === currentName) return;
+
+            // Look up the controller and subs before mutating maps.
+            const controller = state.pieceControllers.get(currentName);
+            const subs = state.pieceSubs.get(currentName);
+
+            // Rename the directory in the tree — do this before any map
+            // mutations so a thrown error leaves state fully consistent.
+            this.tree.rename(
+              state.piecesIno,
+              currentName,
+              state.piecesIno,
+              newName,
+            );
+
+            // Tree rename succeeded — now update all four state maps atomically.
+            state.usedNames.delete(currentName);
+            state.usedNames.add(newName);
+            state.pieceMap.delete(currentName);
+            state.pieceMap.set(newName, piece.id);
+            state.pieceControllers.delete(currentName);
+            if (controller !== undefined) {
+              state.pieceControllers.set(newName, controller);
+            }
+            state.pieceSubs.delete(currentName);
+            if (subs !== undefined) {
+              state.pieceSubs.set(newName, subs);
+            }
+
+            // Rebuild .index.json.
+            this.updateIndexJson(state);
+
+            // Invalidate kernel cache.
+            if (this.onInvalidate) {
+              this.onInvalidate(state.piecesIno, [
+                currentName,
+                newName,
+                ".index.json",
+              ]);
+              this.onInvalidate(state.spaceIno, ["pieces"]);
+            }
+            if (this.onInvalidateInode) {
+              this.onInvalidateInode(state.piecesIno);
+            }
+
+            console.log(
+              `[${spaceName}] Renamed piece: ${currentName} → ${newName}`,
+            );
+          } catch (e) {
+            console.error(
+              `[${spaceName}] Error renaming piece in FUSE tree: ${e}`,
+            );
+          }
+        }, 0);
+      });
+      cancels.push(cancelRootSub);
+    } catch (e) {
+      console.error(
+        `[${spaceName}] Could not subscribe to root cell for ${pieceName}: ${e}`,
+      );
+    }
+
     return cancels;
   }
 

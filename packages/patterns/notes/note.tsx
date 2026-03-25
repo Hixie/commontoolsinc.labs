@@ -3,7 +3,6 @@ import {
   action,
   computed,
   type Default,
-  equals,
   generateText,
   handler,
   NAME,
@@ -44,6 +43,7 @@ interface NoteOutput extends NotePiece {
   grep: PatternToolResult<{ content: string }>;
   translate: PatternToolResult<{ content: string }>;
   editContent: Stream<{ detail: { value: string } }>;
+  setTitle: Stream<string>;
   appendLink: Stream<{ piece: Writable<MentionablePiece> }>;
   createNewNote: Stream<void>;
   /** Parent notebook reference, null if not in a notebook */
@@ -264,6 +264,11 @@ const Note = pattern<NoteInput, NoteOutput>(
       },
     );
 
+    // Exported stream for external title editing
+    const setTitle = action((newTitle: string) => {
+      title.set(newTitle);
+    });
+
     // Append a wiki-link to another piece at the end of the note content
     const appendLink = action(
       ({ piece }: { piece: Writable<MentionablePiece> }) => {
@@ -279,22 +284,6 @@ const Note = pattern<NoteInput, NoteOutput>(
         mentioned.push(piece);
       },
     );
-
-    // LAZY: Only compute which notebooks contain this note when menu is open
-    const containingNotebooks = computed(() => {
-      if (!menuOpen.get()) return [];
-
-      const result: NotebookPiece[] = [];
-      for (const nb of notebooks) {
-        for (const n of nb?.notes ?? []) {
-          if (equals(n, self)) {
-            result.push(nb);
-            break;
-          }
-        }
-      }
-      return result;
-    });
 
     // Link pattern for wiki-links
     const patternJson = computed(() => {
@@ -493,12 +482,6 @@ const Note = pattern<NoteInput, NoteOutput>(
                   >
                     {"  "}
                     {notebook?.[NAME] ?? "Untitled"}
-                    {computed(() => {
-                      return containingNotebooks
-                          .find((nb) => equals(nb, notebook))
-                        ? " ✓"
-                        : "";
-                    })}
                   </ct-button>
                 ))}
 
@@ -547,6 +530,7 @@ const Note = pattern<NoteInput, NoteOutput>(
       grep: patternTool(grepPattern, { content }),
       translate: patternTool(translatePattern, { content }),
       editContent,
+      setTitle,
       appendLink,
       createNewNote,
       embeddedUI: editorUI,
