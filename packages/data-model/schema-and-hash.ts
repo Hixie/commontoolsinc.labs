@@ -1,31 +1,47 @@
 /**
- * A deep-frozen container pairing a `JSONSchema` with a hash string
- * computed from it. Ensures that schemas are always stored in their
- * canonical deep-frozen form and that the hash is computed once.
+ * A deep-frozen container pairing a `JSONSchema` with its content hash.
+ * Ensures that schemas are always stored in their canonical deep-frozen
+ * form and that the hash is computed once.
+ *
+ * To create instances, use `internSchema()` from `schema-hash.ts` —
+ * it handles freezing, hashing, and caching. The constructor is public
+ * for direct use when both the frozen schema and hash are already in hand.
  */
 import type { JSONSchema } from "@commontools/api";
-import { hashSchema } from "./schema-hash.ts";
-import { toDeepFrozenSchema } from "./schema-utils.ts";
+import { isDeepFrozen } from "./deep-freeze.ts";
+import type { FabricHash } from "./fabric-hash.ts";
 
 export class SchemaAndHash {
-  /** The deep-frozen schema. */
-  readonly schema: JSONSchema;
+  readonly #schema: JSONSchema;
+  readonly #hash: FabricHash;
 
-  /** The canonical hash of the schema. */
-  readonly hash: string;
-
-  private constructor(schema: JSONSchema) {
-    this.schema = toDeepFrozenSchema(schema);
-    this.hash = hashSchema(this.schema);
+  /**
+   * Constructs a `SchemaAndHash` from an already-deep-frozen schema and
+   * its pre-computed hash. Throws if the schema is not deep-frozen.
+   * Prefer `internSchema()` from `schema-hash.ts` for the friendly entry
+   * point that handles freezing, hashing, and interning.
+   */
+  constructor(schema: JSONSchema, hash: FabricHash) {
+    if (!isDeepFrozen(schema)) {
+      throw new Error("SchemaAndHash: schema must be deep-frozen");
+    }
+    this.#schema = schema;
+    this.#hash = hash;
     Object.freeze(this);
   }
 
-  /**
-   * Create a `SchemaAndHash` from a schema. The schema is deep-frozen via
-   * `toDeepFrozenSchema()` in the constructor, so the caller's original
-   * object is not modified.
-   */
-  static from(schema: JSONSchema): SchemaAndHash {
-    return new SchemaAndHash(schema);
+  /** The deep-frozen schema. */
+  get schema(): JSONSchema {
+    return this.#schema;
+  }
+
+  /** The content hash of the schema as a `FabricHash`. */
+  get hash(): FabricHash {
+    return this.#hash;
+  }
+
+  /** The hash as a string (delegates to `FabricHash.toString()`). */
+  get hashString(): string {
+    return this.#hash.toString();
   }
 }

@@ -6,20 +6,30 @@
  * legacy `stableStringify` (schema-hash-legacy.ts) and canonical hashing
  * (schema-hash-modern.ts) based on a runtime flag.
  *
+ * Also provides `internSchema` and `findInternedSchema` for schema
+ * interning with bidirectional cache and GC-safe storage. These are
+ * separate from the hot-path hash functions to avoid FabricHash
+ * allocation overhead on every hash call.
+ *
  * Follows the same inline-flag-test dispatch pattern used by
  * `fabric-value.ts`.
  */
 
-import type { JSONSchema } from "@commontools/api";
+import type { JSONSchema, JSONSchemaObj } from "@commontools/api";
+import { FabricHash } from "./fabric-hash.ts";
 import type { FabricValue } from "./interface.ts";
+import { SchemaAndHash } from "./schema-and-hash.ts";
 import {
   hashSchemaItemLegacy,
+  hashSchemaItemLegacyAsFabricHash,
   hashSchemaLegacy,
 } from "./schema-hash-legacy.ts";
 import {
   hashSchemaItemModern,
+  hashSchemaItemModernAsFabricHash,
   hashSchemaModern,
 } from "./schema-hash-modern.ts";
+import { toDeepFrozenSchema } from "./schema-utils.ts";
 
 // ---------------------------------------------------------------------------
 // Modern schema hash mode flag
@@ -30,28 +40,33 @@ let modernSchemaHashEnabled = false;
 /**
  * Activates or deactivates modern schema hash mode. Called by the `Runtime`
  * constructor to propagate `ExperimentalOptions.modernSchemaHash` into the
- * memory layer.
+ * memory layer. Wipes the intern cache since cached hashes are
+ * flag-dependent.
  */
 export function setSchemaHashConfig(enabled: boolean): void {
   modernSchemaHashEnabled = enabled;
+  resetInternCache();
 }
 
 /**
  * Restores modern schema hash mode to its default (disabled). Called by
  * `Runtime.dispose()` to avoid leaking flags between runtime instances or
- * test runs.
+ * test runs. Wipes the intern cache since cached hashes are
+ * flag-dependent.
  */
 export function resetSchemaHashConfig(): void {
   modernSchemaHashEnabled = false;
+  resetInternCache();
 }
 
 // ---------------------------------------------------------------------------
-// Flag-dispatched public API
+// Flag-dispatched public API (hot path — returns string, no FabricHash alloc)
 // ---------------------------------------------------------------------------
 
 /**
- * Compute a deterministic string hash of a JSONSchema.
+ * Compute a deterministic hash of a JSONSchema.
  * Structurally-equal schemas always produce the same hash.
+ * Returns a string for use as a map key or cache key.
  */
 export function hashSchema(schema: JSONSchema): string {
   return modernSchemaHashEnabled
@@ -60,12 +75,197 @@ export function hashSchema(schema: JSONSchema): string {
 }
 
 /**
- * Compute a deterministic string hash of a schema-related item (e.g. a
+ * Compute a deterministic hash of a schema-related item (e.g. a
  * path selector, a value descriptor, etc.). Structurally-equal items
- * always produce the same hash.
+ * always produce the same hash. Returns a string.
  */
 export function hashSchemaItem(item: FabricValue): string {
   return modernSchemaHashEnabled
     ? hashSchemaItemModern(item)
     : hashSchemaItemLegacy(item);
+}
+
+// ---------------------------------------------------------------------------
+// Internal: FabricHash-returning hash for intern cache use only
+// ---------------------------------------------------------------------------
+
+/** Hash a schema-related item as a FabricHash (for intern cache). */
+function _hashSchemaItemAsFabricHash(item: FabricValue): FabricHash {
+  return modernSchemaHashEnabled
+    ? hashSchemaItemModernAsFabricHash(item)
+    : hashSchemaItemLegacyAsFabricHash(item);
+}
+
+// ---------------------------------------------------------------------------
+// Schema interning
+// ---------------------------------------------------------------------------
+
+/**
+ * Bidirectional intern cache for schemas.
+ *
+ * All intern state is flag-dependent (legacy vs modern produce different
+ * hashes) and is wiped whenever the flag changes via `resetInternCache()`.
+ *
+ * The cache is split into two maps to avoid strong retention:
+ *
+ * - `schemaToSah`: `WeakMap<JSONSchemaObj, SchemaAndHash>` — forward lookup.
+ *   When the schema object is GC'd, the entry (and with it the
+ *   `SchemaAndHash`) becomes unreachable.
+ * - `hashToRef`: `Map<string, WeakRef<JSONSchemaObj>>` — reverse lookup
+ *   (hash string → schema). Stores only a `WeakRef`, so the schema is not
+ *   retained. Dead refs are cleaned up by `schemaFinalizer` and on lookup.
+ *
+ * To look up by hash: deref the `WeakRef` from `hashToRef`, then look up
+ * the `SchemaAndHash` from `schemaToSah`. This ensures `SchemaAndHash` is
+ * only reachable while the schema object itself is alive.
+ *
+ * - `booleanInterns`: prefab `SchemaAndHash` for `true` and `false` (boolean
+ *   schemas are primitives and can't be WeakMap/WeakRef targets, so they
+ *   are stored separately and seeded into `hashToRef` with a dummy strong-
+ *   referenced sentinel object).
+ */
+let schemaToSah = new WeakMap<JSONSchemaObj, SchemaAndHash>();
+const hashToRef = new Map<string, WeakRef<JSONSchemaObj>>();
+
+// Dummy sentinel objects for boolean interns (kept alive by booleanSentinels).
+let booleanSentinels = {
+  true: Object.freeze({ cacheSentinel: true }) as JSONSchemaObj,
+  false: Object.freeze({ cacheSentinel: false }) as JSONSchemaObj,
+};
+let booleanInterns = {
+  true: new SchemaAndHash(true, _hashSchemaItemAsFabricHash(true)),
+  false: new SchemaAndHash(false, _hashSchemaItemAsFabricHash(false)),
+};
+let schemaFinalizer = new FinalizationRegistry<string>((hashStr) => {
+  const ref = hashToRef.get(hashStr);
+  if (ref && ref.deref() === undefined) {
+    hashToRef.delete(hashStr);
+  }
+});
+
+/** Seeds the caches with the current boolean interns. */
+function seedBooleanInterns(): void {
+  // Use sentinel objects as WeakMap keys and WeakRef targets for booleans.
+  schemaToSah.set(booleanSentinels.true, booleanInterns.true);
+  schemaToSah.set(booleanSentinels.false, booleanInterns.false);
+  hashToRef.set(
+    booleanInterns.true.hashString,
+    new WeakRef(booleanSentinels.true),
+  );
+  hashToRef.set(
+    booleanInterns.false.hashString,
+    new WeakRef(booleanSentinels.false),
+  );
+}
+
+/**
+ * Wipes all intern caches and re-seeds boolean interns with fresh hashes
+ * for the current flag state. Called whenever `modernSchemaHashEnabled`
+ * changes.
+ */
+function resetInternCache(): void {
+  schemaToSah = new WeakMap();
+  hashToRef.clear();
+  schemaFinalizer = new FinalizationRegistry<string>((hashStr) => {
+    const ref = hashToRef.get(hashStr);
+    if (ref && ref.deref() === undefined) {
+      hashToRef.delete(hashStr);
+    }
+  });
+  booleanSentinels = {
+    true: Object.freeze({ cacheSentinel: true }) as JSONSchemaObj,
+    false: Object.freeze({ cacheSentinel: false }) as JSONSchemaObj,
+  };
+  booleanInterns = {
+    true: new SchemaAndHash(true, _hashSchemaItemAsFabricHash(true)),
+    false: new SchemaAndHash(false, _hashSchemaItemAsFabricHash(false)),
+  };
+  seedBooleanInterns();
+}
+
+// Initial seed.
+seedBooleanInterns();
+
+/**
+ * Intern a schema: freeze it, compute its hash, and cache the
+ * bidirectional mapping. Returns the existing `SchemaAndHash` if the
+ * schema (or a structurally-identical one with the same hash) has
+ * already been interned.
+ *
+ * **Caching behaviour:** only deep-frozen schema objects are used as
+ * cache keys — mutable inputs are never cached by identity.
+ * `toDeepFrozenSchema()` returns the same reference if the input is
+ * already deep-frozen, so such schemas hit the WeakMap on repeated
+ * calls. For mutable inputs, a new frozen copy is created each time
+ * and the hash-keyed reverse map finds a structural match.
+ */
+export function internSchema(schema: JSONSchema): SchemaAndHash {
+  // Boolean schemas are primitives — return prefab instances.
+  if (typeof schema === "boolean") {
+    return schema ? booleanInterns.true : booleanInterns.false;
+  }
+
+  // Object schema — check the WeakMap first.
+  const cached = schemaToSah.get(schema);
+  if (cached) return cached;
+
+  // toDeepFrozenSchema returns the same reference if already deep-frozen.
+  const frozen = toDeepFrozenSchema(schema) as JSONSchemaObj;
+
+  // Check the hash-keyed reverse map (structurally-equal but different object).
+  const hash = _hashSchemaItemAsFabricHash(frozen);
+  const hashStr = hash.toString();
+
+  const ref = hashToRef.get(hashStr);
+  if (ref) {
+    const existing = ref.deref();
+    if (existing !== undefined) {
+      const existingSah = schemaToSah.get(existing)!;
+
+      // Cache the caller's schema so future calls with the same object
+      // hit the WeakMap at the top instead of re-hashing every time.
+      // We only do this when the input was already deep-frozen
+      // (frozen === schema), because mutable objects could be changed
+      // after caching, producing stale hits.
+      const inputIsFrozen = frozen === schema;
+      if (inputIsFrozen) {
+        schemaToSah.set(frozen, existingSah);
+      }
+
+      return existingSah;
+    }
+    // WeakRef is dead — clean up.
+    hashToRef.delete(hashStr);
+  }
+
+  // Not interned yet — create, cache, and return.
+  const sah = new SchemaAndHash(frozen, hash);
+  schemaToSah.set(frozen, sah);
+  hashToRef.set(hashStr, new WeakRef(frozen));
+  schemaFinalizer.register(frozen, hashStr);
+
+  return sah;
+}
+
+/**
+ * Look up a previously interned schema by its hash. Accepts a
+ * `FabricHash` or a plain string. Returns `undefined` if the schema
+ * has not been interned or has been garbage-collected.
+ */
+export function findInternedSchema(
+  hash: FabricHash | string,
+): SchemaAndHash | undefined {
+  const hashStr = typeof hash === "string" ? hash : hash.toString();
+
+  const ref = hashToRef.get(hashStr);
+  if (!ref) return undefined;
+
+  const schema = ref.deref();
+  if (schema === undefined) {
+    // WeakRef is dead — clean up.
+    hashToRef.delete(hashStr);
+    return undefined;
+  }
+
+  return schemaToSah.get(schema);
 }
