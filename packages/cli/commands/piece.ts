@@ -64,11 +64,6 @@ function summarizeForDisplay(value: unknown): unknown {
 
 function pieceCallRawArgs(tail: string[], literalArgs: string[]): string[] {
   if (literalArgs.length > 0) {
-    if (literalArgs[0] === "--json") {
-      throw new ValidationError(
-        'ct piece call reads JSON by default; pass inline JSON or stdin without "--json"',
-      );
-    }
     return literalArgs;
   }
 
@@ -89,9 +84,13 @@ function pieceCallRawArgs(tail: string[], literalArgs: string[]): string[] {
   }
 
   if (tail[0] === "--json") {
-    throw new ValidationError(
-      'ct piece call reads JSON by default; pass inline JSON or stdin without "--json"',
-    );
+    if (tail.length === 1) {
+      // --json alone is a no-op: ct piece call always outputs JSON.
+      // Return machine-readable schema (same as --help --json) to exit cleanly.
+      return ["--help", "--json"];
+    }
+    // --json followed by other args: existing behavior (forward as-is).
+    return ["--json"];
   }
 
   if (tail.length > 1) {
@@ -618,10 +617,19 @@ PATH FORMAT: Use forward slashes and numeric indices for arrays.
   .action(async (options, pathString) => {
     const pieceConfig = parsePieceOptions(options);
     const pathSegments = pathString ? parsePath(pathString) : [];
-    const value = await getCellValue(pieceConfig, pathSegments, {
-      input: options.input,
-    });
-    render(value, { json: true });
+    try {
+      const value = await getCellValue(pieceConfig, pathSegments, {
+        input: options.input,
+      });
+      render(value, { json: true });
+    } catch (error) {
+      if (
+        error instanceof Error && error.message.startsWith("Cannot access path")
+      ) {
+        throw new ValidationError(error.message, { exitCode: 1 });
+      }
+      throw error;
+    }
   })
   /* piece set */
   .command(
@@ -698,6 +706,10 @@ JSON VALUES: Strings need quotes: echo '"hello"' | ct piece set ...`,
     `Run the "search" tool using schema-derived flags after "--".`,
   )
   .option("-c,--piece <piece:string>", "The target piece ID.")
+  .option(
+    "--json",
+    "Input/output format (JSON is the only supported format; this flag is a no-op)",
+  )
   .stopEarly()
   .arguments("<callable:string> [tail...:string]")
   .action(async function (options, callableName, ...tail) {
