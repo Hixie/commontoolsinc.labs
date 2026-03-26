@@ -4,7 +4,6 @@
 
 import type {
   JSONSchema,
-  JSONSchemaMutable,
   JSONSchemaObj,
   JSONSchemaObjMutable,
 } from "@commontools/api";
@@ -92,9 +91,14 @@ export function toDeepFrozenSchema<T extends JSONSchema>(
 }
 
 /**
- * Return a deep mutable copy of a JSONSchema. Boolean and `undefined` schemas
- * are returned as `{}` when `forceObject` is `true`; boolean schemas are
- * returned as-is otherwise, and `undefined` returns `{}`.
+ * Return a mutable object copy of a JSONSchema. Boolean schemas (`true` and
+ * `false`) and `undefined` are converted to their object-form equivalents:
+ * `undefined` and `true` become `{}` (accept any value), `false` becomes
+ * `{ not: true }` (reject all values).
+ *
+ * @param deep When `true`, nested objects are recursively cloned (deep copy).
+ *   Defaults to `false` (shallow copy). Pass `true` when the caller intends to
+ *   mutate nested properties.
  *
  * Note: do not use this on proxy-wrapped schemas from the runtime — those
  * sites should continue using `JSON.parse(JSON.stringify(...))` until the
@@ -102,27 +106,19 @@ export function toDeepFrozenSchema<T extends JSONSchema>(
  */
 export function cloneSchemaMutable(
   schema: JSONSchema | undefined,
-  forceObject: true,
-): JSONSchemaObjMutable;
-export function cloneSchemaMutable(
-  schema: JSONSchema | undefined,
-  forceObject?: false,
-): JSONSchemaMutable;
-export function cloneSchemaMutable(
-  schema: JSONSchema | undefined,
-  forceObject: boolean = false,
-): JSONSchemaMutable {
+  deep: boolean = false,
+): JSONSchemaObjMutable {
   if (schema === undefined) return {};
-  if (typeof schema === "boolean") return forceObject ? {} : schema;
+  if (typeof schema === "boolean") return schema ? {} : { not: true };
   return cloneIfNecessary(schema, {
     frozen: false,
-    deep: true,
+    deep,
   }) as JSONSchemaObjMutable;
 }
 
 /**
- * Return a frozen shallow copy of a schema with the given property overrides
- * applied.
+ * Return a deep-frozen shallow copy of a schema with the given property
+ * overrides applied.
  *
  * - `undefined` and `true` ("accept everything") are treated as `{}` before
  *   applying overrides.
