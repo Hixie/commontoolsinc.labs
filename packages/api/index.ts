@@ -1372,6 +1372,12 @@ type Mutable<T> = T extends ReadonlyArray<infer U> ? Mutable<U>[]
 export type JSONSchemaMutable = Mutable<JSONSchemaObj>;
 
 /**
+ * A `JSONSchemaMutable` or a boolean. JSON Schema allows `true` (accept any
+ * value) and `false` (reject all values) as valid schemas.
+ */
+export type JSONSchemaMutableOrBoolean = JSONSchemaMutable | boolean;
+
+/**
  * Selects a sub-path within a document, optionally paired with a schema
  * that describes the value at that path. Used by the storage/sync layer
  * to track which slices of a document are being observed.

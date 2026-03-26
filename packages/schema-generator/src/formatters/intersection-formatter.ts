@@ -1,9 +1,9 @@
 import ts from "typescript";
 import type {
-  GenerationContext,
-  SchemaDefinition,
-  TypeFormatter,
-} from "../interface.ts";
+  JSONSchemaMutable,
+  JSONSchemaMutableOrBoolean,
+} from "@commontools/api";
+import type { GenerationContext, TypeFormatter } from "../interface.ts";
 import type { SchemaGenerator } from "../schema-generator.ts";
 import { cloneSchemaDefinition, getNativeTypeSchema } from "../type-utils.ts";
 import { getLogger } from "@commontools/utils/logger";
@@ -26,7 +26,10 @@ export class IntersectionFormatter implements TypeFormatter {
     return (type.flags & ts.TypeFlags.Intersection) !== 0;
   }
 
-  formatType(type: ts.Type, context: GenerationContext): SchemaDefinition {
+  formatType(
+    type: ts.Type,
+    context: GenerationContext,
+  ): JSONSchemaMutableOrBoolean {
     const checker = context.typeChecker;
     const native = getNativeTypeSchema(type, checker);
     if (native !== undefined) {
@@ -151,12 +154,12 @@ export class IntersectionFormatter implements TypeFormatter {
     parts: readonly ts.Type[],
     context: GenerationContext,
   ): {
-    schema: SchemaDefinition;
+    schema: JSONSchemaMutable;
     docTexts: string[];
     documentedSources: string[];
     missingSources: string[];
   } {
-    const mergedProps: Record<string, SchemaDefinition> = {};
+    const mergedProps: Record<string, JSONSchemaMutableOrBoolean> = {};
     const requiredSet = new Set<string>();
 
     const docTexts: string[] = [];
@@ -205,7 +208,7 @@ export class IntersectionFormatter implements TypeFormatter {
             );
             continue;
           }
-          mergedProps[key] = value as SchemaDefinition;
+          mergedProps[key] = value;
         }
       }
 
@@ -216,7 +219,7 @@ export class IntersectionFormatter implements TypeFormatter {
       }
     }
 
-    const result: SchemaDefinition = {
+    const result: JSONSchemaMutable = {
       type: "object",
       properties: mergedProps,
     };
@@ -229,11 +232,8 @@ export class IntersectionFormatter implements TypeFormatter {
   }
 
   private isObjectSchema(
-    schema: SchemaDefinition,
-  ): schema is SchemaDefinition & {
-    properties?: Record<string, SchemaDefinition>;
-    required?: string[];
-  } {
+    schema: JSONSchemaMutableOrBoolean,
+  ): schema is JSONSchemaMutable & { type: "object" } {
     return (
       typeof schema === "object" &&
       schema !== null &&
@@ -242,14 +242,9 @@ export class IntersectionFormatter implements TypeFormatter {
   }
 
   private resolveObjectSchema(
-    schema: SchemaDefinition,
+    schema: JSONSchemaMutableOrBoolean,
     context: GenerationContext,
-  ):
-    | (SchemaDefinition & {
-      properties?: Record<string, SchemaDefinition>;
-      required?: string[];
-    })
-    | undefined {
+  ): (JSONSchemaMutable & { type: "object" }) | undefined {
     if (this.isObjectSchema(schema)) return schema;
     if (
       typeof schema === "object" &&
@@ -269,12 +264,12 @@ export class IntersectionFormatter implements TypeFormatter {
 
   private applyIntersectionDocs(
     data: {
-      schema: SchemaDefinition;
+      schema: JSONSchemaMutable;
       docTexts: string[];
       documentedSources: string[];
       missingSources: string[];
     },
-  ): SchemaDefinition {
+  ): JSONSchemaMutable {
     const { schema, docTexts, documentedSources, missingSources } = data;
     if (!isRecord(schema)) return schema;
 

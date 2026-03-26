@@ -2,8 +2,11 @@ import ts from "typescript";
 import { isRecord } from "@commontools/utils/types";
 
 import type {
+  JSONSchemaMutable,
+  JSONSchemaMutableOrBoolean,
+} from "@commontools/api";
+import type {
   GenerationContext,
-  SchemaDefinition,
   SchemaGenerator as ISchemaGenerator,
   TypeFormatter,
 } from "./interface.ts";
@@ -54,7 +57,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     typeNode?: ts.TypeNode,
     options?: { widenLiterals?: boolean },
     schemaHints?: WeakMap<ts.Node, { items?: unknown }>,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     return this.generateSchemaInternal(
       type,
       checker,
@@ -77,7 +80,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     checker: ts.TypeChecker,
     typeRegistry?: WeakMap<ts.Node, ts.Type>,
     schemaHints?: WeakMap<ts.Node, { items?: unknown }>,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     // Pass 'any' type with the typeNode - auto-detection will choose node-based analysis
     const anyType = checker.getAnyType();
     return this.generateSchemaInternal(
@@ -101,7 +104,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     typeRegistry?: WeakMap<ts.Node, ts.Type>,
     options?: { widenLiterals?: boolean },
     schemaHints?: WeakMap<ts.Node, { items?: unknown }>,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     // Create unified context with all state
     const cycles = this.getCycles(type, checker);
     const context: GenerationContext = {
@@ -126,7 +129,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     };
 
     // Auto-detect: Should we use node-based or type-based analysis?
-    let schema: SchemaDefinition;
+    let schema: JSONSchemaMutableOrBoolean;
     if (this.shouldUseNodeBasedAnalysis(type, typeNode, checker)) {
       // Use node-based analysis (for synthetic nodes or when type is unreliable)
       schema = this.analyzeTypeNodeStructure(
@@ -188,7 +191,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     type: ts.Type,
     context: GenerationContext,
     typeNode?: ts.TypeNode,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     // IMPORTANT: Always create a new context, replacing typeNode (even if undefined).
     // If we pass the parent context as-is when typeNode is undefined, the child will
     // inherit the parent's typeNode which leads to mismatched type/node pairs.
@@ -282,7 +285,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     type: ts.Type,
     context: GenerationContext,
     isRootType: boolean = false,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     if ((type.flags & ts.TypeFlags.TypeParameter) !== 0) {
       const checker = context.typeChecker;
       const baseConstraint = checker.getBaseConstraintOfType(type);
@@ -413,11 +416,11 @@ export class SchemaGenerator implements ISchemaGenerator {
    * Build the final schema with definitions if needed
    */
   private buildFinalSchema(
-    schema: SchemaDefinition,
+    schema: JSONSchemaMutableOrBoolean,
     type: ts.Type,
     context: GenerationContext,
     _typeNode?: ts.TypeNode,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     const { definitions, emittedRefs } = context;
 
     // If no definitions were created or used, return simple schema without $schema
@@ -429,14 +432,14 @@ export class SchemaGenerator implements ISchemaGenerator {
     const namedKey = getNamedTypeKey(type) ?? this.anonymousNames.get(type);
     const shouldPromoteRoot = this.shouldPromoteToRef(namedKey, context);
 
-    let base: SchemaDefinition;
+    let base: JSONSchemaMutableOrBoolean;
 
     if (shouldPromoteRoot && namedKey) {
       // Ensure root is present in definitions
       if (!definitions[namedKey]) {
         definitions[namedKey] = schema;
       }
-      base = { $ref: `#/$defs/${namedKey}` } as SchemaDefinition;
+      base = { $ref: `#/$defs/${namedKey}` };
     } else {
       base = schema;
     }
@@ -453,7 +456,7 @@ export class SchemaGenerator implements ISchemaGenerator {
       ...(base as Record<string, unknown>),
     };
     if (Object.keys(filtered).length > 0) out.$defs = filtered;
-    return out as SchemaDefinition;
+    return out as JSONSchemaMutableOrBoolean;
   }
 
   /**
@@ -552,10 +555,10 @@ export class SchemaGenerator implements ISchemaGenerator {
    * already supply one.
    */
   private attachRootDescription(
-    schema: SchemaDefinition,
+    schema: JSONSchemaMutableOrBoolean,
     type: ts.Type,
     context: GenerationContext,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     if (typeof schema !== "object") return schema;
 
     const docInfo = extractDocFromType(type, context.typeChecker);
@@ -571,9 +574,9 @@ export class SchemaGenerator implements ISchemaGenerator {
    * including transitive dependencies.
    */
   private collectReferencedDefinitions(
-    fragment: SchemaDefinition,
-    allDefs: Record<string, SchemaDefinition>,
-  ): Record<string, SchemaDefinition> {
+    fragment: JSONSchemaMutableOrBoolean,
+    allDefs: Record<string, JSONSchemaMutableOrBoolean>,
+  ): Record<string, JSONSchemaMutableOrBoolean> {
     const needed = new Set<string>();
     const visited = new Set<string>();
 
@@ -623,7 +626,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     }
 
     // Build the subset map
-    const subset: Record<string, SchemaDefinition> = {};
+    const subset: Record<string, JSONSchemaMutableOrBoolean> = {};
     for (const name of visited) {
       if (allDefs[name]) subset[name] = allDefs[name];
     }
@@ -639,12 +642,12 @@ export class SchemaGenerator implements ISchemaGenerator {
     typeNode: ts.TypeNode,
     checker: ts.TypeChecker,
     context: GenerationContext,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     const typeRegistry = context.typeRegistry;
 
     // Handle TypeLiteral nodes (object types)
     if (ts.isTypeLiteralNode(typeNode)) {
-      const properties: Record<string, SchemaDefinition> = {};
+      const properties: Record<string, JSONSchemaMutableOrBoolean> = {};
       const required: string[] = [];
 
       for (const member of typeNode.members) {
@@ -679,7 +682,7 @@ export class SchemaGenerator implements ISchemaGenerator {
         }
       }
 
-      const schema: SchemaDefinition = {
+      const schema: JSONSchemaMutable = {
         type: "object",
         properties,
       };
@@ -711,12 +714,17 @@ export class SchemaGenerator implements ISchemaGenerator {
         this.analyzeTypeNodeStructure(member, checker, context)
       );
       if (memberSchemas.some((schema) => schema === true)) {
-        return true as SchemaDefinition;
+        return true;
       }
       if (memberSchemas.length === 1) {
         return memberSchemas[0]!;
       }
-      return { anyOf: memberSchemas as Exclude<SchemaDefinition, boolean>[] };
+      // Filter out `false` schemas (from `never` types) — they reject all
+      // values and are no-ops inside anyOf.
+      const filtered = memberSchemas.filter((s) => s !== false);
+      if (filtered.length === 0) return false;
+      if (filtered.length === 1) return filtered[0]!;
+      return { anyOf: filtered as JSONSchemaMutable[] };
     }
 
     // Synthetic TypeReferenceNodes may fail to bind in checker APIs directly.
@@ -748,13 +756,13 @@ export class SchemaGenerator implements ISchemaGenerator {
         return { type: "undefined" };
       case ts.SyntaxKind.NeverKeyword:
         // Reject all values (never type can never occur)
-        return false as SchemaDefinition;
+        return false;
       case ts.SyntaxKind.UnknownKeyword:
         return { type: "unknown" };
       case ts.SyntaxKind.VoidKeyword:
       case ts.SyntaxKind.AnyKeyword:
         // Accept any value
-        return true as SchemaDefinition;
+        return true;
     }
 
     // For other TypeNode kinds, try to resolve as Type
@@ -765,7 +773,7 @@ export class SchemaGenerator implements ISchemaGenerator {
     }
 
     // Fallback: accept any value
-    return true as SchemaDefinition;
+    return true;
   }
 
   private resolveTypeReferenceFromScope(
@@ -806,9 +814,9 @@ export class SchemaGenerator implements ISchemaGenerator {
    * Build final schema for synthetic TypeNode with $schema and $defs
    */
   private buildFinalSchemaForSynthetic(
-    schema: SchemaDefinition,
+    schema: JSONSchemaMutableOrBoolean,
     context: GenerationContext,
-  ): SchemaDefinition {
+  ): JSONSchemaMutableOrBoolean {
     const { definitions, emittedRefs } = context;
 
     // Handle boolean schemas (rare, but supported by JSON Schema)
@@ -827,6 +835,6 @@ export class SchemaGenerator implements ISchemaGenerator {
       ...(schema as Record<string, unknown>),
     };
     if (Object.keys(filtered).length > 0) out.$defs = filtered;
-    return out as SchemaDefinition;
+    return out as JSONSchemaMutableOrBoolean;
   }
 }
