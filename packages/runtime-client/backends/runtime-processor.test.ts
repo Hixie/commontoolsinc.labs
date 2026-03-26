@@ -1,6 +1,10 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { sanitizeForPostMessage } from "./runtime-processor.ts";
+import {
+  RuntimeProcessor,
+  sanitizeForPostMessage,
+} from "./runtime-processor.ts";
+import { RequestType } from "../protocol/mod.ts";
 
 describe("sanitizeForPostMessage", () => {
   describe("primitives", () => {
@@ -114,7 +118,7 @@ describe("sanitizeForPostMessage", () => {
       expect(result.dangerous).toBe("[Unreadable]");
     });
 
-    it("handles proxies with throwing get trap - walks keys but marks values unreadable", () => {
+    it("handles proxies with throwing get trap", () => {
       const throwingProxy = new Proxy(
         {},
         {
@@ -130,12 +134,10 @@ describe("sanitizeForPostMessage", () => {
         },
       );
 
-      // The proxy itself can be iterated (ownKeys works), but reading values throws
-      const result = sanitizeForPostMessage(throwingProxy) as Record<
-        string,
-        unknown
-      >;
-      expect(result).toEqual({ problematic: "[Unreadable]" });
+      // isCellResult() probes symbol-backed access first, so a hostile get trap
+      // is treated as an uncloneable object before the plain-object walker runs.
+      const result = sanitizeForPostMessage(throwingProxy);
+      expect(result).toBe("[Object - uncloneable]");
     });
 
     it("handles proxies that throw on Object.keys", () => {
@@ -180,5 +182,199 @@ describe("sanitizeForPostMessage", () => {
         },
       });
     });
+  });
+});
+
+describe("RuntimeProcessor diagnosis helpers", () => {
+  it("passes detectNonIdempotent duration through to scheduler.runDiagnosis", async () => {
+    const expected = {
+      nonIdempotent: [],
+      cycles: [],
+      duration: 321,
+      busyTime: 123,
+    };
+    let receivedDuration: number | undefined;
+    const processor = {
+      runtime: {
+        scheduler: {
+          runDiagnosis: (durationMs?: number) => {
+            receivedDuration = durationMs;
+            return expected;
+          },
+        },
+      },
+    } as unknown as RuntimeProcessor;
+
+    const response = await RuntimeProcessor.prototype.detectNonIdempotent.call(
+      processor,
+      {
+        type: RequestType.DetectNonIdempotent,
+        durationMs: 2500,
+      },
+    );
+
+    expect(receivedDuration).toBe(2500);
+    expect(response).toEqual({ result: expected });
+  });
+
+  it("routes settle and trigger trace helpers to the scheduler", () => {
+    const expected = {
+      iterations: [{
+        workSetSize: 3,
+        orderSize: 2,
+        actionsRun: 2,
+        actions: [{ id: "action:test", type: "computation" as const }],
+        durationMs: 12.5,
+      }],
+      totalDurationMs: 12.5,
+      settledEarly: true,
+      initialSeedCount: 1,
+    };
+    const history = [{
+      recordedAt: 1234.5,
+      stats: expected,
+    }];
+    const actionTrace = [{
+      recordedAt: 2234.5,
+      actionId: "action:compute",
+      actionType: "computation" as const,
+      parentActionId: "action:parent",
+      durationMs: 3.5,
+      declaredWrites: [{
+        space: "did:key:test",
+        entityId: "cell-2",
+        path: [],
+      }],
+      actualWrites: [{
+        space: "did:key:test",
+        entityId: "cell-2",
+        path: [],
+      }],
+    }];
+    const triggerTrace = [{
+      recordedAt: 2345.6,
+      notificationType: "commit",
+      changeIndex: 1,
+      matchedActionCount: 1,
+      mode: "pull" as const,
+      writerActionId: "action:writer",
+      space: "did:key:test",
+      entityId: "cell-1",
+      path: ["items", "0"],
+      before: { kind: "undefined" as const },
+      after: { kind: "object" as const, size: 2 },
+      triggered: [{
+        actionId: "action:reader",
+        actionType: "computation" as const,
+        mode: "pull" as const,
+        decision: "mark-dirty" as const,
+        pendingBefore: false,
+        pendingAfter: false,
+        dirtyBefore: false,
+        dirtyAfter: true,
+        scheduledEffects: [{
+          actionId: "action:effect",
+          pendingBefore: false,
+          dirtyBefore: false,
+        }],
+      }],
+    }];
+    const settleEnabledValues: boolean[] = [];
+    const actionRunEnabledValues: boolean[] = [];
+    const triggerEnabledValues: boolean[] = [];
+    const writeTraceMatchers: unknown[] = [];
+    const writeTrace = [{
+      recordedAt: 2456.7,
+      space: "did:key:test",
+      entityId: "of:cell-1",
+      path: [],
+      match: "exact" as const,
+      label: "watched root write",
+      result: "ok" as const,
+      valueKind: "object" as const,
+      stack: "Error\n  at writeValueOrThrow",
+    }];
+    const processor = {
+      runtime: {
+        scheduler: {
+          setSettleStatsEnabled: (enabled: boolean) => {
+            settleEnabledValues.push(enabled);
+          },
+          getSettleStats: () => expected,
+          getSettleStatsHistory: () => history,
+          setActionRunTraceEnabled: (enabled: boolean) => {
+            actionRunEnabledValues.push(enabled);
+          },
+          getActionRunTrace: () => actionTrace,
+          setTriggerTraceEnabled: (enabled: boolean) => {
+            triggerEnabledValues.push(enabled);
+          },
+          getTriggerTrace: () => triggerTrace,
+        },
+        getWriteStackTrace: () => writeTrace,
+        setWriteStackTraceMatchers: (matchers: unknown[]) => {
+          writeTraceMatchers.push(matchers);
+        },
+      },
+    } as unknown as RuntimeProcessor;
+
+    RuntimeProcessor.prototype.setSettleStatsEnabled.call(processor, {
+      type: RequestType.SetSettleStatsEnabled,
+      enabled: true,
+    });
+    RuntimeProcessor.prototype.setActionRunTraceEnabled.call(processor, {
+      type: RequestType.SetActionRunTraceEnabled,
+      enabled: true,
+    });
+    RuntimeProcessor.prototype.setTriggerTraceEnabled.call(processor, {
+      type: RequestType.SetTriggerTraceEnabled,
+      enabled: true,
+    });
+
+    const response = RuntimeProcessor.prototype.getSettleStats.call(processor, {
+      type: RequestType.GetSettleStats,
+    });
+    const historyResponse = RuntimeProcessor.prototype.getSettleStatsHistory
+      .call(processor, {
+        type: RequestType.GetSettleStatsHistory,
+      });
+    const actionTraceResponse = RuntimeProcessor.prototype.getActionRunTrace
+      .call(processor, {
+        type: RequestType.GetActionRunTrace,
+      });
+    const triggerTraceResponse = RuntimeProcessor.prototype.getTriggerTrace
+      .call(
+        processor,
+        {
+          type: RequestType.GetTriggerTrace,
+        },
+      );
+    const writeTraceResponse = RuntimeProcessor.prototype.getWriteStackTrace
+      .call(
+        processor,
+        {
+          type: RequestType.GetWriteStackTrace,
+        },
+      );
+
+    expect(settleEnabledValues).toEqual([true]);
+    expect(actionRunEnabledValues).toEqual([true]);
+    expect(triggerEnabledValues).toEqual([true]);
+    expect(response).toEqual({ stats: expected });
+    expect(historyResponse).toEqual({ history });
+    expect(actionTraceResponse).toEqual({ trace: actionTrace });
+    expect(triggerTraceResponse).toEqual({ trace: triggerTrace });
+    expect(writeTraceResponse).toEqual({
+      trace: writeTrace,
+    });
+
+    RuntimeProcessor.prototype.setWriteStackTraceMatchers.call(
+      processor,
+      {
+        type: RequestType.SetWriteStackTraceMatchers,
+        matchers: [],
+      },
+    );
+    expect(writeTraceMatchers).toEqual([[]]);
   });
 });

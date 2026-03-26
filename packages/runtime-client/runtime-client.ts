@@ -7,10 +7,16 @@
 
 import type { DID, Identity } from "@commontools/identity";
 import type {
+  ActionRunTraceEntry,
   JSONSchema,
   RuntimeTelemetryMarkerResult,
   SchedulerDiagnosisResult,
   SchedulerGraphSnapshot,
+  SettleStats,
+  SettleStatsHistoryEntry,
+  TriggerTraceEntry,
+  WriteStackTraceEntry,
+  WriteStackTraceMatcher,
 } from "@commontools/runner/shared";
 import { Program } from "@commontools/js-compiler/interface";
 import { CellHandle } from "./cell-handle.ts";
@@ -309,12 +315,116 @@ export class RuntimeClient extends EventEmitter<RuntimeClientEvents> {
   }
 
   /**
+   * Enable or disable collection of settle stats in the worker scheduler.
+   * When disabled, the last captured settle stats are cleared.
+   */
+  async setSettleStatsEnabled(enabled: boolean): Promise<void> {
+    await this.#conn.request<RequestType.SetSettleStatsEnabled>({
+      type: RequestType.SetSettleStatsEnabled,
+      enabled,
+    });
+  }
+
+  /**
+   * Return settle stats captured during the last worker scheduler execute() call.
+   * Returns null if settle stats are disabled or no execute() has been captured yet.
+   */
+  async getSettleStats(): Promise<SettleStats | null> {
+    const res = await this.#conn.request<RequestType.GetSettleStats>({
+      type: RequestType.GetSettleStats,
+    });
+    return res.stats;
+  }
+
+  /**
+   * Return recent settle stats history captured from worker execute() calls.
+   * Entries are ordered oldest first.
+   */
+  async getSettleStatsHistory(): Promise<SettleStatsHistoryEntry[]> {
+    const res = await this.#conn.request<RequestType.GetSettleStatsHistory>({
+      type: RequestType.GetSettleStatsHistory,
+    });
+    return res.history;
+  }
+
+  /**
+   * Return recent exact action-run history captured from worker scheduler runs.
+   * Entries are ordered oldest first.
+   */
+  async getActionRunTrace(): Promise<ActionRunTraceEntry[]> {
+    const res = await this.#conn.request<RequestType.GetActionRunTrace>({
+      type: RequestType.GetActionRunTrace,
+    });
+    return res.trace;
+  }
+
+  /**
+   * Enable or disable collection of exact action-run history in the worker scheduler.
+   * When disabled, the current action-run history buffer is cleared.
+   */
+  async setActionRunTraceEnabled(enabled: boolean): Promise<void> {
+    await this.#conn.request<RequestType.SetActionRunTraceEnabled>({
+      type: RequestType.SetActionRunTraceEnabled,
+      enabled,
+    });
+  }
+
+  /**
+   * Enable or disable collection of structured trigger-trace entries in the worker scheduler.
+   * When disabled, the current trigger trace buffer is cleared.
+   */
+  async setTriggerTraceEnabled(enabled: boolean): Promise<void> {
+    await this.#conn.request<RequestType.SetTriggerTraceEnabled>({
+      type: RequestType.SetTriggerTraceEnabled,
+      enabled,
+    });
+  }
+
+  /**
+   * Return recent structured trigger-trace entries captured from worker storage changes.
+   * Entries are ordered oldest first.
+   */
+  async getTriggerTrace(): Promise<TriggerTraceEntry[]> {
+    const res = await this.#conn.request<RequestType.GetTriggerTrace>({
+      type: RequestType.GetTriggerTrace,
+    });
+    return res.trace;
+  }
+
+  /**
+   * Configure transaction-level write stack tracing in the worker.
+   * Passing an empty matcher list disables the probe and clears prior entries.
+   */
+  async setWriteStackTraceMatchers(
+    matchers: WriteStackTraceMatcher[],
+  ): Promise<void> {
+    await this.#conn.request<RequestType.SetWriteStackTraceMatchers>({
+      type: RequestType.SetWriteStackTraceMatchers,
+      matchers,
+    });
+  }
+
+  /**
+   * Return recent transaction-level write stack trace entries from the worker.
+   * Entries are ordered oldest first.
+   */
+  async getWriteStackTrace(): Promise<WriteStackTraceEntry[]> {
+    const res = await this.#conn.request<RequestType.GetWriteStackTrace>({
+      type: RequestType.GetWriteStackTrace,
+    });
+    return res.trace;
+  }
+
+  /**
    * Run non-idempotent computation detection.
    * Returns a report of non-idempotent actions found.
    */
-  async detectNonIdempotent(): Promise<SchedulerDiagnosisResult> {
+  async detectNonIdempotent(
+    durationMs?: number,
+  ): Promise<SchedulerDiagnosisResult> {
     const res = await this.#conn.request<RequestType.DetectNonIdempotent>({
       type: RequestType.DetectNonIdempotent,
+      durationMs,
     });
     return res.result;
   }

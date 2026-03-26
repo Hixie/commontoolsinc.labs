@@ -141,6 +141,197 @@ describe("scheduler", () => {
     expect(c.get()).toBe(4);
   });
 
+  it("captures trigger trace for a change and downstream scheduled effects", async () => {
+    runtime.scheduler.enablePullMode();
+
+    const a = runtime.getCell<number>(
+      space,
+      "captures trigger trace source",
+      undefined,
+      tx,
+    );
+    a.set(1);
+    const b = runtime.getCell<number>(
+      space,
+      "captures trigger trace intermediate",
+      undefined,
+      tx,
+    );
+    b.set(0);
+    const c = runtime.getCell<number>(
+      space,
+      "captures trigger trace sink",
+      undefined,
+      tx,
+    );
+    c.set(0);
+    await tx.commit();
+    tx = runtime.edit();
+
+    function computeIntermediate(tx: IExtendedStorageTransaction) {
+      b.withTx(tx).send(
+        (a.withTx(tx).get() ?? 0) + 1,
+      );
+    }
+
+    function effectSink(tx: IExtendedStorageTransaction) {
+      c.withTx(tx).send(
+        b.withTx(tx).get() ?? 0,
+      );
+    }
+
+    runtime.scheduler.subscribe(
+      computeIntermediate,
+      {
+        reads: [a.getAsNormalizedFullLink()],
+        shallowReads: [],
+        writes: [b.getAsNormalizedFullLink()],
+      },
+      { changeGroup: "compute-intermediate-change-group" },
+    );
+    runtime.scheduler.subscribe(
+      effectSink,
+      {
+        reads: [b.getAsNormalizedFullLink()],
+        shallowReads: [],
+        writes: [c.getAsNormalizedFullLink()],
+      },
+      { isEffect: true },
+    );
+
+    await c.pull();
+    expect(c.get()).toBe(2);
+
+    runtime.scheduler.setTriggerTraceEnabled(false);
+    runtime.scheduler.setTriggerTraceEnabled(true);
+
+    a.withTx(tx).send(2);
+    await tx.commit();
+    tx = runtime.edit();
+    await c.pull();
+
+    const trace = runtime.scheduler.getTriggerTrace();
+    const matchingEntry = trace.find((entry) =>
+      entry.triggered.some((record) =>
+        record.actionId === "computeIntermediate" &&
+        record.decision === "mark-dirty" &&
+        record.scheduledEffects.some((effect) =>
+          effect.actionId === "effectSink"
+        )
+      )
+    );
+
+    expect(trace.length).toBeGreaterThan(0);
+    expect(matchingEntry).toBeDefined();
+    const intermediateEntityId = b.getAsNormalizedFullLink().id;
+    expect(
+      trace.some((entry) =>
+        entry.entityId === intermediateEntityId &&
+        entry.writerActionId === "computeIntermediate"
+      ),
+      "captures writer action IDs outside diagnosis mode",
+    ).toBe(true);
+  });
+
+  it("captures exact action runs for one reactive update", async () => {
+    runtime.scheduler.enablePullMode();
+
+    const a = runtime.getCell<number>(
+      space,
+      "captures action run trace source",
+      undefined,
+      tx,
+    );
+    a.set(1);
+    const b = runtime.getCell<number>(
+      space,
+      "captures action run trace intermediate",
+      undefined,
+      tx,
+    );
+    b.set(0);
+    const c = runtime.getCell<number>(
+      space,
+      "captures action run trace sink",
+      undefined,
+      tx,
+    );
+    c.set(0);
+    await tx.commit();
+    tx = runtime.edit();
+
+    function computeIntermediate(tx: IExtendedStorageTransaction) {
+      b.withTx(tx).send(
+        (a.withTx(tx).get() ?? 0) + 1,
+      );
+    }
+
+    function effectSink(tx: IExtendedStorageTransaction) {
+      c.withTx(tx).send(
+        b.withTx(tx).get() ?? 0,
+      );
+    }
+
+    runtime.scheduler.subscribe(
+      computeIntermediate,
+      {
+        reads: [a.getAsNormalizedFullLink()],
+        shallowReads: [],
+        writes: [b.getAsNormalizedFullLink()],
+      },
+    );
+    runtime.scheduler.subscribe(
+      effectSink,
+      {
+        reads: [b.getAsNormalizedFullLink()],
+        shallowReads: [],
+        writes: [c.getAsNormalizedFullLink()],
+      },
+      { isEffect: true },
+    );
+
+    await c.pull();
+    expect(c.get()).toBe(2);
+
+    runtime.scheduler.setActionRunTraceEnabled(false);
+    runtime.scheduler.setActionRunTraceEnabled(true);
+
+    a.withTx(tx).send(2);
+    await tx.commit();
+    tx = runtime.edit();
+    await c.pull();
+
+    const trace = runtime.scheduler.getActionRunTrace();
+    const computeRuns = trace.filter((entry) =>
+      entry.actionId === "computeIntermediate"
+    );
+    const effectRuns = trace.filter((entry) => entry.actionId === "effectSink");
+
+    expect(trace.length).toBeGreaterThanOrEqual(2);
+    expect(computeRuns.length).toBeGreaterThanOrEqual(1);
+    expect(effectRuns.length).toBeGreaterThanOrEqual(1);
+    expect(computeRuns.at(-1)?.actionType).toBe("computation");
+    expect(effectRuns.at(-1)?.actionType).toBe("effect");
+    expect(computeRuns.at(-1)?.declaredWrites.length).toBe(1);
+    expect(effectRuns.at(-1)?.declaredWrites.length).toBe(1);
+    expect(computeRuns.at(-1)?.actualWrites).toEqual(
+      computeRuns.at(-1)?.declaredWrites,
+    );
+    expect(effectRuns.at(-1)?.actualWrites).toEqual(
+      effectRuns.at(-1)?.declaredWrites,
+    );
+    expect(computeRuns.at(-1)?.declaredWrites[0]).toMatchObject({
+      space,
+      entityId: expect.stringMatching(/^of:/),
+      path: [],
+    });
+    expect(effectRuns.at(-1)?.declaredWrites[0]).toMatchObject({
+      space,
+      entityId: expect.stringMatching(/^of:/),
+      path: [],
+    });
+  });
+
   it("should remove actions", async () => {
     let runCount = 0;
     const a = runtime.getCell<number>(

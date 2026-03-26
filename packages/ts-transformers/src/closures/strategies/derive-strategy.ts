@@ -520,10 +520,9 @@ export function transformDeriveCall(
   );
 
   // Build the derive call expression
-  const deriveExpr = context.ctHelpers.getHelperExpr("derive");
-
-  const newDeriveCall = factory.createCallExpression(
-    deriveExpr,
+  const newDeriveCall = context.ctHelpers.createHelperCall(
+    "derive",
+    deriveCall,
     hasTypeParameter
       ? undefined
       : (resultTypeNode ? [inputTypeNode, resultTypeNode] : [inputTypeNode]),

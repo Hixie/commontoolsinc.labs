@@ -37,15 +37,64 @@ export class CTHelpers {
 
   // Returns an PropertyAccessExpression of the requested
   // helper name e.g. `(__ctHelpers.derive)`.
+  preserveNodeSourceMap<T extends ts.Node>(
+    node: T,
+    originalNode: ts.Node,
+    identityNode?: ts.Node,
+  ): T {
+    const sourceMapRange = ts.getSourceMapRange(originalNode) ?? originalNode;
+    const preserved = ts.setSourceMapRange(node, sourceMapRange);
+    return identityNode
+      ? ts.setOriginalNode(preserved, identityNode) as T
+      : preserved as T;
+  }
+
   getHelperExpr(
     name: string,
+    originalNode?: ts.Node,
   ): ts.PropertyAccessExpression {
     if (!this.sourceHasHelpers()) {
       throw new Error("Source file does not contain helpers.");
     }
-    return this.#factory.createPropertyAccessExpression(
+
+    if (!originalNode) {
+      return this.#factory.createPropertyAccessExpression(
+        this.#helperIdent!,
+        name,
+      );
+    }
+
+    const helperIdent = this.preserveNodeSourceMap(
+      this.#factory.createIdentifier(this.#helperIdent!.text),
+      originalNode,
       this.#helperIdent!,
-      name,
+    );
+    const helperName = this.preserveNodeSourceMap(
+      this.#factory.createIdentifier(name),
+      originalNode,
+    );
+    return this.preserveNodeSourceMap(
+      this.#factory.createPropertyAccessExpression(
+        helperIdent,
+        helperName,
+      ),
+      originalNode,
+    );
+  }
+
+  createHelperCall(
+    name: string,
+    originalNode: ts.Node,
+    typeArguments: readonly ts.TypeNode[] | undefined,
+    argumentsArray: readonly ts.Expression[],
+  ): ts.CallExpression {
+    return this.preserveNodeSourceMap(
+      this.#factory.createCallExpression(
+        this.getHelperExpr(name, originalNode),
+        typeArguments,
+        argumentsArray,
+      ),
+      originalNode,
     );
   }
 

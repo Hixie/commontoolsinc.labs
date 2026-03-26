@@ -65,6 +65,50 @@ import { popFrame, pushFrame } from "./builder/pattern.ts";
 import type { Frame } from "./builder/types.ts";
 import type { ConsoleMessage } from "./interface.ts";
 import type { CachedCompiler } from "./compilation-cache/mod.ts";
+import type {
+  WriteStackTraceEntry,
+  WriteStackTraceMatcher,
+} from "./storage/write-stack-trace.ts";
+import {
+  getWriteStackTrace,
+  setWriteStackTraceMatchers,
+} from "./storage/write-stack-trace.ts";
+
+interface WriteDebugContextStore<T> {
+  getStore(): T | undefined;
+  run<R>(value: T, fn: () => R): R;
+}
+
+class FallbackAsyncLocalStorage<T> implements WriteDebugContextStore<T> {
+  #store: T | undefined;
+
+  getStore(): T | undefined {
+    return this.#store;
+  }
+
+  run<R>(value: T, fn: () => R): R {
+    const previous = this.#store;
+    this.#store = value;
+    try {
+      const result = fn();
+      if (result instanceof Promise) {
+        return result.finally(() => {
+          this.#store = previous;
+        }) as R;
+      }
+      this.#store = previous;
+      return result;
+    } catch (error) {
+      this.#store = previous;
+      throw error;
+    }
+  }
+}
+
+const WriteDebugContextStorage = isDeno()
+  ? (await import("node:async_hooks"))
+    .AsyncLocalStorage as new <T>() => WriteDebugContextStore<T>
+  : FallbackAsyncLocalStorage;
 
 // @ts-ignore - This is temporary to debug integration test
 Error.stackTraceLimit = 500;
@@ -211,6 +255,7 @@ export class Runtime {
   readonly userIdentityDID: DID;
   private defaultFrame?: Frame;
   private queues = new Map<string, AsyncSemaphoreQueue>();
+  private writeDebugContext = new WriteDebugContextStorage<string>();
 
   constructor(options: RuntimeOptions) {
     this.experimental = {
@@ -432,7 +477,34 @@ export class Runtime {
     if (options.changeGroup !== undefined) {
       tx.changeGroup = options.changeGroup;
     }
+    (tx as { writeTraceScopeId?: string }).writeTraceScopeId = this.id;
+    const debugActionId = this.getWriteDebugContext();
+    if (debugActionId) {
+      (tx as { debugActionId?: string }).debugActionId = debugActionId;
+    }
     return new ExtendedStorageTransaction(tx);
+  }
+
+  getWriteDebugContext(): string | undefined {
+    return this.writeDebugContext.getStore() ?? this.scheduler.currentActionId;
+  }
+
+  withWriteDebugContext<T>(
+    label: string | undefined,
+    fn: () => T,
+  ): T {
+    if (!label) {
+      return fn();
+    }
+    return this.writeDebugContext.run(label, fn);
+  }
+
+  setWriteStackTraceMatchers(matchers: WriteStackTraceMatcher[]): void {
+    setWriteStackTraceMatchers(matchers, { scopeId: this.id });
+  }
+
+  getWriteStackTrace(): WriteStackTraceEntry[] {
+    return getWriteStackTrace({ scopeId: this.id });
   }
 
   /**

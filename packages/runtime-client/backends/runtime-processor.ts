@@ -37,6 +37,7 @@ import {
   parseLink,
 } from "../../runner/src/link-utils.ts";
 import {
+  type ActionRunTraceResponse,
   BooleanResponse,
   type CellGetRequest,
   type CellResolveAsCellRequest,
@@ -48,10 +49,15 @@ import {
   type DetectNonIdempotentRequest,
   type DetectNonIdempotentResponse,
   type EnsureHomePatternRunningRequest,
+  type GetActionRunTraceRequest,
   type GetCellRequest,
   GetGraphSnapshotRequest,
   type GetHomeSpaceCellRequest,
   type GetLoggerCountsRequest,
+  type GetSettleStatsHistoryRequest,
+  type GetSettleStatsRequest,
+  type GetTriggerTraceRequest,
+  type GetWriteStackTraceRequest,
   GraphSnapshotResponse,
   type InitializationData,
   IPCClientRequest,
@@ -69,14 +75,22 @@ import {
   type PageStopRequest,
   type RecreateSpaceRootPatternRequest,
   RequestType,
+  type SetActionRunTraceEnabledRequest,
   type SetLoggerEnabledRequest,
   type SetLoggerLevelRequest,
   type SetPullModeRequest,
+  type SetSettleStatsEnabledRequest,
   type SetTelemetryEnabledRequest,
+  type SettleStatsHistoryResponse,
+  type SettleStatsResponse,
+  type SetTriggerTraceEnabledRequest,
+  type SetWriteStackTraceMatchersRequest,
+  type TriggerTraceResponse,
   type VDomEventRequest,
   type VDomMountRequest,
   type VDomMountResponse,
   type VDomUnmountRequest,
+  type WriteStackTraceResponse,
 } from "../protocol/mod.ts";
 import { HttpProgramResolver, Program } from "@commontools/js-compiler";
 import { setLLMUrl } from "@commontools/llm";
@@ -302,24 +316,36 @@ export class RuntimeProcessor {
 
       navigateCallback: (target) => {
         const link = parseLink(target.getAsLink()) as NormalizedFullLink;
+        const writeContext = runtime.getWriteDebugContext();
         // Add to the space's piece list here if it's from the
         // same space.
         if (link.space !== space) {
           console.warn("Navigating cross-space, not adding to pieces list.");
         } else {
-          pieceManager!.add([target]);
+          void runtime.withWriteDebugContext(
+            writeContext,
+            () => pieceManager!.add([target]),
+          ).catch((e: unknown) => {
+            console.error(
+              "[RuntimeProcessor] Failed to add navigated piece:",
+              {
+                error: e instanceof Error ? e.message : e,
+              },
+            );
+          });
 
           // Track as recently used (async, fire-and-forget)
-          RuntimeProcessor.trackRecentPiece(pieceManager!, target).catch(
-            (e: unknown) => {
-              console.error(
-                "[RuntimeProcessor] Failed to track recent piece:",
-                {
-                  error: e instanceof Error ? e.message : e,
-                },
-              );
-            },
-          );
+          void runtime.withWriteDebugContext(
+            writeContext,
+            () => RuntimeProcessor.trackRecentPiece(pieceManager!, target),
+          ).catch((e: unknown) => {
+            console.error(
+              "[RuntimeProcessor] Failed to track recent piece:",
+              {
+                error: e instanceof Error ? e.message : e,
+              },
+            );
+          });
         }
 
         self.postMessage({
@@ -329,7 +355,20 @@ export class RuntimeProcessor {
       },
 
       pieceCreatedCallback: (piece) => {
-        pieceManager?.add([piece]);
+        const writeContext = runtime.getWriteDebugContext();
+        const manager = pieceManager;
+        if (!manager) return;
+        void runtime.withWriteDebugContext(
+          writeContext,
+          () => manager.add([piece]),
+        ).catch((e: unknown) => {
+          console.error(
+            "[RuntimeProcessor] Failed to add created piece:",
+            {
+              error: e instanceof Error ? e.message : e,
+            },
+          );
+        });
       },
 
       errorHandlers: [
@@ -351,8 +390,9 @@ export class RuntimeProcessor {
       throw new Error(`Could not connect to "${data.apiUrl}"`);
     }
 
+    // Allow the worker to acknowledge initialization immediately. Consumers
+    // that need storage/piece-manager convergence should call `synced()`.
     pieceManager = new PieceManager(session, runtime);
-    await pieceManager.synced();
     const cc = new PiecesController(pieceManager);
 
     return new RuntimeProcessor(
@@ -750,10 +790,76 @@ export class RuntimeProcessor {
   }
 
   async detectNonIdempotent(
-    _request: DetectNonIdempotentRequest,
+    request: DetectNonIdempotentRequest,
   ): Promise<DetectNonIdempotentResponse> {
-    const result = await this.runtime.scheduler.runIdempotencyCheck();
+    const result = await this.runtime.scheduler.runDiagnosis(
+      request.durationMs,
+    );
     return { result };
+  }
+
+  getSettleStats(
+    _request: GetSettleStatsRequest,
+  ): SettleStatsResponse {
+    return {
+      stats: this.runtime.scheduler.getSettleStats(),
+    };
+  }
+
+  getSettleStatsHistory(
+    _request: GetSettleStatsHistoryRequest,
+  ): SettleStatsHistoryResponse {
+    return {
+      history: this.runtime.scheduler.getSettleStatsHistory(),
+    };
+  }
+
+  setSettleStatsEnabled(
+    request: SetSettleStatsEnabledRequest,
+  ): void {
+    this.runtime.scheduler.setSettleStatsEnabled(request.enabled);
+  }
+
+  getActionRunTrace(
+    _request: GetActionRunTraceRequest,
+  ): ActionRunTraceResponse {
+    return {
+      trace: this.runtime.scheduler.getActionRunTrace(),
+    };
+  }
+
+  setActionRunTraceEnabled(
+    request: SetActionRunTraceEnabledRequest,
+  ): void {
+    this.runtime.scheduler.setActionRunTraceEnabled(request.enabled);
+  }
+
+  getTriggerTrace(
+    _request: GetTriggerTraceRequest,
+  ): TriggerTraceResponse {
+    return {
+      trace: this.runtime.scheduler.getTriggerTrace(),
+    };
+  }
+
+  setTriggerTraceEnabled(
+    request: SetTriggerTraceEnabledRequest,
+  ): void {
+    this.runtime.scheduler.setTriggerTraceEnabled(request.enabled);
+  }
+
+  getWriteStackTrace(
+    _request: GetWriteStackTraceRequest,
+  ): WriteStackTraceResponse {
+    return {
+      trace: this.runtime.getWriteStackTrace(),
+    };
+  }
+
+  setWriteStackTraceMatchers(
+    request: SetWriteStackTraceMatchersRequest,
+  ): void {
+    this.runtime.setWriteStackTraceMatchers(request.matchers);
   }
 
   async handleRequest(
@@ -820,6 +926,24 @@ export class RuntimeProcessor {
         return this.setTelemetryEnabled(request);
       case RequestType.ResetLoggerBaselines:
         return this.resetLoggerBaselines(request);
+      case RequestType.GetSettleStats:
+        return this.getSettleStats(request);
+      case RequestType.GetSettleStatsHistory:
+        return this.getSettleStatsHistory(request);
+      case RequestType.SetSettleStatsEnabled:
+        return this.setSettleStatsEnabled(request);
+      case RequestType.GetActionRunTrace:
+        return this.getActionRunTrace(request);
+      case RequestType.SetActionRunTraceEnabled:
+        return this.setActionRunTraceEnabled(request);
+      case RequestType.GetTriggerTrace:
+        return this.getTriggerTrace(request);
+      case RequestType.SetTriggerTraceEnabled:
+        return this.setTriggerTraceEnabled(request);
+      case RequestType.GetWriteStackTrace:
+        return this.getWriteStackTrace(request);
+      case RequestType.SetWriteStackTraceMatchers:
+        return this.setWriteStackTraceMatchers(request);
       case RequestType.DetectNonIdempotent:
         return await this.detectNonIdempotent(request);
       case RequestType.VDomEvent:

@@ -141,6 +141,199 @@ await commontools.rt.setLoggerLevel("debug")         // all loggers
 await commontools.rt.setLoggerLevel("debug", "runner") // specific logger
 await commontools.rt.setLoggerEnabled(true)            // enable all
 await commontools.rt.setLoggerEnabled(false, "runner") // disable one
+
+// Focus on nested piece/materialization runs
+await commontools.rt.setLoggerEnabled(true, "runner.trigger-flow")
+await commontools.rt.setLoggerLevel("debug", "runner.trigger-flow")
+
+// Focus on wish() branch choice and query resolution
+await commontools.rt.setLoggerEnabled(true, "runner.wish-flow")
+await commontools.rt.setLoggerLevel("debug", "runner.wish-flow")
+
+// See which raw stack frame was sampled for action/module labels
+await commontools.rt.setLoggerEnabled(true, "builder.source-location")
+await commontools.rt.setLoggerLevel("debug", "builder.source-location")
+```
+
+## Worker Settle Stats
+
+Capture per-`execute()` settle-loop stats from the worker scheduler:
+
+```javascript
+// Enable settle stats collection
+await commontools.rt.setSettleStatsEnabled(true)
+
+// Inspect the most recent execute() settle data
+await commontools.rt.getSettleStats()
+// {
+//   iterations: [
+//     {
+//       workSetSize: 27,
+//       orderSize: 27,
+//       actionsRun: 27,
+//       actions: [{ id, type }, ...],
+//       durationMs: 348.4
+//     },
+//     ...
+//   ],
+//   totalDurationMs: 702.9,
+//   settledEarly: true,
+//   initialSeedCount: 0
+// }
+
+// Disable collection and clear the last captured value
+await commontools.rt.setSettleStatsEnabled(false)
+```
+
+If you need the recent wave sequence rather than just the last settle result,
+read the bounded history buffer:
+
+```javascript
+await commontools.rt.setSettleStatsEnabled(true)
+await commontools.rt.getSettleStatsHistory()
+// [
+//   { recordedAt, stats: { ... } },
+//   { recordedAt, stats: { ... } },
+//   ...
+// ]
+```
+
+`getSettleStats()` still returns only the **last** `execute()` call, so a
+trailing empty settle pass can overwrite the interesting interaction. Prefer
+`getSettleStatsHistory()` for note creation, reload, or navigation flows.
+
+If you need live sampling while the interaction is still in progress, polling is
+still useful:
+
+```javascript
+await commontools.rt.setSettleStatsEnabled(true)
+
+globalThis.__settleSamples = []
+globalThis.__lastSettleSig = null
+globalThis.__settlePoll = setInterval(() => {
+  void commontools.rt.getSettleStats().then((stats) => {
+    const sig = JSON.stringify(stats)
+    if (sig !== globalThis.__lastSettleSig) {
+      globalThis.__lastSettleSig = sig
+      globalThis.__settleSamples.push({ at: performance.now(), stats })
+    }
+  })
+}, 25)
+
+// ... perform the interaction ...
+
+clearInterval(globalThis.__settlePoll)
+globalThis.__settleSamples
+```
+
+## Worker Action Run Trace
+
+Capture the exact action ids that actually ran during one interaction:
+
+```javascript
+// Reset and enable exact action-run tracing
+await commontools.rt.setActionRunTraceEnabled(false)
+await commontools.rt.setActionRunTraceEnabled(true)
+
+// ... perform the interaction ...
+
+await commontools.rt.idle()
+const trace = await commontools.rt.getActionRunTrace()
+trace.slice(-10)
+```
+
+Each trace entry contains:
+
+- `recordedAt`
+- `actionId`
+- `actionType` (`"computation"` or `"effect"`)
+- `parentActionId` when the scheduler knows the caller
+- `durationMs`
+
+To group by exact action id:
+
+```javascript
+const trace = await commontools.rt.getActionRunTrace()
+const counts = new Map()
+
+for (const entry of trace) {
+  const row = counts.get(entry.actionId) ?? {
+    actionType: entry.actionType,
+    count: 0,
+    totalDurationMs: 0,
+  }
+  row.count += 1
+  row.totalDurationMs += entry.durationMs
+  counts.set(entry.actionId, row)
+}
+
+[...counts.entries()]
+  .map(([actionId, row]) => ({
+    actionId,
+    actionType: row.actionType,
+    count: row.count,
+    totalDurationMs: Number(row.totalDurationMs.toFixed(1)),
+  }))
+  .sort((a, b) => b.count - a.count || b.totalDurationMs - a.totalDurationMs)
+  .slice(0, 20)
+```
+
+To disable tracing and clear the ring buffer:
+
+```javascript
+await commontools.rt.setActionRunTraceEnabled(false)
+```
+
+## Worker Trigger Trace
+
+Capture structured change-to-action scheduling data from the worker scheduler:
+
+```javascript
+// Reset and enable trigger tracing
+await commontools.rt.setTriggerTraceEnabled(false)
+await commontools.rt.setTriggerTraceEnabled(true)
+
+// ... perform the interaction ...
+
+// Read the bounded ring buffer
+const trace = await commontools.rt.getTriggerTrace()
+trace.slice(-5)
+```
+
+Each trace entry contains:
+
+- the changed `space`, `entityId`, and `path`
+- compact `before` / `after` value summaries
+- the scheduling mode (`push` or `pull`)
+- the source writer action id when available
+- each directly triggered action, its scheduling decision, and any downstream
+  scheduled effects
+
+To find repeated actions quickly:
+
+```javascript
+const trace = await commontools.rt.getTriggerTrace()
+const counts = new Map()
+
+for (const entry of trace) {
+  for (const action of entry.triggered) {
+    counts.set(action.actionId, (counts.get(action.actionId) ?? 0) + 1)
+    for (const effect of action.scheduledEffects) {
+      counts.set(effect.actionId, (counts.get(effect.actionId) ?? 0) + 1)
+    }
+  }
+}
+
+[...counts.entries()]
+  .filter(([, count]) => count > 1)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 10)
+```
+
+To disable tracing and clear the buffer:
+
+```javascript
+await commontools.rt.setTriggerTraceEnabled(false)
 ```
 
 ## Non-Idempotent Detection
@@ -162,6 +355,10 @@ result.cycles          // causal cycles (A -> B -> A)
 result.busyTime        // ms the scheduler was busy during the window
 result.duration        // total wall-clock duration of the diagnosis
 ```
+
+This now runs a real timed diagnosis window in the worker. In the settle-wave
+investigation, a 3-second note-creation window reported `busyTime` around
+`1062 ms` with no non-idempotent actions or cycles.
 
 The same functionality is available via `RuntimeClient`:
 
@@ -207,7 +404,8 @@ a piece, debugging reactivity issues, or watching values change in real time.
 
 All three functions default `space` to the current shell space and `did` to
 the piece ID from the URL bar (`/<spaceName>/<pieceId>`). Override any default
-by passing an options object.
+by passing an options object. If you already have a full trigger-trace entity
+id such as `of:baedrei...`, pass it as `id`.
 
 ### readCell
 
@@ -225,6 +423,12 @@ await commontools.readCell({
   space: "did:key:z6Mkm...",
   did: "baedrei...",
   path: ["$UI"]
+})
+
+// Read a trigger-trace entity directly using its full id
+await commontools.readCell({
+  space: "did:key:z6Mkm...",
+  id: "of:baedrei..."
 })
 ```
 
@@ -260,6 +464,95 @@ const cancelVariant = commontools.subscribeToCell({
 
 // Clean up
 cancelVariant()
+```
+
+### explainTriggerTrace
+
+Group recent trigger-trace entries, resolve the hottest changed cells, and add
+semantic summaries for the current values.
+
+```javascript
+await commontools.explainTriggerTrace()
+
+// Focus on broad root writes only
+await commontools.explainTriggerTrace({ rootOnly: true })
+
+// Limit how many hot changes are resolved
+await commontools.explainTriggerTrace({ limit: 5 })
+
+// Include the full current values in the returned result
+await commontools.explainTriggerTrace({ includeCurrentValue: true })
+```
+
+This helper:
+
+- groups `commontools.rt.getTriggerTrace()` by exact `space/entity/path`
+- counts direct action schedules and downstream scheduled effects
+- reads the hottest changed cells through `CellHandle`
+- annotates them with shape hints like `ui-result`, `runtime-process-cell`,
+  `default-app-or-home-state`, and `index-state`
+
+### watchWrites / getWriteStackTrace
+
+Arm a transaction-level write watcher for exact or prefix-matched logical cell
+paths, then inspect the captured stacks after the interaction.
+
+For accumulation tests, keep the same space across runs instead of creating a
+fresh one each time. In the integration harness, set `SPACE_NAME=...` so note
+creation keeps adding to one existing space.
+
+```javascript
+// Watch all root writes in the current shell space
+await commontools.watchWrites({
+  space: commontools.space,
+  path: [],
+  match: "exact",
+  label: "root writes in current space"
+})
+
+// ... perform the interaction ...
+
+const trace = await commontools.getWriteStackTrace()
+trace.slice(-5)
+```
+
+To watch one specific changed cell from trigger trace:
+
+```javascript
+await commontools.watchWrites({
+  space: "did:key:z6Mkm...",
+  id: "of:baedrei...",
+  path: [],
+  match: "exact",
+  label: "default-app state"
+})
+```
+
+Each recorded entry includes:
+
+- the matched `space`, `entityId`, and logical `path`
+- the match mode and optional label
+- the written value kind
+- the captured JavaScript stack at the transaction write callsite
+
+Interpret repeated root writes in this order:
+
+- `setup:setSourceCell`: initial result-cell to process-cell linkage
+- `setup:setRawUntyped`: initial process-cell or result-cell materialization
+- `raw:setRawUntyped`: raw builtin/helper rewriting a result cell directly
+
+If you want immediate log output instead of post-hoc inspection, enable the
+focused worker logger before replaying the interaction:
+
+```javascript
+await commontools.rt.setLoggerEnabled(true, "storage.write-trace")
+await commontools.rt.setLoggerLevel("warn", "storage.write-trace")
+```
+
+Disable the watcher and clear the buffer by passing an empty matcher list:
+
+```javascript
+await commontools.watchWrites([])
 ```
 
 ### Agent-Browser Usage
@@ -307,6 +600,15 @@ agent-browser eval "window._cancel()"
 | `commontools.rt.setLoggerLevel(lvl, name?)` | Set worker logger level |
 | `commontools.rt.setLoggerEnabled(on, name?)` | Enable/disable worker logger |
 | `commontools.rt.getLoggerCounts()` | Get worker logger counts/timing/flags |
+| `commontools.rt.setSettleStatsEnabled(on)` | Enable/disable worker settle stats |
+| `commontools.rt.getSettleStats()` | Get the last worker settle stats payload |
+| `commontools.rt.getSettleStatsHistory()` | Get recent worker settle stats history |
+| `commontools.rt.setActionRunTraceEnabled(on)` | Enable/disable exact action-run tracing |
+| `commontools.rt.getActionRunTrace()` | Get recent exact action-run entries |
+| `commontools.rt.setTriggerTraceEnabled(on)` | Enable/disable worker trigger tracing |
+| `commontools.rt.getTriggerTrace()` | Get recent worker trigger-trace entries |
+| `commontools.rt.setWriteStackTraceMatchers(matchers)` | Watch matched transaction writes and clear old entries |
+| `commontools.rt.getWriteStackTrace()` | Get recent transaction write stack traces |
 | `commontools.vdom.renders()` | List active renderings |
 | `commontools.vdom.tree(el?)` | Raw VDOM tree object |
 | `commontools.vdom.dump(el?)` | Pretty-print VDOM tree |
@@ -316,6 +618,9 @@ agent-browser eval "window._cancel()"
 | `commontools.readCell(opts?)` | Read piece output cell (async) |
 | `commontools.readArgumentCell(opts?)` | Read piece argument cell (async) |
 | `commontools.subscribeToCell(opts?)` | Subscribe to cell updates, returns cancel fn |
+| `commontools.watchWrites(opts?)` | Arm transaction write-stack tracing for matched writes |
+| `commontools.getWriteStackTrace()` | Read captured transaction write stacks |
+| `commontools.explainTriggerTrace(opts?)` | Group and annotate hot trigger-trace changes |
 | `commontools.space` | Current space DID |
 | `commontools.detectNonIdempotent(ms?)` | Run non-idempotent diagnosis (default 5s) |
 | `commontools.rt.detectNonIdempotent(ms?)` | Same, via RuntimeClient IPC |

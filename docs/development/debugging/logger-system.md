@@ -74,6 +74,24 @@ await commontools.rt.setLoggerEnabled(true);
 These are used by the debugger UI but can also be called from the browser console
 or application code when you have a `RuntimeClient` reference.
 
+For scheduler churn debugging, prefer targeted loggers before raising the whole
+`scheduler` module:
+
+- `scheduler.trigger-flow` for change matching, trigger decisions, and
+  re-schedule causality
+- `runner.trigger-flow` for nested `Runner.run()`, `setupInternal()`, and
+  `instantiatePatternNode()` activity keyed by the current source action id
+- `runner.wish-flow` for `wish()` query resolution, hashtag-search branches,
+  and whether a call stays on the direct fast path or launches a suggestion
+  pattern
+- `builder.source-location` for the raw stack frame chosen by
+  `getExternalSourceLocation()` and the source-mapped location that became a
+  function/action label
+- `scheduler` for broader settle-loop, debounce, cycle, and execution details
+
+Because logger messages are lazily evaluated, expensive callback payloads only
+run when the logger is enabled and the chosen level will actually emit them.
+
 ## Call Counts
 
 Every log call increments a counter, even when the logger is disabled or the

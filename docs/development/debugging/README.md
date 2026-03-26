@@ -60,12 +60,13 @@ These issues compile without errors but fail at runtime.
 
 - [Logger System](logger-system.md) - Structured logging, levels, counts, timing, flags
 - [Console Commands](console-commands.md) - `globalThis.commontools.*` browser console reference
-  - Includes cell inspection utilities (`readCell`, `readArgumentCell`, `subscribeToCell`)
+  - Includes cell inspection utilities (`readCell`, `readArgumentCell`, `subscribeToCell`, `watchWrites`, `explainTriggerTrace`)
 - [VDOM Debug Helpers](vdom-debug.md) - `commontools.vdom.*` VDOM tree inspection
 
 ### Diagnosis
 
 - [Non-Idempotent Detection](non-idempotent-detection.md) - Detect non-settling computations, cycles, and non-idempotent actions
+- [Debugging Settle Waves](settle-wave-investigation.md) - Worker-focused workflow for tracing fan-out, logger baselines, and next instrumentation
 
 ### Workflows
 

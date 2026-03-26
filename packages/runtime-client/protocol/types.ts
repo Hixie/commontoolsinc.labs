@@ -1,9 +1,15 @@
 import type {
+  ActionRunTraceEntry,
   JSONSchema,
   JSONValue,
   NormalizedFullLink,
   SchedulerDiagnosisResult,
   SchedulerGraphSnapshot,
+  SettleStats,
+  SettleStatsHistoryEntry,
+  TriggerTraceEntry,
+  WriteStackTraceEntry,
+  WriteStackTraceMatcher,
 } from "@commontools/runner/shared";
 import type { DID, KeyPairRaw } from "@commontools/identity";
 import { type Program } from "@commontools/js-compiler/interface";
@@ -43,6 +49,15 @@ export enum RequestType {
   SetLoggerEnabled = "runtime:setLoggerEnabled",
   SetTelemetryEnabled = "runtime:setTelemetryEnabled",
   ResetLoggerBaselines = "runtime:resetLoggerBaselines",
+  GetSettleStats = "runtime:getSettleStats",
+  GetSettleStatsHistory = "runtime:getSettleStatsHistory",
+  SetSettleStatsEnabled = "runtime:setSettleStatsEnabled",
+  GetActionRunTrace = "runtime:getActionRunTrace",
+  SetActionRunTraceEnabled = "runtime:setActionRunTraceEnabled",
+  GetTriggerTrace = "runtime:getTriggerTrace",
+  SetTriggerTraceEnabled = "runtime:setTriggerTraceEnabled",
+  GetWriteStackTrace = "runtime:getWriteStackTrace",
+  SetWriteStackTraceMatchers = "runtime:setWriteStackTraceMatchers",
   DetectNonIdempotent = "runtime:detectNonIdempotent",
 
   // Page operations (main -> worker)
@@ -213,9 +228,69 @@ export interface ResetLoggerBaselinesRequest extends BaseRequest {
   type: RequestType.ResetLoggerBaselines;
 }
 
+export interface GetSettleStatsRequest extends BaseRequest {
+  type: RequestType.GetSettleStats;
+}
+
+export interface SetSettleStatsEnabledRequest extends BaseRequest {
+  type: RequestType.SetSettleStatsEnabled;
+  enabled: boolean;
+}
+
+export interface GetSettleStatsHistoryRequest extends BaseRequest {
+  type: RequestType.GetSettleStatsHistory;
+}
+
+export interface GetActionRunTraceRequest extends BaseRequest {
+  type: RequestType.GetActionRunTrace;
+}
+
+export interface SetActionRunTraceEnabledRequest extends BaseRequest {
+  type: RequestType.SetActionRunTraceEnabled;
+  enabled: boolean;
+}
+
+export interface GetTriggerTraceRequest extends BaseRequest {
+  type: RequestType.GetTriggerTrace;
+}
+
+export interface SetTriggerTraceEnabledRequest extends BaseRequest {
+  type: RequestType.SetTriggerTraceEnabled;
+  enabled: boolean;
+}
+
+export interface GetWriteStackTraceRequest extends BaseRequest {
+  type: RequestType.GetWriteStackTrace;
+}
+
+export interface SetWriteStackTraceMatchersRequest extends BaseRequest {
+  type: RequestType.SetWriteStackTraceMatchers;
+  matchers: WriteStackTraceMatcher[];
+}
+
 export interface DetectNonIdempotentRequest extends BaseRequest {
   type: RequestType.DetectNonIdempotent;
   durationMs?: number;
+}
+
+export interface SettleStatsResponse {
+  stats: SettleStats | null;
+}
+
+export interface SettleStatsHistoryResponse {
+  history: SettleStatsHistoryEntry[];
+}
+
+export interface ActionRunTraceResponse {
+  trace: ActionRunTraceEntry[];
+}
+
+export interface TriggerTraceResponse {
+  trace: TriggerTraceEntry[];
+}
+
+export interface WriteStackTraceResponse {
+  trace: WriteStackTraceEntry[];
 }
 
 export interface DetectNonIdempotentResponse {
@@ -423,6 +498,15 @@ export type IPCClientRequest =
   | SetLoggerEnabledRequest
   | SetTelemetryEnabledRequest
   | ResetLoggerBaselinesRequest
+  | GetSettleStatsRequest
+  | GetSettleStatsHistoryRequest
+  | SetSettleStatsEnabledRequest
+  | GetActionRunTraceRequest
+  | SetActionRunTraceEnabledRequest
+  | GetTriggerTraceRequest
+  | SetTriggerTraceEnabledRequest
+  | GetWriteStackTraceRequest
+  | SetWriteStackTraceMatchersRequest
   | IdleRequest
   | PageCreateRequest
   | PageGetSpaceDefault
@@ -552,6 +636,11 @@ export type RemoteResponse =
   | CellResponse
   | GraphSnapshotResponse
   | LoggerCountsResponse
+  | SettleStatsResponse
+  | SettleStatsHistoryResponse
+  | ActionRunTraceResponse
+  | TriggerTraceResponse
+  | WriteStackTraceResponse
   | PageResponse
   | VDomMountResponse
   | DetectNonIdempotentResponse;
@@ -615,6 +704,42 @@ export type Commands = {
   };
   [RequestType.ResetLoggerBaselines]: {
     request: ResetLoggerBaselinesRequest;
+    response: EmptyResponse;
+  };
+  [RequestType.GetSettleStats]: {
+    request: GetSettleStatsRequest;
+    response: SettleStatsResponse;
+  };
+  [RequestType.GetSettleStatsHistory]: {
+    request: GetSettleStatsHistoryRequest;
+    response: SettleStatsHistoryResponse;
+  };
+  [RequestType.SetSettleStatsEnabled]: {
+    request: SetSettleStatsEnabledRequest;
+    response: EmptyResponse;
+  };
+  [RequestType.GetActionRunTrace]: {
+    request: GetActionRunTraceRequest;
+    response: ActionRunTraceResponse;
+  };
+  [RequestType.SetActionRunTraceEnabled]: {
+    request: SetActionRunTraceEnabledRequest;
+    response: EmptyResponse;
+  };
+  [RequestType.GetTriggerTrace]: {
+    request: GetTriggerTraceRequest;
+    response: TriggerTraceResponse;
+  };
+  [RequestType.SetTriggerTraceEnabled]: {
+    request: SetTriggerTraceEnabledRequest;
+    response: EmptyResponse;
+  };
+  [RequestType.GetWriteStackTrace]: {
+    request: GetWriteStackTraceRequest;
+    response: WriteStackTraceResponse;
+  };
+  [RequestType.SetWriteStackTraceMatchers]: {
+    request: SetWriteStackTraceMatchersRequest;
     response: EmptyResponse;
   };
   // Cell requests

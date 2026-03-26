@@ -75,10 +75,10 @@ function createComputedToDeriveVisitor(
     // Transform: computed(() => expr) → derive({}, () => expr)
     // Keep the zero-parameter callback as-is
     // Always use __ctHelpers.derive for safety (it's always available via cts-enable)
-    const deriveCall = factory.updateCallExpression(
+    const preservedDeriveCall = context.ctHelpers.createHelperCall(
+      "derive",
       node,
-      context.ctHelpers.getHelperExpr("derive"),
-      node.typeArguments, // Preserve type arguments (if any)
+      node.typeArguments,
       [
         factory.createObjectLiteralExpression([], false), // First arg: empty object {}
         callback, // Second arg: original callback (unchanged)
@@ -86,7 +86,18 @@ function createComputedToDeriveVisitor(
     );
 
     // Visit children to transform any nested computed() calls
-    const visitedDeriveCall = ts.visitEachChild(deriveCall, visitor, tsContext);
+    const visitedDeriveCall = ts.visitEachChild(
+      preservedDeriveCall,
+      visitor,
+      tsContext,
+    );
+    const preservedVisitedDeriveCall = ts.setOriginalNode(
+      ts.setSourceMapRange(
+        ts.setTextRange(visitedDeriveCall, node),
+        ts.getSourceMapRange(node) ?? node,
+      ),
+      node,
+    );
 
     // Transfer type from original computed() call to the visited derive call
     // (ts.visitEachChild creates new nodes, so register on the visited node)
@@ -94,7 +105,7 @@ function createComputedToDeriveVisitor(
       const computedType = context.options.typeRegistry.get(node);
       if (computedType) {
         registerDeriveCallType(
-          visitedDeriveCall,
+          preservedVisitedDeriveCall,
           undefined, // resultTypeNode - not needed since we have resultType
           computedType, // resultType from the computed call
           checker,
@@ -105,9 +116,9 @@ function createComputedToDeriveVisitor(
 
     // Set parent pointers on the visited result since ts.visitEachChild creates
     // new nodes. This maintains the parent chain for nested callback analysis.
-    setParentPointers(visitedDeriveCall, node.parent);
+    setParentPointers(preservedVisitedDeriveCall, node.parent);
 
-    return visitedDeriveCall;
+    return preservedVisitedDeriveCall;
   };
 
   return visitor;

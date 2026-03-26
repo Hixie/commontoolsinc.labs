@@ -111,8 +111,10 @@ export class XRootView extends BaseView {
         }
         globalThis.commontools.rt = this.runtime;
         globalThis.commontools.vdom = createVDomDebugHelpers();
-        globalThis.commontools.detectNonIdempotent = async () => {
-          const result = await rt.runtime().detectNonIdempotent();
+        globalThis.commontools.detectNonIdempotent = async (
+          durationMs = 5000,
+        ) => {
+          const result = await rt.runtime().detectNonIdempotent(durationMs);
           console.table(
             result.nonIdempotent.map((r: any) => ({
               action: r.actionId,
@@ -132,6 +134,11 @@ export class XRootView extends BaseView {
         globalThis.commontools.readCell = debugUtils.readCell;
         globalThis.commontools.readArgumentCell = debugUtils.readArgumentCell;
         globalThis.commontools.subscribeToCell = debugUtils.subscribeToCell;
+        globalThis.commontools.watchWrites = debugUtils.watchWrites;
+        globalThis.commontools.getWriteStackTrace =
+          debugUtils.getWriteStackTrace;
+        globalThis.commontools.explainTriggerTrace =
+          debugUtils.explainTriggerTrace;
 
         return rt;
       },
