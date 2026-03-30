@@ -724,7 +724,6 @@ export abstract class BaseObjectTraverser {
     } else if (isRecord(doc.value)) {
       // First, see if we need special handling
       if (isPrimitiveCellLink(doc.value)) {
-        // FIXME(@ubik2): A cell link with a schema should go back into traverseSchema behavior
         // Check if target doc is already tracked BEFORE calling getAtPath,
         // since getAtPath/followPointer will add it to schemaTracker
         let alreadyTracked = false;
@@ -770,7 +769,12 @@ export abstract class BaseObjectTraverser {
         // We can follow all the links, since we don't need to track cells
         const [valueDoc, _] = this.getDocAtPath(redirDoc, [], DefaultSelector);
         this.tx.read(valueDoc.address, READ_FOR_SCHEDULING);
-        return this.traverseDAG(valueDoc, defaultValue, itemLink);
+        return this.traverseLinkedDoc(
+          valueDoc,
+          link.schema,
+          defaultValue,
+          itemLink,
+        );
       } else {
         const newValue: Record<string, Immutable<FabricValue>> = {};
         using t = this.tracker.include(doc.value, true, newValue, doc);
@@ -871,6 +875,20 @@ export abstract class BaseObjectTraverser {
     } else {
       return [doc, selector];
     }
+  }
+
+  /**
+   * Traverse a document reached by following a link. The base implementation
+   * always uses traverseDAG; subclasses may override to switch to a
+   * schema-aware traversal when the link carries a schema.
+   */
+  protected traverseLinkedDoc(
+    doc: IMemorySpaceValueAttestation,
+    _linkSchema: JSONSchema | undefined,
+    defaultValue: FabricDatum | undefined,
+    itemLink: NormalizedFullLink | undefined,
+  ): Immutable<FabricValue> {
+    return this.traverseDAG(doc, defaultValue, itemLink);
   }
 }
 
@@ -1539,6 +1557,7 @@ function _combineSchemaUncached(
         ...(Object.keys(mergedDefs).length && { $defs: mergedDefs }),
       };
     } else if (linkSchema.type === "array" && parentSchema.type === "array") {
+      // TODO(@ubik2): We should handle prefixItems
       if (parentSchema.items === undefined) {
         return linkSchema;
       } else if (linkSchema.items === undefined) {
@@ -1782,6 +1801,33 @@ export class SchemaObjectTraverser<V extends FabricDatum>
     TraverseResult<Immutable<FabricValue>>
   > {
     return this.sharedSchemaMemo ?? this.schemaMemo;
+  }
+
+  protected override traverseLinkedDoc(
+    doc: IMemorySpaceValueAttestation,
+    linkSchema: JSONSchema | undefined,
+    defaultValue: FabricDatum | undefined,
+    itemLink: NormalizedFullLink | undefined,
+  ): Immutable<FabricValue> {
+    if (
+      linkSchema !== undefined &&
+      !ContextualFlowControl.isTrueSchema(linkSchema)
+    ) {
+      const { ok, error } = this.traverseWithSchema(doc, linkSchema, itemLink);
+      if (error !== undefined) {
+        logger.debug(
+          "traverse",
+          () => [
+            "traverseLinkedDoc schema traversal failed, link schema:",
+            linkSchema,
+            error,
+          ],
+        );
+        return null;
+      }
+      return ok;
+    }
+    return this.traverseDAG(doc, defaultValue, itemLink);
   }
 
   override traverse(
@@ -2157,9 +2203,25 @@ export class SchemaObjectTraverser<V extends FabricDatum>
       !SchemaObjectTraverser.asCellOrStream(resolved)
     ) {
       const defaultValue = isRecord(resolved) ? resolved["default"] : undefined;
-      // A value of true or {} means we match anything
+      // A value of true or {} means we match anything.
       // Resolve the rest of the doc, and return
       this.tx.read(doc.address, READ_FOR_SCHEDULING); // recursively read this doc
+      if (!this.traverseCells && doc.value !== undefined) {
+        // When not walking cells for scheduling, create a QueryResultProxy
+        // directly instead of pre-traversing the DAG. TransformObjectCreator
+        // ignores the pre-built value for true schemas anyway, so traversal
+        // is wasted work. The proxy reads lazily from the tx on its own.
+        // We don't do this when doc.value is undefined, so we can support
+        // Cell.of, which essentially makes the initial value the default
+        // value. Since the proxy system doesn't interact with the default
+        // value system, we need to bypass that here.
+        const effectiveLink = link ?? getNormalizedLink(doc.address, true);
+        const proxy = this.objectCreator.createObject(
+          { ...effectiveLink, schema: true },
+          doc.value,
+        );
+        return { ok: proxy };
+      }
       return { ok: this.traverseDAG(doc, defaultValue, link) };
     } else if (
       ContextualFlowControl.isFalseSchema(resolved) &&
