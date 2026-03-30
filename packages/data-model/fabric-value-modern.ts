@@ -3,6 +3,7 @@ import {
   FabricInstance,
   type FabricNativeObject,
   FabricPrimitive,
+  FabricSpecialObject,
   type FabricValue,
   type FabricValueLayer,
 } from "./interface.ts";
@@ -11,10 +12,10 @@ import {
   FabricError,
   FabricNativeWrapper,
   FabricRegExp,
-  FabricUint8Array,
   isConvertibleNativeInstance,
   UNSAFE_KEYS,
 } from "./fabric-native-instances.ts";
+import { FabricBytes } from "./fabric-bytes.ts";
 import { NATIVE_TAGS, tagFromNativeValue } from "./native-type-tags.ts";
 import { isArrayWithOnlyIndexProperties } from "./array-utils.ts";
 
@@ -58,6 +59,7 @@ export function shallowFabricFromNativeValueModern(
     case NATIVE_TAGS.EpochNsec:
     case NATIVE_TAGS.EpochDays:
     case NATIVE_TAGS.ContentHash:
+    case NATIVE_TAGS.FabricBytes:
       return value as FabricValueLayer;
 
     case NATIVE_TAGS.Error: {
@@ -89,10 +91,9 @@ export function shallowFabricFromNativeValueModern(
     }
 
     case NATIVE_TAGS.Uint8Array: {
-      // Native Uint8Array instances are wrapped in FabricUint8Array.
-      const wrapped = new FabricUint8Array(value as Uint8Array);
-      if (freeze) Object.freeze(wrapped);
-      return wrapped;
+      // Native Uint8Array instances are wrapped in FabricBytes.
+      // FabricBytes self-freezes in its constructor (FabricPrimitive contract).
+      return new FabricBytes(value as Uint8Array);
     }
 
     case NATIVE_TAGS.Array:
@@ -249,8 +250,7 @@ export function fabricFromNativeValueModern(
  * whose children are all also deep-frozen FabricValues.
  */
 function isDeepFrozenFabricValue(value: unknown): boolean {
-  if (value === null || value === undefined) return true;
-  if (typeof value !== "object") return true; // primitives
+  if (value === null || (typeof value !== "object")) return true; // primitives
   if (!Object.isFrozen(value)) return false;
 
   if (Array.isArray(value)) {
@@ -260,14 +260,17 @@ function isDeepFrozenFabricValue(value: unknown): boolean {
     return true;
   }
 
-  // Special primitives are simple frozen value wrappers.
-  if (value instanceof FabricPrimitive) {
-    return true;
-  }
+  // `FabricPrimitive`s are by definition frozen and have no outbound
+  // references.
+  if (value instanceof FabricPrimitive) return true;
 
-  // FabricInstance -- check if frozen; don't recurse into its properties
-  // (it's a protocol type, not a plain data container).
-  if (value instanceof FabricInstance) return true;
+  // `FabricInstance`s might have references, but -- TODO(@danfuzz) -- we have
+  // no way of handling them yet.
+  if (value instanceof FabricInstance) {
+    throw new Error(
+      `Cannot yet handle instance of class ${value.constructor.name}`,
+    );
+  }
 
   for (const v of Object.values(value)) {
     if (!isDeepFrozenFabricValue(v)) return false;
@@ -346,20 +349,10 @@ function fabricFromNativeValueRichInternal(
     return result as FabricValue;
   }
 
-  // Special primitives are direct FabricDatum members -- always frozen,
-  // pass through as-is regardless of the `freeze` argument.
-  if (value instanceof FabricPrimitive) {
-    if (isOriginalRecord) {
-      converted.set(original, value);
-    }
-    return value as FabricValue;
-  }
-
-  // Other FabricInstance values (Cell, Stream, UnknownValue, etc.)
-  // don't need recursion -- their [DECONSTRUCT] implementations return
-  // proper FabricValue. We do not freeze protocol objects; they are
-  // managed by the caller.
-  if (value instanceof FabricInstance) {
+  // FabricSpecialObject (primitives and protocol types) -- pass through
+  // as-is. Primitives are always frozen; protocol types are managed by
+  // the caller.
+  if (value instanceof FabricSpecialObject) {
     if (isOriginalRecord) {
       converted.set(original, value);
     }
@@ -491,14 +484,8 @@ export function isFabricValueModern(
       if (value === null) {
         return true;
       }
-      // Special primitives are direct FabricDatum members.
-      if (value instanceof FabricPrimitive) {
-        return true;
-      }
-      // FabricInstance values (including FabricError, UnknownValue,
-      // etc.) are accepted -- they are valid FabricValue members via the
-      // FabricInstance arm of FabricDatum.
-      if (value instanceof FabricInstance) {
+      // FabricSpecialObject -- already a valid FabricValue.
+      if (value instanceof FabricSpecialObject) {
         return true;
       }
       if (Array.isArray(value)) {
@@ -525,7 +512,7 @@ export function isFabricValueModern(
 }
 
 // ---------------------------------------------------------------------------
-// canBeStored: deep check for fabric compatibility (FabricValue | FabricNativeObject)
+// canBeStored: deep check for fabric compatibility
 // ---------------------------------------------------------------------------
 
 /**
@@ -538,8 +525,8 @@ export function isFabricValueModern(
  * - `canBeStored(x)` -- "could x be converted to a `FabricValue` via
  *   `fabricFromNativeValue()`?"
  *
- * `canBeStored` additionally accepts `FabricNativeObject` types (Error, Map,
- * Set, Date, Uint8Array, Blob) and objects/functions with `toJSON()` methods
+ * `canBeStored` additionally accepts `FabricNativeObject` types and
+ * objects/functions with `toJSON()` methods
  * that return fabric values. It checks recursively, so all nested values in
  * arrays and objects must also be fabric-compatible or convertible.
  */
@@ -663,6 +650,7 @@ function cloneHelper(
     case NATIVE_TAGS.EpochNsec:
     case NATIVE_TAGS.EpochDays:
     case NATIVE_TAGS.ContentHash:
+    case NATIVE_TAGS.FabricBytes:
       return value;
 
     case NATIVE_TAGS.FabricInstance:
@@ -747,11 +735,10 @@ function canBeStoredInternal(value: unknown, seen: Set<object>): boolean {
     }
 
     case "object": {
-      // FabricInstance values are already FabricValue.
-      if (value instanceof FabricInstance) return true;
+      // FabricSpecialObject -- already a valid FabricValue.
+      if (value instanceof FabricSpecialObject) return true;
 
-      // FabricNativeObject types: Error, Map, Set, Date, Uint8Array.
-      // These would be wrapped by fabricFromNativeValue().
+      // FabricNativeObject types would be wrapped by fabricFromNativeValue().
       if (isConvertibleNativeInstance(value)) {
         return true;
       }
@@ -835,11 +822,9 @@ export function nativeFromFabricValueModern(
     return value.toNativeValue(frozen);
   }
 
-  if (value instanceof FabricPrimitive) {
-    return value;
-  }
-
-  if (value instanceof FabricInstance) return value;
+  // Remaining FabricSpecialObject values (not FabricNativeWrapper) pass
+  // through unchanged.
+  if (value instanceof FabricSpecialObject) return value;
 
   if (value === null || value === undefined || typeof value !== "object") {
     return value;

@@ -10,6 +10,20 @@
  */
 
 // ===========================================================================
+// FabricSpecialObject
+// ===========================================================================
+
+/**
+ * Abstract base class for all fabric-system value types. This is the common
+ * superclass of `FabricInstance` (protocol types with DECONSTRUCT/RECONSTRUCT)
+ * and `FabricPrimitive` (immutable special primitives). It enables a single
+ * `instanceof FabricSpecialObject` check wherever code needs to recognize any
+ * fabric-system value without caring which branch of the hierarchy it
+ * belongs to.
+ */
+export abstract class FabricSpecialObject {}
+
+// ===========================================================================
 // Fabric instance protocol (DECONSTRUCT / RECONSTRUCT / FabricInstance)
 // ===========================================================================
 
@@ -43,7 +57,7 @@ export const RECONSTRUCT: unique symbol = Symbol.for("common.reconstruct");
  * - `shallowClone(false)` always returns a new unfrozen clone -- even if the
  *   instance is already unfrozen. The caller gets a distinct, mutable object.
  */
-export abstract class FabricInstance {
+export abstract class FabricInstance extends FabricSpecialObject {
   /**
    * Returns the essential state of this instance as a `FabricValue`.
    * Implementations must NOT recursively deconstruct nested values -- the
@@ -81,13 +95,12 @@ export abstract class FabricInstance {
 /**
  * Abstract base class for "special primitive" fabric types -- values that
  * behave like primitives in the fabric type system but are represented as
- * class instances for type safety and dispatch. Currently covers temporal
- * types (`FabricEpochNsec`, `FabricEpochDays`) and content IDs
- * (`FabricHash`).
+ * class instances for type safety and dispatch. Covers temporal types,
+ * content IDs, byte sequences, and similar.
  *
- * Analogous to `ExplicitTagValue` (which unifies `UnknownValue` and
- * `ProblematicValue`), this class enables a single `instanceof` check
- * where code needs to handle any special primitive uniformly.
+ * Analogous to `ExplicitTagValue`, this class enables a single
+ * `instanceof` check where code needs to handle any special primitive
+ * uniformly.
  *
  * Instances are always frozen (like true primitives, they are immutable).
  * Each leaf subclass must call `Object.freeze(this)` at the end of its
@@ -96,8 +109,10 @@ export abstract class FabricInstance {
  *
  * See Section 1.4.5 and 1.4.6 of the formal spec.
  */
-export abstract class FabricPrimitive {
-  constructor() {}
+export abstract class FabricPrimitive extends FabricSpecialObject {
+  constructor() {
+    super();
+  }
 }
 
 // ===========================================================================
@@ -122,12 +137,11 @@ export type FabricValue = FabricDatum | undefined;
  *
  *   JavaScript "wild west" (unknown) <-> FabricValue <-> Serialized (Uint8Array)
  *
- * Most native JS object types (`Error`, `Map`, `Set`, `Uint8Array`) enter the
- * fabric layer via wrapper classes that implement `FabricInstance`. However,
- * fabric primitives (`FabricEpochNsec`, `FabricEpochDays`, `FabricHash`) and
- * `bigint` are direct members of `FabricDatum` without implementing
- * `FabricInstance`. Native `Date` is converted to `FabricEpochNsec` during
- * conversion.
+ * Most native JS object types enter the fabric layer via wrapper classes
+ * that implement `FabricInstance`. However, `FabricPrimitive` subclasses
+ * and `bigint` are direct members of `FabricDatum` without implementing
+ * `FabricInstance`. Some native types are converted to fabric primitives
+ * during conversion.
  *
  * `undefined` is preserved when the `modernDataModel` flag is ON. When the
  * flag is OFF, `undefined` in arrays is converted to `null` and `undefined`
@@ -140,14 +154,11 @@ export type FabricDatum =
   | number
   | string
   | bigint
-  // -- Fabric primitives (FabricEpochNsec, FabricEpochDays, FabricHash) --
-  | FabricPrimitive
+  // -- Fabric special objects --
+  | FabricSpecialObject
   // -- Containers --
   | FabricArray
   | FabricObject
-  // -- Protocol types (Cell, Stream, UnknownValue, ProblematicValue,
-  //    and native wrappers like FabricError at runtime) --
-  | FabricInstance
   // -- Extended primitives (experimental: modernDataModel) --
   | undefined;
 
@@ -177,16 +188,13 @@ export type FabricValueLayer =
 
 /**
  * Union of raw native JS **object** types that the fabric type system can
- * convert into `FabricInstance` wrappers. These are the inputs to the
- * "sausage grinder" -- `shallowFabricFromNativeValue()` accepts
- * `FabricValue | FabricNativeObject`, meaning callers can pass in either
- * already-fabric data or raw native JS objects. The conversion produces
- * `FabricInstance` wrappers (FabricError, FabricMap, etc.) that live
- * inside `FabricValue` via the `FabricInstance` arm of `FabricDatum`.
- *
- * `Blob` is included because `FabricUint8Array.toNativeValue(true)` returns
- * a `Blob` (immutable by nature) instead of a `Uint8Array`. The synchronous
- * serialization path throws on `Blob` since its data access methods are async.
+ * convert into `FabricInstance` wrappers or `FabricPrimitive` values. These
+ * are the inputs to the "sausage grinder" -- `shallowFabricFromNativeValue()`
+ * accepts `FabricValue | FabricNativeObject`, meaning callers can pass in
+ * either already-fabric data or raw native JS objects. The conversion
+ * produces `FabricInstance` wrappers or `FabricPrimitive` values that live
+ * inside
+ * `FabricValue` via the corresponding arms of `FabricDatum`.
  *
  * The `{ toJSON(): unknown }` arm covers objects (and functions) that are
  * convertible to fabric form via their `toJSON()` method. This is a legacy
@@ -203,7 +211,6 @@ export type FabricNativeObject =
   | Date
   | RegExp
   | Uint8Array
-  | Blob
   | { toJSON(): unknown };
 
 // ===========================================================================

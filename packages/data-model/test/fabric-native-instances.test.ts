@@ -12,7 +12,6 @@ import {
   FabricMap,
   FabricNativeWrapper,
   FabricSet,
-  FabricUint8Array,
   isConvertibleNativeInstance,
 } from "../fabric-native-instances.ts";
 import { nativeFromFabricValueModern } from "../fabric-value-modern.ts";
@@ -287,7 +286,7 @@ describe("fabric-native-instances", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Stub wrappers (FabricMap, FabricSet, FabricUint8Array)
+  // Stub wrappers
   // --------------------------------------------------------------------------
 
   describe("stub wrappers", () => {
@@ -390,42 +389,6 @@ describe("fabric-native-instances", () => {
       expect(result).toBeInstanceOf(Set);
       expect(result).not.toBeInstanceOf(FrozenSet);
       expect(result.has(1 as FabricValue)).toBe(true);
-    });
-
-    it("FabricUint8Array implements FabricInstance", () => {
-      const su = new FabricUint8Array(new Uint8Array([1, 2, 3]));
-      expect(su instanceof FabricInstance).toBe(true);
-      expect(su.typeTag).toBe("Bytes@1");
-    });
-
-    it("FabricUint8Array [DECONSTRUCT] throws (stub)", () => {
-      const su = new FabricUint8Array(new Uint8Array());
-      expect(() => su[DECONSTRUCT]()).toThrow("not yet implemented");
-    });
-
-    it("FabricUint8Array.toNativeValue(true) returns Blob", () => {
-      const bytes = new Uint8Array([1, 2, 3]);
-      const su = new FabricUint8Array(bytes);
-      const result = su.toNativeValue(true);
-      expect(result).toBeInstanceOf(Blob);
-      expect((result as Blob).size).toBe(3);
-      expect((result as Blob).type).toBe("");
-    });
-
-    it("FabricUint8Array.toNativeValue(true) Blob contains correct data", async () => {
-      const bytes = new Uint8Array([10, 20, 30]);
-      const su = new FabricUint8Array(bytes);
-      const blob = su.toNativeValue(true) as Blob;
-      const buf = await blob.arrayBuffer();
-      expect(new Uint8Array(buf)).toEqual(new Uint8Array([10, 20, 30]));
-    });
-
-    it("FabricUint8Array.toNativeValue(false) returns the original", () => {
-      const bytes = new Uint8Array([1, 2, 3]);
-      const su = new FabricUint8Array(bytes);
-      const result = su.toNativeValue(false);
-      expect(result).toBe(bytes); // same reference
-      expect(result).toBeInstanceOf(Uint8Array);
     });
   });
 
