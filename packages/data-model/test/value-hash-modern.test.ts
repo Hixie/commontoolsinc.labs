@@ -7,7 +7,11 @@ import {
 import { hashOfModern as modernHashRaw } from "../value-hash-modern.ts";
 import { FabricHash } from "../fabric-hash.ts";
 import { FabricEpochDays, FabricEpochNsec } from "../fabric-epoch.ts";
-import { FabricError, FabricUint8Array } from "../fabric-native-instances.ts";
+import {
+  FabricError,
+  FabricRegExp,
+  FabricUint8Array,
+} from "../fabric-native-instances.ts";
 
 // Dynamic import to satisfy the no-external-import lint rule.
 const nodeCrypto = await import("node:crypto");
@@ -1050,6 +1054,123 @@ Deno.test("modernHash caching", async (t) => {
       const a = modernHashRaw("hello");
       const b = modernHashRaw("world");
       assertNotEquals(hex(a.hash), hex(b.hash));
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Native instance hashing (on-the-fly conversion)
+// ---------------------------------------------------------------------------
+
+Deno.test("modernHash native instances", async (t) => {
+  // --- Date ---
+
+  await t.step("native Date hashes without throwing", () => {
+    const date = new Date("2024-01-01T00:00:00Z");
+    const hash = modernHash(date);
+    assertEquals(hash.length, 32);
+  });
+
+  await t.step(
+    "native Date produces same hash as equivalent FabricEpochNsec",
+    () => {
+      const date = new Date("2024-01-01T00:00:00Z");
+      const nsec = BigInt(date.getTime()) * 1_000_000n;
+      const dateHash = hex(modernHash(date));
+      const epochHash = hex(modernHash(new FabricEpochNsec(nsec)));
+      assertEquals(dateHash, epochHash);
+    },
+  );
+
+  await t.step("different Dates produce different hashes", () => {
+    const d1 = new Date("2024-01-01T00:00:00Z");
+    const d2 = new Date("2025-06-15T12:00:00Z");
+    assertNotEquals(hex(modernHash(d1)), hex(modernHash(d2)));
+  });
+
+  // --- RegExp ---
+
+  await t.step("native RegExp hashes without throwing", () => {
+    const re = /hello/gi;
+    const hash = modernHash(re);
+    assertEquals(hash.length, 32);
+  });
+
+  await t.step(
+    "native RegExp produces same hash as equivalent FabricRegExp",
+    () => {
+      const re = /hello/gi;
+      const nativeHash = hex(modernHash(re));
+      const fabricHash = hex(modernHash(new FabricRegExp(re)));
+      assertEquals(nativeHash, fabricHash);
+    },
+  );
+
+  await t.step("different RegExps produce different hashes", () => {
+    const r1 = /foo/;
+    const r2 = /bar/;
+    assertNotEquals(hex(modernHash(r1)), hex(modernHash(r2)));
+  });
+
+  // --- Uint8Array ---
+
+  await t.step("native Uint8Array hashes without throwing", () => {
+    const buf = new Uint8Array([1, 2, 3]);
+    const hash = modernHash(buf);
+    assertEquals(hash.length, 32);
+  });
+
+  await t.step(
+    "native Uint8Array produces same hash as FabricUint8Array with same bytes",
+    () => {
+      const bytes = new Uint8Array([10, 20, 30]);
+      const nativeHash = hex(modernHash(bytes));
+      const fabricHash = hex(modernHash(new FabricUint8Array(bytes)));
+      assertEquals(nativeHash, fabricHash);
+    },
+  );
+
+  await t.step("different Uint8Arrays produce different hashes", () => {
+    const b1 = new Uint8Array([1, 2, 3]);
+    const b2 = new Uint8Array([4, 5, 6]);
+    assertNotEquals(hex(modernHash(b1)), hex(modernHash(b2)));
+  });
+
+  // --- Deferred types (not yet handled — these document known gaps) ---
+
+  await t.step("Map throws (deferred — needs recursive translation)", () => {
+    assertThrows(
+      () => modernHashRaw(new Map([["a", 1]])),
+      Error,
+      "unsupported object type",
+    );
+  });
+
+  await t.step("Set throws (deferred — needs recursive translation)", () => {
+    assertThrows(
+      () => modernHashRaw(new Set([1, 2, 3])),
+      Error,
+      "unsupported object type",
+    );
+  });
+
+  await t.step("Error throws (deferred — needs recursive translation)", () => {
+    assertThrows(
+      () => modernHashRaw(new Error("test")),
+      Error,
+      "unsupported object type",
+    );
+  });
+
+  await t.step(
+    "HasToJSON throws (deferred — needs recursive translation)",
+    () => {
+      const obj = { toJSON: () => "hello" };
+      assertThrows(
+        () => modernHashRaw(obj),
+        Error,
+        "unsupported object type",
+      );
     },
   );
 });

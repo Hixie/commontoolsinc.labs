@@ -14,6 +14,7 @@ import { isDeepFrozen } from "./deep-freeze.ts";
 import { FabricHash } from "./fabric-hash.ts";
 import { FabricUint8Array } from "./fabric-native-instances.ts";
 import { DECONSTRUCT, type FabricInstance } from "./interface.ts";
+import { shallowFabricFromNativeValueModern } from "./fabric-value-modern.ts";
 import { NATIVE_TAGS, tagFromNativeValue } from "./native-type-tags.ts";
 import { encodeULEB128 } from "@commontools/leb128";
 import { bigintToMinimalTwosComplement } from "./bigint-encoding.ts";
@@ -157,17 +158,6 @@ function feedObjectValue(
   hasher: IncrementalHasher,
   value: object,
 ): void {
-  // FabricUint8Array has a dedicated hash encoding (TAG_BYTES) but is a
-  // FabricInstance wrapper, not a native Uint8Array. Handle before the
-  // tagFromNativeValue switch.
-  if (value instanceof FabricUint8Array) {
-    hasher.update(TAG_BYTES_BYTES);
-    const bytes = value.bytes;
-    feedLength(hasher, bytes.length);
-    hasher.update(bytes);
-    return;
-  }
-
   const nativeTag = tagFromNativeValue(value);
 
   switch (nativeTag) {
@@ -211,7 +201,17 @@ function feedObjectValue(
       return;
 
     case NATIVE_TAGS.FabricInstance: {
-      // FabricInstance (generic protocol path via DECONSTRUCT).
+      // FabricUint8Array has a dedicated hash encoding (TAG_BYTES) rather
+      // than the generic FabricInstance DECONSTRUCT path.
+      if (value instanceof FabricUint8Array) {
+        hasher.update(TAG_BYTES_BYTES);
+        const bytes = value.bytes;
+        feedLength(hasher, bytes.length);
+        hasher.update(bytes);
+        return;
+      }
+
+      // Generic FabricInstance (protocol path via DECONSTRUCT).
       hasher.update(TAG_INSTANCE_BYTES);
       const typeTag = (value as { typeTag?: unknown }).typeTag;
       if (typeof typeTag !== "string") {
@@ -227,16 +227,26 @@ function feedObjectValue(
       return;
     }
 
-      // Error, Map, Set, Date, HasToJSON: not valid FabricValue types for
-      // hashing -- they should have been converted before reaching here.
-      // Fall through to the error path below.
-  }
+    case NATIVE_TAGS.Date:
+    case NATIVE_TAGS.RegExp:
+    case NATIVE_TAGS.Uint8Array: {
+      // Native instances that have a well-defined FabricValue conversion.
+      // Convert on-the-fly and hash the converted value.
+      const converted = shallowFabricFromNativeValueModern(value, false);
+      feedValue(hasher, converted);
+      return;
+    }
 
-  throw new Error(
-    `hashOfModern: unsupported object type: ${
-      value?.constructor?.name ?? typeof value
-    }`,
-  );
+    default: {
+      // Nothing else is handled. As of this writing, specifically missing are
+      // `Map`, `Set`, `Error`, and `HasToJSON`.
+      throw new Error(
+        `hashOfModern: unsupported object type: ${
+          value?.constructor?.name ?? typeof value
+        }`,
+      );
+    }
+  }
 }
 
 /**
