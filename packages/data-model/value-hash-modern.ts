@@ -184,11 +184,14 @@ function feedObjectValue(
     case NATIVE_TAGS.ContentHash: {
       const cid = value as FabricHash;
       hasher.update(TAG_CONTENT_HASH_BYTES);
-      const algTagUtf8 = encoder.encode(cid.algorithmTag);
+      const algTagUtf8 = encoder.encode(cid.tag);
       feedLength(hasher, algTagUtf8.length);
       hasher.update(algTagUtf8);
-      feedLength(hasher, cid.hash.length);
-      hasher.update(cid.hash);
+      // TODO(@danfuzz): Look into avoiding making a copy of bytes here.
+      // This could be a performance issue.
+      const cidBytes = cid.bytes;
+      feedLength(hasher, cidBytes.length);
+      hasher.update(cidBytes);
       return;
     }
 
@@ -413,7 +416,7 @@ function hashOfModernInternal(
 /**
  * Compute the canonical SHA-256 hash of a `FabricValue`. Returns a
  * `FabricHash` with algorithm tag `fid1` (fabric ID, v1).
- * The caller (`hashOf()`) extracts the raw digest via `.hash` for
+ * The caller (`hashOf()`) extracts the raw digest via `.bytes` for
  * `Reference.fromDigest()`.
  *
  * Caches results for primitives (LRU) and deep-frozen objects (WeakMap).
