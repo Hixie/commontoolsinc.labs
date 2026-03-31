@@ -20,10 +20,7 @@ import type {
   URI,
   Variant,
 } from "@commontools/memory/interface";
-import type {
-  FabricDatum,
-  FabricValue,
-} from "@commontools/data-model/fabric-value";
+import type { FabricValue } from "@commontools/data-model/fabric-value";
 import { BaseMemoryAddress } from "@commontools/runner/traverse";
 import { Cell } from "../cell.ts";
 
@@ -485,7 +482,7 @@ export interface IStorageTransaction {
    */
   write(
     address: IMemorySpaceAddress,
-    value?: FabricDatum,
+    value?: FabricValue,
   ): Result<IAttestation, WriterError | WriteError>;
 
   /**
@@ -650,7 +647,7 @@ export interface ITransactionWriter extends ITransactionReader {
    */
   write(
     address: IMemoryAddress,
-    value?: FabricDatum,
+    value?: FabricValue,
   ): Result<IAttestation, WriteError>;
 }
 
@@ -787,7 +784,7 @@ export interface IMemoryAddress {
    */
   type: MediaType;
   /**
-   * Intra-value path to the {@link FabricDatum} being referenced by this
+   * Intra-value path to the {@link FabricValue} being referenced by this
    * address. It is a path within the `is` field of the fact in memory protocol.
    */
   path: readonly MemoryAddressPathComponent[];
@@ -802,7 +799,7 @@ export type MemoryAddressPathComponent = string;
 export interface Assert {
   the: MediaType;
   of: URI;
-  is: FabricDatum;
+  is: FabricValue;
 
   claim?: void;
 }
@@ -952,13 +949,13 @@ export interface ITypeMismatchError extends IStorageError {
  */
 export interface IAttestation {
   readonly address: IMemoryAddress;
-  readonly value?: Immutable<FabricDatum>;
+  readonly value?: Immutable<FabricValue>;
 }
 
 // An IAttestation where the address is an IMemorySpaceAddress
 export interface IMemorySpaceAttestation {
   readonly address: IMemorySpaceAddress;
-  readonly value?: Immutable<FabricDatum>;
+  readonly value?: Immutable<FabricValue>;
 }
 
 // Re-export transaction wrapper utilities from implementation

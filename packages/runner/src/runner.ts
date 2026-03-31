@@ -2,10 +2,7 @@ import { hashOf } from "@commontools/data-model/value-hash";
 import { getLogger } from "@commontools/utils/logger";
 import { isRecord, type Mutable } from "@commontools/utils/types";
 import { rendererVDOMSchema } from "./schemas.ts";
-import type {
-  FabricDatum,
-  FabricValue,
-} from "@commontools/data-model/fabric-value";
+import type { FabricValue } from "@commontools/data-model/fabric-value";
 import {
   type Frame,
   isModule,
@@ -178,7 +175,7 @@ export class Runner {
       [TYPE]: string;
       spell?: SigilLink;
       argument?: T;
-      internal?: FabricDatum;
+      internal?: FabricValue;
       resultRef: SigilLink;
     };
 
@@ -308,7 +305,7 @@ export class Runner {
     const internal = Object.assign(
       {},
       cellAwareDeepCopy(
-        (defaults as unknown as { internal: FabricDatum })?.internal,
+        (defaults as unknown as { internal: FabricValue })?.internal,
       ),
       cellAwareDeepCopy(
         isRecord(pattern.initial) && isRecord(pattern.initial.internal)
@@ -316,7 +313,7 @@ export class Runner {
           : {},
       ),
       isRecord(previousInternal) ? previousInternal : {},
-    ) as FabricDatum;
+    ) as FabricValue;
 
     // Still necessary until we consistently use schema for defaults.
     // Only do it on first load.
@@ -1241,9 +1238,7 @@ export class Runner {
     // Check if $event is a stream alias
     let streamLink: NormalizedFullLink | undefined = undefined;
     if (isRecord(inputs) && "$event" in inputs) {
-      let value: FabricDatum | undefined = inputs.$event as
-        | FabricDatum
-        | undefined;
+      let value: FabricValue = inputs.$event as FabricValue;
       while (isWriteRedirectLink(value)) {
         const maybeStreamLink = resolveLink(
           this.runtime,
