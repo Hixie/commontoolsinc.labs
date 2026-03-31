@@ -147,7 +147,15 @@ export class CellController<T> implements ReactiveController {
         this._currentValue.equals(value))
     ) {
       this._cleanupCellSubscription();
-      if (schema !== undefined && value instanceof CellHandle) {
+      // Only apply the component's schema when the CellHandle doesn't already
+      // have one. Pattern-compiled $bindings (e.g. $images, $files) arrive with
+      // a schema from the pattern compiler — overriding it via asSchema() would
+      // create a divergent cell view where component writes and pattern reads
+      // target different schema projections.
+      if (
+        schema !== undefined && value instanceof CellHandle &&
+        !value.ref().schema
+      ) {
         this._currentValue = value.asSchema<T>(schema);
       } else {
         this._currentValue = value;
