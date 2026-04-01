@@ -148,6 +148,7 @@ export declare const ID_FIELD: unique symbol;
 export declare const TYPE: "$TYPE";
 export declare const NAME: "$NAME";
 export declare const UI: "$UI";
+export declare const FS: "$FS";
 
 // Symbol for accessing self-reference in patterns
 export declare const SELF: unique symbol;
@@ -2138,3 +2139,25 @@ export type VNode = {
   children?: RenderNode | undefined;
   [UI]?: VNode;
 };
+
+/**
+ * Filesystem projection for a pattern result. Used with the [FS] symbol.
+ *
+ * - `type: "text/markdown"` — render as `index.md` with YAML frontmatter +
+ *   markdown body. Primitive frontmatter fields go into YAML; complex values
+ *   (arrays of entities, nested objects) become sibling directories.
+ * - `type: "application/json"` — render as `index.json` with `content`.
+ * - Plain object (no `type` field) — shorthand: the object itself becomes the
+ *   content of `index.json`.
+ */
+export type FsProjection =
+  | {
+    type: "text/markdown";
+    frontmatter?: Record<string, unknown>;
+    content: string;
+  }
+  | {
+    type: "application/json";
+    content: Record<string, unknown>;
+  }
+  | { type?: undefined; [key: string]: unknown };

@@ -61,6 +61,88 @@ export function isSigilLink(v: unknown): boolean {
 
 export { isHandlerCell, isStreamValue } from "./callables.ts";
 
+/** Returns true if the value is a VNode (virtual DOM element). */
+export function isVNode(value: unknown): boolean {
+  return typeof value === "object" && value !== null &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).type === "vnode";
+}
+
+/**
+ * Resolved shape of a [FS] projection value, after reading from cells.
+ * Mirrors the FsProjection API type but with the plain-object case
+ * normalized into the explicit application/json form.
+ */
+export type FsValue =
+  | {
+    type: "text/markdown";
+    content: string;
+    frontmatter?: Record<string, unknown>;
+  }
+  | {
+    type: "application/json";
+    content: Record<string, unknown>;
+  };
+
+function isFrontmatterPrimitive(val: unknown): boolean {
+  return val === null || val === undefined || typeof val === "string" ||
+    typeof val === "number" || typeof val === "boolean";
+}
+
+/**
+ * Build a single-file filesystem projection from a [FS] value.
+ *
+ * - text/markdown  → index.md  (YAML frontmatter + body)
+ *   Primitive frontmatter fields go into YAML.
+ *   Complex fields (objects, arrays of entities) become subdirectories
+ *   alongside index.md via `buildSubtree`.
+ * - application/json → index.json (flat JSON object)
+ *
+ * `entityId` is always injected first (read-only field).
+ * Returns the inode of the created file.
+ */
+export function buildFsProjection(
+  tree: FsTree,
+  parentIno: bigint,
+  fsValue: FsValue,
+  entityId: string,
+  buildSubtree?: (parentIno: bigint, name: string, value: unknown) => void,
+): bigint {
+  if (fsValue.type === "text/markdown") {
+    const fmLines: string[] = [`entityId: ${entityId}`];
+    if (fsValue.frontmatter) {
+      for (const [key, val] of Object.entries(fsValue.frontmatter)) {
+        // Skip entityId if pattern accidentally includes it
+        if (key === "entityId") continue;
+        if (isFrontmatterPrimitive(val)) {
+          fmLines.push(`${key}: ${String(val ?? "")}`);
+        } else if (buildSubtree) {
+          // Arrays of entities or nested objects can't be expressed in YAML
+          // frontmatter — render as a sibling directory instead.
+          buildSubtree(parentIno, key, val);
+        }
+      }
+    }
+    const body = String(fsValue.content ?? "");
+    const fileContent = `---\n${fmLines.join("\n")}\n---\n\n${body}`;
+    return tree.addFile(parentIno, "index.md", fileContent, "string");
+  }
+
+  if (fsValue.type === "application/json") {
+    const { entityId: _skipEntityId, ...safeContent } = fsValue.content ?? {};
+    const obj = { entityId, ...safeContent };
+    return tree.addFile(parentIno, "index.json", safeStringify(obj), "object");
+  }
+
+  // Fallback: unknown type
+  return tree.addFile(
+    parentIno,
+    "index.txt",
+    safeStringify(fsValue),
+    "object",
+  );
+}
+
 /** Options for buildJsonTree beyond the required params. */
 export interface BuildJsonTreeOpts {
   seen?: WeakSet<object>;

@@ -22,9 +22,9 @@ import {
   type ExecCommandSpec,
   normalizeCallableInputForExecution,
   type ParsedExecArgs,
-  parseExecArgs,
   renderExecHelpJson,
   renderPieceCallHelp,
+  resolveExecInvocation,
 } from "./exec-schema.ts";
 
 export interface EntryConfig {
@@ -52,6 +52,9 @@ export interface PieceCallableDependencies extends CallableExecutionDeps {
   loadManager?: (config: SpaceConfig) => Promise<any>;
   loadPiece?: (manager: any, pieceId: string) => Promise<any>;
   readJsonInput?: () => Promise<unknown>;
+  readTextInput?: () => Promise<string>;
+  readTextFile?: (path: string) => Promise<string>;
+  isStdinTerminal?: () => boolean;
 }
 
 export interface ExecutedPieceCallable {
@@ -262,19 +265,6 @@ export async function applyPieceInput(
   await piece.setInput(input);
 }
 
-async function defaultReadJsonInput(): Promise<unknown> {
-  const text = await new Response(Deno.stdin.readable).text();
-  if (text.trim().length === 0) {
-    throw new Error("Expected JSON on stdin for --json");
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("Invalid JSON on stdin for --json");
-  }
-}
-
 function getCallableValue(rootValue: unknown, callableName: string): unknown {
   if (
     typeof rootValue !== "object" || rootValue === null ||
@@ -455,7 +445,12 @@ export async function executePieceCallable(
   deps: PieceCallableDependencies = {},
 ): Promise<ExecutedPieceCallable> {
   const resolved = await resolvePieceCallable(config, callableName, deps);
-  const parsed = parseExecArgs(resolved.commandSpec, rawArgs);
+  const invocation = await resolveExecInvocation(
+    resolved.commandSpec,
+    rawArgs,
+    deps,
+  );
+  const parsed = invocation.parsed;
 
   if (parsed.showHelp) {
     return {
@@ -470,9 +465,7 @@ export async function executePieceCallable(
     };
   }
 
-  const input = parsed.readJsonFromStdin
-    ? await (deps.readJsonInput ?? defaultReadJsonInput)()
-    : parsed.input;
+  const input = invocation.input;
   const executed = await executeResolvedCallable(
     resolved,
     parsed.usedJsonInput

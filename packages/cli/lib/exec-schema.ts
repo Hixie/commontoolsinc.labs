@@ -13,12 +13,29 @@ export interface ParsedExecArgs {
   showHelp: boolean;
   showHelpJson: boolean;
   readJsonFromStdin: boolean;
+  readTextFromStdin: boolean;
+  inputFile?: {
+    format: "json" | "text";
+    path: string;
+  };
   usedJsonInput: boolean;
 }
 
 export interface RenderExecHelpOptions {
   commandPrefix?: string;
   invocationStyle?: "ct" | "direct";
+}
+
+export interface ExecInputResolverDeps {
+  readJsonInput?: () => Promise<unknown>;
+  readTextInput?: () => Promise<string>;
+  readTextFile?: (path: string) => Promise<string>;
+  isStdinTerminal?: () => boolean;
+}
+
+export interface ResolvedExecInvocation {
+  parsed: ParsedExecArgs;
+  input?: unknown;
 }
 
 interface FlagDescriptor {
@@ -30,6 +47,11 @@ interface FlagDescriptor {
 interface ParsedInputMode {
   input: unknown;
   readJsonFromStdin: boolean;
+  readTextFromStdin: boolean;
+  inputFile?: {
+    format: "json" | "text";
+    path: string;
+  };
   usedJsonInput: boolean;
 }
 
@@ -102,6 +124,18 @@ function parseInlineOrStdinJson(
     throw new Error("--json cannot be combined with generated flags");
   }
   return { inlineValue: candidate, consumeNext: true };
+}
+
+function parseFilePathArg(
+  args: string[],
+  index: number,
+  flagName: string,
+): string {
+  const candidate = args[index + 1];
+  if (candidate === undefined || candidate.startsWith("--")) {
+    throw new Error(`Missing value for ${flagName}`);
+  }
+  return candidate;
 }
 
 function validateEnum(
@@ -179,9 +213,11 @@ function parseObjectInput(
   }
 
   const input: Record<string, unknown> = {};
+  let directJsonInput: unknown;
   let usedJson = false;
   let usedGeneratedFlags = false;
   let readJsonFromStdin = false;
+  let inputFile: ParsedInputMode["inputFile"];
 
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
@@ -202,18 +238,28 @@ function parseObjectInput(
         readJsonFromStdin = true;
         continue;
       }
-      const parsed = parseJson(inlineValue, "--json");
-      if (
-        typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-      ) {
-        throw new Error("Invalid JSON for --json: expected object");
-      }
-      // TODO(#3117): validate decoded --json input against the linked schema here so
-      // callers get field-level CLI errors before runner-side validation.
-      Object.assign(input, parsed as Record<string, unknown>);
+      directJsonInput = parseJson(inlineValue, "--json");
       if (consumeNext) {
         i++;
       }
+      continue;
+    }
+
+    if (token === "--json-file") {
+      if (usedGeneratedFlags) {
+        throw new Error("--json-file cannot be combined with generated flags");
+      }
+      if (usedJson) {
+        throw new Error("--json can only be provided once");
+      }
+      usedJson = true;
+      const filePath = parseFilePathArg(args, i, "--json-file");
+      if (filePath === "-") {
+        readJsonFromStdin = true;
+      } else {
+        inputFile = { format: "json", path: filePath };
+      }
+      i++;
       continue;
     }
 
@@ -275,6 +321,17 @@ function parseObjectInput(
     return {
       input: undefined,
       readJsonFromStdin: true,
+      readTextFromStdin: false,
+      usedJsonInput: true,
+    };
+  }
+
+  if (inputFile) {
+    return {
+      input: undefined,
+      readJsonFromStdin: false,
+      readTextFromStdin: false,
+      inputFile,
       usedJsonInput: true,
     };
   }
@@ -290,8 +347,9 @@ function parseObjectInput(
   }
 
   return {
-    input,
+    input: usedJson ? directJsonInput : input,
     readJsonFromStdin: false,
+    readTextFromStdin: false,
     usedJsonInput: usedJson,
   };
 }
@@ -304,6 +362,7 @@ function parseNonObjectInput(
     return {
       input: undefined,
       readJsonFromStdin: false,
+      readTextFromStdin: false,
       usedJsonInput: false,
     };
   }
@@ -312,18 +371,56 @@ function parseNonObjectInput(
   }
 
   const [flag, rawValue] = args;
-  if (flag !== "--value" && flag !== "--json") {
+  if (
+    flag !== "--value" && flag !== "--json" && flag !== "--value-file" &&
+    flag !== "--json-file"
+  ) {
     throw new Error(`Unknown flag ${flag}`);
   }
   if (flag === "--json" && rawValue === undefined) {
     return {
       input: undefined,
       readJsonFromStdin: true,
+      readTextFromStdin: false,
       usedJsonInput: true,
     };
   }
   if (rawValue === undefined) {
     throw new Error(`Missing value for ${flag}`);
+  }
+  if (flag === "--json-file") {
+    if (rawValue === "-") {
+      return {
+        input: undefined,
+        readJsonFromStdin: true,
+        readTextFromStdin: false,
+        usedJsonInput: true,
+      };
+    }
+    return {
+      input: undefined,
+      readJsonFromStdin: false,
+      readTextFromStdin: false,
+      inputFile: { format: "json", path: rawValue },
+      usedJsonInput: true,
+    };
+  }
+  if (flag === "--value-file") {
+    if (rawValue === "-") {
+      return {
+        input: undefined,
+        readJsonFromStdin: false,
+        readTextFromStdin: true,
+        usedJsonInput: false,
+      };
+    }
+    return {
+      input: undefined,
+      readJsonFromStdin: false,
+      readTextFromStdin: false,
+      inputFile: { format: "text", path: rawValue },
+      usedJsonInput: false,
+    };
   }
   if (flag === "--json") {
     if (rawValue.startsWith("--")) {
@@ -332,12 +429,14 @@ function parseNonObjectInput(
     return {
       input: parseJson(rawValue, flag),
       readJsonFromStdin: false,
+      readTextFromStdin: false,
       usedJsonInput: true,
     };
   }
   return {
     input: parseValueForSchema(rawValue, schema, flag),
     readJsonFromStdin: false,
+    readTextFromStdin: false,
     usedJsonInput: false,
   };
 }
@@ -370,6 +469,118 @@ export function normalizeCallableInputForExecution(
   return {
     ...(input as Record<string, unknown>),
     help: "",
+  };
+}
+
+async function defaultReadTextInput(): Promise<string> {
+  return await new Response(Deno.stdin.readable).text();
+}
+
+async function defaultReadTextFile(path: string): Promise<string> {
+  return await Deno.readTextFile(path);
+}
+
+function parseJsonText(text: string, source: string): unknown {
+  if (text.trim().length === 0) {
+    throw new Error(`Expected JSON from ${source}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid JSON from ${source}`);
+  }
+}
+
+export async function resolveParsedExecInput(
+  spec: ExecCommandSpec,
+  parsed: ParsedExecArgs,
+  deps: ExecInputResolverDeps = {},
+): Promise<unknown> {
+  if (parsed.readJsonFromStdin) {
+    if (deps.readJsonInput) {
+      return await deps.readJsonInput();
+    }
+    const text = await (deps.readTextInput ?? defaultReadTextInput)();
+    return parseJsonText(text, "stdin for --json");
+  }
+
+  if (parsed.readTextFromStdin) {
+    const text = await (deps.readTextInput ?? defaultReadTextInput)();
+    return parseValueForSchema(text, spec.inputSchema, "--value-file");
+  }
+
+  if (parsed.inputFile) {
+    const text = await (deps.readTextFile ?? defaultReadTextFile)(
+      parsed.inputFile.path,
+    );
+    if (parsed.inputFile.format === "json") {
+      return parseJsonText(
+        text,
+        `${parsed.inputFile.path} for --json-file`,
+      );
+    }
+    return parseValueForSchema(text, spec.inputSchema, "--value-file");
+  }
+
+  return parsed.input;
+}
+
+async function resolveImplicitPipedHandlerInput(
+  spec: ExecCommandSpec,
+  rawArgs: string[],
+  deps: ExecInputResolverDeps = {},
+): Promise<ResolvedExecInvocation | null> {
+  if (spec.callableKind !== "handler" || rawArgs.length > 0) {
+    return null;
+  }
+
+  const isTerminal = deps.isStdinTerminal?.() ?? Deno.stdin.isTerminal();
+  if (isTerminal) {
+    return null;
+  }
+
+  const text = await (deps.readTextInput ?? defaultReadTextInput)();
+  if (text.length === 0) {
+    return null;
+  }
+
+  const properties = objectProperties(spec.inputSchema);
+  const input = properties
+    ? parseJsonText(text, "stdin")
+    : parseValueForSchema(text, spec.inputSchema, "--value-file");
+
+  return {
+    parsed: {
+      verb: spec.defaultVerb,
+      input,
+      showHelp: false,
+      showHelpJson: false,
+      readJsonFromStdin: false,
+      readTextFromStdin: false,
+      usedJsonInput: properties !== null,
+    },
+    input,
+  };
+}
+
+export async function resolveExecInvocation(
+  spec: ExecCommandSpec,
+  rawArgs: string[],
+  deps: ExecInputResolverDeps = {},
+): Promise<ResolvedExecInvocation> {
+  const implicit = await resolveImplicitPipedHandlerInput(spec, rawArgs, deps);
+  if (implicit) {
+    return implicit;
+  }
+
+  const parsed = parseExecArgs(spec, rawArgs);
+  if (parsed.showHelp) {
+    return { parsed };
+  }
+
+  return {
+    parsed,
+    input: await resolveParsedExecInput(spec, parsed, deps),
   };
 }
 
@@ -437,6 +648,9 @@ function specificFlagLines(schema: JSONSchema): string[] {
   if (!properties) {
     return [
       `  ${`--value ${valuePlaceholder(schema)}`.padEnd(20)}  Required.`,
+      `  ${
+        "--value-file <path>".padEnd(20)
+      }  Read the value from a UTF-8 file. Use - for stdin.`,
     ];
   }
 
@@ -488,12 +702,18 @@ function specificFlagLines(schema: JSONSchema): string[] {
 }
 
 function genericFlagLines(schema: JSONSchema): string[] {
-  const jsonLabel = objectProperties(schema) ? "--json" : "--json";
+  const jsonLabel = "--json";
   const jsonDescription = objectProperties(schema)
     ? "Read the full input object from stdin. Cannot be combined with other input flags."
     : "Read the full input value as JSON from stdin. Cannot be combined with other input flags.";
   const descriptors = [
     { usage: jsonLabel, detail: jsonDescription },
+    {
+      usage: "--json-file <path>",
+      detail: objectProperties(schema)
+        ? "Read the full input object from a JSON file. Use - for stdin."
+        : "Read the full input value as JSON from a file. Use - for stdin.",
+    },
     { usage: "--help", detail: "Show this help." },
     { usage: "--help --json", detail: "Show full schema details as JSON." },
   ];
@@ -588,9 +808,12 @@ function helpUsageLines(
     commandPrefix,
   );
   const verb = optionalVerbUsage(spec);
+  const properties = objectProperties(spec.inputSchema);
   return [
     `  ${usageLine(mountedFilePath, spec, invocationStyle, commandPrefix)}`,
+    ...(!properties ? [`  ${prefix} ${verb} --value-file <path>`] : []),
     `  ${prefix} ${verb} --json`,
+    `  ${prefix} ${verb} --json-file <path>`,
     `  ${prefix} ${verb} --help`,
     `  ${prefix} ${verb} --help --json`,
   ];
@@ -618,6 +841,7 @@ export function parseExecArgs(
         showHelp: true,
         showHelpJson: false,
         readJsonFromStdin: false,
+        readTextFromStdin: false,
         usedJsonInput: false,
       };
     }
@@ -628,6 +852,7 @@ export function parseExecArgs(
         showHelp: true,
         showHelpJson: true,
         readJsonFromStdin: false,
+        readTextFromStdin: false,
         usedJsonInput: false,
       };
     }
@@ -656,6 +881,7 @@ export function parseExecArgs(
         showHelp: true,
         showHelpJson: false,
         readJsonFromStdin: false,
+        readTextFromStdin: false,
         usedJsonInput: false,
       };
     }
@@ -666,6 +892,7 @@ export function parseExecArgs(
         showHelp: true,
         showHelpJson: true,
         readJsonFromStdin: false,
+        readTextFromStdin: false,
         usedJsonInput: false,
       };
     }
@@ -674,9 +901,13 @@ export function parseExecArgs(
     }
   }
 
-  if (spec.callableKind === "handler" && !explicitVerb && args.length === 0) {
+  if (
+    spec.callableKind === "handler" && !explicitVerb && args.length === 0 &&
+    !handlerAllowsInvokeWithoutInputs(spec.inputSchema)
+  ) {
+    const typeShape = schemaShapeString(spec.inputSchema);
     throw new Error(
-      "Refusing to invoke handler with no inputs; use invoke to call it without inputs",
+      `Handler requires input. Expected type: ${typeShape}\nRun --help for full usage.`,
     );
   }
 
@@ -687,12 +918,16 @@ export function parseExecArgs(
 
   return {
     verb,
-    input: properties && !parsedInput.readJsonFromStdin
-      ? parsedInput.input ?? {}
-      : parsedInput.input,
+    input:
+      properties && !parsedInput.readJsonFromStdin && !parsedInput.inputFile &&
+        !parsedInput.usedJsonInput
+        ? parsedInput.input ?? {}
+        : parsedInput.input,
     showHelp: false,
     showHelpJson: false,
     readJsonFromStdin: parsedInput.readJsonFromStdin,
+    readTextFromStdin: parsedInput.readTextFromStdin,
+    inputFile: parsedInput.inputFile,
     usedJsonInput: parsedInput.usedJsonInput,
   };
 }
@@ -717,10 +952,14 @@ export function renderExecHelp(
   const invocationStyle = options.invocationStyle ?? "ct";
   const specificFlags = specificFlagLines(spec.inputSchema);
   const genericFlags = genericFlagLines(spec.inputSchema);
+  const typeShape = schemaShapeString(spec.inputSchema);
 
   const lines = [
     "Usage:",
     ...helpUsageLines(mountedFilePath, spec, invocationStyle, commandPrefix),
+    "",
+    "Input type:",
+    ...typeShape.split("\n").map((line) => `  ${line}`),
     "",
     "Flags:",
     ...specificFlags,
@@ -827,17 +1066,20 @@ function pieceUsageLines(
   commandPrefix: string,
   spec: ExecCommandSpec,
 ): string[] {
+  const properties = objectProperties(spec.inputSchema);
   return [
     `  ${commandPrefix} --help`,
     `  ${commandPrefix} --help --json`,
     `  ${pieceJsonUsageLine(commandPrefix)}`,
+    `  ${commandPrefix} -- --json-file <path>`,
     `  ${pieceFlagUsageLine(commandPrefix, spec)}`,
+    ...(!properties ? [`  ${commandPrefix} -- --value-file <path>`] : []),
   ];
 }
 
 function pieceJsonInputLines(schema: JSONSchema): string[] {
   return [
-    "  Pass inline JSON as the next argument, or pipe JSON on stdin.",
+    "  Pass inline JSON as the next argument, use `-- --json-file <path>`, or pipe JSON on stdin with `-- --json`.",
     ...schemaShapeString(schema).split("\n").map((line) => `  ${line}`),
   ];
 }

@@ -19,19 +19,16 @@ import {
   ENOTDIR,
   ERANGE,
   EXDEV,
-  FILE_MODE,
   FILE_MODE_RW,
-  FILE_MODE_RWX,
-  FILE_MODE_RX,
   FUSE_SET_ATTR_SIZE,
   getPlatform,
   O_RDWR,
   O_WRONLY,
   readCString,
-  SYMLINK_MODE,
 } from "./platform.ts";
 import { FsTree } from "./tree.ts";
-import { HandleMap } from "./handles.ts";
+import { HandleMap, type HandleState } from "./handles.ts";
+import { buildNodeStat, getMountOwnership, nodeMode } from "./stat.ts";
 
 const encoder = new TextEncoder();
 
@@ -114,8 +111,13 @@ export async function main(argv: string[] = Deno.args) {
 
   // Create filesystem tree
   const tree = new FsTree();
+  const mountOwnership = getMountOwnership();
 
   let bridge: CellBridge | null = null;
+  const scheduledFlushes = new WeakMap<
+    HandleState,
+    ReturnType<typeof setTimeout>
+  >();
 
   // Populate tree
   const apiUrl = args["api-url"];
@@ -148,26 +150,14 @@ export async function main(argv: string[] = Deno.args) {
   // File handle tracking for write support
   const handles = new HandleMap();
 
-  function nodeMode(node: ReturnType<typeof tree.getNode>, ino?: bigint) {
-    if (!node) return 0;
-    if (node.kind === "dir") return DIR_MODE;
-    if (node.kind === "symlink") return SYMLINK_MODE;
-    if (node.kind === "callable") {
-      return node.callableKind === "handler" ? FILE_MODE_RWX : FILE_MODE_RX;
-    }
-    // Files in writable piece data get 644, others stay 444
-    if (bridge && ino !== undefined && bridge.resolveWritePath(ino)) {
-      return FILE_MODE_RW;
-    }
-    return FILE_MODE;
-  }
-
-  function nodeSize(node: ReturnType<typeof tree.getNode>) {
-    if (!node) return 0;
-    if (node.kind === "file") return node.content.length;
-    if (node.kind === "symlink") return node.target.length;
-    if (node.kind === "callable") return node.script.length;
-    return 0;
+  function buildStat(
+    node: NonNullable<ReturnType<typeof tree.getNode>>,
+    ino: bigint,
+  ) {
+    return buildNodeStat(node, ino, {
+      isWritable: Boolean(bridge?.resolveWritePath(ino)),
+      ownership: mountOwnership,
+    });
   }
 
   function replyEntry(
@@ -178,12 +168,7 @@ export async function main(argv: string[] = Deno.args) {
     const entryBuf = new ArrayBuffer(ENTRY_PARAM_SIZE);
     writeEntryParam(entryBuf, {
       ino,
-      attr: {
-        ino,
-        mode: nodeMode(node, ino),
-        nlink: node!.kind === "dir" ? 2 : 1,
-        size: nodeSize(node),
-      },
+      attr: buildStat(node!, ino),
       attrTimeout: 1.0,
       entryTimeout: 1.0,
     });
@@ -288,12 +273,7 @@ export async function main(argv: string[] = Deno.args) {
       }
 
       const statBuf = new ArrayBuffer(STAT_SIZE);
-      writeStat(statBuf, {
-        ino: inode,
-        mode: nodeMode(node, inode),
-        nlink: node.kind === "dir" ? 2 : 1,
-        size: nodeSize(node),
-      });
+      writeStat(statBuf, buildStat(node, inode));
 
       fuse.symbols.fuse_reply_attr(
         req,
@@ -521,7 +501,10 @@ export async function main(argv: string[] = Deno.args) {
         entries.push({
           name: childName,
           ino: childIno,
-          mode: nodeMode(childNode),
+          mode: nodeMode(
+            childNode,
+            Boolean(bridge?.resolveWritePath(childIno)),
+          ),
         });
       }
 
@@ -538,6 +521,8 @@ export async function main(argv: string[] = Deno.args) {
           mode: entry.mode,
           nlink: 1,
           size: 0,
+          uid: mountOwnership.uid,
+          gid: mountOwnership.gid,
         });
 
         const remaining = bufSize - pos;
@@ -603,6 +588,25 @@ export async function main(argv: string[] = Deno.args) {
       if (!writePath) return EACCES;
 
       const text = new TextDecoder().decode(buffer);
+
+      // [FS] projection index file: parse and write back to cells
+      if (writePath.fsProjection) {
+        const ok = await bridge.writeFsFile(writePath, text);
+        if (!ok) return EINVAL;
+        if (handle.version === flushVersion) {
+          handle.dirty = false;
+        }
+        try {
+          const node = tree.getNode(handle.ino);
+          if (node && node.kind === "file") {
+            tree.updateFile(handle.ino, text);
+          }
+        } catch {
+          // Stale inode after subscription rebuild — ignore.
+        }
+        return 0;
+      }
+
       let value: unknown;
 
       if (writePath.isJsonFile) {
@@ -673,6 +677,36 @@ export async function main(argv: string[] = Deno.args) {
     }
   }
 
+  function clearScheduledFlush(
+    handle: NonNullable<ReturnType<typeof handles.get>>,
+  ): void {
+    const timer = scheduledFlushes.get(handle);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      scheduledFlushes.delete(handle);
+    }
+  }
+
+  function scheduleFlush(
+    handle: NonNullable<ReturnType<typeof handles.get>>,
+    delayMs: number,
+  ): void {
+    clearScheduledFlush(handle);
+    const timer = setTimeout(() => {
+      scheduledFlushes.delete(handle);
+      if (handle.flushing) {
+        // A flush is already in flight; retry shortly so we commit the latest
+        // stable buffer rather than an intermediate chunk from a multi-write save.
+        scheduleFlush(handle, 10);
+        return;
+      }
+      flushHandle(handle).catch((e) => {
+        console.error(`[fuse] scheduled flush error: ${e}`);
+      });
+    }, delayMs);
+    scheduledFlushes.set(handle, timer);
+  }
+
   // write(req, ino, buf_ptr, size, offset, fi_ptr)
   const writeCb = new Deno.UnsafeCallback(
     {
@@ -734,9 +768,17 @@ export async function main(argv: string[] = Deno.args) {
       fuse.symbols.fuse_reply_err(req, 0);
 
       // Fire-and-forget the actual write to the cell
-      flushHandle(handle).catch((e) => {
-        console.error(`[fuse] flush write error: ${e}`);
-      });
+      const writePath = bridge?.resolveWritePath(handle.ino);
+      if (writePath?.fsProjection === "markdown") {
+        // Markdown saves often arrive as several small writes plus flushes.
+        // Delay slightly so we commit the settled buffer, not a truncated
+        // intermediate body that still parses as valid markdown.
+        scheduleFlush(handle, 25);
+      } else {
+        flushHandle(handle).catch((e) => {
+          console.error(`[fuse] flush write error: ${e}`);
+        });
+      }
     },
   );
   callbacks.push(flushCb);
@@ -786,12 +828,7 @@ export async function main(argv: string[] = Deno.args) {
 
       // Reply with current attrs (silently accept chmod/chown/times)
       const statBuf = new ArrayBuffer(STAT_SIZE);
-      writeStat(statBuf, {
-        ino: inode,
-        mode: nodeMode(node, inode),
-        nlink: node.kind === "dir" ? 2 : 1,
-        size: nodeSize(node),
-      });
+      writeStat(statBuf, buildStat(node, inode));
       fuse.symbols.fuse_reply_attr(
         req,
         Deno.UnsafePointer.of(new Uint8Array(statBuf)),
@@ -811,10 +848,15 @@ export async function main(argv: string[] = Deno.args) {
 
       // Reply immediately and close the handle.
       // Fire-and-forget the write if dirty.
-      if (handle && handle.dirty && bridge && !handle.flushing) {
-        flushHandle(handle).catch((e) => {
-          console.error(`[fuse] release flush error: ${e}`);
-        });
+      if (handle && handle.dirty && bridge) {
+        const writePath = bridge.resolveWritePath(handle.ino);
+        if (writePath?.fsProjection === "markdown") {
+          scheduleFlush(handle, 0);
+        } else if (!handle.flushing) {
+          flushHandle(handle).catch((e) => {
+            console.error(`[fuse] release flush error: ${e}`);
+          });
+        }
       }
       handles.close(fh);
       fuse.symbols.fuse_reply_err(req, 0);
@@ -978,6 +1020,8 @@ export async function main(argv: string[] = Deno.args) {
           mode: FILE_MODE_RW,
           nlink: 1,
           size: 0,
+          uid: mountOwnership.uid,
+          gid: mountOwnership.gid,
         },
         attrTimeout: 1.0,
         entryTimeout: 1.0,

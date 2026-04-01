@@ -9,9 +9,9 @@ import {
   type ExecCommandSpec,
   normalizeCallableInputForExecution,
   type ParsedExecArgs,
-  parseExecArgs,
   renderExecHelp,
   renderExecHelpJson,
+  resolveExecInvocation,
 } from "./exec-schema.ts";
 import {
   canonicalizeMountLookupPath,
@@ -48,6 +48,9 @@ export interface ExecDependencies {
   waitForResult?: (resultCell: any, timeoutMs: number) => Promise<unknown>;
   invocationStyle?: "ct" | "direct";
   readJsonInput?: () => Promise<unknown>;
+  readTextInput?: () => Promise<string>;
+  readTextFile?: (path: string) => Promise<string>;
+  isStdinTerminal?: () => boolean;
 }
 
 export interface ExecutedMountedCallableFile {
@@ -107,19 +110,6 @@ async function assertMountedCallableFileExists(absPath: string): Promise<void> {
   }
 }
 
-async function defaultReadJsonInput(): Promise<unknown> {
-  const text = await new Response(Deno.stdin.readable).text();
-  if (text.trim().length === 0) {
-    throw new Error("Expected JSON on stdin for --json");
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("Invalid JSON on stdin for --json");
-  }
-}
-
 export async function resolveMountedCallableFile(
   filePath: string,
   deps: ExecDependencies = {},
@@ -174,7 +164,12 @@ export async function executeMountedCallableFile(
   deps: ExecDependencies = {},
 ): Promise<ExecutedMountedCallableFile> {
   const resolved = await resolveMountedCallableFile(filePath, deps);
-  const parsed = parseExecArgs(resolved.commandSpec, rawArgs);
+  const invocation = await resolveExecInvocation(
+    resolved.commandSpec,
+    rawArgs,
+    deps,
+  );
+  const parsed = invocation.parsed;
   const invocationStyle = deps.invocationStyle ??
     (Deno.env.get("CT_EXEC_SHEBANG") === "1" ? "direct" : "ct");
 
@@ -190,9 +185,7 @@ export async function executeMountedCallableFile(
     };
   }
 
-  const input = parsed.readJsonFromStdin
-    ? await (deps.readJsonInput ?? defaultReadJsonInput)()
-    : parsed.input;
+  const input = invocation.input;
   const executed = await executeResolvedCallable(
     {
       callableCell: resolved.callableCell,

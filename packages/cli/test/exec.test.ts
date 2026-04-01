@@ -9,6 +9,7 @@ import {
   renderExecHelp,
   renderExecHelpJson,
   renderPieceCallHelp,
+  resolveParsedExecInput,
 } from "../lib/exec-schema.ts";
 import {
   executeMountedCallableFile,
@@ -225,6 +226,22 @@ describe("parseExecArgs", () => {
     });
   });
 
+  it("preserves inline --json payloads for object schemas without CLI shape enforcement", () => {
+    const result = parseExecArgs(
+      makeSpec("handler", {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+        required: ["query"],
+      }),
+      ["--json", '["not-an-object"]'],
+    );
+
+    expect(result.usedJsonInput).toBe(true);
+    expect(result.input).toEqual(["not-an-object"]);
+  });
+
   it("treats bare --json as stdin input mode", () => {
     const result = parseExecArgs(
       makeSpec("tool", {
@@ -241,6 +258,45 @@ describe("parseExecArgs", () => {
     expect(result.input).toBeUndefined();
   });
 
+  it("supports file-based value and JSON input modes", () => {
+    const valueFile = parseExecArgs(
+      makeSpec("handler", { type: "string" }),
+      ["--value-file", "/tmp/content.md"],
+    );
+    const jsonFile = parseExecArgs(
+      makeSpec("tool", {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+        required: ["query"],
+      }),
+      ["--json-file", "/tmp/input.json"],
+    );
+
+    expect(valueFile.inputFile).toEqual({
+      format: "text",
+      path: "/tmp/content.md",
+    });
+    expect(valueFile.readTextFromStdin).toBe(false);
+    expect(jsonFile.inputFile).toEqual({
+      format: "json",
+      path: "/tmp/input.json",
+    });
+    expect(jsonFile.readJsonFromStdin).toBe(false);
+  });
+
+  it("supports reading primitive values from stdin via --value-file -", () => {
+    const result = parseExecArgs(
+      makeSpec("handler", { type: "string" }),
+      ["--value-file", "-"],
+    );
+
+    expect(result.readTextFromStdin).toBe(true);
+    expect(result.readJsonFromStdin).toBe(false);
+    expect(result.input).toBeUndefined();
+  });
+
   it("preserves omitted non-object inputs as undefined", () => {
     const primitive = parseExecArgs(
       makeSpec("handler", { type: "number" }),
@@ -254,14 +310,26 @@ describe("parseExecArgs", () => {
     expect(() =>
       parseExecArgs(
         makeSpec("handler", {
-          type: "object",
-          properties: {},
+          type: "string",
         }),
         [],
       )
     ).toThrow(
-      /Refusing to invoke handler with no inputs; use invoke to call it without inputs/i,
+      /Handler requires input/i,
     );
+  });
+
+  it("allows handlers with empty object inputs to invoke without arguments", () => {
+    const result = parseExecArgs(
+      makeSpec("handler", {
+        type: "object",
+        properties: {},
+      }),
+      [],
+    );
+
+    expect(result.verb).toBe("invoke");
+    expect(result.input).toEqual({});
   });
 
   it("allows invoke alone for handlers whose inputs are all optional", () => {
@@ -311,6 +379,88 @@ describe("parseExecArgs", () => {
   });
 });
 
+describe("resolveParsedExecInput", () => {
+  it("reads text payloads from files for primitive inputs", async () => {
+    const spec = makeSpec("handler", { type: "string" });
+    const parsed = parseExecArgs(spec, ["--value-file", "/tmp/content.md"]);
+
+    const input = await resolveParsedExecInput(spec, parsed, {
+      readTextFile: (path) => {
+        expect(path).toBe("/tmp/content.md");
+        return Promise.resolve("# Title\n\nLine 2");
+      },
+    });
+
+    expect(input).toBe("# Title\n\nLine 2");
+  });
+
+  it("reads JSON payloads from files for object inputs", async () => {
+    const spec = makeSpec("tool", {
+      type: "object",
+      properties: {
+        detail: {
+          type: "object",
+          properties: {
+            value: { type: "string" },
+          },
+        },
+      },
+      required: ["detail"],
+    });
+    const parsed = parseExecArgs(spec, ["--json-file", "/tmp/input.json"]);
+
+    const input = await resolveParsedExecInput(spec, parsed, {
+      readTextFile: (path) => {
+        expect(path).toBe("/tmp/input.json");
+        return Promise.resolve(
+          '{"detail":{"value":"Use `cat` to read files"}}',
+        );
+      },
+    });
+
+    expect(input).toEqual({
+      detail: { value: "Use `cat` to read files" },
+    });
+  });
+
+  it("reads --json stdin payloads for object inputs without CLI shape enforcement", async () => {
+    const spec = makeSpec("handler", {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+      },
+      required: ["query"],
+    });
+    const parsed = parseExecArgs(spec, ["--json"]);
+
+    const input = await resolveParsedExecInput(spec, parsed, {
+      readTextInput: () => Promise.resolve('["not-an-object"]'),
+    });
+
+    expect(input).toEqual(["not-an-object"]);
+  });
+
+  it("reads --json-file payloads for object inputs without CLI shape enforcement", async () => {
+    const spec = makeSpec("handler", {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+      },
+      required: ["query"],
+    });
+    const parsed = parseExecArgs(spec, ["--json-file", "/tmp/input.json"]);
+
+    const input = await resolveParsedExecInput(spec, parsed, {
+      readTextFile: (path) => {
+        expect(path).toBe("/tmp/input.json");
+        return Promise.resolve('["not-an-object"]');
+      },
+    });
+
+    expect(input).toEqual(["not-an-object"]);
+  });
+});
+
 describe("renderExecHelp", () => {
   it("renders flag-first tool help without schema prose", () => {
     const help = renderExecHelp(
@@ -340,10 +490,12 @@ describe("renderExecHelp", () => {
     expect(help).toContain("Usage:");
     expect(help).toContain("ct exec /tmp/search.tool [run] --query <string>");
     expect(help).toContain("ct exec /tmp/search.tool [run] --json");
+    expect(help).toContain("ct exec /tmp/search.tool [run] --json-file <path>");
     expect(help).toContain("ct exec /tmp/search.tool [run] --help --json");
     expect(help).toContain("--query <string>");
     expect(help).toContain('Optional input field named "help".');
     expect(help).toContain("Read the full input object from stdin.");
+    expect(help).toContain("Read the full input object from a JSON file.");
     expect(help).toContain("Show full schema details as JSON.");
     expect(help).toContain("Output:");
     expect(help).toContain("JSON on success:");
@@ -418,9 +570,19 @@ describe("renderExecHelp", () => {
     expect(help).toContain(
       "ct exec /tmp/number.handler [invoke] --value <number>",
     );
+    expect(help).toContain(
+      "ct exec /tmp/number.handler [invoke] --value-file <path>",
+    );
     expect(help).toContain("ct exec /tmp/number.handler [invoke] --json");
+    expect(help).toContain(
+      "ct exec /tmp/number.handler [invoke] --json-file <path>",
+    );
     expect(help).toContain("--value <number>");
+    expect(help).toContain("--value-file <path>");
     expect(help).toContain("Read the full input value as JSON from stdin.");
+    expect(help).toContain(
+      "Read the value from a UTF-8 file. Use - for stdin.",
+    );
   });
 
   it("renders boolean help fields without colliding with command help", () => {
@@ -1064,6 +1226,84 @@ describe("mounted callable resolution and execution", () => {
         cellProp: "result",
         path: ["add"],
         value: { query: "milk" },
+      },
+    ]);
+  });
+
+  it("infers piped stdin for mounted primitive handlers when no args are provided", async () => {
+    const mountpoint = join(tmpDir, "mount");
+    const filePath = await createMountedFile(mountpoint, {
+      relativePath: "home/pieces/notes-2/result/add.handler",
+      pieceId: "of:piece-123",
+    });
+    const harness = createExecHarness({
+      callableKind: "handler",
+      cellProp: "result",
+      cellKey: "add",
+      pieceId: "of:piece-123",
+      inputSchema: { type: "string" },
+    });
+
+    await writeLiveMountState(stateDir, mountpoint);
+
+    await executeMountedCallableFile(
+      filePath,
+      [],
+      {
+        stateDir,
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        isStdinTerminal: () => false,
+        readTextInput: () => Promise.resolve("# Title\n\nLine 2"),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["add"],
+        value: "# Title\n\nLine 2",
+      },
+    ]);
+  });
+
+  it("passes implicit piped JSON through for mounted object handlers without CLI shape enforcement", async () => {
+    const mountpoint = join(tmpDir, "mount");
+    const filePath = await createMountedFile(mountpoint, {
+      relativePath: "home/pieces/notes-2/result/add.handler",
+      pieceId: "of:piece-123",
+    });
+    const harness = createExecHarness({
+      callableKind: "handler",
+      cellProp: "result",
+      cellKey: "add",
+      pieceId: "of:piece-123",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    });
+
+    await writeLiveMountState(stateDir, mountpoint);
+
+    await executeMountedCallableFile(
+      filePath,
+      [],
+      {
+        stateDir,
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        isStdinTerminal: () => false,
+        readTextInput: () => Promise.resolve('["not-an-object"]'),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["add"],
+        value: ["not-an-object"],
       },
     ]);
   });

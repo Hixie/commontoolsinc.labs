@@ -110,6 +110,295 @@ describe("executePieceCallable", () => {
     });
   });
 
+  it("reads primitive handler input from --value-file", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: { type: "string" },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      ["--value-file", "/tmp/content.md"],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        readTextFile: () => Promise.resolve("# Title\n\nUse `cat` here"),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: "# Title\n\nUse `cat` here",
+      },
+    ]);
+  });
+
+  it("reads object handler input from --json-file", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: {
+        type: "object",
+        properties: {
+          detail: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+          },
+        },
+        required: ["detail"],
+      },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      ["--json-file", "/tmp/input.json"],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        readTextFile: () =>
+          Promise.resolve(
+            '{"detail":{"value":"Use `cat` to read files"}}',
+          ),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: {
+          detail: { value: "Use `cat` to read files" },
+        },
+      },
+    ]);
+  });
+
+  it("passes --json-file payloads through for object handlers without CLI shape enforcement", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: {
+        type: "object",
+        properties: {
+          detail: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+          },
+        },
+        required: ["detail"],
+      },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      ["--json-file", "/tmp/input.json"],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        readTextFile: () => Promise.resolve('["not-an-object"]'),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: ["not-an-object"],
+      },
+    ]);
+  });
+
+  it("infers piped stdin for primitive handlers when no args are provided", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: { type: "string" },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      [],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        isStdinTerminal: () => false,
+        readTextInput: () => Promise.resolve("# Title\n\nLine 2"),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: "# Title\n\nLine 2",
+      },
+    ]);
+  });
+
+  it("infers piped stdin for object handlers when no args are provided", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: {
+        type: "object",
+        properties: {
+          detail: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+          },
+        },
+        required: ["detail"],
+      },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      [],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        isStdinTerminal: () => false,
+        readTextInput: () =>
+          Promise.resolve('{"detail":{"value":"Use `cat` to read files"}}'),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: {
+          detail: { value: "Use `cat` to read files" },
+        },
+      },
+    ]);
+  });
+
+  it("passes implicit piped JSON through for object handlers without CLI shape enforcement", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: {
+        type: "object",
+        properties: {
+          detail: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+          },
+        },
+        required: ["detail"],
+      },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      [],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+        isStdinTerminal: () => false,
+        readTextInput: () => Promise.resolve('["not-an-object"]'),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: ["not-an-object"],
+      },
+    ]);
+  });
+
+  it("passes inline --json through for object handlers without CLI shape enforcement", async () => {
+    const harness = createPieceCallableHarness({
+      callableKind: "handler",
+      cellKey: "editContent",
+      inputSchema: {
+        type: "object",
+        properties: {
+          detail: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+          },
+        },
+        required: ["detail"],
+      },
+    });
+
+    await executePieceCallable(
+      {
+        apiUrl: "http://localhost:8000",
+        identity: "/tmp/test-identity.pem",
+        piece: "of:piece-123",
+        space: "home",
+      },
+      "editContent",
+      ["--json", '["not-an-object"]'],
+      {
+        loadManager: () => Promise.resolve(harness.manager),
+        loadPiece: () => Promise.resolve(harness.piece),
+      },
+    );
+
+    expect(harness.tracker.handlerWrites).toEqual([
+      {
+        cellProp: "result",
+        path: ["editContent"],
+        value: ["not-an-object"],
+      },
+    ]);
+  });
+
   it("renders piece-call help with the piece-call command prefix", async () => {
     const harness = createPieceCallableHarness({
       callableKind: "tool",

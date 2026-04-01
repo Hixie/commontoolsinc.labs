@@ -521,30 +521,96 @@ export function normalizeName(name: string): string {
     .trim();
 }
 
-/** Integration-test job name patterns to track. */
-export const INTEGRATION_JOB_PATTERNS = [
-  "Package Integration Tests",
-  "CLI Integration Tests",
-  "Pattern Integration Tests",
-  "Generated Patterns Integration Tests",
-];
+const JOB_METRIC_NAMES: Record<string, string> = {
+  "Package Integration Tests": "job: Package Integration Tests",
+  "CLI Integration Tests (core)": "job: CLI Integration Tests (core)",
+  "CLI Integration Tests (fuse)": "job: CLI Integration Tests (fuse)",
+  // Legacy pre-matrix job name retained for older baselines and overrides.
+  "CLI Integration Tests": "job: CLI Integration Tests",
+  "Pattern Integration Tests": "job: Pattern Integration Tests",
+  "Generated Patterns Integration Tests":
+    "job: Generated Patterns Integration Tests",
+  "Build Binaries": "job: Build Binaries",
+  "Test": "job: Test",
+  "Check": "job: Check",
+  "Test and Build": "job: Test and Build",
+};
 
 /** Pattern for matrix jobs like "Pattern Unit Tests (1/5)". */
 export const PATTERN_UNIT_RE = /Pattern Unit Tests\s*\((\d+)\/(\d+)\)/;
 
-/** Step name substrings to track within jobs. */
-export const STEP_KEYWORDS = [
-  "runner integration",
-  "runtime-client integration",
-  "shell integration",
-  "background worker integration",
-  "patterns integration",
-  "CLI integration",
-  "generated patterns integration",
-  "pattern unit tests",
-  "Type check",
-  "workspace tests",
-  "Build application",
+interface StepMetricMatcher {
+  jobName: string;
+  stepKeyword: string;
+  metricName: string;
+}
+
+const STEP_METRIC_MATCHERS: StepMetricMatcher[] = [
+  {
+    jobName: "Package Integration Tests",
+    stepKeyword: "runner integration",
+    metricName: "step: runner integration",
+  },
+  {
+    jobName: "Package Integration Tests",
+    stepKeyword: "runtime-client integration",
+    metricName: "step: runtime-client integration",
+  },
+  {
+    jobName: "Package Integration Tests",
+    stepKeyword: "shell integration",
+    metricName: "step: shell integration",
+  },
+  {
+    jobName: "Package Integration Tests",
+    stepKeyword: "background worker integration",
+    metricName: "step: background worker integration",
+  },
+  {
+    jobName: "Pattern Integration Tests",
+    stepKeyword: "patterns integration",
+    metricName: "step: patterns integration",
+  },
+  {
+    jobName: "Generated Patterns Integration Tests",
+    stepKeyword: "generated patterns integration",
+    metricName: "step: generated patterns integration",
+  },
+  {
+    jobName: "CLI Integration Tests (core)",
+    stepKeyword: "cli integration suite",
+    metricName: "step: CLI integration (core)",
+  },
+  {
+    jobName: "CLI Integration Tests (fuse)",
+    stepKeyword: "cli fuse integration suite",
+    metricName: "step: CLI integration (fuse)",
+  },
+  {
+    jobName: "CLI Integration Tests",
+    stepKeyword: "cli integration suite",
+    metricName: "step: CLI integration",
+  },
+  {
+    jobName: "Pattern Unit Tests",
+    stepKeyword: "pattern unit tests",
+    metricName: "step: pattern unit tests",
+  },
+  {
+    jobName: "Check",
+    stepKeyword: "type check",
+    metricName: "step: Type check",
+  },
+  {
+    jobName: "Test",
+    stepKeyword: "workspace tests",
+    metricName: "step: workspace tests",
+  },
+  {
+    jobName: "Build Binaries",
+    stepKeyword: "build application",
+    metricName: "step: Build application",
+  },
 ];
 
 export function extractMetrics(
@@ -567,11 +633,14 @@ export function extractMetrics(
 
     const normalizedJobName = normalizeName(job.name);
 
-    for (const pattern of INTEGRATION_JOB_PATTERNS) {
-      if (normalizedJobName.includes(pattern)) {
-        metrics.set(`job: ${pattern}`, makeSample(jobDuration));
-      }
+    const jobMetricName = JOB_METRIC_NAMES[normalizedJobName];
+    if (jobMetricName) {
+      metrics.set(jobMetricName, makeSample(jobDuration));
     }
+
+    const matcherJobName = normalizedJobName.startsWith("Pattern Unit Tests")
+      ? "Pattern Unit Tests"
+      : normalizedJobName;
 
     const unitMatch = PATTERN_UNIT_RE.exec(normalizedJobName);
     if (unitMatch) {
@@ -585,25 +654,17 @@ export function extractMetrics(
       metrics.set("job: Test and Build", makeSample(jobDuration));
     }
 
-    // New parallelized job names (after CI restructure)
-    if (normalizedJobName === "Build Binaries") {
-      metrics.set("job: Build Binaries", makeSample(jobDuration));
-    }
-    if (normalizedJobName === "Test") {
-      metrics.set("job: Test", makeSample(jobDuration));
-    }
-    if (normalizedJobName === "Check") {
-      metrics.set("job: Check", makeSample(jobDuration));
-    }
-
     for (const step of job.steps) {
       const stepDuration = durationSeconds(step.started_at, step.completed_at);
       if (stepDuration <= 0) continue;
 
       const normalizedStepName = normalizeName(step.name).toLowerCase();
-      for (const keyword of STEP_KEYWORDS) {
-        if (normalizedStepName.includes(keyword.toLowerCase())) {
-          metrics.set(`step: ${keyword}`, makeSample(stepDuration));
+      for (const matcher of STEP_METRIC_MATCHERS) {
+        if (
+          matcher.jobName === matcherJobName &&
+          normalizedStepName.includes(matcher.stepKeyword)
+        ) {
+          metrics.set(matcher.metricName, makeSample(stepDuration));
         }
       }
     }

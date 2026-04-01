@@ -67,6 +67,7 @@ export const ID_FIELD: typeof IDFieldSymbol = Symbol(
 export const TYPE = "$TYPE";
 export const NAME = "$NAME";
 export const UI = "$UI";
+export const FS = "$FS";
 
 // Symbol for accessing self-reference in patterns
 export const SELF: typeof SELFSymbol = Symbol("SELF") as any;
@@ -91,6 +92,7 @@ export type {
   Cell,
   CellKind,
   CellTypeConstructor,
+  FsProjection,
   Handler,
   HandlerFactory,
   HKT,
@@ -291,6 +293,7 @@ export interface BuilderFunctionsAndConstants {
   TYPE: typeof TYPE;
   NAME: typeof NAME;
   UI: typeof UI;
+  FS: typeof FS;
 
   // Schema utilities
   schema: typeof schema;
