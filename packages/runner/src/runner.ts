@@ -1,5 +1,6 @@
 import { hashOf } from "@commontools/data-model/value-hash";
 import { getLogger } from "@commontools/utils/logger";
+import { patternBreakpoint } from "./pattern-breakpoint.ts";
 import { isRecord, type Mutable } from "@commontools/utils/types";
 import { rendererVDOMSchema } from "./schemas.ts";
 import type { FabricValue } from "@commontools/data-model/fabric-value";
@@ -1374,7 +1375,19 @@ export class Runner {
           }
           // We only run the action if we have a valid argument, or the function's schema
           // is false (like an input of `never`).
-          const result = isValidArgument ? fn(argument) : undefined;
+          const result = name &&
+              this.runtime.scheduler.hasBreakpoint(`handler:${name}`)
+            ? patternBreakpoint(
+              fn,
+              isValidArgument,
+              argument,
+              module.argumentSchema,
+              module.resultSchema,
+              inputsCell,
+            )
+            : isValidArgument
+            ? fn(argument)
+            : undefined;
 
           const postRun = (result: any) => {
             if (
@@ -1631,7 +1644,19 @@ export class Runner {
 
           // We only run the action if we have a valid argument, or the function's schema
           // is false (like an input of `never`).
-          const result = isValidArgument ? fn(argument) : undefined;
+          const result = name &&
+              this.runtime.scheduler.hasBreakpoint(`action:${name}`)
+            ? patternBreakpoint(
+              fn,
+              isValidArgument,
+              argument,
+              module.argumentSchema,
+              module.resultSchema,
+              inputsCell,
+            )
+            : isValidArgument
+            ? fn(argument)
+            : undefined;
 
           const postRun = (result: any) => {
             if (
