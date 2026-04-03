@@ -1,10 +1,14 @@
 import { isRecord } from "@commontools/utils/types";
+import {
+  emptySchemaObject,
+  schemaForValueType,
+  schemaWithProperties,
+} from "@commontools/data-model/schema-utils";
+import { internSchema } from "@commontools/data-model/schema-hash";
 import { type LegacyAlias } from "../sigil-types.ts";
 import {
   isPattern,
   type JSONSchema,
-  type JSONSchemaObjMutable,
-  type JSONSchemaTypes,
   type JSONValue,
   type Module,
   type Opaque,
@@ -138,89 +142,163 @@ export function toJSONWithLegacyAliases(
   return value;
 }
 
+/**
+ * Creates a schema based on an `example` piece of data. The result is always an
+ * interned schema. Note that interned schemas are necessarily frozen.
+ *
+ * **Note:** Though the intention is to treat `undefined` as an acceptable
+ * value, this function doesn't in fact represent it as a proper schema.
+ */
 export function createJsonSchema(
   example: any,
-  addDefaults = false,
+  addDefaults: boolean = false,
   runtime?: Runtime,
-): JSONSchemaObjMutable {
-  const seen = new Map<string, JSONSchemaObjMutable>();
+): JSONSchema {
+  const state = {
+    addDefaults,
+    runtime,
+    seen: new Map<string, JSONSchema>(),
+  };
 
-  function analyzeType(value: any): JSONSchema {
-    if (isCellLink(value)) {
-      const link = parseLink(value);
-      const linkAsStr = JSON.stringify(link);
-      if (seen.has(linkAsStr)) {
-        // Return a copy of the schema to avoid mutating the original.
-        return JSON.parse(JSON.stringify(seen.get(linkAsStr)!));
-      }
+  return analyzeType(example, state);
+}
 
-      const cell = runtime?.getCellFromLink(link);
-      if (!cell) return {}; // TODO(seefeld): Should be `true`
+type AnalyzeTypeState = {
+  addDefaults: boolean;
+  runtime: Runtime | undefined;
+  seen: Map<string, JSONSchema>;
+};
 
-      let schema = cell.schema;
-      if (schema === undefined) {
-        // If we find pointing back here, assume an empty schema. This is
-        // overwritten below. (TODO(seefeld): This should create `$ref: "#/.."`)
-        seen.set(linkAsStr, {} as JSONSchemaObjMutable);
-        schema = analyzeType(cell.getRaw());
-      }
-      seen.set(linkAsStr, schema as JSONSchemaObjMutable);
-      return schema;
+/**
+ * Helper for `createJsonSchema()` which analyzes a value, calling itself
+ * recursively on subcomponents of the value (if any). The return value is
+ * always an interned schema.
+ */
+function analyzeType(value: any, state: AnalyzeTypeState): JSONSchema {
+  if (isCellLink(value)) {
+    const seen = state.seen;
+    const link = parseLink(value);
+    const linkAsStr = JSON.stringify(link);
+
+    const found = seen.get(linkAsStr);
+    if (found !== undefined) {
+      return found;
     }
 
-    const type = typeof value;
-    const schema: JSONSchemaObjMutable = {};
+    const cell = state.runtime?.getCellFromLink(link);
+    if (!cell) {
+      // Shouldn't happen: We have a cell link but its link doesn't correspond
+      // to a cell.
 
-    switch (type) {
-      case "object":
-        if (Array.isArray(value)) {
-          schema.type = "array";
-          if (value.length === 0) {
-            schema.items = {}; // TODO(seefeld): Should be `true`
-          } else {
-            const schemas = value.map((v) => analyzeType(v)).map((s) =>
-              JSON.stringify(s)
-            );
-            const uniqueSchemas = [...new Set(schemas)].map((s) =>
-              JSON.parse(s)
-            );
-            if (uniqueSchemas.length === 1) {
-              schema.items = uniqueSchemas[0];
-            } else {
-              schema.items = { anyOf: uniqueSchemas };
-            }
-          }
-        } else if (value !== null) {
-          schema.type = "object";
-          schema.properties = {};
-          for (
-            const key of new Set([...Object.keys(value ?? {})])
-          ) {
-            (schema.properties as any)[key] = analyzeType(value?.[key]);
-          }
-        } else {
-          schema.type = "null";
-        }
-        break;
-      case "number":
-        schema.type = Number.isInteger(value) ? "integer" : "number";
-        break;
-      case "undefined":
-        break;
-      default:
-        schema.type = type as JSONSchemaTypes;
-        break;
+      // TODO(danfuzz): I think the `TODO(seefeld)` below reflects the old state
+      // of `createJsonSchema()` which was defined to return a
+      // `JSONSchemaObjMutable` (which had to be an `object`) and not a
+      // `JSONSchema` (which includes `boolean`), and not some other problem
+      // with returning `true`. That said, maybe it's more appropriate to
+      // `throw` in this case? Figure out what's what, and take action as
+      // appropriate.
+
+      // TODO(seefeld): Should be `true`.
+      return emptySchemaObject();
     }
 
-    // Put the defaults on the leaves
-    if (addDefaults && value !== undefined && schema.type !== "object") {
-      schema.default = value;
+    let schema = cell.schema;
+    if (schema === undefined) {
+      // The `seen.set()` here provides a safe default which prevents the call
+      // to `analyzeType()` (immediately below) from ending up recursing back
+      // into this block (i.e., runaway recursion). Typically, `analyzeType()`
+      // promptly overwrites the backstop.
+      // TODO(seefeld): This should create `$ref: "#/.."`.
+      seen.set(linkAsStr, emptySchemaObject());
+      schema = analyzeType(cell.getRaw(), state);
+    } else {
+      // This needs to be interned for deduping during array analysis. (See
+      // comments below.)
+      schema = internSchema(schema);
     }
-
+    seen.set(linkAsStr, schema);
     return schema;
   }
 
-  return analyzeType(example) as JSONSchemaObjMutable;
+  // Adds the `default` when appropriate and does the necessary final result
+  // processing. The result needs to be interned for deduping during array
+  // analysis. (See comment below.)
+  const finishResult = (schema: JSONSchema, addDefault = true): JSONSchema => {
+    const result = (addDefault && state.addDefaults)
+      ? schemaWithProperties(schema, { default: value })
+      : schema;
+    return internSchema(result);
+  };
+
+  const basicSchema = schemaForValueType(value);
+  if (basicSchema === undefined) {
+    // TODO(danfuzz): I think it's safe to return `true` here. (See longer
+    // related comment above.)
+
+    // Unrecognized type. Treat it as "any."
+    return finishResult(emptySchemaObject());
+  }
+
+  switch (basicSchema.type) {
+    case "array": {
+      // The call here deduplicates the individual array element schemas using
+      // object-identity-based uniquing. In order for it to work, all of the
+      // schemas have to be interned. See comments above on the `internSchema()`
+      // use sites that enable this.
+      const items = itemsSchemaFromArray(value, state);
+      const result = schemaWithProperties(basicSchema, { items });
+      return finishResult(result);
+    }
+
+    case "object": {
+      const entries: [string, JSONSchema][] = Object.entries(value).map(
+        ([key, subValue]) => {
+          return [key, analyzeType(subValue, state)];
+        },
+      );
+      const properties = Object.fromEntries(entries);
+      const result = schemaWithProperties(basicSchema, { properties });
+      // `addDefault = false` because sub-properties will get defaults, if
+      // any.
+      return finishResult(result, false);
+    }
+
+    default: {
+      return finishResult(basicSchema);
+    }
+  }
+}
+
+/**
+ * Helper for `analyzeType()` which derives an `items` schema property from an
+ * array value. The result is always an interned schema.
+ */
+function itemsSchemaFromArray(
+  value: JSONValue[],
+  state: AnalyzeTypeState,
+): JSONSchema {
+  // No need for any fanciness for empty or single-element arrays.
+  switch (value.length) {
+    case 0: {
+      // TODO(danfuzz): I think it's safe to return `true` here. (See longer
+      // related comment above.)
+      // TODO(seefeld): should be `true` in this case.
+      return emptySchemaObject();
+    }
+    case 1: {
+      return analyzeType(value[0], state);
+    }
+  }
+
+  // This `Set` constructor call achieves schema uniquing, exactly because all
+  // the `schemas` are guaranteed to be interned. That is if `schema1 !==
+  // schema2` (not the same actual object), then we know that they also aren't
+  // equivalent (same-content objects).
+  const schemas = value.map((v) => analyzeType(v, state));
+  const uniqueSchemas = [...new Set(schemas)];
+  return (uniqueSchemas.length === 1)
+    ? uniqueSchemas[0]
+    : internSchema({ anyOf: uniqueSchemas });
 }
 
 export function moduleToJSON(module: Module) {
