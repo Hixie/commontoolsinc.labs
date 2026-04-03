@@ -24,10 +24,13 @@ export const RECENT_WINDOW = 3;
 export const RECENT_THRESHOLD = 2;
 
 /** Standard deviations above the median to flag a regression. */
-export const STDDEV_FACTOR = 3;
+export const STDDEV_FACTOR = 2;
 
-/** Multiplier on the median as an alternative threshold. */
-export const MEDIAN_MULTIPLIER = 2;
+/** Minimum percentage increase over median to flag a regression. */
+export const MIN_REGRESSION_PCT = 0.10;
+
+/** Minimum absolute increase (in seconds) over median for non-bench metrics. */
+export const MIN_ABSOLUTE_DELTA = 2;
 
 /** Baseline window: at least this many runs. */
 export const MIN_BASELINE_RUNS = 20;
@@ -94,6 +97,7 @@ export interface MetricTimeline {
 export interface Baseline {
   median: number;
   stddev: number;
+  variance: number;
   count: number;
   threshold: number;
 }
@@ -707,7 +711,10 @@ export function extractTestFileMetrics(
 // Statistics
 // ---------------------------------------------------------------------------
 
-export function computeBaseline(samples: number[]): Baseline | null {
+export function computeBaseline(
+  samples: number[],
+  minAbsoluteDelta = 0,
+): Baseline | null {
   if (samples.length < MIN_SAMPLES) return null;
 
   const sorted = [...samples].sort((a, b) => a - b);
@@ -721,17 +728,23 @@ export function computeBaseline(samples: number[]): Baseline | null {
     samples.length;
   const stddev = Math.sqrt(variance);
 
-  const threshold = Math.min(
+  const threshold = Math.max(
     median + STDDEV_FACTOR * stddev,
-    median * MEDIAN_MULTIPLIER,
+    median * (1 + MIN_REGRESSION_PCT),
+    median + minAbsoluteDelta,
   );
 
-  return { median, stddev, count: samples.length, threshold };
+  return { median, stddev, variance, count: samples.length, threshold };
 }
 
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
+
+/** Escape a string for use inside a Markdown table cell. */
+export function escapeTableCell(s: string): string {
+  return s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
 
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds.toFixed(1)}s`;

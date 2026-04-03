@@ -32,10 +32,12 @@ import {
   formatOverrideSuggestion,
   githubGet,
   mapConcurrent,
-  MEDIAN_MULTIPLIER,
   type MetricTimeline,
+  MIN_ABSOLUTE_DELTA,
+  MIN_REGRESSION_PCT,
   MIN_SAMPLES,
   parseBaselineOverrides,
+  type PRInfo,
   REPO,
   STDDEV_FACTOR,
   type TimingSample,
@@ -152,12 +154,17 @@ async function main() {
   // 4. Fetch job/step metrics for baseline runs + check for baseline overrides
   const timelines = new Map<string, MetricTimeline>();
   const overridesBySha = new Map<string, BaselineOverrides>();
+  const prInfoBySha = new Map<string, PRInfo>();
 
   await mapConcurrent(baselineRuns, API_CONCURRENCY, async (run) => {
     const [jobs, pr] = await Promise.all([
       fetchJobsForRun(run.id),
       fetchPRForCommit(run.head_sha),
     ]);
+
+    if (pr) {
+      prInfoBySha.set(run.head_sha, pr);
+    }
 
     const metrics = extractMetrics(run, jobs);
     for (const [name, sample] of metrics) {
@@ -214,6 +221,8 @@ async function main() {
     metric: string;
     current: number;
     median: number;
+    variance: number;
+    stddev: number;
     threshold: number;
     pctIncrease: number;
   }[] = [];
@@ -245,6 +254,7 @@ async function main() {
 
     const baseline = computeBaseline(
       timeline.samples.map((s) => s.durationSeconds),
+      metric.startsWith("bench:") ? 0 : MIN_ABSOLUTE_DELTA,
     );
     if (!baseline) continue;
 
@@ -256,6 +266,8 @@ async function main() {
         metric,
         current: currentSample.durationSeconds,
         median: baseline.median,
+        variance: baseline.variance,
+        stddev: baseline.stddev,
         threshold: baseline.threshold,
         pctIncrease,
       });
@@ -289,6 +301,28 @@ async function main() {
     );
   }
 
+  console.log("\nBaseline sample breakdown:\n");
+  for (const f of failures) {
+    const timeline = timelines.get(f.metric);
+    if (!timeline) continue;
+
+    const fmt = (v: number) => formatMetricValue(f.metric, v);
+    console.log(
+      `  ${f.metric} (n=${timeline.samples.length}, median=${
+        fmt(f.median)
+      }, variance=${fmt(f.variance)}, stddev=${fmt(f.stddev)}):`,
+    );
+    for (const s of timeline.samples) {
+      const pr = prInfoBySha.get(s.sha);
+      const prStr = pr ? `PR #${pr.number}` : s.sha.slice(0, 8);
+      console.log(
+        `    ${fmt(s.durationSeconds)} — ${prStr} (${
+          s.createdAt.slice(0, 10)
+        })`,
+      );
+    }
+  }
+
   console.log(
     "\nTo accept these regressions, add the following to your PR description:\n",
   );
@@ -300,7 +334,9 @@ async function main() {
   console.log("---END COPY-PASTE---");
 
   console.log(
-    `\nThresholds: median + ${STDDEV_FACTOR}σ or ${MEDIAN_MULTIPLIER}x median (whichever is lower).`,
+    `\nThresholds: median + ${STDDEV_FACTOR}σ or +${
+      MIN_REGRESSION_PCT * 100
+    }% (whichever is higher); non-bench metrics also require at least +${MIN_ABSOLUTE_DELTA}s.`,
   );
 
   Deno.exit(1);
