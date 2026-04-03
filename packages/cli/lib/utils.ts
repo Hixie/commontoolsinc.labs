@@ -17,19 +17,30 @@ export function absPath(relpath: string, cwd = Deno.cwd()): string {
  * (felt.config.ts) so all three share one source of truth.
  */
 export function experimentalOptionsFromEnv(): ExperimentalOptions {
-  const read = (name: string) => Deno.env.get(name) === "true";
+  /**
+   * Results in `true` (on), `false` (off), or `undefined` (default).
+   */
+  const read = (name: string): boolean | undefined => {
+    const v = Deno.env.get(name);
+    return v === undefined ? undefined : v === "true";
+  };
   const opts: ExperimentalOptions = {
     modernDataModel: read("EXPERIMENTAL_MODERN_DATA_MODEL"),
     unifiedJsonEncoding: read("EXPERIMENTAL_UNIFIED_JSON_ENCODING"),
     modernHash: read("EXPERIMENTAL_MODERN_HASH"),
     modernSchemaHash: read("EXPERIMENTAL_MODERN_SCHEMA_HASH"),
   };
-  const active = Object.entries(opts).filter(([, v]) => v);
-  if (active.length > 0) {
+
+  // Log any overridden experimental flags.
+  const overrideFlags = Object.entries(opts)
+    .filter(([_, v]) => v !== undefined)
+    .map(([k, v]) => `${k}=${v}`);
+  if (overrideFlags.length > 0) {
     console.error(
-      `[${cliName()}] Experimental flags: ${active.map(([k]) => k).join(", ")}`,
+      `[${cliName()}] Experimental flag overrides: ${overrideFlags.join(", ")}`,
     );
   }
+
   return opts;
 }
 

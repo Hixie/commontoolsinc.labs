@@ -143,13 +143,13 @@ export type PieceCreatedCallback = (piece: Cell<any>) => void;
  */
 export interface ExperimentalOptions {
   /** Enable the new fabric value type system (bigint, Map, Set, Uint8Array, Date, FabricInstance). */
-  modernDataModel?: boolean;
+  modernDataModel?: boolean | undefined;
   /** Enable `/<Type>@<Version>` JSON encoding, replacing legacy sigil/`@`-prefix/`$`-prefix conventions. */
-  unifiedJsonEncoding?: boolean;
+  unifiedJsonEncoding?: boolean | undefined;
   /** Enable canonical hashing, replacing merkle-reference CID-based hashing. */
-  modernHash?: boolean;
+  modernHash?: boolean | undefined;
   /** Enable modern schema hashing, replacing stableStringify-based schema hashing. */
-  modernSchemaHash?: boolean;
+  modernSchemaHash?: boolean | undefined;
 }
 
 export interface RuntimeOptions {
@@ -250,7 +250,7 @@ export class Runtime {
   readonly telemetry: RuntimeTelemetry;
   readonly cachedCompiler?: CachedCompiler;
   /** Resolved experimental flags (all properties present, defaulting to `false`). */
-  readonly experimental: Required<ExperimentalOptions>;
+  readonly experimental: ExperimentalOptions;
   readonly apiUrl: URL;
   readonly userIdentityDID: DID;
   private defaultFrame?: Frame;
@@ -259,10 +259,10 @@ export class Runtime {
 
   constructor(options: RuntimeOptions) {
     this.experimental = {
-      modernDataModel: false,
-      unifiedJsonEncoding: false,
-      modernHash: false,
-      modernSchemaHash: false,
+      modernDataModel: undefined,
+      unifiedJsonEncoding: undefined,
+      modernHash: undefined,
+      modernSchemaHash: undefined,
       ...options.experimental,
     };
 
@@ -276,13 +276,13 @@ export class Runtime {
       );
     }
 
-    // Log any enabled experimental flags.
-    const enabledFlags = Object.entries(this.experimental)
-      .filter(([_, v]) => v)
-      .map(([k]) => k);
-    if (enabledFlags.length > 0) {
+    // Log any overridden experimental flags.
+    const overrideFlags = Object.entries(this.experimental)
+      .filter(([_, v]) => v !== undefined)
+      .map(([k, v]) => `${k}=${v}`);
+    if (overrideFlags.length > 0) {
       console.log(
-        `Experimental flags enabled: ${enabledFlags.join(", ")}`,
+        `Experimental flag overrides: ${overrideFlags.join(", ")}`,
       );
     }
 
