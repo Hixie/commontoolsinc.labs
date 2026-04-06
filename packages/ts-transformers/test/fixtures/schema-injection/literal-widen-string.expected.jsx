@@ -1,5 +1,16 @@
-import * as __cfHelpers from "commonfabric";
+function __ctHardenFn(fn: Function) {
+    Object.freeze(fn);
+    const prototype = fn.prototype;
+    if (prototype && typeof prototype === "object") {
+        Object.freeze(prototype);
+    }
+    return fn;
+}
+import { __ctHelpers as __cfHelpers } from "commonfabric";
 import { cell } from "commonfabric";
+const define = undefined;
+const runtimeDeps = undefined;
+const __ctAmdHooks = undefined;
 // FIXTURE: literal-widen-string
 // Verifies: string literals (normal, empty, multiline, with spaces) are all widened to { type: "string" }
 //   cell("hello") → cell("hello", { type: "string" })
@@ -20,7 +31,7 @@ export default function TestLiteralWidenString() {
     } as const satisfies __cfHelpers.JSONSchema);
     return null;
 }
+__ctHardenFn(TestLiteralWidenString);
 // @ts-ignore: Internals
 function h(...args: any[]) { return __cfHelpers.h.apply(null, args); }
-// @ts-ignore: Internals
-h.fragment = __cfHelpers.h.fragment;
+__ctHardenFn(h);

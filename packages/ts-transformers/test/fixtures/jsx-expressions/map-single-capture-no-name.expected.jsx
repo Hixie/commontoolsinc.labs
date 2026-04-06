@@ -1,5 +1,16 @@
-import * as __cfHelpers from "commonfabric";
+function __ctHardenFn(fn: Function) {
+    Object.freeze(fn);
+    const prototype = fn.prototype;
+    if (prototype && typeof prototype === "object") {
+        Object.freeze(prototype);
+    }
+    return fn;
+}
+import { __ctHelpers as __cfHelpers } from "commonfabric";
 import { cell, pattern, UI } from "commonfabric";
+const define = undefined;
+const runtimeDeps = undefined;
+const __ctAmdHooks = undefined;
 // FIXTURE: map-single-capture-no-name
 // Verifies: same map + length guard transforms work with _state: any parameter
 //   people.get().length > 0 && <ul>{people.map(...)}</ul> → when(..., <ul>{mapWithPattern(...)}</ul>)
@@ -45,7 +56,16 @@ export default pattern((_state: any) => {
                 people: {
                     type: "array",
                     items: {
-                        type: "unknown"
+                        type: "object",
+                        properties: {
+                            id: {
+                                type: "string"
+                            },
+                            name: {
+                                type: "string"
+                            }
+                        },
+                        required: ["id", "name"]
                     },
                     asCell: true
                 }
@@ -134,5 +154,4 @@ export default pattern((_state: any) => {
 } as const satisfies __cfHelpers.JSONSchema);
 // @ts-ignore: Internals
 function h(...args: any[]) { return __cfHelpers.h.apply(null, args); }
-// @ts-ignore: Internals
-h.fragment = __cfHelpers.h.fragment;
+__ctHardenFn(h);

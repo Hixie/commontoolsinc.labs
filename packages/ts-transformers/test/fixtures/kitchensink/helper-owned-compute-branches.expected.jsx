@@ -1,4 +1,12 @@
-import * as __cfHelpers from "commonfabric";
+function __ctHardenFn(fn: Function) {
+    Object.freeze(fn);
+    const prototype = fn.prototype;
+    if (prototype && typeof prototype === "object") {
+        Object.freeze(prototype);
+    }
+    return fn;
+}
+import { __ctHelpers as __cfHelpers } from "commonfabric";
 /**
  * FIXTURE: helper-owned-compute-branches
  * Verifies: helper-owned branches inside computed() can mix compute-owned array
@@ -11,6 +19,9 @@ import * as __cfHelpers from "commonfabric";
  * - authored ifElse branches still lower safely around the mixed map behavior
  */
 import { computed, ifElse, pattern, UI, Writable } from "commonfabric";
+const define = undefined;
+const runtimeDeps = undefined;
+const __ctAmdHooks = undefined;
 interface Badge {
     text: string;
     active: boolean;
@@ -473,5 +484,4 @@ export default pattern((state) => {
 } as const satisfies __cfHelpers.JSONSchema);
 // @ts-ignore: Internals
 function h(...args: any[]) { return __cfHelpers.h.apply(null, args); }
-// @ts-ignore: Internals
-h.fragment = __cfHelpers.h.fragment;
+__ctHardenFn(h);

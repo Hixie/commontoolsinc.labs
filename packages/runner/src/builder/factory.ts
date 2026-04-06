@@ -18,7 +18,7 @@ import {
   ID_FIELD,
   isPattern,
   NAME,
-  schema,
+  schema as schemaIdentity,
   SELF,
   TYPE,
   UI,
@@ -57,6 +57,12 @@ import {
   FabricEpochNsec,
 } from "@commonfabric/data-model/fabric-epoch";
 import { FabricHash } from "@commonfabric/data-model/fabric-hash";
+import { freezeVerifiedPlainData } from "../sandbox/plain-data.ts";
+import { nonPrivateRandom, safeDateNow } from "./safe-builtins.ts";
+import {
+  registerUnsafeHostTrustedValue,
+  type UnsafeHostTrust,
+} from "../unsafe-host-trust.ts";
 
 // Runtime implementation of toSchema - this should never be called
 // The TypeScript transformer should replace all calls at compile time
@@ -67,16 +73,54 @@ const toSchema: ToSchemaFunction = (_options?) => {
   );
 };
 
+const runtimeSchema = freezeVerifiedPlainData as typeof schemaIdentity;
+
+export interface CreateBuilderOptions {
+  unsafeHostTrust?: UnsafeHostTrust;
+}
+
 /**
  * Creates a set of builder functions with the given runtime
- * @param runtime - The runtime instance to use for cell creation
  * @returns An object containing all builder functions
  */
-export const createBuilder = (): {
+export const createBuilder = (options: CreateBuilderOptions = {}): {
   commonfabric: BuilderFunctionsAndConstants;
   commontools: BuilderFunctionsAndConstants;
   exportsCallback: (exports: Map<any, RuntimeProgram>) => void;
 } => {
+  const trustValue = <T>(value: T): T => {
+    registerUnsafeHostTrustedValue(options.unsafeHostTrust, value);
+    return value;
+  };
+
+  const trustedPattern = ((...args: any[]) =>
+    trustValue(
+      (pattern as (...args: any[]) => unknown)(...args),
+    )) as typeof pattern;
+  const trustedLift = ((...args: any[]) =>
+    trustValue(
+      (lift as (...args: any[]) => unknown)(...args),
+    )) as typeof lift;
+  const trustedHandler = ((...args: any[]) =>
+    trustValue(
+      (handler as (...args: any[]) => unknown)(...args),
+    )) as typeof handler;
+  const trustedComputed = ((...args: any[]) =>
+    trustValue(
+      (computed as (...args: any[]) => unknown)(...args),
+    )) as typeof computed;
+  const trustedDerive = ((...args: any[]) =>
+    trustValue(
+      (derive as (...args: any[]) => unknown)(...args),
+    )) as typeof derive;
+  const trustedStr =
+    ((strings: TemplateStringsArray, ...values: unknown[]) =>
+      trustValue(str(strings, ...values))) as typeof str;
+  const trustedPatternTool = ((...args: any[]) =>
+    trustValue(
+      (patternTool as (...args: any[]) => unknown)(...args),
+    )) as typeof patternTool;
+
   // Associate runtime programs with patterns after compilation and initial eval
   // and before compilation returns, so before any e.g. pattern would be
   // instantiated. This way they get saved with a way to rehydrate them.
@@ -89,20 +133,20 @@ export const createBuilder = (): {
     }
   };
 
-  const builder: BuilderFunctionsAndConstants = {
+  const commontools = {
     // Pattern creation
-    pattern,
-    patternTool,
+    pattern: trustedPattern,
+    patternTool: trustedPatternTool,
 
     // Module creation
-    lift,
-    handler,
+    lift: trustedLift,
+    handler: trustedHandler,
     action,
-    derive,
-    computed,
+    derive: trustedDerive,
+    computed: trustedComputed,
 
     // Built-in modules
-    str,
+    str: trustedStr,
     ifElse,
     when,
     unless,
@@ -135,6 +179,8 @@ export const createBuilder = (): {
 
     // Environment
     getPatternEnvironment,
+    nonPrivateRandom,
+    safeDateNow,
 
     // Entity utilities
     getEntityId,
@@ -149,8 +195,9 @@ export const createBuilder = (): {
     FS,
 
     // Schema utilities
-    schema,
+    schema: runtimeSchema,
     toSchema,
+    __ct_data: freezeVerifiedPlainData,
     AuthSchema,
     WebhookConfigSchema,
 
@@ -165,12 +212,14 @@ export const createBuilder = (): {
     FabricEpochNsec,
     FabricEpochDays,
     FabricHash,
+  } as BuilderFunctionsAndConstants & {
+    __ctHelpers?: BuilderFunctionsAndConstants;
   };
+  commontools.__ctHelpers = commontools;
 
   return {
-    commonfabric: builder,
-    // Backward-compat alias for older tests and compiled patterns.
-    commontools: builder,
+    commonfabric: commontools,
+    commontools,
     exportsCallback,
   };
 };

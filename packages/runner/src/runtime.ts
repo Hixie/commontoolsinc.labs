@@ -75,6 +75,11 @@ import {
   getWriteStackTrace,
   setWriteStackTraceMatchers,
 } from "./storage/write-stack-trace.ts";
+import {
+  createUnsafeHostTrustToken,
+  type UnsafeHostTrust,
+  type UnsafeHostTrustOptions,
+} from "./unsafe-host-trust.ts";
 
 interface WriteDebugContextStore<T> {
   getStore(): T | undefined;
@@ -174,6 +179,8 @@ export interface RuntimeOptions {
   /** Optional compilation cache for persistent caching of compiled JS.
    *  If absent, no persistent caching is performed (same as before). */
   cachedCompiler?: CachedCompiler;
+  /** Replace runner-owned frames with `<CT_INTERNAL>` in surfaced stacks. */
+  hideInternalStackFrames?: boolean;
 }
 
 /**
@@ -342,7 +349,9 @@ export class Runtime {
     this.cachedCompiler = options.cachedCompiler;
 
     // Create harness first (no dependencies on other services)
-    this.harness = new Engine(this);
+    this.harness = new Engine(this, {
+      hideInternalStackFrames: options.hideInternalStackFrames,
+    });
 
     this.storageManager = options.storageManager;
     this.userIdentityDID = options.storageManager.as.did() as DID;
@@ -489,7 +498,7 @@ export class Runtime {
       this.defaultFrame = undefined;
     }
 
-    // Dispose the Engine (clears TypeScriptCompiler, UnsafeEvalRuntime source maps, console hook)
+    // Dispose the Engine (clears compiler/runtime state and the console hook)
     this.harness.dispose();
 
     // Reset experimental fabric config to defaults
@@ -528,6 +537,31 @@ export class Runtime {
 
   getWriteDebugContext(): string | undefined {
     return this.writeDebugContext.getStore() ?? this.scheduler.currentActionId;
+  }
+
+  createUnsafeHostTrust(
+    options: UnsafeHostTrustOptions,
+  ): UnsafeHostTrust {
+    return createUnsafeHostTrustToken(
+      options,
+      (value) => this.harness.unsafeTrustHostValue(value, options),
+    );
+  }
+
+  unsafeTrustPattern<T extends Pattern>(
+    pattern: T,
+    options: UnsafeHostTrustOptions,
+  ): T {
+    this.harness.unsafeTrustHostValue(pattern, options);
+    return pattern;
+  }
+
+  unsafeTrustModule<T extends Module>(
+    module: T,
+    options: UnsafeHostTrustOptions,
+  ): T {
+    this.harness.unsafeTrustHostValue(module, options);
+    return module;
   }
 
   withWriteDebugContext<T>(

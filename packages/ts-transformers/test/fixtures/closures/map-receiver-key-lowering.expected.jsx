@@ -1,5 +1,36 @@
-import * as __cfHelpers from "commonfabric";
+function __ctHardenFn(fn: Function) {
+    Object.freeze(fn);
+    const prototype = fn.prototype;
+    if (prototype && typeof prototype === "object") {
+        Object.freeze(prototype);
+    }
+    return fn;
+}
+import { __ctHelpers as __cfHelpers } from "commonfabric";
 import { pattern } from "commonfabric";
+const define = undefined;
+const runtimeDeps = undefined;
+const __ctAmdHooks = undefined;
+const __ctModuleCallback_1 = __ctHardenFn(({ element: item, params: {} }) => item.key("subItems").mapWithPattern(__cfHelpers.pattern(__ct_pattern_input => {
+    const subItem = __ct_pattern_input.key("element");
+    return subItem.key("value");
+}, {
+    type: "object",
+    properties: {
+        element: {
+            type: "object",
+            properties: {
+                value: {
+                    type: "string"
+                }
+            },
+            required: ["value"]
+        }
+    },
+    required: ["element"]
+} as const satisfies __cfHelpers.JSONSchema, {
+    type: "string"
+} as const satisfies __cfHelpers.JSONSchema), {}));
 interface Item {
     subItems: Array<{
         value: string;
@@ -15,38 +46,10 @@ interface Input {
 // Context: No captures; receiver expression item.subItems is lowered to item.key("subItems")
 const _p = pattern((__ct_pattern_input) => {
     const items = __ct_pattern_input.key("items");
-    return items.mapWithPattern(__cfHelpers.pattern(__ct_pattern_input => {
-        const item = __ct_pattern_input.key("element");
-        return item.key("subItems").mapWithPattern(__cfHelpers.pattern(__ct_pattern_input => {
-            const subItem = __ct_pattern_input.key("element");
-            return subItem.key("value");
-        }, {
-            type: "object",
-            properties: {
-                element: {
-                    type: "object",
-                    properties: {
-                        value: {
-                            type: "string"
-                        }
-                    },
-                    required: ["value"]
-                }
-            },
-            required: ["element"]
-        } as const satisfies __cfHelpers.JSONSchema, {
-            type: "string"
-        } as const satisfies __cfHelpers.JSONSchema), {});
-    }, {
+    return items.mapWithPattern(__cfHelpers.pattern(__ctModuleCallback_1, {
         type: "object",
         properties: {
             element: {
-                $ref: "#/$defs/Item"
-            }
-        },
-        required: ["element"],
-        $defs: {
-            Item: {
                 type: "object",
                 properties: {
                     subItems: {
@@ -64,7 +67,8 @@ const _p = pattern((__ct_pattern_input) => {
                 },
                 required: ["subItems"]
             }
-        }
+        },
+        required: ["element"]
     } as const satisfies __cfHelpers.JSONSchema, {
         type: "array",
         items: {
@@ -113,5 +117,4 @@ const _p = pattern((__ct_pattern_input) => {
 } as const satisfies __cfHelpers.JSONSchema);
 // @ts-ignore: Internals
 function h(...args: any[]) { return __cfHelpers.h.apply(null, args); }
-// @ts-ignore: Internals
-h.fragment = __cfHelpers.h.fragment;
+__ctHardenFn(h);

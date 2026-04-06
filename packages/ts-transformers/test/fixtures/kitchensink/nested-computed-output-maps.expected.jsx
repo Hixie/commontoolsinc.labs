@@ -1,4 +1,12 @@
-import * as __cfHelpers from "commonfabric";
+function __ctHardenFn(fn: Function) {
+    Object.freeze(fn);
+    const prototype = fn.prototype;
+    if (prototype && typeof prototype === "object") {
+        Object.freeze(prototype);
+    }
+    return fn;
+}
+import { __ctHelpers as __cfHelpers } from "commonfabric";
 /**
  * FIXTURE: nested-computed-output-maps
  * Verifies: nested computed outputs can flow back into later pattern-owned
@@ -16,6 +24,9 @@ import * as __cfHelpers from "commonfabric";
  * - closures preserve thread/comment indices, state.lane, and local Writables
  */
 import { computed, handler, ifElse, lift, pattern, UI, Writable, } from "commonfabric";
+const define = undefined;
+const runtimeDeps = undefined;
+const __ctAmdHooks = undefined;
 interface Comment {
     id: string;
     text: string;
@@ -954,5 +965,4 @@ export default pattern((state) => {
 } as const satisfies __cfHelpers.JSONSchema);
 // @ts-ignore: Internals
 function h(...args: any[]) { return __cfHelpers.h.apply(null, args); }
-// @ts-ignore: Internals
-h.fragment = __cfHelpers.h.fragment;
+__ctHardenFn(h);

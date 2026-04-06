@@ -9,6 +9,7 @@ import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
 import { NAME } from "../src/builder/types.ts";
 import { createBuilder } from "../src/builder/factory.ts";
 import type { Pattern } from "../src/builder/types.ts";
+import { createTrustedBuilder } from "./support/trusted-builder.ts";
 import { Runtime } from "../src/runtime.ts";
 import { type IExtendedStorageTransaction } from "../src/storage/interface.ts";
 
@@ -24,6 +25,16 @@ describe("Pattern Runner - Regressions", () => {
   let ifElse: ReturnType<typeof createBuilder>["commonfabric"]["ifElse"];
   let handler: ReturnType<typeof createBuilder>["commonfabric"]["handler"];
 
+  const bindBuilder = () => {
+    const { commonfabric } = createTrustedBuilder(runtime);
+    ({
+      derive,
+      pattern,
+      ifElse,
+      handler,
+    } = commonfabric);
+  };
+
   beforeEach(() => {
     storageManager = StorageManager.emulate({ as: signer });
     runtime = new Runtime({
@@ -32,14 +43,7 @@ describe("Pattern Runner - Regressions", () => {
     });
 
     tx = runtime.edit();
-
-    const { commonfabric } = createBuilder();
-    ({
-      derive,
-      pattern,
-      ifElse,
-      handler,
-    } = commonfabric);
+    bindBuilder();
   });
 
   afterEach(async () => {
@@ -136,6 +140,7 @@ describe("Pattern Runner - Regressions", () => {
       memoryVersion: "v2",
     });
     tx = runtime.edit();
+    bindBuilder();
 
     const notePattern = pattern<{ title: string }>(({ title }) => ({
       title,
@@ -219,6 +224,7 @@ describe("Pattern Runner - Regressions", () => {
       memoryVersion: "v2",
     });
     tx = runtime.edit();
+    bindBuilder();
 
     const echoPattern = pattern<{ title: string }>(({ title }) => ({ title }));
     const resultCell = runtime.getCell<{ title: string }>(
@@ -265,6 +271,7 @@ describe("Pattern Runner - Regressions", () => {
       memoryVersion: "v2",
     });
     tx = runtime.edit();
+    bindBuilder();
 
     const initialRecipe = Object.assign(() => {}, {
       toJSON() {

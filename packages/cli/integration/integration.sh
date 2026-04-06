@@ -46,6 +46,9 @@ else
  cf_impl() {
    command cf "$@"
  }
+ ct() {
+   deno task ct "$@"
+ }
 fi
 
 ct() {
@@ -286,10 +289,10 @@ fi
 
 # Call increment handler on piece2 — since its value is linked to piece1's
 # output cell, this should update piece1's value too
-cf piece call $SPACE_ARGS --piece $PIECE_ID2 increment '{}'
+ct piece call $SPACE_ARGS --piece $PIECE_ID2 increment '{}'
 
 # Verify piece1's value is now 11 (was 10, incremented via piece2's handler)
-RESULT=$(cf piece get $SPACE_ARGS --piece $PIECE_ID value)
+RESULT=$(ct piece get $SPACE_ARGS --piece $PIECE_ID value)
 if [ "$RESULT" != "11" ]; then
   error "After calling increment on piece2, piece1's value should be 11, got: $RESULT"
 fi
@@ -330,9 +333,9 @@ if [ "$RESULT" != "42" ]; then
 fi
 
 # Call increment on piece3 and verify the invented piece's value updates
-cf piece call $SPACE_ARGS --piece $PIECE_ID3 increment '{}'
+ct piece call $SPACE_ARGS --piece $PIECE_ID3 increment '{}'
 
-RESULT=$(cf piece get $SPACE_ARGS --piece $INVENTED_ID value)
+RESULT=$(ct piece get $SPACE_ARGS --piece $INVENTED_ID value)
 if [ "$RESULT" != "43" ]; then
   error "After calling increment on piece3, invented piece's value should be 43, got: $RESULT"
 fi

@@ -1213,7 +1213,7 @@ export class Scheduler {
         this.executingAction = action;
         this.currentActionId = actionId;
         logger.timeStart("scheduler", "run", "action");
-        Promise.resolve(action(tx))
+        Promise.resolve(this.runtime.harness.invoke(() => action(tx)))
           .then((actionResult) => {
             logger.timeEnd("scheduler", "run", "action");
             result = actionResult;
@@ -3182,6 +3182,7 @@ export class Scheduler {
     );
 
     // Transform stack trace to show original source locations
+    materializeHostVisibleStack(error);
     if (error.stack) {
       error.stack = this.runtime.harness.parseStack(error.stack);
     }
@@ -4081,6 +4082,23 @@ function getPieceMetadataFromFrame(frame?: Frame): {
     JSON.stringify(resultCell?.entityId ?? {}),
   )["/"];
   return result;
+}
+
+function materializeHostVisibleStack(error: Error): void {
+  if (typeof error.stack === "string" && error.stack.length > 0) {
+    return;
+  }
+  const getStackString = (globalThis as {
+    getStackString?: (error: Error) => string;
+  }).getStackString;
+  if (typeof getStackString !== "function") {
+    return;
+  }
+  const frames = getStackString(error);
+  if (!frames) {
+    return;
+  }
+  error.stack = `${error}${frames.startsWith("\n") ? frames : `\n${frames}`}`;
 }
 
 function queueTask(fn: () => void): ReturnType<typeof setTimeout> {
