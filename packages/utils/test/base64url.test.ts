@@ -5,7 +5,7 @@ import {
   fromBase64url,
   toBase64Polyfill,
   toUnpaddedBase64url,
-} from "../base64url.ts";
+} from "@commonfabric/utils/base64url";
 
 const TEST_PAIRS: { arr: readonly number[]; b64: string }[] = [
   { arr: [], b64: "" },
