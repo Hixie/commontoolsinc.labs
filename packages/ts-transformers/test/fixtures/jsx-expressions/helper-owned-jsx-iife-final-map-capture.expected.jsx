@@ -8,14 +8,13 @@ function __ctHardenFn(fn: Function) {
 }
 import { __ctHelpers as __cfHelpers } from "commonfabric";
 /**
- * TRANSFORM REPRO: helper-owned JSX IIFE decomposes through local aliases
+ * TRANSFORM REPRO: helper-owned JSX IIFE final map callback captures reactive state
  *
- * We want the decomposed branch shape, not main's blanket outer-IIFE wrapping.
- * The important invariant is that local aliases like `const p = path.get() || []`
- * must not hide the explicit `path -> visible` dependency when later helper-owned
- * derives are created.
+ * The decomposed helper-owned IIFE path currently leaves the final `visible.map(...)`
+ * as a plain map call. That is only safe when the callback depends only on the mapped
+ * element. If it captures outer reactive state, it must lower through mapWithPattern.
  */
-import { action, Default, pattern, UI, VNode, Writable, } from "commonfabric";
+import { Default, pattern, UI, VNode, Writable, } from "commonfabric";
 const define = undefined;
 const runtimeDeps = undefined;
 const __ctAmdHooks = undefined;
@@ -43,82 +42,11 @@ export default pattern((__ct_pattern_input) => {
             type: "string"
         }
     } as const satisfies __cfHelpers.JSONSchema);
-    const pushPath = __cfHelpers.handler({
-        type: "object",
-        properties: {
-            name: {
-                type: "string"
-            }
-        },
-        required: ["name"]
-    } as const satisfies __cfHelpers.JSONSchema, {
-        type: "object",
-        properties: {
-            path: {
-                type: "array",
-                items: {
-                    type: "string"
-                },
-                asCell: true
-            }
-        },
-        required: ["path"]
-    } as const satisfies __cfHelpers.JSONSchema, ({ name }, { path }) => {
-        path.push(name);
-    })({
-        path: path
-    });
+    const labelPrefix = Writable.of("prefix:", {
+        type: "string"
+    } as const satisfies __cfHelpers.JSONSchema);
     return {
         [UI]: (<div>
-        {(() => {
-                const p = __cfHelpers.unless({
-                    type: "array",
-                    items: {
-                        type: "string"
-                    }
-                } as const satisfies __cfHelpers.JSONSchema, {
-                    type: "array",
-                    items: false
-                } as const satisfies __cfHelpers.JSONSchema, {
-                    type: "array",
-                    items: {
-                        type: "string"
-                    }
-                } as const satisfies __cfHelpers.JSONSchema, __cfHelpers.derive({
-                    type: "object",
-                    properties: {
-                        path: {
-                            type: "array",
-                            items: {
-                                type: "string"
-                            },
-                            asCell: true
-                        }
-                    },
-                    required: ["path"]
-                } as const satisfies __cfHelpers.JSONSchema, {
-                    type: "array",
-                    items: {
-                        type: "string"
-                    }
-                } as const satisfies __cfHelpers.JSONSchema, { path: path }, ({ path }) => path.get()), []);
-                if (p.length === 0)
-                    return null;
-                return <div>{__cfHelpers.derive({
-                    type: "object",
-                    properties: {
-                        p: {
-                            type: "array",
-                            items: {
-                                type: "string"
-                            }
-                        }
-                    },
-                    required: ["p"]
-                } as const satisfies __cfHelpers.JSONSchema, {
-                    type: ["string", "undefined"]
-                } as const satisfies __cfHelpers.JSONSchema, { p: p }, ({ p }) => p[p.length - 1])}</div>;
-            })()}
         {(() => {
                 const p = __cfHelpers.unless({
                     type: "array",
@@ -202,38 +130,9 @@ export default pattern((__ct_pattern_input) => {
                 }, ({ entries, p }) => visibleEntries(entries, p[0] || ""));
                 return visible.mapWithPattern(__cfHelpers.pattern(__ct_pattern_input => {
                     const entry = __ct_pattern_input.key("element");
-                    const pushPath = __ct_pattern_input.key("params", "pushPath");
-                    return (<button type="button" onClick={__cfHelpers.handler(false as const satisfies __cfHelpers.JSONSchema, {
-                        type: "object",
-                        properties: {
-                            pushPath: {
-                                type: "object",
-                                properties: {
-                                    name: {
-                                        type: "string"
-                                    }
-                                },
-                                required: ["name"],
-                                asStream: true
-                            },
-                            entry: {
-                                type: "object",
-                                properties: {
-                                    name: {
-                                        type: "string"
-                                    }
-                                },
-                                required: ["name"]
-                            }
-                        },
-                        required: ["pushPath", "entry"]
-                    } as const satisfies __cfHelpers.JSONSchema, (_, { pushPath, entry }) => pushPath.send({ name: entry.name }))({
-                        pushPath: pushPath,
-                        entry: {
-                            name: entry.key("name")
-                        }
-                    })}>
-              {entry.key("name")}
+                    const labelPrefix = __ct_pattern_input.key("params", "labelPrefix");
+                    return (<button type="button">
+              {labelPrefix}:{entry.key("name")}
             </button>);
                 }, {
                     type: "object",
@@ -244,18 +143,12 @@ export default pattern((__ct_pattern_input) => {
                         params: {
                             type: "object",
                             properties: {
-                                pushPath: {
-                                    type: "object",
-                                    properties: {
-                                        name: {
-                                            type: "string"
-                                        }
-                                    },
-                                    required: ["name"],
-                                    asStream: true
+                                labelPrefix: {
+                                    type: "string",
+                                    asCell: true
                                 }
                             },
-                            required: ["pushPath"]
+                            required: ["labelPrefix"]
                         }
                     },
                     required: ["element", "params"],
@@ -291,7 +184,7 @@ export default pattern((__ct_pattern_input) => {
                         }
                     }
                 } as const satisfies __cfHelpers.JSONSchema), {
-                    pushPath: pushPath
+                    labelPrefix: labelPrefix
                 });
             })()}
       </div>),
