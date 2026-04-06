@@ -14,7 +14,7 @@
  * and data are truly persisted and can be loaded fresh from storage.
  */
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { Runtime, type RuntimeProgram } from "@commonfabric/runner";
 import { Identity, type IdentityCreateConfig } from "@commonfabric/identity";
 import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
@@ -49,7 +49,10 @@ const patternProgram: RuntimeProgram = {
         "import { pattern, lift } from 'commonfabric';",
         "",
         "// Define lifts outside the pattern body",
+        "let computeSumRuns = 0;",
         "const computeSum = lift((data: { values: number[] }) => {",
+        "  computeSumRuns += 1;",
+        "  console.log('[computeSum #' + computeSumRuns + ']', JSON.stringify(data));",
         "  return data.values.reduce((acc: number, v: number) => acc + v, 0);",
         "});",
         "",
@@ -202,9 +205,10 @@ async function phase2LoadAndVerify(
     resultCell,
   );
   await tx.commit();
-  await runResult.pull();
+  const pulled = await runResult.pull();
 
   const output = runResult.getAsQueryResult();
+  console.log(`Pulled result: ${JSON.stringify(pulled)}`);
   console.log(`Computed result: ${JSON.stringify(output)}`);
 
   // Verify
@@ -260,6 +264,12 @@ async function phase3ReactivityAndIsolation(
     resultCell3,
   );
 
+  const phase3Commit = await tx.commit();
+  assert(
+    phase3Commit.ok,
+    `Phase 3 setup commit failed: ${JSON.stringify(phase3Commit)}`,
+  );
+
   // Also load and start Phase 2's instance to verify isolation
   // NOTE: This sync is required - without it, Phase 2's pattern sees undefined inputs
   // because the input cell data isn't auto-loaded from storage.
@@ -269,8 +279,6 @@ async function phase3ReactivityAndIsolation(
   const resultCell2 = getResultCell(ctx.runtime, space, RESULT_CELL_ID_PHASE_2);
   await ctx.runtime.start(resultCell2);
   console.log("Started Phase 2's instance for isolation check");
-
-  await tx.commit();
   await runResult3.pull();
   await resultCell2.pull();
 

@@ -57,6 +57,7 @@ import type {
   WriteError,
   WriterError,
 } from "./storage/interface.ts";
+import { createReadOnlyTransactionError } from "./storage/interface.ts";
 import { resolve } from "./storage/transaction/attestation.ts";
 import { isWriteRedirectLink } from "./link-types.ts";
 import { LastNode } from "./link-resolution.ts";
@@ -99,6 +100,14 @@ export type IMemorySpaceValueAttestation = IMemorySpaceAttestation & {
   address: IMemorySpaceValueAddress;
 };
 
+/**
+ * Produces a canonical string representation for use as a hash key.
+ * Object keys are sorted for deterministic output so structurally-equal
+ * objects always hash identically. Results are cached per object identity
+ * via WeakMap, so repeated hashing of the same schema object is O(1).
+ */
+const _hashCache = new WeakMap<object, string>();
+
 // Schema operation intern caches: memoize merge/combine results so
 // structurally-identical operations return the same object identity.
 // This ensures downstream hashSchema hits the WeakMap cache
@@ -121,7 +130,39 @@ function internSet(
   cache.set(key, result);
   return result;
 }
+export function stableStringify(value: unknown): string {
+  if (value === null) return "n";
+  if (value === undefined) return "u";
+  const t = typeof value;
+  if (t === "boolean") return value ? "T" : "F";
+  if (t === "number") return `#${value}`;
+  if (t === "string") return `s${(value as string).length}:${value}`;
 
+  const obj = value as object;
+  const cached = _hashCache.get(obj);
+  if (cached !== undefined) return cached;
+
+  let result: string;
+  if (Array.isArray(obj)) {
+    result = "[" + obj.map(stableStringify).join(",") + "]";
+  } else if (obj instanceof Date) {
+    result = `D${(obj as Date).getTime()}`;
+  } else if (obj instanceof RegExp) {
+    result = `R${(obj as RegExp).toString()}`;
+  } else {
+    const keys = Object.keys(obj).sort();
+    result = "{" +
+      keys.map((k) =>
+        k + ":" + stableStringify((obj as Record<string, unknown>)[k])
+      ).join(",") +
+      "}";
+  }
+
+  _hashCache.set(obj, result);
+  return result;
+}
+
+export const stableHash = stableStringify;
 /**
  * A data structure that maps keys to sets of values, allowing multiple values
  * to be associated with a single key without duplication.
@@ -398,10 +439,31 @@ class ManagedStorageJournal implements ITransactionJournal {
  * This is a read-only transaction, and is only used by the query traversal.
  */
 export class ManagedStorageTransaction implements IStorageTransaction {
+  #readOnlySource?: string;
+
   constructor(
     private manager: ObjectStorageManager,
     public journal = new ManagedStorageJournal(),
   ) {
+  }
+
+  setReadOnly(reason = "runtime.readTx()"): void {
+    this.#readOnlySource = reason;
+  }
+
+  clearReadOnly(): void {
+    this.#readOnlySource = undefined;
+  }
+
+  isReadOnly(): boolean {
+    return this.#readOnlySource !== undefined;
+  }
+
+  private assertWritable(method: string): void {
+    if (this.#readOnlySource === undefined) {
+      return;
+    }
+    throw createReadOnlyTransactionError(method, this.#readOnlySource);
   }
 
   status(): StorageTransactionStatus {
@@ -420,21 +482,25 @@ export class ManagedStorageTransaction implements IStorageTransaction {
     return resolve(source, address);
   }
   writer(_space: MemorySpace): Result<ITransactionWriter, WriterError> {
+    this.assertWritable("writer()");
     throw new Error("Method not implemented.");
   }
   write(
     _address: IMemorySpaceAddress,
     _value?: FabricValue,
   ): Result<IAttestation, WriterError | WriteError> {
+    this.assertWritable("write()");
     throw new Error("Method not implemented.");
   }
   reader(_space: MemorySpace): Result<ITransactionReader, ReaderError> {
     throw new Error("Method not implemented.");
   }
   abort(_reason?: unknown): Result<Unit, InactiveTransactionError> {
+    this.assertWritable("abort()");
     throw new Error("Method not implemented.");
   }
   commit(): Promise<Result<Unit, CommitError>> {
+    this.assertWritable("commit()");
     throw new Error("Method not implemented.");
   }
 }
@@ -2511,6 +2577,16 @@ export class SchemaObjectTraverser<V extends FabricValue>
         path: curDoc.address.path,
         schema: itemSchema,
       };
+      // Sparse array holes are densified to `null` at the storage boundary in
+      // legacy JSON mode. When the item schema expects cells/streams, or the
+      // schema rejects both `null` and `undefined`, treat that committed `null`
+      // as a missing slot so array consumers still see hole semantics.
+      if (
+        item === null &&
+        this.shouldTreatNullArrayEntryAsHole(curSelector.schema)
+      ) {
+        return true;
+      }
       // We follow the first link in array elements so we don't have
       // strangeness with setting item at 0 to item at 1. If the element on
       // the array is a link, we follow that link so the returned object is
@@ -2648,6 +2724,25 @@ export class SchemaObjectTraverser<V extends FabricValue>
       return true;
     });
     return valid ? arrayObj : undefined;
+  }
+
+  private shouldTreatNullArrayEntryAsHole(
+    schema: JSONSchema | undefined,
+  ): boolean {
+    if (
+      schema === undefined ||
+      ContextualFlowControl.isTrueSchema(schema) ||
+      ContextualFlowControl.isFalseSchema(schema)
+    ) {
+      return false;
+    }
+
+    if (SchemaObjectTraverser.asCellOrStream(schema)) {
+      return true;
+    }
+
+    return this.isValidType(schema, "null") === TypeValidity.False &&
+      this.isValidType(schema, "undefined") === TypeValidity.False;
   }
 
   /**

@@ -1,9 +1,12 @@
+import {
+  fabricFromNativeValue,
+  type FabricValue,
+} from "@commonfabric/data-model/fabric-value";
 import { hashOf } from "@commonfabric/data-model/value-hash";
 import { getLogger } from "@commonfabric/utils/logger";
 import { patternBreakpoint } from "./pattern-breakpoint.ts";
 import { isRecord, type Mutable } from "@commonfabric/utils/types";
 import { rendererVDOMSchema } from "./schemas.ts";
-import type { FabricValue } from "@commonfabric/data-model/fabric-value";
 import {
   type Frame,
   isModule,
@@ -79,6 +82,7 @@ export class Runner {
   readonly cancels = new Map<`${MemorySpace}/${URI}`, Cancel>();
   private allCancels = new Set<Cancel>();
   private functionCache = new FunctionCache();
+  private locallyPreparedResults = new Set<`${MemorySpace}/${URI}`>();
   // Map whose key is the result cell's full key, and whose values are the
   // patterns as strings
   private resultPatternCache = new Map<`${MemorySpace}/${URI}`, string>();
@@ -231,29 +235,18 @@ export class Runner {
       console.warn(
         "No pattern provided and no pattern found in process doc. Not running.",
       );
+      this.locallyPreparedResults.delete(this.getDocKey(resultCell));
       return { resultCell, needsStart: false };
     }
 
     let pattern: Pattern;
 
-    // If this is a module, not a pattern, wrap it in a pattern that just runs,
-    // passing arguments in unmodified and passing all results through as is
+    // If this is a module, wrap it first and register the wrapped Pattern.
+    // start() resolves the stored $TYPE back through PatternManager and will
+    // compare against that wrapped Pattern's ID, so registering the raw Module
+    // here creates a mismatched identity on restart.
     if (isModule(patternOrModule)) {
-      const module = patternOrModule as Module;
-      patternId ??= this.runtime.patternManager.registerPattern(module);
-
-      pattern = {
-        argumentSchema: module.argumentSchema ?? {},
-        resultSchema: module.resultSchema ?? {},
-        result: { $alias: { path: ["internal"] } },
-        nodes: [
-          {
-            module,
-            inputs: { $alias: { path: ["argument"] } },
-            outputs: { $alias: { path: ["internal"] } },
-          },
-        ],
-      } satisfies Pattern;
+      pattern = this.moduleToPattern(patternOrModule as Module);
     } else {
       pattern = patternOrModule as Pattern;
     }
@@ -339,7 +332,7 @@ export class Runner {
       argument = mergeObjects<T>(argument as any, defaults);
     }
 
-    processCell.withTx(tx).setRawUntyped({
+    processCell.withTx(tx).setRawUntyped(fabricFromNativeValue({
       ...processCell.getRaw({ meta: ignoreReadForScheduling }),
       [TYPE]: patternId || "unknown",
       resultRef: pattern.resultSchema !== undefined
@@ -354,7 +347,7 @@ export class Runner {
         }),
       internal,
       ...(patternId !== undefined) ? { spell: getSpellLink(patternId) } : {},
-    } as FabricValue);
+    }, false));
     if (argument) {
       diffAndUpdate(
         this.runtime,
@@ -378,7 +371,9 @@ export class Runner {
       result = { ...result, [NAME]: previousResult[NAME] };
     }
     if (!deepEqual(result, previousResult)) {
-      resultCell.withTx(tx).setRawUntyped(result as FabricValue);
+      resultCell.withTx(tx).setRawUntyped(
+        fabricFromNativeValue(result, false),
+      );
     }
 
     // [unsafe closures:] For patterns from closures, add a materialize factory
@@ -391,6 +386,12 @@ export class Runner {
     // Discover and cache all JavaScript functions in the pattern before start
     this.discoverAndCacheFunctions(pattern, new Set());
 
+    this.locallyPreparedResults.add(key);
+    tx.addCommitCallback((_tx, result) => {
+      if (result.error) {
+        this.locallyPreparedResults.delete(key);
+      }
+    });
     return { resultCell, pattern, processCell, needsStart: true };
   }
 
@@ -450,6 +451,7 @@ export class Runner {
   ): void {
     const { tx, givenPattern, doNotUpdateOnPatternChange } = options;
     const key = this.getDocKey(resultCell);
+    this.locallyPreparedResults.delete(key);
 
     // Create cancel group early - before the $TYPE sink
     const [cancel, addCancel] = useCancelGroup();
@@ -607,6 +609,12 @@ export class Runner {
     resultCell: Cell<T>,
     seenCells: Set<Cell> = new Set(),
   ): Promise<boolean> {
+    // `synced === true` means this cell was rehydrated from storage rather than
+    // assembled purely from writes in the current runtime, so start() may need
+    // to await dependency sync before process startup.
+    const wasSyncedAtEntry =
+      (resultCell as Cell<any> & { synced?: boolean }).synced === true;
+
     // Step 1: For subpath cells, resolve to root cell
     const link = resultCell.getAsNormalizedFullLink();
     const rootCell = link.path.length > 0
@@ -614,6 +622,7 @@ export class Runner {
       : resultCell;
 
     const key = this.getDocKey(rootCell);
+    const wasPreparedLocally = this.locallyPreparedResults.has(key);
 
     // Step 2: Already started? Return success
     if (this.cancels.has(key)) return Promise.resolve(true);
@@ -676,15 +685,40 @@ export class Runner {
         });
     }
 
-    // Step 6: Start the pattern
-    try {
-      this.startCore(rootCell, processCell);
-    } catch (err) {
-      return Promise.reject(err);
+    const resolvedPattern = this.resolveToPattern(pattern);
+
+    // Fast path for pieces prepared in the current runtime via setup()/run().
+    // Those writes are already present locally, so we should preserve the
+    // historical synchronous start() behavior even if an earlier read flipped
+    // the cell's generic `synced` flag. The dependency sync below is
+    // specifically for resumed pieces that came from storage.
+    if (!wasSyncedAtEntry || wasPreparedLocally) {
+      try {
+        this.startCore(rootCell, processCell, {
+          givenPattern: resolvedPattern,
+        });
+      } catch (err) {
+        return Promise.reject(err);
+      }
+
+      return Promise.resolve(true);
     }
 
-    // Success!
-    return Promise.resolve(true);
+    // Step 6: Sync the cells this running pattern depends on before wiring the
+    // scheduler back up in a fresh runtime. Without this, resumed pieces can
+    // observe the last persisted result but miss subsequent input updates.
+    return this.syncCellsForRunningPattern(rootCell, resolvedPattern)
+      .then(() => {
+        try {
+          this.startCore(rootCell, processCell, {
+            givenPattern: resolvedPattern,
+          });
+        } catch (err) {
+          return Promise.reject(err);
+        }
+
+        return true;
+      });
   }
 
   private startWithTx<T = any>(
@@ -980,6 +1014,7 @@ export class Runner {
     const key = this.getDocKey(resultCell);
     this.cancels.get(key)?.();
     this.cancels.delete(key);
+    this.locallyPreparedResults.delete(key);
   }
 
   stopAll(): void {
@@ -995,6 +1030,7 @@ export class Runner {
     // Clear the result pattern cache as well, since the actions have been
     // canceled
     this.resultPatternCache.clear();
+    this.locallyPreparedResults.clear();
   }
 
   /**
@@ -1390,10 +1426,9 @@ export class Runner {
             : undefined;
 
           const postRun = (result: any) => {
-            if (
-              validateAndCheckOpaqueRefs(result, name) ||
-              frame.opaqueRefs.size > 0
-            ) {
+            const hasOpaqueRefs = validateAndCheckOpaqueRefs(result, name) ||
+              frame.opaqueRefs.size > 0;
+            if (hasOpaqueRefs) {
               const resultPattern = patternFromFrame(
                 () => result,
               );

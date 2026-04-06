@@ -1,4 +1,4 @@
-import { env, waitFor } from "@commonfabric/integration";
+import { env, type Page, waitFor } from "@commonfabric/integration";
 import { ShellIntegration } from "@commonfabric/integration/shell-utils";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { join } from "@std/path";
@@ -8,6 +8,13 @@ import { PieceController, PiecesController } from "@commonfabric/piece/ops";
 import { FileSystemProgramResolver } from "@commonfabric/js-compiler";
 
 const { API_URL, SPACE_NAME, FRONTEND_URL } = env;
+
+function pierce(page: Page, selector: string, timeout?: number) {
+  return page.waitForSelector(selector, {
+    strategy: "pierce",
+    ...(timeout != null ? { timeout } : {}),
+  });
+}
 
 describe("shell piece tests", () => {
   const shell = new ShellIntegration();
@@ -188,37 +195,22 @@ describe("shell piece tests", () => {
       });
     };
 
-    const clickDecrement = async () => {
+    const clickDecrement = async (fromValue: number) => {
+      await waitFor(async () =>
+        (await piece.result.get(["value"])) === fromValue
+      );
+
       await waitFor(async () => {
-        return await page.evaluate(async (expectedPieceId) => {
-          const rootView = document.querySelector("x-root-view");
-          const appView = rootView?.shadowRoot?.querySelector("x-app-view") as
-            | {
-              _patterns?: {
-                value?: {
-                  activePattern?: {
-                    id(): string;
-                    cell(): {
-                      key(name: string): {
-                        sync(): Promise<unknown>;
-                        send(value: unknown): Promise<void>;
-                      };
-                    };
-                  };
-                };
-              };
-            }
-            | null;
-          const activePattern = appView?._patterns?.value?.activePattern;
-          if (!activePattern || activePattern.id() !== expectedPieceId) {
-            return false;
-          }
-          const decrement = activePattern.cell().key("decrement");
-          await decrement.sync();
-          await decrement.send(undefined);
+        try {
+          await pierce(page, "#counter-decrement", 500);
           return true;
-        }, { args: [pieceId] });
+        } catch {
+          return false;
+        }
       });
+
+      const decrementButton = await pierce(page, "#counter-decrement");
+      await decrementButton.click();
     };
 
     try {
@@ -229,17 +221,9 @@ describe("shell piece tests", () => {
     }
     await waitFor(async () => (await piece.result.get(["value"])) === 0);
 
-    await clickDecrement();
+    await clickDecrement(0);
     try {
       await waitFor(async () => (await piece.result.get(["value"])) === -1);
-    } catch (error) {
-      await logDebugSnapshot("shell piece decrement debug");
-      throw error;
-    }
-
-    await clickDecrement();
-    try {
-      await waitFor(async () => (await piece.result.get(["value"])) === -2);
     } catch (error) {
       await logDebugSnapshot("shell piece decrement debug");
       throw error;

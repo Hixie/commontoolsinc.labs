@@ -32,6 +32,7 @@ import {
 } from "@commonfabric/data-model/schema-hash";
 import { PatternEnvironment, setPatternEnvironment } from "./builder/env.ts";
 import { AsyncSemaphoreQueue, type QueueConfig } from "./queue.ts";
+import { getDefaultMemoryVersion } from "./storage/interface.ts";
 import type {
   ChangeGroup,
   CommitError,
@@ -40,6 +41,7 @@ import type {
   IStorageManager,
   IStorageProvider,
   MemorySpace,
+  MemoryVersion,
 } from "./storage/interface.ts";
 import { type Cell, createCell } from "./cell.ts";
 import { createRef, EntityId } from "./create-ref.ts";
@@ -130,7 +132,7 @@ export type ErrorWithContext = Error & {
 };
 
 export type ErrorHandler = (error: ErrorWithContext) => void;
-export type NavigateCallback = (target: Cell<any>) => void;
+export type NavigateCallback = (target: Cell<any>) => void | Promise<void>;
 export type PieceCreatedCallback = (piece: Cell<any>) => void;
 
 /**
@@ -144,17 +146,22 @@ export type PieceCreatedCallback = (piece: Cell<any>) => void;
 export interface ExperimentalOptions {
   /** Enable the new fabric value type system (bigint, Map, Set, Uint8Array, Date, FabricInstance). */
   modernDataModel?: boolean | undefined;
+  /** Backward-compat alias for `modernDataModel`. */
+  richStorableValues?: boolean | undefined;
   /** Enable `/<Type>@<Version>` JSON encoding, replacing legacy sigil/`@`-prefix/`$`-prefix conventions. */
   unifiedJsonEncoding?: boolean | undefined;
   /** Enable canonical hashing, replacing merkle-reference CID-based hashing. */
   modernHash?: boolean | undefined;
   /** Enable modern schema hashing, replacing stableStringify-based schema hashing. */
   modernSchemaHash?: boolean | undefined;
+  /** Backward-compat alias for `modernHash`. */
+  canonicalHashing?: boolean | undefined;
 }
 
 export interface RuntimeOptions {
   apiUrl: URL;
   storageManager: IStorageManager;
+  memoryVersion?: MemoryVersion;
   consoleHandler?: ConsoleHandler;
   errorHandlers?: ErrorHandler[];
   patternEnvironment?: PatternEnvironment;
@@ -247,6 +254,7 @@ export class Runtime {
   readonly cfc: ContextualFlowControl;
   readonly staticCache: StaticCache;
   readonly storageManager: IStorageManager;
+  readonly memoryVersion: MemoryVersion;
   readonly telemetry: RuntimeTelemetry;
   readonly cachedCompiler?: CachedCompiler;
   /** Resolved experimental flags (all properties present, defaulting to `false`). */
@@ -258,13 +266,46 @@ export class Runtime {
   private writeDebugContext = new WriteDebugContextStorage<string>();
 
   constructor(options: RuntimeOptions) {
+    const defaultMemoryVersion = getDefaultMemoryVersion();
+    this.memoryVersion = options.memoryVersion ?? defaultMemoryVersion;
+    const storageManagerMemoryVersion = (
+      options.storageManager as { memoryVersion?: MemoryVersion }
+    ).memoryVersion;
+
+    if (
+      storageManagerMemoryVersion !== undefined &&
+      storageManagerMemoryVersion !== this.memoryVersion
+    ) {
+      throw new Error(
+        "Runtime memoryVersion does not match storage manager memoryVersion: " +
+          `${this.memoryVersion} !== ${storageManagerMemoryVersion}`,
+      );
+    }
+
     this.experimental = {
       modernDataModel: undefined,
+      richStorableValues: undefined,
       unifiedJsonEncoding: undefined,
       modernHash: undefined,
       modernSchemaHash: undefined,
+      canonicalHashing: undefined,
       ...options.experimental,
     };
+
+    if (
+      options.experimental?.modernDataModel === undefined &&
+      options.experimental?.richStorableValues !== undefined
+    ) {
+      this.experimental.modernDataModel =
+        options.experimental.richStorableValues;
+    }
+
+    if (
+      options.experimental?.modernHash === undefined &&
+      options.experimental?.canonicalHashing !== undefined
+    ) {
+      this.experimental.modernHash = options.experimental.canonicalHashing;
+    }
 
     if (
       this.experimental.modernDataModel &&
@@ -343,6 +384,7 @@ export class Runtime {
     if (options.debug) {
       console.log("Runtime initialized with services:", {
         scheduler: !!this.scheduler,
+        memoryVersion: this.memoryVersion,
         storageManager: !!this.storageManager,
         patternManager: !!this.patternManager,
         moduleRegistry: !!this.moduleRegistry,
@@ -426,7 +468,6 @@ export class Runtime {
       queue.abortPending();
     }
     this.queues.clear();
-
     // Stop all running docs
     this.runner.stopAll();
 
@@ -563,10 +604,19 @@ export class Runtime {
 
   /**
    * Returns the given transaction if it is ready, otherwise creates a new
-   * transaction.
+   * read-only fallback transaction.
    */
   readTx(tx?: IExtendedStorageTransaction): IExtendedStorageTransaction {
-    return tx?.status().status === "ready" ? tx : this.edit();
+    if (tx?.status().status === "ready") {
+      return tx;
+    }
+    return this.createReadTx();
+  }
+
+  private createReadTx(): IExtendedStorageTransaction {
+    const tx = this.edit();
+    tx.setReadOnly?.("runtime.readTx()");
+    return tx;
   }
 
   // Cell factory methods

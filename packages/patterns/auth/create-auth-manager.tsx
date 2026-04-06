@@ -353,8 +353,8 @@ export function createAuthManager<T, R>(
       const tokenExpiryDisplay = authState.tokenExpiryDisplay;
 
       // Refresh state
-      const refreshStream = authState.refreshStream;
       const refreshing = Writable.of(false);
+      const refreshStream = authState.refreshStream;
       const isRefreshing = computed(() => refreshing.get());
       const refreshFailed = Writable.of(false);
       const refreshStartedAt = Writable.of(0);
