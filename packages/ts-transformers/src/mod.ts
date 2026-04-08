@@ -6,8 +6,8 @@ export type {
   TransformMode,
 } from "./core/mod.ts";
 export {
+  injectCfDataHelper,
   injectCfHelpers,
-  injectCtDataHelper,
   Pipeline,
   sourceUsesCfDirective,
   transformCfDirective,
