@@ -1189,7 +1189,7 @@ Deno.test("Schema Shrink Validation", async (t) => {
           errors.map((e) => `${e.type}: ${e.message}`).join("; ")
         }`,
       );
-      assertStringIncludes(result.output, "asCell: true");
+      assertStringIncludes(result.output, 'asCell: ["cell"]');
       assertStringIncludes(result.output, '"foo"');
       assertStringIncludes(result.output, '"bar"');
     },
@@ -1219,7 +1219,7 @@ Deno.test("Schema Shrink Validation", async (t) => {
           errors.map((e) => `${e.type}: ${e.message}`).join("; ")
         }`,
       );
-      assertStringIncludes(result.output, "asCell: true");
+      assertStringIncludes(result.output, 'asCell: ["cell"]');
       assertStringIncludes(result.output, '"foo"');
       assertStringIncludes(result.output, '"bar"');
     },

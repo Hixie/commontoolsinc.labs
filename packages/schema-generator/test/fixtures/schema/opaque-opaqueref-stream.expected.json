@@ -3,7 +3,10 @@
     "LLMState": {
       "properties": {
         "cancelGeneration": {
-          "asStream": true
+          "asCell": [
+            "stream",
+            "opaque"
+          ]
         },
         "error": {
           "type": "unknown"
@@ -25,7 +28,10 @@
   },
   "properties": {
     "state": {
-      "$ref": "#/$defs/LLMState"
+      "$ref": "#/$defs/LLMState",
+      "asCell": [
+        "opaque"
+      ]
     }
   },
   "required": [

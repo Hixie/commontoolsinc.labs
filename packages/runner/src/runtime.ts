@@ -212,15 +212,15 @@ export const spaceCellSchema: JSONSchema = toDeepFrozenSchema(
             items: {
               type: "object",
               properties: {
-                result: { type: "object", asCell: true },
+                result: { type: "object", asCell: ["cell"] },
                 messages: { type: "array" },
                 timestamp: { type: "string" },
               },
             },
           },
-          recordSuggestion: { asStream: true },
+          recordSuggestion: { asCell: ["stream"] },
         },
-        asCell: true,
+        asCell: ["cell"],
       },
     },
   },
