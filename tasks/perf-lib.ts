@@ -27,6 +27,21 @@ export const COVERAGE_BASELINE_RESET_MARKER = "NEW_COVERAGE_BASELINE";
 export const COVERAGE_SUGGESTION_MARKER = "<!-- coverage-debt-suggestion -->";
 
 /**
+ * Artifact and file the coverage gate writes a pending PR comment to. The gate
+ * runs on `pull_request`, where fork PRs only get a read-only token, so it
+ * cannot comment directly. A separate `workflow_run` workflow picks this file
+ * up and posts it with a write token from the base-repo context.
+ */
+export const COVERAGE_COMMENT_ARTIFACT_NAME = "coverage-comment";
+export const COVERAGE_COMMENT_FILE = "coverage-comment.json";
+
+/** Pending PR comment handed from the gate to the posting workflow. */
+export interface CoverageCommentPayload {
+  prNumber: number;
+  body: string;
+}
+
+/**
  * Command an author (or an LLM) runs locally to reproduce the coverage gate.
  * Collects coverage from the unit-test suites and prints the per-group
  * uncovered-line counts as JSON. The integration suites are omitted, so the

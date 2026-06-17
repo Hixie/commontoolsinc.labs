@@ -25,7 +25,8 @@ import {
   computeBaseline,
   computeCiWallTimeRevisitSignals,
   COVERAGE_BASELINE_RESET_MARKER,
-  COVERAGE_SUGGESTION_MARKER,
+  COVERAGE_COMMENT_FILE,
+  type CoverageCommentPayload,
   coverageGroupForChangedFile,
   coverageGroupsForChangedFiles,
   coverageMetricGroupName,
@@ -39,14 +40,12 @@ import {
   extractTestFileMetrics,
   fetchArtifactsForRun,
   fetchCurrentPRBody,
-  fetchIssueComments,
   fetchJobsForRun,
   fetchPRFiles,
   fetchPRForCommit,
   formatMetricValue,
   formatOverrideSuggestion,
   githubGet,
-  githubPost,
   isCoverageDebtMetric,
   mapConcurrent,
   type MetricTimeline,
@@ -456,12 +455,13 @@ async function extractCoverageDebtSamples(
 }
 
 /**
- * Post a once-per-PR comment that tells the author (and an LLM) how to cover the
- * new code that tripped the coverage gate. Skips silently if a previous run
- * already posted one, and never throws — posting is best-effort so it cannot
+ * Write the once-per-PR coverage-debt comment to a file for a later workflow to
+ * post. The gate runs on `pull_request`, where fork PRs get a read-only token
+ * and cannot comment, so the `coverage-comment` workflow_run job posts this from
+ * the base-repo context instead. Never throws — this is best-effort so it cannot
  * mask the regression failure itself.
  */
-async function postCoverageDebtSuggestion(
+async function writeCoverageDebtSuggestion(
   prNumber: number,
   coverageFailures: Row[],
   prFiles: PRFile[],
@@ -512,24 +512,18 @@ async function postCoverageDebtSuggestion(
   }
 
   try {
-    const existing = await fetchIssueComments(prNumber);
-    if (
-      existing.some((comment) =>
-        comment.body.includes(COVERAGE_SUGGESTION_MARKER)
-      )
-    ) {
-      console.log(
-        `Coverage suggestion comment already present on PR #${prNumber}; not posting again.`,
-      );
-      return;
-    }
-
     const body = buildCoverageDebtSuggestionComment({ groups, files });
-    await githubPost(`/repos/${REPO}/issues/${prNumber}/comments`, { body });
-    console.log(`Posted coverage suggestion comment to PR #${prNumber}.`);
+    const payload: CoverageCommentPayload = { prNumber, body };
+    await Deno.writeTextFile(
+      COVERAGE_COMMENT_FILE,
+      JSON.stringify(payload, null, 2),
+    );
+    console.log(
+      `Wrote ${COVERAGE_COMMENT_FILE} for PR #${prNumber}; the coverage-comment workflow will post it.`,
+    );
   } catch (error) {
     console.warn(
-      `  Warning: could not post coverage suggestion comment to PR #${prNumber}: ${error}`,
+      `  Warning: could not write coverage suggestion comment for PR #${prNumber}: ${error}`,
     );
   }
 }
@@ -1313,9 +1307,11 @@ async function main() {
   }
 
   // A coverage regression on a real PR earns a once-per-PR comment pointing the
-  // author at the uncovered files and how to cover them.
+  // author at the uncovered lines and how to cover them. The gate only writes
+  // the comment here; the coverage-comment workflow posts it (fork PRs get a
+  // read-only token on pull_request and cannot comment directly).
   if (coverageFailures.length > 0 && prNumber) {
-    await postCoverageDebtSuggestion(
+    await writeCoverageDebtSuggestion(
       parseInt(prNumber),
       coverageFailures,
       prFiles,
