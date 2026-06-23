@@ -174,6 +174,8 @@ export {
   parseCellPath,
   resolveCellPath,
 } from "./piece-helpers.ts";
+export type { ModuleByteCache } from "./compilation-cache/module-byte-cache.ts";
+export type { CompiledModuleArtifact } from "./harness/types.ts";
 export {
   isSlugAddress,
   slugCause,

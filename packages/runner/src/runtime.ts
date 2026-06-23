@@ -74,6 +74,7 @@ import {
   type TrustSnapshot,
 } from "./cfc/mod.ts";
 import { PatternManager } from "./pattern-manager.ts";
+import type { ModuleByteCache } from "./compilation-cache/module-byte-cache.ts";
 import { ModuleRegistry } from "./module.ts";
 import { Runner } from "./runner.ts";
 import { registerBuiltins } from "./builtins/index.ts";
@@ -213,6 +214,16 @@ export interface RuntimeOptions {
    * and retry window. See scheduler/backpressure.ts.
    */
   commitBackpressure?: Partial<CommitBackpressurePolicy>;
+  /**
+   * Process-level, content-addressed cache of compiled MODULE BYTES, shared
+   * across runtimes. When set, the ESM cell-cache compile path consults it before
+   * the per-space storage read and populates it after a compile, so a module
+   * compiled in one runtime or space serves another runtime or space compiling
+   * the same module. When unset, the byte cache is off and only the per-space
+   * cache applies. Holds emitted JS only, never live pattern instances. See
+   * {@link ModuleByteCache}.
+   */
+  moduleByteCache?: ModuleByteCache;
 }
 
 export interface CfcRuntimeStats {
@@ -319,6 +330,8 @@ export class Runtime {
   readonly cfcSinkMaxConfidentiality: SinkMaxConfidentiality;
   readonly staticCache: StaticCache;
   readonly storageManager: IStorageManager;
+  /** Optional process-level compiled-module-byte cache; see RuntimeOptions. */
+  readonly moduleByteCache?: ModuleByteCache;
   readonly trustSnapshotProvider: () => TrustSnapshot | undefined;
   readonly telemetry: RuntimeTelemetry;
   /** Resolved experimental flags (all properties present, defaulting to `false`). */
@@ -408,6 +421,7 @@ export class Runtime {
     });
 
     this.storageManager = options.storageManager;
+    this.moduleByteCache = options.moduleByteCache;
     const actingPrincipal = options.storageManager.as.did() as DID;
     this.trustSnapshotProvider = options.trustSnapshotProvider ?? (() => ({
       id: `principal:${actingPrincipal}`,
