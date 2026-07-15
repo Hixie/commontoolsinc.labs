@@ -181,21 +181,47 @@ function readyQueuedEvent(args: {
   };
 }
 
+type OnCommit = NonNullable<QueuedEvent["onCommit"]>;
+
+// A commit callback that runs a flat list of callbacks in order, isolating each
+// throw so one failure neither skips the rest nor propagates to the caller.
+interface ChainedOnCommit extends OnCommit {
+  callbacks: OnCommit[];
+}
+
+function isChainedOnCommit(fn: OnCommit): fn is ChainedOnCommit {
+  return Array.isArray((fn as Partial<ChainedOnCommit>).callbacks);
+}
+
+// Combine two commit callbacks. Chaining APPENDS to a flat list rather than
+// nesting closures: a stream that collapses many times under the W4 backlog cap
+// (all same-origin, so each overflow chains onto the surviving entry) would
+// otherwise build a deeply nested chain that recurses once per collapse when it
+// finally runs, overflowing the stack for a large enough burst. The flat list
+// runs iteratively, so the depth is constant regardless of how many callbacks
+// were chained.
 function chainOnCommit(
   a: QueuedEvent["onCommit"],
   b: QueuedEvent["onCommit"],
 ): QueuedEvent["onCommit"] {
   if (!a) return b;
   if (!b) return a;
-  return (tx) => {
-    // Isolate the callbacks: a throw in the first must not skip the second.
-    try {
-      a(tx);
-    } catch (error) {
-      logger.error("onCommit-callback-error", () => [error]);
+  if (isChainedOnCommit(a)) {
+    a.callbacks.push(b);
+    return a;
+  }
+  const callbacks: OnCommit[] = [a, b];
+  const chained = ((tx) => {
+    for (const callback of callbacks) {
+      try {
+        callback(tx);
+      } catch (error) {
+        logger.error("onCommit-callback-error", () => [error]);
+      }
     }
-    b(tx);
-  };
+  }) as ChainedOnCommit;
+  chained.callbacks = callbacks;
+  return chained;
 }
 
 export function queueSchedulerEvent(state: SchedulerEventQueueState, args: {
