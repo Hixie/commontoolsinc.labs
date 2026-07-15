@@ -1,5 +1,9 @@
 import { freezeSandboxRecordValues, freezeSandboxValue } from "./hardening.ts";
-import { sandboxDateNow, sandboxRandom } from "../builder/safe-builtins.ts";
+import {
+  sandboxDateNow,
+  sandboxFetchGate,
+  sandboxRandom,
+} from "../builder/safe-builtins.ts";
 
 // A `Date` for the pattern sandbox whose ambient reads (`Date.now()` and the
 // no-argument `new Date()`) route through the capability gate (coarse in a
@@ -62,6 +66,86 @@ function createGatedMath(): typeof Math {
   return gated as unknown as typeof Math;
 }
 
+// The settlement grid for the sandbox `fetch` (channel 7): the returned promise
+// settles only on the wall-clock one-second grid, so the instant a pattern can
+// observe carries no sub-second phase — the same resolution as the coarse
+// handler clock (W1) and the #now grid.
+const FETCH_SETTLE_GRID_MS = 1000;
+
+// Statuses whose Response constructor forbids a body.
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
+// A `fetch` for the pattern sandbox that closes the network round-trip clock
+// (channel 7, see docs/specs/sandboxing/TIMING_SIDE_CHANNELS.md):
+//
+//   - Handler-only (sandboxFetchGate): starting a request from a lift/computed
+//     or the pattern body throws, mirroring the clock/entropy gate. Request
+//     *initiation* instants therefore come from handler runs, whose delivery is
+//     already shaped (W3/plan B).
+//   - The whole response body is buffered before the promise settles, and the
+//     settlement (fulfillment or rejection) is delayed to the next wall-clock
+//     grid boundary. The pattern receives a Response built from the buffer, so
+//     every subsequent read (`json()`, `text()`, `blob()`, `clone()`, body
+//     stream) completes in microtasks — no later settlement carries real time.
+//   - `content-encoding`/`content-length` are dropped from the rebuilt response:
+//     they describe the wire form, not the buffered body.
+//
+// What this deliberately does not hide: response *content* (a server can echo
+// its own timestamps — that measures request arrival at the server, which is a
+// shaped handler-run instant plus network noise, not a local fine clock), and
+// settlement *order* of concurrent requests (ordering, not time).
+export function createGatedFetch(
+  hostFetch: typeof fetch,
+  options: {
+    gridMs?: number;
+    now?: () => number;
+    wait?: (ms: number) => Promise<void>;
+  } = {},
+): typeof fetch {
+  const gridMs = options.gridMs ?? FETCH_SETTLE_GRID_MS;
+  const now = options.now ?? (() => Date.now());
+  const wait = options.wait ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+  const settleOnGrid = async (): Promise<void> => {
+    const current = now();
+    await wait(gridMs - (current % gridMs));
+  };
+
+  const gatedFetch = async function fetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    sandboxFetchGate();
+    let res: Response;
+    let body: ArrayBuffer | null;
+    try {
+      res = await hostFetch(input, init);
+      body = NULL_BODY_STATUSES.has(res.status)
+        ? null
+        : await res.arrayBuffer();
+    } catch (error) {
+      await settleOnGrid();
+      throw error;
+    }
+    await settleOnGrid();
+    const headers = new Headers(res.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    const buffered = new Response(body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+    // The constructor cannot set these; carry them as own properties so client
+    // code reading `res.url` / `res.redirected` keeps working.
+    Object.defineProperty(buffered, "url", { value: res.url });
+    Object.defineProperty(buffered, "redirected", { value: res.redirected });
+    return buffered;
+  };
+  return gatedFetch as typeof fetch;
+}
+
 const CONSOLE_METHOD_NAMES = [
   "assert",
   "clear",
@@ -91,9 +175,12 @@ function createCompatibilityGlobals(): Record<string, unknown> {
   const hostGlobals = globalThis as typeof globalThis & Record<string, unknown>;
 
   if (typeof globalThis.fetch === "function") {
-    // Temporary migration shim: many existing patterns still perform direct
-    // network requests from authored callbacks.
-    globals.fetch = freezeSandboxValue(globalThis.fetch.bind(globalThis));
+    // Gated fetch (channel 7): handler-only, with settlement coarsened to the
+    // one-second grid, so a pattern's imperative network access carries no
+    // fine clock. See createGatedFetch above.
+    globals.fetch = freezeSandboxValue(
+      createGatedFetch(globalThis.fetch.bind(globalThis)),
+    );
   }
 
   globals.Proxy = undefined;
