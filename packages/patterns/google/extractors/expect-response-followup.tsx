@@ -616,10 +616,12 @@ export default pattern<PatternInput, PatternOutput>(() => {
   // as time passes. Ticks every hour (granularity finer than a day is wasted
   // here since the countdown is in whole days).
   const nowTickingCell = wish<number>({ query: "#now/3600" });
-  // One-shot stamp used only to decide whether formatDate shows the year.
-  const nowCell = wish<number>({ query: "#now" });
   const currentYear = computed(() => {
-    const nowMs = nowCell.result;
+    // Derived from the same ticking clock as the dashboard, so year suppression
+    // tracks the live year — a dashboard left open across New Year re-shows the
+    // year on old dates once the clock ticks over, rather than staying frozen at
+    // the one-shot load year.
+    const nowMs = nowTickingCell.result;
     // During load nowMs is undefined; fall back to no-year-suppression by
     // using a year that won't match real dates, so the year is shown until
     // the clock resolves.
