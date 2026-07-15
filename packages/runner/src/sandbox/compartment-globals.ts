@@ -83,12 +83,25 @@ const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
 //     *initiation* instants therefore come from handler runs, whose delivery is
 //     already shaped (W3/plan B).
 //   - The whole response body is buffered before the promise settles, and the
-//     settlement (fulfillment or rejection) is delayed to the next wall-clock
-//     grid boundary. The pattern receives a Response built from the buffer, so
-//     every subsequent read (`json()`, `text()`, `blob()`, `clone()`, body
-//     stream) completes in microtasks — no later settlement carries real time.
+//     settlement (fulfillment or rejection) is delayed to a wall-clock grid
+//     boundary chosen from the request's ISSUE instant, not its arrival instant.
+//     The pattern receives a Response built from the buffer, so every subsequent
+//     read (`json()`, `text()`, `blob()`, `clone()`, body stream) completes in
+//     microtasks — no later settlement carries real time.
 //   - `content-encoding`/`content-length` are dropped from the rebuilt response:
 //     they describe the wire form, not the buffered body.
+//
+// Why the boundary is chosen from the ISSUE instant, not arrival. Snapping to
+// the next grid boundary AFTER arrival still leaks about one bit of sub-second
+// phase per fetch: which boundary the arrival lands on depends on whether
+// (issuePhase + roundTrip) crossed a grid line, and the handler continuation can
+// read that boundary off the coarse clock (Date.now() is coarse-but-readable in
+// a handler) and binary-search the issue phase by varying a known round trip.
+// Instead, the settlement is issueBoundary + grid*(1 + ceil(roundTrip/grid)):
+// a function of the coarse issue second and the round trip ROUNDED UP to the
+// grid, and independent of the sub-second issue phase. It still reveals the
+// coarse round-trip band (the same 1s-quantized latency the coarse clock already
+// exposes for any interval), and adds up to two grid steps of settlement latency.
 //
 // What this deliberately does not hide: response *content* (a server can echo
 // its own timestamps — that measures request arrival at the server, which is a
@@ -107,9 +120,17 @@ export function createGatedFetch(
   const wait = options.wait ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  const settleOnGrid = async (): Promise<void> => {
-    const current = now();
-    await wait(gridMs - (current % gridMs));
+  // Delay until the grid boundary derived from the issue instant (captured
+  // before any await), so the settlement instant carries no sub-second phase of
+  // when the request was issued. `now()` here reads the arrival instant; the
+  // target is one grid step beyond the grid-rounded round trip, measured from the
+  // issue boundary, so it is always strictly after arrival and phase-independent.
+  const settleFromIssue = async (issueMs: number): Promise<void> => {
+    const issueBoundary = Math.floor(issueMs / gridMs) * gridMs;
+    const arrivalMs = now();
+    const latency = Math.max(0, arrivalMs - issueMs);
+    const target = issueBoundary + gridMs * (1 + Math.ceil(latency / gridMs));
+    await wait(Math.max(0, target - arrivalMs));
   };
 
   const gatedFetch = async function fetch(
@@ -117,6 +138,7 @@ export function createGatedFetch(
     init?: RequestInit,
   ): Promise<Response> {
     sandboxFetchGate();
+    const issueMs = now();
     let res: Response;
     let body: ArrayBuffer | null;
     try {
@@ -125,10 +147,10 @@ export function createGatedFetch(
         ? null
         : await res.arrayBuffer();
     } catch (error) {
-      await settleOnGrid();
+      await settleFromIssue(issueMs);
       throw error;
     }
-    await settleOnGrid();
+    await settleFromIssue(issueMs);
     const headers = new Headers(res.headers);
     headers.delete("content-encoding");
     headers.delete("content-length");

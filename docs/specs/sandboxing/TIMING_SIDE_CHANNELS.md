@@ -51,7 +51,7 @@ Every real-time-correlated signal a pattern can reach, and how it is closed.
 | 4 | `#now` cell-flip arrival/ordering | value coarsened + tick grid-aligned (≥1 s); deliberately left unshaped (low value; ≥1 s + grid-aligned + W1) | — |
 | 5 | Server-pushed cell changes (cross-tab/cross-machine), the `$value` write bypass, and own commit-completion latency | `$value` keystroke writes and server pushes to a pattern reader are shaped through the cell-notification shaper (plan B, DONE) | cell-notification shaper on the storage-notification hook |
 | 6 | Builtin progress cells — `fetchData` `pending`, large-language-model `partial` (~15 Hz) | LLM `partial` coarsened to ≤1 Hz always-on (DONE); `fetchData` `pending` left to W1 (terminal, not a cadence) | coarsen at source |
-| 7 | Raw `fetch()` exposed directly to patterns | CLOSED: gated fetch (handler-only, settlement coarsened to the 1 s grid, fully buffered body) | createGatedFetch in `sandbox/compartment-globals.ts` (DONE) |
+| 7 | Raw `fetch()` exposed directly to patterns | CLOSED: gated fetch (handler-only, settlement snapped to an issue-relative 1 s grid boundary, fully buffered body) | createGatedFetch in `sandbox/compartment-globals.ts` (DONE) |
 | 8 | `Date.now()` / `Math.random()` re-enabled by a Secure ECMAScript config drift | neutered by an implicit default | W0 (pinned by test) |
 
 Randomness note: `Math.random()` is not itself a timing channel — random
@@ -135,13 +135,26 @@ Landing order, smallest and safest first. Each is its own commit/PR.
     `TimeCapabilityError`, mirroring the W1 clock/entropy gate. Request
     *initiation* instants therefore come only from handler runs, whose delivery
     is already shaped (W3/plan B).
-  - **Grid-aligned settlement.** The whole response body is buffered, then the
-    promise settles (fulfills or rejects) only at the next wall-clock
-    one-second boundary. The pattern receives a `Response` rebuilt from the
-    buffer, so every later read (`json()`, `text()`, `clone()`, the body
-    stream) completes in microtasks — no later settlement carries real time.
-    The settlement instants a pattern can observe are exactly the 1 s grid the
-    coarse handler clock already exposes: no new capability.
+  - **Issue-relative grid settlement.** The whole response body is buffered,
+    then the promise settles (fulfills or rejects) at a wall-clock grid boundary
+    chosen from the request's *issue* instant, not its *arrival* instant:
+    `issueBoundary + grid·(1 + ceil(roundTrip / grid))`, where `issueBoundary`
+    is the issue time floored to the grid and `roundTrip` is the measured
+    arrival-minus-issue latency. The pattern receives a `Response` rebuilt from
+    the buffer, so every later read (`json()`, `text()`, `clone()`, the body
+    stream) completes in microtasks — no later settlement carries real time. The
+    settlement instant is a function only of the coarse issue second and the
+    round trip rounded up to the grid, and is independent of the sub-second issue
+    phase, so it exposes no capability beyond the coarse handler clock and the
+    coarse round-trip band. **This corrects an earlier design that snapped to the
+    next boundary after *arrival*: that leaked about one bit of sub-second issue
+    phase per fetch** (see the next bullet), because which boundary the arrival
+    lands on depends on whether `issuePhase + roundTrip` crossed a grid line — a
+    boundary the handler continuation can read off the coarse clock. The
+    issue-relative rule adds up to two grid steps of settlement latency in
+    exchange for closing that phase channel. Verified by
+    `runner/test/fetch-capability.test.ts` (phase-independence across a full
+    second of issue phases).
   - **Why every fetch, not a burst (unlike the event shaper).** The event
     shaper (W3) lets a short burst through at realtime and only floors the
     *sustained* cadence, because the click threat is a sustained reference
@@ -160,13 +173,20 @@ Landing order, smallest and safest first. Each is its own commit/PR.
     fetch already leaks about a bit and a burst of ten would leak about ten
     (roughly millisecond resolution) — a fine clock. "Repeated fetches only" is
     therefore backwards: each fetch is another measurement, so more repetition
-    is more leak. Snapping every completion to the grid removes the mid-second
-    edge the correlation needs. (This is also why the reactive `fetchData`
-    builtin is left uncoarsened — its completion drives a cell flip observed in
-    reactive/lift context, where W1 denies any clock, so there is no
-    handler-clock edge to correlate and nothing to snap; the grid-snap cost
-    falls only on imperative handler `fetch`, exactly the context where the
-    correlation exists.)
+    is more leak. Snapping the settlement to the grid removes the mid-second edge
+    the correlation needs — **but only if the boundary is chosen from the issue
+    instant, not the arrival instant.** Snapping to the next boundary after
+    arrival does *not* close the channel: the arrival is `issue + roundTrip`, so
+    which boundary it lands on still depends on the sub-second issue phase, and
+    the elapsed whole-seconds the continuation reads (`ceil((phase+roundTrip) /
+    grid)`) is exactly the leaked bit. Choosing the boundary from the coarse
+    issue second plus the grid-rounded round trip makes the settlement
+    phase-independent, which is what actually closes it. (This is also why the
+    reactive `fetchData` builtin is left uncoarsened — its completion drives a
+    cell flip observed in reactive/lift context, where W1 denies any clock, so
+    there is no handler-clock edge to correlate and nothing to snap; the
+    settlement cost falls only on imperative handler `fetch`, exactly the context
+    where the correlation exists.)
   - **What it deliberately does not hide:** response *content* (a cooperating
     server can echo its own fine timestamps — but those measure request
     arrival at the server, which is a shaped handler-run instant plus network

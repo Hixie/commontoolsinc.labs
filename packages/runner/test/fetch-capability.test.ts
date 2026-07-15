@@ -134,22 +134,70 @@ describe("channel 7: gated sandbox fetch", () => {
   it("settles on the wall-clock grid (fulfillment)", async () => {
     const hostFetch =
       (() => Promise.resolve(new Response("body"))) as typeof fetch;
+    // Virtual `now` is fixed, so issue and arrival coincide (latency 0): the
+    // settlement is one grid step past the issue boundary — issue 1234, issue
+    // boundary 1000, settle 2000 -> wait 766.
     const { gated, waits } = virtualGatedFetch(hostFetch, 1234, 1000);
     await inFrame({ inHandler: true }, async () => {
       await gated("https://example.test/");
     });
-    // 1234 -> next boundary 2000 -> wait 766.
     expect(waits).toEqual([766]);
   });
 
   it("settles on the wall-clock grid (rejection), propagating the error", async () => {
     const failure = new Error("connection refused");
     const hostFetch = (() => Promise.reject(failure)) as typeof fetch;
+    // Latency 0: issue 250, issue boundary 0, settle 1000 -> wait 750. The
+    // rejection path uses the same issue-relative settlement as fulfillment.
     const { gated, waits } = virtualGatedFetch(hostFetch, 250, 1000);
     await inFrame({ inHandler: true }, async () => {
       await expect(gated("https://example.test/")).rejects.toBe(failure);
     });
     expect(waits).toEqual([750]);
+  });
+
+  it("settles independently of the sub-second issue phase (no phase leak)", async () => {
+    // A fetch issued at phase p within a second, with a known round trip R,
+    // must settle at the SAME wall-clock boundary regardless of p — otherwise
+    // the handler continuation could read that boundary off the coarse clock
+    // and binary-search p by varying R (the residual channel-7 leak). `now`
+    // returns the issue instant first, then the arrival instant (issue + R).
+    const settlementInstant = async (
+      issueMs: number,
+      rMs: number,
+    ): Promise<number> => {
+      const times = [issueMs, issueMs + rMs];
+      let call = 0;
+      let waited = 0;
+      const gated = createGatedFetch(
+        (() => Promise.resolve(new Response("x"))) as typeof fetch,
+        {
+          gridMs: 1000,
+          now: () => times[Math.min(call++, times.length - 1)],
+          wait: (ms) => {
+            waited = ms;
+            return Promise.resolve();
+          },
+        },
+      );
+      await inFrame({ inHandler: true }, async () => {
+        await gated("https://example.test/");
+      });
+      return issueMs + rMs + waited;
+    };
+
+    const R = 500;
+    // Two issues in the SAME coarse second (10000) at different phases.
+    const early = await settlementInstant(10_100, R); // phase 100ms
+    const late = await settlementInstant(10_700, R); // phase 700ms
+    expect(early).toBe(late); // phase-independent settlement
+    expect(early % 1000).toBe(0); // on the grid
+    // Contrast: a larger round trip shifts settlement by whole grid steps only
+    // (the coarse round-trip band is not hidden), still phase-independent.
+    const slowEarly = await settlementInstant(10_100, 1500);
+    const slowLate = await settlementInstant(10_800, 1500);
+    expect(slowEarly).toBe(slowLate);
+    expect(slowLate).toBeGreaterThan(late);
   });
 
   it("does not settle before the grid wait resolves", async () => {
