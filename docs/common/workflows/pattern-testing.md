@@ -140,9 +140,9 @@ const assert_game_ready = computed(() => {
 });
 ```
 
-Keep assertions deterministic. Do not call `safeDateNow()`,
-`nonPrivateRandom()`, `Date.now()`, or `Math.random()` inside the assertion
-itself. If the pattern stamps a timestamp or random ID, assert that the value
+Keep assertions deterministic. Do not call `Date.now()` or `Math.random()`
+inside the assertion itself (they are gated and throw in a `computed()`
+anyway). If the pattern stamps a timestamp or random ID, assert that the value
 exists or changed in the expected place.
 
 ## Test Organization
