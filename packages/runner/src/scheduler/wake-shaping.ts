@@ -341,6 +341,24 @@ function linkKey(link: NormalizedFullLink): string {
 }
 
 /**
+ * The per-instance shaper group key for a pattern reader/handler. It combines
+ * the owning space with the pieceId: the pieceId is `${scope}:${id}`, and the
+ * id is content-addressed, so two instances of the same pattern in different
+ * spaces can share a pieceId. Without the space, their wakes would collide into
+ * one shaper bucket and one space's activity would consume or delay the other's
+ * per-pattern burst budget (and expose a cross-space timing correlation). The
+ * space is JSON-tuple-encoded with the pieceId so the two fields cannot run
+ * together ambiguously. Returns undefined when no pieceId is known (internal
+ * machinery), so the caller applies its own fallback.
+ */
+export function shaperInstanceGroupKey(
+  identity: { ownerSpace?: string; pieceId?: string } | undefined,
+): string | undefined {
+  if (!identity?.pieceId) return undefined;
+  return JSON.stringify([identity.ownerSpace ?? null, identity.pieceId]);
+}
+
+/**
  * Shape an event delivery (channel 3). `groupKey` identifies the owning pattern
  * instance (all of a pattern's input shares one bucket); when undefined the
  * stream itself is the group. Strips any injected clock field from the payload

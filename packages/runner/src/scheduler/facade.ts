@@ -67,6 +67,7 @@ import {
   type DeliverFn,
   holdShapedCell,
   holdShapedEvent,
+  shaperInstanceGroupKey,
   shouldShapeDelivery,
   WakeShaper,
 } from "./wake-shaping.ts";
@@ -1354,15 +1355,20 @@ export class Scheduler {
   // input across its several streams into one delivery-shaping window (per-pattern
   // coalescing, W3). The wake shaper's hold() runs before the handler is
   // resolved, so we find it here from the registered handlers; undefined when none
-  // is registered yet (the shaper then falls back to per-stream grouping).
+  // is registered yet (the shaper then falls back to per-stream grouping). The key
+  // includes the owning space so two instances of one pattern in different spaces
+  // (same content-addressed pieceId) do not share a bucket (see
+  // shaperInstanceGroupKey).
   private pieceIdForEventLink(
     eventLink: NormalizedFullLink,
   ): string | undefined {
     for (const [link, handler] of this.eventHandlers) {
       if (areNormalizedLinksSame(link, eventLink)) {
-        return (handler as {
-          schedulerObservationIdentity?: SchedulerObservationIdentity;
-        }).schedulerObservationIdentity?.pieceId;
+        return shaperInstanceGroupKey(
+          (handler as {
+            schedulerObservationIdentity?: SchedulerObservationIdentity;
+          }).schedulerObservationIdentity,
+        );
       }
     }
     return undefined;

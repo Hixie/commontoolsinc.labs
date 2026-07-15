@@ -9,6 +9,7 @@ import type { TriggerIndexState } from "./trigger-index.ts";
 import type { MaterializerIndexState } from "./materializers.ts";
 import type { NodeRegistry, SchedulerNode } from "./node-record.ts";
 import { summarizeTriggerTraceValue } from "./diagnostics.ts";
+import { shaperInstanceGroupKey } from "./wake-shaping.ts";
 import type {
   Action,
   SpaceScopeAndURI,
@@ -42,18 +43,23 @@ export function shapableWakeGroupKey(
   notification: StorageNotification,
   action: Action,
 ): string | undefined {
-  const pieceId = (action as {
-    schedulerObservationIdentity?: { pieceId?: string };
-  }).schedulerObservationIdentity?.pieceId;
-  if (pieceId === undefined) return undefined;
+  // Space-qualified so two instances of one pattern in different spaces (which
+  // can share a content-addressed pieceId) don't collide into one shaper bucket
+  // (see shaperInstanceGroupKey). Undefined for internal machinery (no pieceId).
+  const instanceKey = shaperInstanceGroupKey(
+    (action as {
+      schedulerObservationIdentity?: { ownerSpace?: string; pieceId?: string };
+    }).schedulerObservationIdentity,
+  );
+  if (instanceKey === undefined) return undefined;
   if (
     notification.type === "commit" &&
     state.isRendererInputSource(notification.source)
   ) {
-    return `${pieceId}|input`;
+    return `${instanceKey}|input`;
   }
   if (notification.type === "pull" || notification.type === "integrate") {
-    return `${pieceId}|push`;
+    return `${instanceKey}|push`;
   }
   return undefined;
 }
