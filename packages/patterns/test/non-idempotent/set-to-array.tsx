@@ -1,14 +1,7 @@
 // WARNING: This pattern is INTENTIONALLY non-idempotent.
 // It exists to test detectNonIdempotent() diagnosis tooling.
 // Do NOT use as a reference for correct pattern development.
-import {
-  computed,
-  Default,
-  nonPrivateRandom,
-  pattern,
-  UI,
-  Writable,
-} from "commonfabric";
+import { computed, Default, pattern, UI, Writable } from "commonfabric";
 
 interface Item {
   title: string;
@@ -33,7 +26,7 @@ export default pattern<{
   const uniqueTags = new Writable<string[]>([]);
   computed(() => {
     const tags = items.get().map((i) => i.tag);
-    const shuffled = tags.sort(() => nonPrivateRandom() - 0.5);
+    const shuffled = tags.sort(() => Math.random() - 0.5);
     const set = new Set(shuffled);
     uniqueTags.set([...set]);
   });

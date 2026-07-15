@@ -2890,8 +2890,6 @@ export interface PatternEnvironment {
 }
 
 export type GetPatternEnvironmentFunction = () => PatternEnvironment;
-export type NonPrivateRandomFunction = () => number;
-export type SafeDateNowFunction = () => number;
 export type ToCompactDebugStringFunction = (
   value: unknown,
   maxLength?: number,
@@ -2980,8 +2978,6 @@ export function getPatternEnvironment(): PatternEnvironment {
     : new URL("http://localhost:8000");
   return Object.freeze({ apiUrl });
 }
-export declare const nonPrivateRandom: NonPrivateRandomFunction;
-export declare const safeDateNow: SafeDateNowFunction;
 export declare const toCompactDebugString: ToCompactDebugStringFunction;
 export declare const toIndentedDebugString: ToIndentedDebugStringFunction;
 
