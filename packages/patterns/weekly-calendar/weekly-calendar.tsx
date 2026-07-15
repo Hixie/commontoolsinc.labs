@@ -409,8 +409,11 @@ const WeeklyCalendar = pattern<Input, Output>(
     const editEventEndTime = new Writable<string>("10:00");
     const editEventColor = new Writable<string>(COLORS[0]);
 
-    // Track last drop time to prevent click firing after drag
-    const lastDropTime = new Cell(0);
+    // A drag-drop's pointer-up also synthesizes a click on the drop target;
+    // this flag lets the next click after a drop be swallowed. A time-window
+    // guard is not usable here: the in-handler clock is coarsened to one second,
+    // so a millisecond-scale "just dropped" window cannot be measured.
+    const suppressNextClick = new Cell(false);
 
     // Backlinks
     const backlinks = new Writable<MentionablePiece[]>([]);
@@ -991,13 +994,16 @@ const WeeklyCalendar = pattern<Input, Output>(
                           .set(addMinutesToTime(newTime, duration));
                       }
 
-                      lastDropTime.set(Date.now());
+                      suppressNextClick.set(true);
                     });
 
                     // Click handlers for creating events at specific hours (using action)
                     const hourClickActions = hours.map((hour) =>
                       action(() => {
-                        if (Date.now() - lastDropTime.get() < 300) return;
+                        if (suppressNextClick.get()) {
+                          suppressNextClick.set(false);
+                          return;
+                        }
                         newEventTitle.set("");
                         newEventDate.set(columnDate);
                         newEventStartTime.set(hour.startTime);
@@ -1126,7 +1132,10 @@ const WeeklyCalendar = pattern<Input, Output>(
 
                     // Click action to open edit modal
                     const openEvent = action(() => {
-                      if (Date.now() - lastDropTime.get() < 300) return;
+                      if (suppressNextClick.get()) {
+                        suppressNextClick.set(false);
+                        return;
+                      }
                       // Populate edit form with event data
                       editingEventIndex.set(evtIndex);
                       editEventTitle.set(evt.title || "");
