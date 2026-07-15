@@ -270,6 +270,46 @@ const timeAgo = computed(() => {
 });
 ```
 
+### Periodic work: polling a data source on a `#now/N` tick
+
+`#now/N` is also how a pattern does periodic *work* — "check this feed every five
+minutes", "re-run this query every minute". The `#now/N` cell flips every `N`
+seconds; feed that tick into the input of a **reactive** fetch builtin
+(`fetchJson` / `fetchText` / `fetchData`), and the builtin re-runs each window
+because its input changed. Vary the request by the tick (a `since` parameter, or
+a cache-busting query value) so each window is a fresh request rather than a
+memoized repeat:
+
+```tsx
+// Shown inside a pattern body.
+// Poll a feed every 5 minutes. The #now/300 tick changes `url` each window, so
+// the reactive fetch re-runs; its result lands in a cell the UI reads. No clock
+// is read in reactive code — the tick is a cell, and the fetch is a reactive
+// builtin, so the graph still quiesces between windows.
+const tick = wish<number>({ query: "#now/300" });
+const feed = fetchJson<{ items: string[] }>({
+  url: computed(() =>
+    tick.result == null ? "" : `/api/my-feed?window=${tick.result}`
+  ),
+});
+const items = computed(() => feed.result?.items ?? []);
+```
+
+This stays inside the timing model: reactive fetch settlement is observed in a
+lift/computed context where the clock is denied, so a periodic re-fetch grants no
+fine clock (see `docs/specs/sandboxing/TIMING_SIDE_CHANNELS.md`).
+
+**What a `#now/N` tick cannot do: trigger a handler.** A tick is a cell flip.
+Reactive code (lifts, computeds, the pattern body) cannot emit an event, so there
+is no way to make a `#now/N` tick *fire a handler* on a timer. That rules out
+timer-driven *imperative* work — the sequenced multi-request OAuth flows, token
+refreshes, and mutations that the email/calendar clients run inside handlers.
+Those still need a user action (a "Refresh" button, a visit) to start. Periodic
+work that can be expressed as "re-derive this value / re-read this source" fits
+the reactive-fetch shape above; periodic work that must *push* (send a reply,
+write to a remote mailbox) on a timer is deliberately not expressible, because an
+unattended background side-effect is a larger capability than a background read.
+
 ## Intended Usage
 
 Keep a handle to important information in a piece, e.g. google auth, user
