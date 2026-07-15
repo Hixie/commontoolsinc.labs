@@ -25,7 +25,6 @@ import {
   handler,
   NAME,
   pattern,
-  safeDateNow,
   UI,
   wish,
   Writable,
@@ -177,9 +176,10 @@ function calculateCalendarDays(fromDate: Date, toDate: Date): number {
 function calculateDays(
   fromDateStr: string,
   context: ThreadContext,
+  nowMs: number,
 ): number {
   const fromDate = new Date(fromDateStr);
-  const toDate = new Date(safeDateNow());
+  const toDate = new Date(nowMs);
 
   if (context === "business") {
     return calculateBusinessDays(fromDate, toDate);
@@ -209,15 +209,13 @@ function suggestContext(email: string): ThreadContext {
 /**
  * Format date for display
  */
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, currentYear: number): string {
   try {
     const date = new Date(dateStr);
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      year: date.getFullYear() !== new Date(safeDateNow()).getFullYear()
-        ? "numeric"
-        : undefined,
+      year: date.getFullYear() !== currentYear ? "numeric" : undefined,
     });
   } catch {
     return dateStr;
@@ -611,6 +609,24 @@ export default pattern<PatternInput, PatternOutput>(() => {
   const emailStylePrompt = emailStyleWish.result?.stylePrompt ?? "";
 
   // ==========================================================================
+  // CURRENT TIME
+  // ==========================================================================
+
+  // Ticking clock for the days-since-last-response countdown so it refreshes
+  // as time passes. Ticks every hour (granularity finer than a day is wasted
+  // here since the countdown is in whole days).
+  const nowTickingCell = wish<number>({ query: "#now/3600" });
+  // One-shot stamp used only to decide whether formatDate shows the year.
+  const nowCell = wish<number>({ query: "#now" });
+  const currentYear = computed(() => {
+    const nowMs = nowCell.result;
+    // During load nowMs is undefined; fall back to no-year-suppression by
+    // using a year that won't match real dates, so the year is shown until
+    // the clock resolves.
+    return nowMs == null ? 0 : new Date(nowMs).getFullYear();
+  });
+
+  // ==========================================================================
   // GMAIL EXTRACTOR
   // ==========================================================================
 
@@ -636,6 +652,9 @@ export default pattern<PatternInput, PatternOutput>(() => {
     const metadata = threadMetadata.get();
     // User email from createGoogleAuth - used to filter out threads where user sent last message
     const currentUserEmail = (currentEmail || "").toLowerCase();
+    // Reactive clock for the days-waiting countdown. Undefined during load.
+    const nowMs = nowTickingCell.result;
+    if (nowMs == null) return [];
 
     // Group by threadId
     const threadMap = new Map<string, Email[]>();
@@ -682,6 +701,7 @@ export default pattern<PatternInput, PatternOutput>(() => {
       const daysSinceLastResponse = calculateDays(
         lastEmail.date,
         settings.context,
+        nowMs,
       );
 
       // Determine if due
@@ -755,7 +775,7 @@ export default pattern<PatternInput, PatternOutput>(() => {
       const threadSummary = emailArray
         .slice(-5)
         .map((email) => {
-          const date = formatDate(String(email.date || ""));
+          const date = formatDate(String(email.date || ""), currentYear);
           const from = String(email.from || "");
           const snippetStr = String(email.snippet || "");
           const snippet = snippetStr.slice(0, 200);
@@ -1169,7 +1189,10 @@ Write only the email body, no subject line or greeting line (the greeting will b
                               From: {thread.lastResponder}
                             </span>
                             <span>
-                              Last: {formatDate(thread.lastMessageDate)}
+                              Last:{" "}
+                              {computed(() =>
+                                formatDate(thread.lastMessageDate, currentYear)
+                              )}
                             </span>
                             <span
                               style={{
@@ -1335,7 +1358,9 @@ Write only the email body, no subject line or greeting line (the greeting will b
                                       }}
                                     >
                                       <span>{email.from}</span>
-                                      <span>{formatDate(email.date)}</span>
+                                      <span>
+                                        {formatDate(email.date, currentYear)}
+                                      </span>
                                     </div>
                                     <div
                                       style={{

@@ -19,7 +19,6 @@ import {
   lift,
   NAME,
   pattern,
-  safeDateNow,
   SELF,
   str,
   toCompactDebugString,
@@ -326,7 +325,7 @@ const trashSubPiece = handler<
   if (!entry) return;
 
   // Move to trash with timestamp
-  trash.push({ ...entry, trashedAt: new Date(safeDateNow()).toISOString() });
+  trash.push({ ...entry, trashedAt: new Date().toISOString() });
 
   // Remove from active using splice
   const updated = [...current];
@@ -740,7 +739,7 @@ const handleRemoveModule = handler<
   const def = getDefinition(entry.type);
 
   // Move to trash with timestamp
-  trash.push({ ...entry, trashedAt: new Date(safeDateNow()).toISOString() });
+  trash.push({ ...entry, trashedAt: new Date().toISOString() });
 
   // Remove from active
   const updated = [...current];

@@ -30,7 +30,6 @@ import {
   ifElse,
   NAME,
   pattern,
-  safeDateNow,
   toIndentedDebugString,
   UI,
   Writable,
@@ -87,7 +86,7 @@ export default pattern<TestInput, TestOutput>(({ triggerCount }) => {
       const current = nonIdempotentArray.get();
       nonIdempotentArray.set([...current, {
         trigger,
-        timestamp: safeDateNow(),
+        timestamp: Date.now(),
       }]);
 
       // Increment counter to show how many times this ran
@@ -116,7 +115,7 @@ export default pattern<TestInput, TestOutput>(({ triggerCount }) => {
       if (!(key in current)) {
         idempotentMap.set({
           ...current,
-          [key]: { trigger, timestamp: safeDateNow() },
+          [key]: { trigger, timestamp: Date.now() },
         });
       }
 
