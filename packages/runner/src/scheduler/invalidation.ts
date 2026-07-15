@@ -24,6 +24,40 @@ export function hasRegisteredTriggers(
   return state.hasRegisteredTriggers();
 }
 
+// Timing side-channel mitigation (plan B, channels 4/5). Return the token-bucket
+// group key for this change's subscriber wake when it should be shaped through the
+// cell-notification shaper — i.e. the change is a shapable real-world-timing source
+// (a renderer `$value` keystroke write, or a server push) AND the reader is a
+// pattern instance (carries a pieceId). Internal machinery (no pieceId) and
+// ordinary local computation (not a shapable source) return undefined and are
+// never deferred, so normal reactivity is untouched.
+//
+// Interactive input (renderer `$value` keystrokes) and passive server pushes get
+// SEPARATE per-pattern buckets (`|input` vs `|push`). A chatty background source —
+// a synced `#now` clock, another tab writing a shared cell — must not drain the
+// burst budget that keeps a user's own typing responsive. Both remain per-pattern,
+// so the per-pattern grouping that defeats the counting attack is intact.
+export function shapableWakeGroupKey(
+  state: StorageNotificationState,
+  notification: StorageNotification,
+  action: Action,
+): string | undefined {
+  const pieceId = (action as {
+    schedulerObservationIdentity?: { pieceId?: string };
+  }).schedulerObservationIdentity?.pieceId;
+  if (pieceId === undefined) return undefined;
+  if (
+    notification.type === "commit" &&
+    state.isRendererInputSource(notification.source)
+  ) {
+    return `${pieceId}|input`;
+  }
+  if (notification.type === "pull" || notification.type === "integrate") {
+    return `${pieceId}|push`;
+  }
+  return undefined;
+}
+
 export function processStorageNotification(
   state: StorageNotificationState,
   notification: StorageNotification,
@@ -33,6 +67,11 @@ export function processStorageNotification(
   if (!("changes" in notification)) {
     return;
   }
+
+  // One charge per notification (one commit or one push): every reader wake this
+  // notification produces observes the same instant, so they share one burst token
+  // in the cell-notification shaper rather than each spending their own.
+  const commitChargeKey = {};
 
   const sourceChangeGroup = notification.type === "commit"
     ? notification.source?.changeGroup
@@ -115,12 +154,30 @@ export function processStorageNotification(
         actionChangeGroup,
         sourceChangeGroup,
       });
-      applyPullTriggeredActionPlan(
-        state,
-        action,
-        plan,
-        { ...change.address, space },
-      );
+      const cause: IMemorySpaceAddress = { ...change.address, space };
+      const shapeGroupKey = plan.operation !== "none"
+        ? shapableWakeGroupKey(state, notification, action)
+        : undefined;
+      if (shapeGroupKey !== undefined) {
+        // Defer this pattern reader's wake through the cell-notification
+        // shaper, coalesced per (reader, cell) and released with the pattern's
+        // window. The reader re-reads current cell state when it runs, so
+        // nothing is lost. Record the invalid cause now as well as at release
+        // (addInvalidCause dedups by address): an interleaved unshaped wake may
+        // run the action and consume its recorded causes before the deferred
+        // release, and the deferred rerun must still carry the "this change
+        // triggered me" flow label.
+        const record = state.nodes.get(action);
+        if (record) addInvalidCause(record, cause);
+        state.holdShapedNotification(
+          shapeGroupKey,
+          `${actionId}|${spaceAndURI}`,
+          commitChargeKey,
+          () => applyPullTriggeredActionPlan(state, action, plan, cause),
+        );
+      } else {
+        applyPullTriggeredActionPlan(state, action, plan, cause);
+      }
 
       triggerTraceEntry?.triggered.push(
         createTriggerTraceActionRecord({
@@ -374,4 +431,20 @@ export interface StorageNotificationState {
   readonly isInvalid: (action: Action) => boolean;
   readonly materializerIndex: MaterializerIndexState;
   readonly queueExecution: () => void;
+  // Timing side-channel mitigation (plan B, channels 4/5). Whether a committed
+  // change came from a renderer `$value` keystroke write — its notification
+  // `source` carries the renderer-input mark — so the resulting subscriber wake
+  // should be shaped.
+  readonly isRendererInputSource: (source: object | undefined) => boolean;
+  // Defer a shapable subscriber wake through the cell-notification shaper.
+  // groupKey identifies the observing pattern instance (so a pattern's shaped
+  // wakes share one window); itemKey is the (reader, cell) coalescing unit;
+  // deliver performs the wake once the shaping window releases. chargeKey
+  // identifies the source commit so all its reader wakes share one burst token.
+  readonly holdShapedNotification: (
+    groupKey: string,
+    itemKey: string,
+    chargeKey: object,
+    deliver: () => void,
+  ) => void;
 }

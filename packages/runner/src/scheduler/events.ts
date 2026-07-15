@@ -27,6 +27,7 @@ import type {
   SchedulerActionInfo,
   SchedulerEventPreflightStats,
 } from "../telemetry.ts";
+import { MAX_EVENT_BACKLOG_PER_STREAM } from "./constants.ts";
 import { createEventPreflightTraceContext } from "./diagnostics.ts";
 import { mintEventId } from "./event-identity.ts";
 import { planEventInvalidDependencyScheduling } from "./execution.ts";
@@ -180,6 +181,23 @@ function readyQueuedEvent(args: {
   };
 }
 
+function chainOnCommit(
+  a: QueuedEvent["onCommit"],
+  b: QueuedEvent["onCommit"],
+): QueuedEvent["onCommit"] {
+  if (!a) return b;
+  if (!b) return a;
+  return (tx) => {
+    // Isolate the callbacks: a throw in the first must not skip the second.
+    try {
+      a(tx);
+    } catch (error) {
+      logger.error("onCommit-callback-error", () => [error]);
+    }
+    b(tx);
+  };
+}
+
 export function queueSchedulerEvent(state: SchedulerEventQueueState, args: {
   readonly eventLink: NormalizedFullLink;
   readonly event: unknown;
@@ -193,6 +211,54 @@ export function queueSchedulerEvent(state: SchedulerEventQueueState, args: {
   const handler = findEventHandler(state.eventHandlers, args.eventLink);
 
   if (handler) {
+    // W4: bound the per-(stream, handler) in-queue backlog. Below the cap,
+    // events queue normally (ordinary delivery is unchanged); at the cap,
+    // collapse the newest into the last pending entry (last-wins) instead of
+    // growing the backlog, so a pattern cannot observe an unbounded post-block
+    // event count.
+    if (
+      // The matching (stream, handler) count can only reach the cap once the
+      // whole queue is at it, so this O(queue) scan runs only after a backlog
+      // has already formed — ordinary enqueue stays O(1).
+      state.eventQueue.length >= MAX_EVENT_BACKLOG_PER_STREAM
+    ) {
+      let pending = 0;
+      let lastSameOrigin: QueuedEvent | undefined;
+      for (const q of state.eventQueue) {
+        if (
+          q.handler === handler &&
+          areNormalizedLinksSame(q.eventLink, args.eventLink)
+        ) {
+          pending++;
+          // Collapse only within the same origin transaction. Coalescing an
+          // event from a different origin would misattribute speculation
+          // lineage: the surviving entry keeps its original originTx, so the
+          // single dispatch-time release would key off the wrong origin.
+          if (q.originTx === args.originTx) lastSameOrigin = q;
+        }
+      }
+      if (
+        pending >= MAX_EVENT_BACKLOG_PER_STREAM &&
+        lastSameOrigin !== undefined
+      ) {
+        // Collapse is silent by design. A per-collapse log here would fire on
+        // every enqueue during an adversarial burst, turning observability
+        // into a log-flood amplifier; any telemetry added later must be
+        // rate-limited.
+        lastSameOrigin.event = args.event;
+        lastSameOrigin.action = (tx) => handler(tx, args.event);
+        lastSameOrigin.onCommit = chainOnCommit(
+          lastSameOrigin.onCommit,
+          args.onCommit,
+        );
+        if (args.originTx !== undefined) {
+          // Same origin as the surviving entry, so this re-record is idempotent.
+          state.recordLineageEvent(args.originTx, lastSameOrigin);
+        }
+        state.queueExecution();
+        return;
+      }
+    }
     const queuedEvent = readyQueuedEvent({ ...args, id, handler });
     state.eventQueue.push(queuedEvent);
     if (args.originTx !== undefined) {
