@@ -80,69 +80,62 @@ done
 echo "All smoketests started. Monitor logs in tools/ralph/smoketest/<ID>/ralph.log"
 echo ""
 
-# Poll containers until all have exited
-while true; do
-  RUNNING_CONTAINERS=()
+# Wait for the containers to exit, reporting each one as it finishes.
+# docker wait blocks until a container exits and prints its exit code, reading
+# it from the container's record. The containers run with --rm, so a container
+# that exited before its wait started may already have been removed, taking its
+# exit code with it; docker wait then reports no such container, and its message
+# is passed through in place of the code.
+for ID in $RALPH_IDS; do
+  (
+    if STATUS=$(docker wait "ralph_$ID" 2>&1) && [ -n "$STATUS" ]; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Finished: $ID (exit code $STATUS)"
+    else
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] No exit code for $ID: ${STATUS:-docker wait reported nothing}"
+    fi
+  ) &
+done
+wait
 
-  # Check which containers are still running
-  for ID in $RALPH_IDS; do
-    if docker ps --filter "name=ralph_$ID" --format "{{.Names}}" | grep -q "ralph_$ID"; then
-      RUNNING_CONTAINERS+=("ralph_$ID")
+echo "All smoketests completed!"
+
+# Move screenshots to appropriate smoketest directories
+if [ -d "$LABS/.playwright-mcp" ]; then
+  for screenshot in "$LABS/.playwright-mcp"/ralph_*-*.png; do
+    if [ -f "$screenshot" ]; then
+      # Extract RALPH_ID from filename (ralph_1-foo.png -> 1)
+      filename=$(basename "$screenshot")
+      ralph_id=$(echo "$filename" | sed 's/ralph_\([0-9]*\)-.*/\1/')
+      if [ -d "$LABS/tools/ralph/smoketest/$ralph_id" ]; then
+        mv "$screenshot" "$LABS/tools/ralph/smoketest/$ralph_id/"
+        echo "Moved $filename to smoketest/$ralph_id/"
+      fi
     fi
   done
+fi
 
-  # If no containers are running, exit the loop
-  if [ ${#RUNNING_CONTAINERS[@]} -eq 0 ]; then
-    echo "All smoketests completed!"
+echo ""
 
-    # Move screenshots to appropriate smoketest directories
-    if [ -d "$LABS/.playwright-mcp" ]; then
-      for screenshot in "$LABS/.playwright-mcp"/ralph_*-*.png; do
-        if [ -f "$screenshot" ]; then
-          # Extract RALPH_ID from filename (ralph_1-foo.png -> 1)
-          filename=$(basename "$screenshot")
-          ralph_id=$(echo "$filename" | sed 's/ralph_\([0-9]*\)-.*/\1/')
-          if [ -d "$LABS/tools/ralph/smoketest/$ralph_id" ]; then
-            mv "$screenshot" "$LABS/tools/ralph/smoketest/$ralph_id/"
-            echo "Moved $filename to smoketest/$ralph_id/"
-          fi
-        fi
-      done
-    fi
+# Summarize scores
+SUCCESS_COUNT=0
+PARTIAL_COUNT=0
+FAILURE_COUNT=0
 
-    echo ""
-
-    # Summarize scores
-    SUCCESS_COUNT=0
-    PARTIAL_COUNT=0
-    FAILURE_COUNT=0
-
-    for ID in $RALPH_IDS; do
-      if [ -f "$LABS/tools/ralph/smoketest/$ID/SCORE.txt" ]; then
-        SCORE=$(cat "$LABS/tools/ralph/smoketest/$ID/SCORE.txt" | tr -d '[:space:]')
-        case "$SCORE" in
-          SUCCESS) SUCCESS_COUNT=$((SUCCESS_COUNT + 1)) ;;
-          PARTIAL) PARTIAL_COUNT=$((PARTIAL_COUNT + 1)) ;;
-          FAILURE) FAILURE_COUNT=$((FAILURE_COUNT + 1)) ;;
-        esac
-      fi
-    done
-
-    echo "Summary: $SUCCESS_COUNT success, $PARTIAL_COUNT partial, $FAILURE_COUNT failure"
-    echo ""
-    echo "Results available in tools/ralph/smoketest/<ID>/"
-    echo "  - SCORE.txt: SUCCESS/PARTIAL/FAILURE"
-    echo "  - RESULTS.md: Test summary"
-    echo "  - ralph.log: Full execution log"
-    echo "  - Pattern files and screenshots"
-
-    break
+for ID in $RALPH_IDS; do
+  if [ -f "$LABS/tools/ralph/smoketest/$ID/SCORE.txt" ]; then
+    SCORE=$(cat "$LABS/tools/ralph/smoketest/$ID/SCORE.txt" | tr -d '[:space:]')
+    case "$SCORE" in
+      SUCCESS) SUCCESS_COUNT=$((SUCCESS_COUNT + 1)) ;;
+      PARTIAL) PARTIAL_COUNT=$((PARTIAL_COUNT + 1)) ;;
+      FAILURE) FAILURE_COUNT=$((FAILURE_COUNT + 1)) ;;
+    esac
   fi
-
-  # Print status (strip "ralph_" prefix from container names)
-  IDS=("${RUNNING_CONTAINERS[@]#ralph_}")
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Still running: ${IDS[*]}"
-
-  # Wait 10 seconds before checking again
-  sleep 10
 done
+
+echo "Summary: $SUCCESS_COUNT success, $PARTIAL_COUNT partial, $FAILURE_COUNT failure"
+echo ""
+echo "Results available in tools/ralph/smoketest/<ID>/"
+echo "  - SCORE.txt: SUCCESS/PARTIAL/FAILURE"
+echo "  - RESULTS.md: Test summary"
+echo "  - ralph.log: Full execution log"
+echo "  - Pattern files and screenshots"
