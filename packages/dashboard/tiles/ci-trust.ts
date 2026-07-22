@@ -9,6 +9,7 @@ function makeCiTrust(opts: { id: string; label: string; repo: string; workflow: 
   return {
     id: opts.id,
     intervalMs: 30_000,
+    runSources: [{ repo: opts.repo, workflow: opts.workflow }],
     async collect(ctx): Promise<TileView> {
       const runs = await ctx.runsFor(opts.repo, opts.workflow);
       const completed = runs.filter((r) => r.status === "completed" && r.conclusion);
