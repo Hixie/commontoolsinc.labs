@@ -230,15 +230,8 @@ const fillAndVerify = async (
   return verified;
 };
 
-// Tag the inner click target of the cf-button behind `selector` so the test can
-// resolve and click exactly that element. A click target that is still
-// detached, or not rendered — laid out, and not display:none or
-// visibility:hidden — is left untagged, so a re-check on the next DOM mutation
-// retries the mark once the control renders. The check is viewport-independent:
-// the click scrolls the element into view itself, so a control below the fold
-// is markable. It reads the click target alone because hiding the host or any
-// ancestor reaches the inner button either way: display:none zeroes its box,
-// and visibility:hidden inherits into its computed visibility.
+// Tag the inner click target of the cf-button behind `selector`. The predicate
+// waits until the target is connected and rendered before adding the mark.
 const markForClick = (
   probe: ProbeApi,
   selector: string,
@@ -339,7 +332,9 @@ const markTrustedAction = (
 // safety net, and the settle itself awaits a real promise.
 export async function settleView(page: Page): Promise<void> {
   await waitForCondition(page, viewSettledReady);
-  await awaitViewSettled(page);
+  if (!await awaitViewSettled(page)) {
+    throw new Error("View settlement hook disappeared before settlement");
+  }
 }
 
 /**
@@ -615,38 +610,115 @@ export async function waitForDisabled(
   }
 }
 
-async function markRenderedCfButton(
+/** Verify that one rendered, attached element still carries a click mark. */
+export async function assertMarkedClickTargetRendered(
   page: Page,
-  selector: string,
-): Promise<string> {
-  const token = `cf-button-${crypto.randomUUID()}`;
-  try {
-    // Mark the rendered button exactly once. The mark is the predicate, so the
-    // re-check on each DOM mutation retries finding the button without
-    // re-clicking anything.
-    await waitForCondition(page, markForClick, {
-      args: [selector, token, CLICK_TARGET_ATTR],
-    });
-  } catch (cause) {
-    // The probe's per-match `rect` and `visible` report whether the control was
-    // absent or present without a layout box.
-    const probe = await readTextProbe(page, selector).catch(() => undefined);
-    // Indented for readable test-log output
+  token: string,
+  description: string,
+): Promise<void> {
+  const state = await page.evaluate((targetToken, targetAttribute) => {
+    const roots: (Document | ShadowRoot)[] = [document];
+    const matches: Element[] = [];
+    while (roots.length > 0) {
+      const root = roots.pop()!;
+      for (const element of root.querySelectorAll("*")) {
+        const tokens = (element.getAttribute(targetAttribute) ?? "")
+          .split(/\s+/)
+          .filter(Boolean);
+        if (tokens.includes(targetToken)) matches.push(element);
+        if (element.shadowRoot) roots.push(element.shadowRoot);
+      }
+    }
+    if (matches.length !== 1) {
+      return {
+        attached: false,
+        matches: matches.length,
+        rendered: false,
+      };
+    }
+    const target = matches[0];
+    const style = globalThis.getComputedStyle(target);
+    const rect = target.getBoundingClientRect();
+    return {
+      attached: target.isConnected,
+      matches: 1,
+      rendered: style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        rect.width > 0 &&
+        rect.height > 0,
+    };
+  }, { args: [token, CLICK_TARGET_ATTR] });
+
+  if (state.matches === 0) {
+    throw new Error(`${description} was replaced while settling`);
+  }
+  if (state.matches !== 1) {
     throw new Error(
-      `Unable to mark ${selector} for click. Last probe: ${
-        toIndentedDebugString(probe)
+      `${description} had ${state.matches} matching click marks after settling`,
+    );
+  }
+  if (!state.attached) {
+    throw new Error(`${description} was replaced while settling`);
+  }
+  if (!state.rendered) {
+    throw new Error(`${description} stopped being rendered while settling`);
+  }
+}
+
+async function markRenderedCfButtonsAfterSettling(
+  page: Page,
+  targets: readonly { selector: string; token: string }[],
+): Promise<void> {
+  try {
+    await settleView(page);
+    for (const { selector, token } of targets) {
+      await waitForCondition(page, markForClick, {
+        args: [selector, token, CLICK_TARGET_ATTR],
+      });
+    }
+    await settleView(page);
+    for (const { selector, token } of targets) {
+      await assertMarkedClickTargetRendered(
+        page,
+        token,
+        `Click target for "${selector}"`,
+      );
+    }
+  } catch (cause) {
+    for (const { token } of targets) {
+      await clearClickMark(page, token).catch(() => {});
+    }
+    const probes = [];
+    for (const { selector } of targets) {
+      probes.push(
+        await readTextProbe(page, selector).catch(() => undefined),
+      );
+    }
+    throw new Error(
+      `Unable to mark ${
+        targets.map(({ selector }) => selector).join(", ")
+      } for click after settling. Last probes: ${
+        toIndentedDebugString(probes)
       }`,
       { cause },
     );
   }
+}
+
+async function markRenderedCfButtonAfterSettling(
+  page: Page,
+  selector: string,
+): Promise<string> {
+  const token = `cf-button-${crypto.randomUUID()}`;
+  await markRenderedCfButtonsAfterSettling(page, [{ selector, token }]);
   return token;
 }
 
-async function clickRenderedCfButton(
+async function clickSettledCfButton(
   page: Page,
   selector: string,
 ) {
-  const token = await markRenderedCfButton(page, selector);
+  const token = await markRenderedCfButtonAfterSettling(page, selector);
   await clickMarked(page, token);
 }
 
@@ -654,39 +726,37 @@ export async function clickCfButton(
   page: Page,
   selector: string,
 ) {
-  await settleView(page);
-  await clickRenderedCfButton(page, selector);
+  await clickSettledCfButton(page, selector);
   await settleView(page);
 }
 
 /**
- * Settle every target page before dispatch. Mark every target before the first
- * click. Dispatch every click without an intervening view settle. Settle every
- * target page after dispatch.
+ * Settle every target page with its controls rendered and mark every target
+ * before the first dispatch. Dispatch every click without an intervening view
+ * settle. Settle every target page after dispatch.
  */
 export async function clickCfButtonsConcurrently(
   targets: readonly { page: Page; selector: string }[],
 ): Promise<void> {
   const pages = [...new Set(targets.map(({ page }) => page))];
-  await Promise.all(pages.map((page) => settleView(page)));
-
   const markedByPage = pages.map((page) => ({
     page,
-    tokens: [] as string[],
+    targets: targets.filter((target) => target.page === page).map(
+      ({ selector }) => ({
+        selector,
+        token: `cf-button-${crypto.randomUUID()}`,
+      }),
+    ),
   }));
   const markResults = await Promise.allSettled(
-    markedByPage.map(async ({ page, tokens }) => {
-      for (
-        const { selector } of targets.filter((target) => target.page === page)
-      ) {
-        tokens.push(await markRenderedCfButton(page, selector));
-      }
-    }),
+    markedByPage.map(({ page, targets }) =>
+      markRenderedCfButtonsAfterSettling(page, targets)
+    ),
   );
   const clearMarks = () =>
     Promise.all(
-      markedByPage.flatMap(({ page, tokens }) =>
-        tokens.map((token) => clearClickMark(page, token).catch(() => {}))
+      markedByPage.flatMap(({ page, targets }) =>
+        targets.map(({ token }) => clearClickMark(page, token).catch(() => {}))
       ),
     );
   const markFailure = markResults.find((result) =>
@@ -698,8 +768,8 @@ export async function clickCfButtonsConcurrently(
   }
 
   const clickResults = await Promise.allSettled(
-    markedByPage.map(async ({ page, tokens }) => {
-      for (const token of tokens) {
+    markedByPage.map(async ({ page, targets }) => {
+      for (const { token } of targets) {
         await clickMarked(page, token);
       }
     }),

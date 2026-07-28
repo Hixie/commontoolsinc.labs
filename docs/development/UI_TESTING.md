@@ -241,9 +241,9 @@ fire, the click lands on whatever shifted into that spot instead of the control,
 and nothing happens. Settling the view drains the pending reflow so the target
 is stationary when it is clicked.
 
-**Use `awaitViewSettled(page)`** from `@commonfabric/integration` before issuing
-the first click or keystroke after navigation or any state change. It resolves
-once all three stages are done, so a single click then lands on a bound handler:
+Settle once to pump pending rendering, wait for the rendered control, then
+settle again with that control present. A single click then lands on a bound,
+stationary target:
 
 ```typescript
 // Shown at module scope.
@@ -252,20 +252,54 @@ import {
   waitForCondition,
 } from "@commonfabric/integration";
 
-// Before interacting: wait until the shell has exposed its settle hook, then
-// settle the view so the click lands on a bound handler.
-await waitForCondition(page, () =>
-  typeof (globalThis as {
-    commonfabric?: { viewSettled?: unknown };
-  }).commonfabric?.viewSettled === "function");
-await awaitViewSettled(page);
-const button = await page.waitForSelector("cf-button[role='button']");
+const settleView = async () => {
+  await waitForCondition(page, () =>
+    typeof (globalThis as {
+      commonfabric?: { viewSettled?: unknown };
+    }).commonfabric?.viewSettled === "function");
+  if (!await awaitViewSettled(page)) {
+    throw new Error("The view settlement hook disappeared");
+  }
+};
+
+// Before interacting: pump pending rendering, mark the native click target,
+// then settle with that exact element present.
+const clickToken = `ui-test-${crypto.randomUUID()}`;
+const clickTargetAttribute = "data-ui-test-click-target";
+await settleView();
+await waitForCondition(page, (
+  probe,
+  targetToken: string,
+  targetAttribute: string,
+) => {
+  const host = probe.collect("cf-button[role='button']")[0];
+  const target = host?.shadowRoot?.querySelector("button");
+  if (!target || !probe.isRendered(target)) return false;
+  probe.addToken(target, targetAttribute, targetToken);
+  return true;
+}, { args: [clickToken, clickTargetAttribute] });
+await settleView();
+const button = await page.$(
+  `[${clickTargetAttribute}~="${clickToken}"]`,
+  { strategy: "pierce" },
+);
+if (!button) throw new Error("The marked click target was replaced");
+const stillRendered = await button.evaluate((target: Element) => {
+  const style = globalThis.getComputedStyle(target);
+  const rect = target.getBoundingClientRect();
+  return target.isConnected &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect.width > 0 &&
+    rect.height > 0;
+});
+if (!stillRendered) throw new Error("The marked click target stopped rendering");
 await button.click(); // delivered to a bound handler
 
 // After interacting: settle once, then wait for the click's specific effect
 // event-drivenly. The modal opening is a DOM mutation, so waitForCondition's
 // in-page waiter resolves the instant it appears.
-await awaitViewSettled(page);
+await settleView();
 await waitForCondition(page, (probe) =>
   probe.collect("cf-modal[open]").length > 0);
 ```
@@ -273,7 +307,8 @@ await waitForCondition(page, (probe) =>
 Pattern integration tests can reach for the higher-level wrappers in
 `packages/patterns/integration/cfc-browser-helpers.ts` — `waitForText`,
 `fillCfInput`, `clickCfButton`, `clickCfButtonAndWaitForText` — which bundle
-"settle the view, act once, wait for the effect" on top of these primitives.
+"settle with the target present, act once, wait for the effect" on top of these
+primitives.
 
 ### Do not reach for these instead
 
@@ -298,8 +333,8 @@ Each of the following is what `awaitViewSettled` replaces. They are either racy
   `waitForSelector` is itself a tight CDP poll, and a present element is not a
   ready one.
 
-The shape is always: settle the view, click once, then wait for the effect —
-never poll-and-pray, and never re-click.
+The shape is always: settle, resolve the target, settle with it present, click
+once, then wait for the effect. Never re-click while waiting for one effect.
 
 A CI check enforces this for the polling `waitFor`: `deno task check-no-waitfor`
 fails when an integration test imports `waitFor` as a value from

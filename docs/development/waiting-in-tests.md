@@ -138,6 +138,13 @@ why it belongs in the predicate that tags the control. Whether the control is
 declines it. A test that needs a control enabled before clicking says so with
 `waitForDisabled(page, selector, false)`.
 
+Settle once to pump pending rendering, wait for and mark the target, then settle
+again with that exact target present. A settle that ran before the control
+existed does not cover the view that contains it. The control can appear later
+with its handler still unbound or its layout box still moving. `clickCfButton`
+and `clickCfButtonsConcurrently` preserve the exact marks through the second
+settle and proceed only while those targets remain attached.
+
 **Non-browser and off-page waits** have no page to observe. Resolve a `defer()`
 (from `packages/utils/src/defer.ts`) inside a callback the test already registers
 — a cell `sink`/`subscribe`, a storage subscription's `next`, a scheduler

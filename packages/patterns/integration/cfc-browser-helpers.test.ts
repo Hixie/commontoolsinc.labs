@@ -1,5 +1,5 @@
 import { Browser, type Page } from "@commonfabric/integration";
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import {
   CLICK_TARGET_ATTR,
@@ -67,7 +67,71 @@ describe("CFC browser helpers", () => {
       result.inputPresent,
       'clicking "Continue as guest" did not reveal #lp-join-name',
     );
-    assertEquals(result.settleCalls, 2);
+    assertEquals(result.settleCalls, 3);
+  });
+
+  it("rejects when the settlement hook vanishes before invocation", async () => {
+    await page.evaluate(() => {
+      const host = document.createElement("div");
+      const root = host.attachShadow({ mode: "open" });
+      const button = document.createElement("button");
+      button.id = "vanishing-settle-button";
+      button.textContent = "Open";
+      root.append(button);
+      document.body.append(host);
+
+      let accesses = 0;
+      let clicks = 0;
+      let settles = 0;
+      const settle = () => {
+        settles++;
+        button.addEventListener("click", () => clicks++, { once: true });
+        return Promise.resolve();
+      };
+      (globalThis as typeof globalThis & {
+        commonfabric: {
+          readonly viewSettled?: () => Promise<void>;
+        };
+        __vanishingSettleResult: () => {
+          accesses: number;
+          clicks: number;
+          settles: number;
+        };
+      }).commonfabric = {
+        get viewSettled() {
+          accesses++;
+          return accesses % 2 === 1 ? settle : undefined;
+        },
+      };
+      (globalThis as typeof globalThis & {
+        __vanishingSettleResult: () => {
+          accesses: number;
+          clicks: number;
+          settles: number;
+        };
+      }).__vanishingSettleResult = () => ({ accesses, clicks, settles });
+    });
+
+    const error = await assertRejects(
+      () => clickCfButton(page, "#vanishing-settle-button"),
+      Error,
+    );
+    assert(
+      error.cause instanceof Error &&
+        error.cause.message.includes("disappeared before settlement"),
+      `unexpected vanished-hook failure: ${error.stack}`,
+    );
+    const result = await page.evaluate(() =>
+      (globalThis as typeof globalThis & {
+        __vanishingSettleResult: () => {
+          accesses: number;
+          clicks: number;
+          settles: number;
+        };
+      }).__vanishingSettleResult()
+    );
+    assertEquals(result.settles, 0);
+    assertEquals(result.clicks, 0);
   });
 
   it("settles after a late control arrives before clicking it", async () => {
@@ -136,6 +200,125 @@ describe("CFC browser helpers", () => {
     assertEquals(result.settleCalls, 3);
   });
 
+  it("settles again when a control arrives during settlement", async () => {
+    await page.evaluate(() => {
+      const host = document.createElement("div");
+      const root = host.attachShadow({ mode: "open" });
+      document.body.append(host);
+
+      let settleCalls = 0;
+      let clickedAtSettle = 0;
+      let bound = false;
+      let created = false;
+      const bind = () => {
+        const button = root.querySelector("#during-settle-button");
+        if (!button || bound) return;
+        bound = true;
+        button.addEventListener("click", () => {
+          clickedAtSettle = settleCalls;
+        }, { once: true });
+      };
+
+      (globalThis as typeof globalThis & {
+        commonfabric: { viewSettled: () => Promise<void> };
+      }).commonfabric = {
+        viewSettled: async () => {
+          settleCalls++;
+          bind();
+          if (!created) {
+            await Promise.resolve();
+            const button = document.createElement("button");
+            button.id = "during-settle-button";
+            button.textContent = "Open";
+            root.append(button);
+            created = true;
+          }
+        },
+      };
+
+      (globalThis as typeof globalThis & {
+        __duringSettleClickResult: () => {
+          settleCalls: number;
+          clickedAtSettle: number;
+        };
+      }).__duringSettleClickResult = () => ({
+        settleCalls,
+        clickedAtSettle,
+      });
+    });
+
+    await clickCfButton(page, "#during-settle-button");
+
+    const result = await page.evaluate(() =>
+      (globalThis as typeof globalThis & {
+        __duringSettleClickResult: () => {
+          settleCalls: number;
+          clickedAtSettle: number;
+        };
+      }).__duringSettleClickResult()
+    );
+    assert(
+      result.clickedAtSettle > 0,
+      "the control was clicked before a settle began with it present",
+    );
+    assertEquals(result.settleCalls, 3);
+  });
+
+  it("rejects a control hidden by target-present settlement", async () => {
+    await page.evaluate(() => {
+      const host = document.createElement("div");
+      const root = host.attachShadow({ mode: "open" });
+      const button = document.createElement("button");
+      button.id = "hidden-during-settle-button";
+      button.textContent = "Open";
+      root.append(button);
+      document.body.append(host);
+
+      let settleCalls = 0;
+      let clicks = 0;
+      button.addEventListener("click", () => clicks++);
+      (globalThis as typeof globalThis & {
+        commonfabric: { viewSettled: () => Promise<void> };
+        __hiddenDuringSettleResult: () => {
+          clicks: number;
+          settleCalls: number;
+        };
+      }).commonfabric = {
+        viewSettled: () => {
+          settleCalls++;
+          if (settleCalls === 2) button.style.display = "none";
+          return Promise.resolve();
+        },
+      };
+      (globalThis as typeof globalThis & {
+        __hiddenDuringSettleResult: () => {
+          clicks: number;
+          settleCalls: number;
+        };
+      }).__hiddenDuringSettleResult = () => ({ clicks, settleCalls });
+    });
+
+    const error = await assertRejects(
+      () => clickCfButton(page, "#hidden-during-settle-button"),
+      Error,
+    );
+    assert(
+      error.cause instanceof Error &&
+        error.cause.message.includes("stopped being rendered while settling"),
+      `unexpected hidden-target failure: ${error.stack}`,
+    );
+    const result = await page.evaluate(() =>
+      (globalThis as typeof globalThis & {
+        __hiddenDuringSettleResult: () => {
+          clicks: number;
+          settleCalls: number;
+        };
+      }).__hiddenDuringSettleResult()
+    );
+    assertEquals(result.clicks, 0);
+    assertEquals(result.settleCalls, 2);
+  });
+
   it("settles the view after clicking so local effects render", async () => {
     await page.evaluate(() => {
       const host = document.createElement("div");
@@ -182,7 +365,7 @@ describe("CFC browser helpers", () => {
       result.inputPresent,
       "the click effect was not applied by a post-click view settle",
     );
-    assertEquals(result.settleCalls, 2);
+    assertEquals(result.settleCalls, 3);
   });
 
   it("marks grouped targets between settlement barriers", async () => {
@@ -255,8 +438,8 @@ describe("CFC browser helpers", () => {
         };
       }).__groupedClickResult()
     );
-    assertEquals(result.settleCallsAtClick, [1, 1, 1]);
-    assertEquals(result.settleCalls, 2);
+    assertEquals(result.settleCallsAtClick, [2, 2, 2]);
+    assertEquals(result.settleCalls, 3);
     assert(
       result.secondTargetMarkedAtFirstClick,
       `the second target did not carry ${CLICK_TARGET_ATTR} before dispatch`,

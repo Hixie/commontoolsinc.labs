@@ -6,6 +6,7 @@ import { assertEquals } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { join } from "@std/path";
 import {
+  assertMarkedClickTargetRendered,
   CLICK_TARGET_ATTR,
   clickMarked,
   settleView,
@@ -132,17 +133,8 @@ async function topicAt(
  * trusted browser click. Returning the link's fid lets the test assert the
  * shell selected exactly the destination represented by the rendered data.
  *
- * Settle the view before marking, the same ordering `clickCfButton` uses. A
- * cold-loaded detail page keeps reflowing as content above the crossref links
- * settles (the topic body's markdown fills in, the links form and Connections
- * card render), so the link's layout box moves for a few frames after it first
- * becomes rendered and resolvable. A trusted click resolves the button's box
- * and then dispatches the mouse events; if the box moved in between, the click
- * lands on the shifted-away layout instead of the button, no navigation fires,
- * and the following `waitForTopicView` waits out its full safety net. Settling
- * first drains the pipeline that carries a change from the worker through an
- * applied vdom batch to a finished Lit update, so the target is stationary when
- * it is clicked.
+ * An initial settle pumps pending rendering. Once the resolved link appears and
+ * is marked, a second settle begins with that exact link present.
  */
 async function clickCellLink(page: Page, label: string): Promise<string> {
   await settleView(page);
@@ -177,6 +169,12 @@ async function clickCellLink(page: Page, label: string): Promise<string> {
     },
     { args: [label, token, CLICK_TARGET_ATTR] },
   );
+  await settleView(page);
+  await assertMarkedClickTargetRendered(
+    page,
+    token,
+    `Topics link "${label}"`,
+  );
 
   const target = await page.evaluate((targetToken: string) => {
     const stack: (Document | ShadowRoot)[] = [document];
@@ -197,6 +195,7 @@ async function clickCellLink(page: Page, label: string): Promise<string> {
   }
 
   await clickMarked(page, token);
+  await settleView(page);
   return target.slice(1);
 }
 
