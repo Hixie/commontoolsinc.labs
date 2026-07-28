@@ -695,54 +695,41 @@ its embedded tsnet).
 **Build, push, deploy**
 
 `.github/workflows/dashboard-image.yml` publishes the image, and it publishes
-only from `main`. A push to `main` starts it when the dashboard image, the
+only from a push to `main`. A push starts it when the dashboard image, the
 dashboard package, the Gantt drill-down, the Deno dependency metadata, or the
-workflow itself changes. You can also start it by hand from the repository's
-Actions tab, which is how to publish a `main` commit whose files fall outside
-that path list. A manual run can name any branch or tag, so the workflow's
-first step fails a run that is not on `main`: publishing moves the `latest` tag
-the stage deployment follows. That step runs before anything from the named ref
-is checked out.
+workflow itself changes.
 
 The workflow runs the dashboard tests, then builds the amd64 image and pushes
-it under both the immutable `dev-dashboard:<full-sha>` tag and `latest`. Once a
-SHA tag exists, a rerun of that commit reuses its digest: it moves `latest` onto
-the image already there rather than rebuilding it or repushing the immutable
-tag.
+it under the commit-scoped `dev-dashboard:<full-sha>` tag. It always rebuilds
+the image, including on a rerun. The image config records the source
+repository, source commit, branch, workflow, event, run ID, and run attempt.
+These labels are covered by the published digest. Deployment uses that digest,
+not the tag. The workflow also signs a GitHub build-provenance attestation that
+names the digest.
 
 The same tests also run in CI, on pull requests and on main alike, because the
 dashboard is a workspace package and CI's `Test` job runs each package's test
 task. The publish workflow runs them again rather than leaning on that. The two
 workflows are independent — neither waits for the other, and this one cannot
 read CI's verdict — so its own test job is the only thing standing between a
-dashboard that fails its tests and the `latest` tag. Leave it in place even
+dashboard that fails its tests and a published image. Leave it in place even
 though it looks redundant.
 
 No image is built or published for a pull request.
 
 The publish job authenticates with GitHub OIDC and GCP Workload Identity
 Federation. It emits the immutable `sha256:` image reference in the workflow
-summary; no service-account JSON key is used.
+summary; no service-account JSON key is used. The infra image-provenance
+verifier checks the signed digest attestation, reads the labels from the image
+config, and corroborates the exact recorded run attempt with GitHub. Images
+built outside this workflow are not deployment inputs.
 
-The manual trigger publishes whatever `main` currently points at. To publish
-some other commit, build and push it by hand:
-
-```bash
-SHA=$(git rev-parse HEAD)
-IMG=us-central1-docker.pkg.dev/commontools-core/containers/dev-dashboard
-docker build --platform=linux/amd64 \
-  --build-arg DASHBOARD_GIT_COMMIT="$SHA" \
-  -f Dockerfile.dashboard -t "$IMG:$SHA" .
-docker push "$IMG:$SHA"
-```
-
-Copy the published digest — from the workflow summary, or from `docker push`'s
-output for a hand build — into the infra stage overlay's `images[].digest`,
-commit that immutable pin, then run
-`make apply-dev-dashboard-stage` from `infra/k8s`. The node then appears in the
-Tailscale console as `tag:dashboard`; open
-`https://dashboard.<tailnet>.ts.net/`. (The sidecar image is already pinned by
-`@sha256` digest in `03-deployment.yaml`, matching golink.)
+Copy the published digest from the workflow summary into the infra stage
+overlay's `images[].digest`, then commit the immutable pin. After that infra
+commit lands on GitHub's `main`, run `make apply-dev-dashboard-stage` from
+`infra/k8s`. The node then appears in the Tailscale console as `tag:dashboard`;
+open `https://dashboard.<tailnet>.ts.net/`. (The sidecar image is already pinned
+by `@sha256` digest in `03-deployment.yaml`, matching golink.)
 
 **Gated tiles** stay gray until wired: add the Secret Manager *value* (the
 container already exists from `tofu apply`), uncomment the ExternalSecret in

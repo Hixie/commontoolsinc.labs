@@ -1,7 +1,6 @@
 name: Dashboard
 
 on:
-  workflow_dispatch: {} # Publish a main commit the path filter below misses
   push:
     branches: [main]
     paths:
@@ -28,13 +27,11 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
-      # A manual run can name any ref. Publishing moves the `latest` tag that
-      # the deployment follows, so a run on another ref stops here, before
-      # anything from that ref is checked out or run.
-      - name: Verify the run is on main
-        if: ${{ github.ref != 'refs/heads/main' }}
+      # The deployment verifier accepts images only from push runs on main.
+      - name: Verify the run is a main push
+        if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
         run: |
-          echo "The dashboard image publishes only from main; this run is on ${GITHUB_REF}." >&2
+          echo "The dashboard image publishes only from a push to main." >&2
           exit 1
 
       - name: Checkout source commit
@@ -58,6 +55,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
+      attestations: write
       contents: read
       id-token: write
     env:
@@ -86,41 +84,14 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
 
       - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
+        uses: useblacksmith/setup-docker-builder@6ff44f8e5255f9d8aa31ef22f7e57a2d926b7da0 # v1
 
-      - name: Resolve existing immutable image
-        id: existing
-        env:
-          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-        shell: bash
-        run: |
-          result=$(curl --silent --show-error --output /dev/null --head \
-            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
-            --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-            --write-out '%header{docker-content-digest}\n%{http_code}' \
-            "https://us-central1-docker.pkg.dev/v2/commontools-core/containers/dev-dashboard/manifests/${GITHUB_SHA}")
-          digest=${result%%$'\n'*}
-          status=${result##*$'\n'}
-
-          case "$status" in
-            200)
-              [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-              echo "exists=true" >> "$GITHUB_OUTPUT"
-              echo "digest=$digest" >> "$GITHUB_OUTPUT"
-              ;;
-            404)
-              echo "exists=false" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "Artifact Registry manifest lookup failed with HTTP $status" >&2
-              exit 1
-              ;;
-          esac
-
+      # These labels are part of the image config covered by the published
+      # digest. The infra deployment verifier checks them against the source
+      # repository, main branch, and successful GitHub workflow run.
       - name: Build and push dashboard image
         id: build
-        if: ${{ steps.existing.outputs.exists != 'true' }}
-        uses: useblacksmith/build-push-action@v2
+        uses: useblacksmith/build-push-action@fb9e3e6a9299c78462bfadd0d93352c316adc9b8 # v2
         with:
           context: .
           file: Dockerfile.dashboard
@@ -128,29 +99,37 @@ jobs:
           push: true
           build-args: |
             DASHBOARD_GIT_COMMIT=${{ github.sha }}
-          tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
-
-      - name: Promote existing image to latest
-        if: ${{ steps.existing.outputs.exists == 'true' }}
-        env:
-          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
-        run: docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${EXISTING_DIGEST}"
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.sha }}
+            dev.commontools.provenance.repository=${{ github.repository }}
+            dev.commontools.provenance.ref=${{ github.ref }}
+            dev.commontools.provenance.event=${{ github.event_name }}
+            dev.commontools.provenance.workflow-ref=${{ github.workflow_ref }}
+            dev.commontools.provenance.run-id=${{ github.run_id }}
+            dev.commontools.provenance.run-attempt=${{ github.run_attempt }}
 
       - name: Resolve published digest
         id: result
         env:
-          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
-          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest }}
         shell: bash
         run: |
-          digest="${BUILT_DIGEST:-$EXISTING_DIGEST}"
-          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Attest published image
+        id: attestation
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.result.outputs.digest }}
 
       - name: Report immutable image reference
         env:
+          ATTESTATION_URL: ${{ steps.attestation.outputs.attestation-url }}
           DIGEST: ${{ steps.result.outputs.digest }}
         run: |
           {
@@ -158,4 +137,5 @@ jobs:
             echo
             echo "- Tag: \`${IMAGE}:${GITHUB_SHA}\`"
             echo "- Digest: \`${IMAGE}@${DIGEST}\`"
+            echo "- Attestation: ${ATTESTATION_URL}"
           } >> "$GITHUB_STEP_SUMMARY"

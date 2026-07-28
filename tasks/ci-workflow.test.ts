@@ -114,11 +114,11 @@ Deno.test("Dashboard publishes only from main, never from a pull request", async
 
   assertStringIncludes(dashboard, "name: Dashboard\n");
   const triggers = workflowTriggers(dashboard);
-  assertStringIncludes(triggers, "  workflow_dispatch: {}");
   assertStringIncludes(
     triggers,
     "  push:\n    branches: [main]\n    paths:\n",
   );
+  assertEquals(triggers.includes("  workflow_dispatch:"), false);
   assertEquals(triggers.includes("  pull_request:"), false);
   assertEquals(triggers.includes("  workflow_call:"), false);
   assertStringIncludes(
@@ -128,14 +128,15 @@ Deno.test("Dashboard publishes only from main, never from a pull request", async
   assertStringIncludes(dashboard, "group: dashboard-${{ github.ref }}");
   assertEquals(jobIds(dashboard).sort(), ["publish", "tests"]);
 
-  // A manual run can name any ref, so the tests job refuses anything but main
-  // before the publish job it gates gets a credential. The guard has to fail
-  // the run, not just report: a guard that only warns lets a dispatch from any
-  // branch move the `latest` tag.
+  // The tests job checks the event and ref before the publish job it gates gets
+  // a credential.
   const tests = jobBlock(dashboard, "tests");
   assertEquals(tests.includes("id-token: write"), false);
-  const guard = stepBlock(tests, "Verify the run is on main");
-  assertStringIncludes(guard, "if: ${{ github.ref != 'refs/heads/main' }}");
+  const guard = stepBlock(tests, "Verify the run is a main push");
+  assertStringIncludes(
+    guard,
+    "if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}",
+  );
   assertStringIncludes(guard, "\n          exit 1\n");
 
   const publish = jobBlock(dashboard, "publish");
@@ -143,12 +144,23 @@ Deno.test("Dashboard publishes only from main, never from a pull request", async
   assertEquals(publish.includes("\n    if:"), false);
   assertStringIncludes(
     publish,
-    "permissions:\n      contents: read\n      id-token: write",
+    "permissions:\n" +
+      "      attestations: write\n" +
+      "      contents: read\n" +
+      "      id-token: write",
+  );
+  assertStringIncludes(
+    publish,
+    "uses: useblacksmith/setup-docker-builder@" +
+      "6ff44f8e5255f9d8aa31ef22f7e57a2d926b7da0 # v1",
   );
 
-  // Both tags go up in the one push: the immutable commit tag the infra
-  // overlay pins, and the `latest` the deployment follows.
   const build = stepBlock(publish, "Build and push dashboard image");
+  assertStringIncludes(
+    build,
+    "uses: useblacksmith/build-push-action@" +
+      "fb9e3e6a9299c78462bfadd0d93352c316adc9b8 # v2",
+  );
   assertStringIncludes(build, "\n          push: true\n");
   assertStringIncludes(
     build,
@@ -157,8 +169,58 @@ Deno.test("Dashboard publishes only from main, never from a pull request", async
   );
   assertStringIncludes(
     build,
-    "\n          tags: |\n" +
-      "            ${{ env.IMAGE }}:${{ github.sha }}\n" +
-      "            ${{ env.IMAGE }}:latest\n",
+    "\n          tags: ${{ env.IMAGE }}:${{ github.sha }}\n",
+  );
+  assertEquals(build.includes(":latest"), false);
+  assertEquals(build.includes("\n        if:"), false);
+
+  const provenanceLabels = [
+    "org.opencontainers.image.source=https://github.com/${{ github.repository }}",
+    "org.opencontainers.image.revision=${{ github.sha }}",
+    "org.opencontainers.image.version=${{ github.sha }}",
+    "dev.commontools.provenance.repository=${{ github.repository }}",
+    "dev.commontools.provenance.ref=${{ github.ref }}",
+    "dev.commontools.provenance.event=${{ github.event_name }}",
+    "dev.commontools.provenance.workflow-ref=${{ github.workflow_ref }}",
+    "dev.commontools.provenance.run-id=${{ github.run_id }}",
+    "dev.commontools.provenance.run-attempt=${{ github.run_attempt }}",
+  ];
+  for (const label of provenanceLabels) {
+    assertStringIncludes(build, `            ${label}\n`);
+  }
+
+  assertEquals(
+    publish.includes("- name: Resolve existing immutable image"),
+    false,
+  );
+  assertEquals(publish.includes("- name: Promote existing image"), false);
+
+  const result = stepBlock(publish, "Resolve published digest");
+  assertStringIncludes(
+    result,
+    "          DIGEST: ${{ steps.build.outputs.digest }}\n",
+  );
+  assertStringIncludes(
+    result,
+    '          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]\n',
+  );
+
+  const attestation = stepBlock(publish, "Attest published image");
+  assertStringIncludes(
+    attestation,
+    "uses: actions/attest-build-provenance@" +
+      "977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3",
+  );
+  assertStringIncludes(
+    attestation,
+    "\n          subject-name: ${{ env.IMAGE }}\n",
+  );
+  assertStringIncludes(
+    attestation,
+    "          subject-digest: ${{ steps.result.outputs.digest }}\n",
+  );
+  assert(
+    publish.indexOf("- name: Resolve published digest") <
+      publish.indexOf("- name: Attest published image"),
   );
 });
