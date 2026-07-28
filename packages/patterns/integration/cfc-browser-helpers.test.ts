@@ -70,6 +70,72 @@ describe("CFC browser helpers", () => {
     assertEquals(result.settleCalls, 2);
   });
 
+  it("settles after a late control arrives before clicking it", async () => {
+    await page.evaluate(() => {
+      const host = document.createElement("div");
+      const root = host.attachShadow({ mode: "open" });
+      document.body.append(host);
+
+      let settleCalls = 0;
+      let clickedAtSettle = 0;
+      let bound = false;
+      const bind = () => {
+        const button = root.querySelector("#late-vote-button");
+        if (!button || bound) return;
+        bound = true;
+        button.addEventListener("click", () => {
+          clickedAtSettle = settleCalls;
+        }, { once: true });
+      };
+
+      const arrival = new MessageChannel();
+      arrival.port1.addEventListener("message", () => {
+        const button = document.createElement("button");
+        button.id = "late-vote-button";
+        button.textContent = "Veto";
+        root.append(button);
+        arrival.port1.close();
+        arrival.port2.close();
+      }, { once: true });
+      arrival.port1.start();
+
+      (globalThis as typeof globalThis & {
+        commonfabric: { viewSettled: () => Promise<void> };
+      }).commonfabric = {
+        viewSettled: () => {
+          settleCalls++;
+          bind();
+          if (settleCalls === 1) arrival.port2.postMessage(undefined);
+          return Promise.resolve();
+        },
+      };
+
+      (globalThis as typeof globalThis & {
+        __lateClickResult: () => {
+          settleCalls: number;
+          clickedAtSettle: number;
+        };
+      }).__lateClickResult = () => ({ settleCalls, clickedAtSettle });
+    });
+
+    await clickCfButton(page, "#late-vote-button");
+
+    const result = await page.evaluate(() =>
+      (globalThis as typeof globalThis & {
+        __lateClickResult: () => {
+          settleCalls: number;
+          clickedAtSettle: number;
+        };
+      }).__lateClickResult()
+    );
+    assert(
+      result.clickedAtSettle > 0,
+      "the click reached no handler because the target arrived after the " +
+        "pre-click settle",
+    );
+    assertEquals(result.settleCalls, 3);
+  });
+
   it("settles the view after clicking so local effects render", async () => {
     await page.evaluate(() => {
       const host = document.createElement("div");
