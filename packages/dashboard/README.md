@@ -522,7 +522,7 @@ Notes:
     are spread across at most 200 time buckets, so a shorter window uses more of
     the collected samples per day. Each graph chooses its vertical scale after
     ignoring the two lowest and two highest displayed values; those points stay
-    in the line but no longer determine the scale, so they may clip instead of
+    in the line but do not determine the scale, so they may clip instead of
     flattening the rest of the history. A graph with fewer than 20 values uses
     its complete range. Keyboard arrows adjust the window without
     moving focus. Enter applies the range immediately. Another selector carries
