@@ -135,9 +135,13 @@ place to introduce a cycle is against the package everything already depends on.
   (`EntityDocument`, `Operation`, `ClientCommit`, `GraphQuery` in `v2.ts`). New
   work is v2; `lib.ts` is the legacy entry point. The fact model is still
   exported and still confuses newcomers.
-- **Three link representations coexist**: the serialized `SigilLink`, the
-  in-memory `NormalizedLink`, and a deprecated `LegacyAlias` still present in the
-  `PrimitiveCellLink` union. New readers meet all three.
+- **Two link representations coexist, plus a legacy binding that looks like a
+  third.** The real links are the serialized `SigilLink` and the in-memory
+  `NormalizedLink`/`NormalizedFullLink` (`PrimitiveCellLink` is now just
+  `SigilLink`). Separately, the old `$alias` binding form (`AliasBinding`) still
+  appears inside saved patterns, and `link-types.ts` is explicit that these
+  `$alias` records are *not* links — so a newcomer meets three alias-shaped
+  things and has to learn which one is not a link.
 - **The modern cell representation is implemented but off.**
   `data-model/cell-rep.ts` implements both the modern (bare
   `FabricHash`/`FabricLink`) and legacy (`{ "/": "tag:hash" }` envelope) forms;
@@ -237,6 +241,6 @@ grumbling:
 
 By contrast, `ts-transformers` and `js-compiler` are almost free of
 `TODO`/`FIXME`/`HACK` comments. Their open questions live in design documents
-instead (`ts-transformers/docs/`, `docs/specs/ts-transformer/`, and
-`ts-transformers/ISSUES_TO_FOLLOW_UP.md`) — the README tells you to read the
-behavior spec rather than infer from the code, and it means it.
+instead (`ts-transformers/docs/` and `docs/specs/ts-transformer/`) — the README
+tells you to read the behavior spec rather than infer from the code, and it
+means it.
