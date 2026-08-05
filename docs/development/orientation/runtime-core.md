@@ -146,8 +146,9 @@ Three facts that trip people up:
 
 - **A write that does not change the value does not re-run readers.** The
   value-equality gate lives at commit-notification time, in
-  `scheduler/reactive-dependencies.ts` (`determineTriggeredActions`, using
-  `valueEqual` for recursive reads and `shallowEqual` for non-recursive ones), so
+  `reactive-dependencies.ts` (`determineTriggeredActions`, called from
+  `scheduler/trigger-index.ts`, using `valueEqual` for recursive reads and
+  `shallowEqual` for non-recursive ones), so
   an unchanged write yields no triggered readers and no invalidation. There is no
   longer a separate "write-propagation" module.
 - **The loop is bounded but has no cycle-breaker.** The settle loop runs at most
@@ -215,5 +216,6 @@ types (`Action`, `ReactivityLog`), the `Engine`, and `ContextualFlowControl`.
 
 Sub-path exports matter here because other packages import them directly:
 `@commonfabric/runner/traverse` (imported by `memory`),
-`@commonfabric/runner/shared`, `/slugs`, `/schemas`, `/cfc`,
-`/storage/inspector`, `/storage/telemetry`.
+`@commonfabric/runner/shared`, `/slugs`, `/schemas`, `/cfc` (plus the `/cfc/*`
+label-view and migration helpers), `/storage/cache`, and
+`/storage/write-stack-trace`.

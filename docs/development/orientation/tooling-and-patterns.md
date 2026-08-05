@@ -28,9 +28,7 @@ flowchart TB
 ```
 
 The single largest module inside it is `logger.ts`, a from-scratch
-logging library that works in both Deno and the browser. (Until recently
-`deno.jsonc` declared a `"./integration"` export pointing at a file that no
-longer existed; that dangling export has since been removed.)
+logging library that works in both Deno and the browser.
 
 ---
 
@@ -56,9 +54,7 @@ flowchart TB
 The authoritative, type-checked component catalog is
 `packages/patterns/catalog/catalog.tsx`, with a story file per `cf-*` component
 under `catalog/stories/`. The defunct examples are in
-`packages/patterns/deprecated/`, which `AGENTS.md` tells you to ignore. (An
-earlier `AGENTS.md` called this a top-level `deprecated-patterns` folder, a path
-that never existed; it now names the real one.)
+`packages/patterns/deprecated/`, which `AGENTS.md` tells you to ignore.
 
 ---
 
@@ -74,7 +70,7 @@ concurrently, each with its own working directory and coverage directory.
 flowchart TB
     runner_["tasks/test.ts → tasks/workspace-tests.ts"]
     list["read workspace[] from root deno.jsonc"]
-    skip["minus ALL_DISABLED (just vendor-astral)<br/>and TEST_DISABLED_PACKAGES"]
+    skip["minus ALL_DISABLED (currently empty)<br/>and TEST_DISABLED_PACKAGES"]
     fan["spawn 'deno task test' per package, concurrently"]
     each["each package's own deno.jsonc defines a test task"]
 
@@ -146,11 +142,13 @@ and a few more.
 |---|---|
 | `static` | Lazy-loaded static assets, shared across Deno (read from disk) and browser (served by `toolshed`). Holds the bundled type declarations shipped to the in-browser TypeScript compiler — a large generated `es2023.d.ts`, `dom.d.ts`, and symlinks to the live `api` and `html` sources. Most of the package's size is that one generated file. |
 | `test-support` | Golden-fixture suite runner (`defineFixtureSuite`, unified-diff helpers) and isolated-Deno-subprocess helpers that run `deno check` in a temporary config so tests do not dirty the repo lockfile. |
-| `deno-web-test` | Runs `Deno.test`-style tests inside a real browser, for code that must work in both Deno and the browser. Driven by `vendor-astral`. |
-| `vendor-astral` | A vendored copy of Astral, a Deno-native browser-automation library over the Chrome DevTools Protocol. Excluded from lint, format, and the test runner. Do not edit it as if it were first-party. |
+| `deno-web-test` | Runs `Deno.test`-style tests inside a real browser, for code that must work in both Deno and the browser. Driven by Astral (the external `@astral/astral`, a Deno-native Chrome DevTools automation library). |
 | `integration` | The browser-driving test harness: a `Browser`/`Page` wrapper over the Chrome DevTools Protocol, an `env` module of test knobs (target URL, headless toggle, per-run space name), and shell login helpers. Its own `test` task is a stub; the tests that use it live in other packages. |
 | `home-schemas` | Schemas for the "home" space. Exists specifically so that `runner` and `piece` can share schemas without importing each other — a deliberate shared leaf to break a cycle. |
 | `generated-patterns` | Well over a hundred machine-generated test patterns (each with a paired test) plus the harness that generates them (`ralph/`). |
+| `dashboard` | An internal dev/company status dashboard: a small Deno server that renders status tiles and updates them in place over Server-Sent Events (`deno task dashboard`). Not part of the product; it imports no `@commonfabric/*` package. |
+| `pure-json` | A leaf library that decides whether a value is faithful JSON (`isPureJson`, `findJsonUnfaithfulValues`). Imported by `llm` to keep schema transport JSON-safe. |
+| `spec-model` | A non-normative executable model of the server-side-execution identity/commit machinery, used to check schedule-dependent properties (crash windows, cascade interleavings, push filtering) mechanically rather than by hand. Imported by nobody; it stands alone. |
 
 ---
 

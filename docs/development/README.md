@@ -10,6 +10,13 @@ mapped in [`../README.md`](../README.md).
 
 ## Start here
 
+- [`orientation/`](orientation/README.md) — an architecture orientation for
+  engineers new to the repository: the layer model, the dependency graph
+  measured from source, and a guided tour of every package. Start here if the
+  codebase is unfamiliar
+- [`TECHNICAL_DEBT.md`](TECHNICAL_DEBT.md) — one register of the repository's
+  known debt, half-finished migrations, and deliberate trade-offs, cross-linked
+  from the orientation pages
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — coding standards, design principles,
   and the build and test workflow. Read this first
 - [`LOCAL_DEV_SERVERS.md`](LOCAL_DEV_SERVERS.md) — starting the local servers,

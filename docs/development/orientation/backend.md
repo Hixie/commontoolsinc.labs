@@ -248,8 +248,7 @@ the rest of the repo's, in [TECHNICAL_DEBT.md](../TECHNICAL_DEBT.md).
   egress on first DB open). The `COMPILED` file's presence also switches the shell
   route from dev-proxy to static serving.
 - `background-piece-service` (`@commonfabric/background-piece`) — entry
-  `src/main.ts` (`deno task start`). It now ships its own tests, so unlike
-  `vendor-astral` it is no longer in the test runner's disabled list.
+  `src/main.ts` (`deno task start`). It ships its own tests.
 - `llm` — library only; `.`, `./types`, `./client`.
 - `ports.json` (repo root): `toolshed` 8000, `shell` 5173, inspector 9229. The
   OpenTelemetry collector defaults to 4318.

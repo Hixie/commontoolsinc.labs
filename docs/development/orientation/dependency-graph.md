@@ -191,9 +191,9 @@ each several thousand lines, listed roughly biggest first:
 
 | File | What it is |
 |---|---|
+| `runner/src/runner.ts` | Instantiates a pattern's nodes into scheduler actions |
 | `runner/src/cfc/prepare.ts` | The Contextual-Flow-Control write-policy gate |
 | `memory/v2/engine.ts` | The transactional SQLite core |
-| `runner/src/runner.ts` | Instantiates a pattern's nodes into scheduler actions |
 | `runner/src/traverse.ts` | Schema-driven traversal of the value/link graph |
 | `ts-transformers/src/transformers/schema-injection.ts` | Attaches schemas to reactive boundaries |
 | `html/src/worker/reconciler.ts` | The worker-thread VDOM reconciler |
@@ -203,13 +203,14 @@ each several thousand lines, listed roughly biggest first:
 | `ts-transformers/src/policy/capability-analysis.ts` | CFC capability analysis for the transformer |
 | `runner/src/scheduler/facade.ts` | The scheduler's public facade (after scheduler-v2 split `scheduler.ts` into `scheduler/`) |
 
-Most of these are in `runner`, and its single largest file is the CFC
-write-policy gate — Contextual Flow Control has grown into the biggest piece of
-the runtime. The complexity is real and concentrated. (A large *generated* JSX
-type-declaration file, `html/src/jsx.d.ts`, is omitted here because it is
-declarations, not code to read; so are the far larger data blobs —
-`patterns/scrabble/scrabble-words.ts` and the vendored/generated files under
-`vendor-astral/` and `static/assets/`.)
+Most of these are in `runner`. Its two biggest hand-written files are the
+pattern instantiator (`runner.ts`) and the CFC write-policy gate
+(`cfc/prepare.ts`) — Contextual Flow Control has grown into one of the largest
+single pieces of the runtime. The complexity is real and concentrated. (A large
+*generated* JSX type-declaration file, `html/src/jsx.d.ts`, is omitted here
+because it is declarations, not code to read; so are the far larger data blobs —
+`patterns/scrabble/scrabble-words.ts` and the generated files under
+`static/assets/`.)
 
 ---
 
@@ -245,9 +246,10 @@ iframe-sandbox    → runner, utils
 integration       → identity, runner, shell, utils
 js-compiler       → static, ts-transformers, utils
 lib-shell         → api, data-model, identity, runner, runtime-client, utils
-llm               → api, runner, utils
+llm               → api, pure-json, runner, utils
 memory            → api, data-model, identity, runner, utils
 piece             → api, data-model, home-schemas, identity, js-compiler, runner, utils
+pure-json         → (no package imports; a leaf, imported by llm)
 runner            → api, content-hash, data-model, home-schemas, html, identity,
                     js-compiler, llm, memory, static, ts-transformers, utils
 runtime-client    → api, data-model, home-schemas, html, identity, js-compiler,

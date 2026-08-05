@@ -65,11 +65,12 @@ Control" (CFC) machinery in the runtime is for.
 
 `AGENTS.md` describes the repository as a stack of layers that change at
 different speeds — the foundation changes slowly, the end-user programs change
-constantly. The diagram below mirrors that list. `AGENTS.md` also carves out a
-set of support and test packages that sit outside the layer stack (`utils`,
-`content-hash`, `leb128`, `test-support`, `deno-web-test`, `integration`,
-`generated-patterns`, `felt`, `static`, `vendor-astral`, `fs-sync-example`);
-those are shown in the side box.
+constantly. The diagram below mirrors that list. `AGENTS.md` also notes that
+anything under `packages/` not named in the layer list — utilities, build
+tooling, test support, internal dashboards, and example code — sits outside the
+layer stack. The side box shows the main ones (`utils`, `content-hash`,
+`leb128`, `test-support`, `deno-web-test`, `integration`, `generated-patterns`,
+`felt`, `static`, `dashboard`, `pure-json`, `spec-model`, `fs-sync-example`).
 
 ```mermaid
 flowchart TB
@@ -115,7 +116,7 @@ flowchart TB
         utils["utils"]
         contenthash["content-hash"]
         leb128["leb128"]
-        misc["test-support, deno-web-test, integration,<br/>generated-patterns, felt, static,<br/>vendor-astral, fs-sync-example"]
+        misc["test-support, deno-web-test, integration,<br/>generated-patterns, felt, static, dashboard,<br/>pure-json, spec-model, fs-sync-example"]
     end
 
     L7 --> L6 --> L5 --> L4 --> L3 --> L2 --> L1
@@ -161,10 +162,10 @@ graph LR
     UT["utils — ~3.5k"]:::small
 ```
 
-(Excluded from this chart because they are examples, generated, or vendored, and
-much larger: `patterns` (example programs), `generated-patterns`, `vendor-astral`
-(vendored), `cf-harness`, and `static` (mostly a generated declaration file). See
-the [tooling page](tooling-and-patterns.md).)
+(Excluded from this chart because they are examples, generated, or otherwise not
+representative, and much larger: `patterns` (example programs),
+`generated-patterns`, `cf-harness`, and `static` (mostly a generated declaration
+file). See the [tooling page](tooling-and-patterns.md).)
 
 ---
 

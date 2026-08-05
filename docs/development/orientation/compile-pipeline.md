@@ -98,17 +98,19 @@ injected.
 
 ```mermaid
 flowchart TB
-    subgraph p1["Phase 1 · Validate + compile CFC policy (stages 1-7)"]
+    subgraph p1["Phase 1 · Validate + compile CFC policy"]
         v1["CastValidation"]
         v2["EmptyArrayOfValidation"]
         v3["OpaqueGetValidation"]
         v4["PatternContextValidation"]
         v5["MergeablePushValidation"]
+        v5b["VerbReturnValidation (return under a void verb)"]
         v6["CfcPolicyAuthoring (policy imports → manifests)"]
         v7["CfcPolicyOfValidation"]
     end
     subgraph p2["Phase 2 · Lower (rewrite structure)"]
         l1["JsxExpressionSiteRouter"]
+        l1b["AssertDiagnostics"]
         l2["LiftLowering"]
         l3["Closure (handlers, actions, array methods)"]
         l4["ExpressionSiteLowering (pattern-owned, helper-owned)"]

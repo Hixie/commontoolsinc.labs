@@ -55,15 +55,16 @@ place to introduce a cycle is against the package everything already depends on.
 ## Structural: where the complexity concentrates
 
 - **A handful of files carry a disproportionate share of the system**, each
-  several thousand lines: `runner/src/cfc/prepare.ts`, `memory/v2/engine.ts`,
-  `runner/src/runner.ts`, `runner/src/traverse.ts`,
+  several thousand lines: `runner/src/runner.ts`, `runner/src/cfc/prepare.ts`,
+  `memory/v2/engine.ts`, `runner/src/traverse.ts`,
   `ts-transformers/src/transformers/schema-injection.ts`,
   `html/src/worker/reconciler.ts`, `runner/src/builtins/llm-dialog.ts`,
   `runner/src/storage/v2.ts`, `runner/src/cell.ts`,
   `ts-transformers/src/policy/capability-analysis.ts`, and
-  `runner/src/scheduler/facade.ts`. Most are in `runner`, and the largest is the
-  CFC write-policy gate — Contextual Flow Control has grown into the biggest
-  single piece of the runtime.
+  `runner/src/scheduler/facade.ts`. Most are in `runner`; the two biggest are the
+  pattern instantiator (`runner.ts`) and the CFC write-policy gate
+  (`cfc/prepare.ts`) — Contextual Flow Control has grown into one of the biggest
+  single pieces of the runtime.
 - **`cli` is a hub, and a growing one.** It imports `runner` most, plus
   `identity`, `utils`, `js-compiler`, `piece`, `api`, and `state-inspector`. A
   change in any of those can break the command line.

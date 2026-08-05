@@ -27,11 +27,12 @@ flowchart TB
     launcher --> mod --> tree --> libs
 
     tree --- c1["piece (ls, new, step, apply, call,<br/>inspect, view, link, map, rm, set-slug, ...)"]
-    tree --- c2["check / dev (compile + run a pattern)"]
+    tree --- c2["check (compile + run a pattern)"]
     tree --- c3["fuse (mount, unmount, status)"]
     tree --- c4["id (new, did, derive, from-mnemonic)"]
     tree --- c5["acl (ls, set, remove)"]
-    tree --- c6["exec, init, test, deps"]
+    tree --- c6["exec, init, test, deps, view, wish"]
+    tree --- c7["space (memory-space ops), inspect (offline autopsy),<br/>completion (shell completion)"]
 ```
 
 A launcher subtlety that bites people: `--config` is the *child Deno* import
@@ -207,10 +208,11 @@ the rest of the repo's, in [TECHNICAL_DEBT.md](../TECHNICAL_DEBT.md).
 ## Public surfaces and the `cf` subcommands
 
 - **`cli`** — `.` → `mod.ts`; the real entry is `launcher.ts` (the root `cf`
-  task). Subcommands: `help`, `acl`, `piece` (with many verbs), `check`, `dev`
-  (a hidden alias of `check`), `inspect` (the offline state-inspector), `view`,
-  `wish`, `deps`, `exec`, `fuse`, `id`, `init`, `test`, and a hidden `deploy`
-  that just prints guidance to use `piece new`.
+  task). Subcommands: `help`, `acl`, `piece` (with many verbs), `check`, `deps`,
+  `inspect` (the offline state-inspector), `space` (memory-space operations),
+  `view`, `exec`, `fuse`, `completion` (shell completion), `id`, `init`, `test`,
+  and `wish`. (`fuse-daemon` and `fuse-supervisor` also exist but are internal,
+  used by the compiled binary.)
 - **`piece`** — `.` (`PieceManager`, `pieceId`, slug helpers), `./ops` (the
   controllers).
 - **`runtime-client`** — `.` → `mod.ts`, `./transports/web-worker`.
