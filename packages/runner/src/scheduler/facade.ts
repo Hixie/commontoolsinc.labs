@@ -123,6 +123,7 @@ import {
 import type { ExecuteContinuationState } from "./continuation.ts";
 import { applyPullExecuteContinuation } from "./continuation.ts";
 import { SchedulerGates } from "./gates.ts";
+import type { InitialRunGate } from "./initial-run-gate.ts";
 import {
   markInvalid as markInvalidRecord,
   type StorageNotificationState,
@@ -321,6 +322,15 @@ type SchedulerRegisterOptions = {
   // instantiation side effects (starting child runs) that a clean skip would
   // strand. See docs/specs/scheduler-v2/per-doc-rehydration.md §3.3.
   resumeMode?: "always-run";
+  // Defer this registration until the gate releases. While the gate is
+  // pending the scheduler does not know the action: nothing runs, no state
+  // is tracked for it, and unrelated work proceeds normally. Release performs
+  // the registration through the ordinary path, so the initial run and any
+  // snapshot-currency checks read storage state as of release. Cancelling
+  // the gate, or the returned cancel, discards the pending registration.
+  // The gate has no timer; its owner releases or cancels it from the
+  // outcome of the transaction that establishes the action's piece.
+  initialRunGate?: InitialRunGate;
 };
 
 function isReactivityLog(value: unknown): value is ReactivityLog {
@@ -675,6 +685,9 @@ export class Scheduler {
    * scheduler automatically re-subscribes using the reactivity log from the
    * run.
    *
+   * A registration carrying a pending `initialRunGate` is deferred whole:
+   * it happens, with the same semantics, when the gate releases.
+   *
    * @param action The action to subscribe
    * @param dependencies Optional callback or immediate ReactivityLog for
    *   backwards compatibility
@@ -692,6 +705,43 @@ export class Scheduler {
       dependenciesOrOptions,
       maybeOptions,
     );
+    const gate = options.initialRunGate;
+    if (gate !== undefined && !gate.isReleased()) {
+      // Defer the whole registration until the gate releases. While the gate
+      // is pending the scheduler does not know the action, so nothing runs
+      // and unrelated work proceeds normally. Release performs the ordinary
+      // registration below, whose initial run and snapshot checks read
+      // storage state current at that moment; it runs outside any executing
+      // action, so the action gets no parent link and no provisional demand
+      // from the context that originally requested it. Cancelling the
+      // returned cancel first — or cancelling the gate, which drops its
+      // release callbacks — means the registration never happens.
+      let discarded = false;
+      let registered: Cancel | undefined;
+      const unsubscribe = gate.onRelease(() => {
+        if (discarded) return;
+        const cancel = this.registerNow(action, dependencies, options);
+        if (discarded) {
+          cancel();
+          return;
+        }
+        registered = cancel;
+      });
+      return () => {
+        if (discarded) return;
+        discarded = true;
+        unsubscribe();
+        registered?.();
+      };
+    }
+    return this.registerNow(action, dependencies, options);
+  }
+
+  private registerNow(
+    action: Action,
+    dependencies: SchedulerRegistrationInput | undefined,
+    options: SchedulerRegisterOptions,
+  ): Cancel {
     const { rehydrateFromStorage } = options;
     const previousObservationIdentityKey = this
       .observationIdentityKeyForAction(action);

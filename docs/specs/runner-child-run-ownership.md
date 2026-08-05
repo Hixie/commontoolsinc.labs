@@ -61,3 +61,28 @@ Ownership of it begins when the start is scheduled, so stopping the result
 before that commit tombstones the pending start and the callback does not
 install it. Without this a piece the user stopped starts anyway, moments
 later.
+
+## Deferred registrations
+
+A start can carry an *initial-run gate*. An action registration made under a
+pending gate — for the run's own nodes and for the nested child runs they
+instantiate — does not reach the scheduler. Releasing the gate performs the
+registration with ordinary semantics at that moment, so the action's first
+run, and on resume the checks that decide whether its persisted observation
+is still current, read the storage state of the release. Cancelling the gate,
+or stopping the registration first, discards it; the scheduler never learns
+it existed. A gate settles exactly once, as released or as cancelled, and has
+no timer.
+
+A stale basis follows the rolling-back rule above: the re-run that resolves
+it reuses what is already there, so a conflict outcome releases the gate or
+stops the run — cancelling the gate while keeping the run's registration
+structures would leave a piece that looks running and holds no actions.
+
+Event handler registration does not defer behind the gate. A stream with no
+registered handler drops an event after one attempt to start its piece, so
+holding a handler back requires parking the events themselves, which the gate
+does not provide.
+
+No start creates a gate today. The mechanism exists for a start that must not
+schedule work while the transaction establishing it can still fail.

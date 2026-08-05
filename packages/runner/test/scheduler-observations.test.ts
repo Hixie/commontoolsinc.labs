@@ -22,6 +22,7 @@ import {
   schedulerImplementationFingerprint,
   schedulerRuntimeFingerprint,
 } from "../src/scheduler/run.ts";
+import { createInitialRunGate } from "../src/scheduler/initial-run-gate.ts";
 import { createTrustedBuilder } from "./support/trusted-builder.ts";
 import type { RuntimeProgram } from "../src/harness/types.ts";
 import type {
@@ -724,6 +725,229 @@ describe("persistent scheduler observations", () => {
         true,
       );
       expect(testRuntime.runtime.scheduler.getStats().pending).toBe(0);
+    } finally {
+      await disposeSchedulerTestRuntime(testRuntime);
+    }
+  });
+
+  it("runs only gated dirty and failed observations after release", async () => {
+    const testRuntime = createSchedulerTestRuntime("https://example.test", {});
+    try {
+      const subscribe = (
+        name: string,
+        snapshotState: "clean" | "dirty" | "failed",
+      ) => {
+        let runs = 0;
+        const action = Object.assign(
+          {
+            [name]: function () {
+              runs++;
+            },
+          }[name] as Action,
+          { writes: [writeLink] },
+        );
+        const gate = createInitialRunGate();
+        const observation = buildSchedulerActionObservation({
+          ownerSpace: space,
+          actionId: name,
+          actionKind: "effect",
+          branch: "",
+          pieceId: `space:${name}`,
+          processGeneration: 1,
+          implementationFingerprint: schedulerImplementationFingerprint(
+            action,
+            name,
+            undefined,
+          ),
+          runtimeFingerprint: schedulerRuntimeFingerprint(),
+          observedAtSeq: 5,
+          transactionKind: "action-run",
+          currentKnownWrites: [writeAddress],
+          transactionLog: {
+            reads: [readAddress],
+            shallowReads: [],
+            writes: [],
+          },
+          ...(snapshotState === "failed"
+            ? { status: "failed", errorFingerprint: "error:test" }
+            : {}),
+        });
+        testRuntime.runtime.scheduler.subscribe(action, {
+          reads: [],
+          shallowReads: [],
+          writes: [],
+        }, {
+          isEffect: true,
+          initialRunGate: gate.gate,
+          rehydrateFromStorage: {
+            space,
+            pieceId: observation.pieceId,
+            processGeneration: 1,
+            ...currentSnapshotOracle,
+            snapshotsByActionId: new Map([[
+              name,
+              [{
+                executionContextKey: "session:test:test",
+                observation,
+                ...(snapshotState === "dirty" ? { directDirtySeq: 7 } : {}),
+              }],
+            ]]),
+          },
+        });
+        return { gate, runs: () => runs };
+      };
+
+      const clean = subscribe("gatedCleanObservation", "clean");
+      const dirty = subscribe("gatedDirtyObservation", "dirty");
+      const failed = subscribe("gatedFailedObservation", "failed");
+      await testRuntime.runtime.idle();
+      expect(clean.runs()).toBe(0);
+      expect(dirty.runs()).toBe(0);
+      expect(failed.runs()).toBe(0);
+
+      clean.gate.release();
+      dirty.gate.release();
+      failed.gate.release();
+      await testRuntime.runtime.idle();
+      expect(clean.runs()).toBe(0);
+      expect(dirty.runs()).toBe(1);
+      expect(failed.runs()).toBe(1);
+    } finally {
+      await disposeSchedulerTestRuntime(testRuntime);
+    }
+  });
+
+  it("checks a gated snapshot's currency at release, not at subscribe", async () => {
+    const testRuntime = createSchedulerTestRuntime("https://example.test", {});
+    try {
+      let runs = 0;
+      const action = Object.assign(
+        function gatedStaleObservation() {
+          runs++;
+        } as Action,
+        { writes: [writeLink] },
+      );
+      const gate = createInitialRunGate();
+      const observation = buildSchedulerActionObservation({
+        ownerSpace: space,
+        actionId: "gatedStaleObservation",
+        actionKind: "effect",
+        branch: "",
+        pieceId: "space:gatedStaleObservation",
+        processGeneration: 1,
+        implementationFingerprint: schedulerImplementationFingerprint(
+          action,
+          "gatedStaleObservation",
+          undefined,
+        ),
+        runtimeFingerprint: schedulerRuntimeFingerprint(),
+        observedAtSeq: 5,
+        transactionKind: "action-run",
+        currentKnownWrites: [writeAddress],
+        transactionLog: {
+          reads: [readAddress],
+          shallowReads: [],
+          writes: [],
+        },
+      });
+      // The oracle answers with live storage state. Its answer flipping
+      // between subscribe and release stands for a write to the observation's
+      // reads landing while the registration was deferred.
+      let readsStillCurrent = true;
+      testRuntime.runtime.scheduler.subscribe(action, {
+        reads: [],
+        shallowReads: [],
+        writes: [],
+      }, {
+        isEffect: true,
+        initialRunGate: gate.gate,
+        rehydrateFromStorage: {
+          space,
+          pieceId: observation.pieceId,
+          processGeneration: 1,
+          addressesCurrentAtOrBelow: () => readsStillCurrent,
+          hasPendingWriteOverlapping: () => false,
+          snapshotsByActionId: new Map([[
+            "gatedStaleObservation",
+            [{
+              executionContextKey: "session:test:test",
+              observation,
+            }],
+          ]]),
+        },
+      });
+      await testRuntime.runtime.idle();
+      expect(runs).toBe(0);
+
+      readsStillCurrent = false;
+      gate.release();
+      await testRuntime.runtime.idle();
+      // The clean snapshot no longer matches storage, so instead of resuming
+      // clean the action gets a fresh initial run.
+      expect(runs).toBe(1);
+    } finally {
+      await disposeSchedulerTestRuntime(testRuntime);
+    }
+  });
+
+  it("routes a registration failure at release to the releaser", async () => {
+    const testRuntime = createSchedulerTestRuntime("https://example.test", {});
+    try {
+      const action = Object.assign(
+        function gatedFailingRehydration() {} as Action,
+        { writes: [writeLink] },
+      );
+      const gate = createInitialRunGate();
+      const observation = buildSchedulerActionObservation({
+        ownerSpace: space,
+        actionId: "gatedFailingRehydration",
+        actionKind: "effect",
+        branch: "",
+        pieceId: "space:gatedFailingRehydration",
+        processGeneration: 1,
+        implementationFingerprint: schedulerImplementationFingerprint(
+          action,
+          "gatedFailingRehydration",
+          undefined,
+        ),
+        runtimeFingerprint: schedulerRuntimeFingerprint(),
+        observedAtSeq: 5,
+        transactionKind: "action-run",
+        currentKnownWrites: [writeAddress],
+        transactionLog: {
+          reads: [readAddress],
+          shallowReads: [],
+          writes: [],
+        },
+      });
+      testRuntime.runtime.scheduler.subscribe(action, {
+        reads: [],
+        shallowReads: [],
+        writes: [],
+      }, {
+        isEffect: true,
+        initialRunGate: gate.gate,
+        rehydrateFromStorage: {
+          space,
+          pieceId: observation.pieceId,
+          processGeneration: 1,
+          addressesCurrentAtOrBelow: () => {
+            throw new Error("oracle unavailable");
+          },
+          hasPendingWriteOverlapping: () => false,
+          snapshotsByActionId: new Map([[
+            "gatedFailingRehydration",
+            [{
+              executionContextKey: "session:test:test",
+              observation,
+            }],
+          ]]),
+        },
+      });
+      await testRuntime.runtime.idle();
+      // The registration performed at release consults the snapshot-currency
+      // oracle; its failure reaches whoever released the gate.
+      expect(() => gate.release()).toThrow("oracle unavailable");
     } finally {
       await disposeSchedulerTestRuntime(testRuntime);
     }

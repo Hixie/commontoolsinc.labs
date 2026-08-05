@@ -24,6 +24,7 @@ import type {
 } from "./scheduler-test-utils.ts";
 import { getDirectTransactionReactivityLog } from "../src/storage/transaction-inspection.ts";
 import { PASS_RUN_BUDGET } from "../src/scheduler/constants.ts";
+import { createInitialRunGate } from "../src/scheduler/initial-run-gate.ts";
 
 // Seed stored CFC metadata via an ungated path-[] full-document write (the
 // shape hydration delivers it), reading the current doc first so the value
@@ -110,6 +111,180 @@ describe("scheduler", () => {
     await c.pull();
     expect(runCount).toBe(2);
     expect(c.get()).toBe(4);
+  });
+
+  it("holds one initial run without blocking unrelated actions", async () => {
+    const gate = createInitialRunGate();
+    let heldRuns = 0;
+    let unrelatedRuns = 0;
+    const held: Action = () => {
+      heldRuns++;
+    };
+    const unrelated: Action = () => {
+      unrelatedRuns++;
+    };
+
+    runtime.scheduler.subscribe(held, {
+      isEffect: true,
+      initialRunGate: gate.gate,
+    });
+    runtime.scheduler.subscribe(unrelated, { isEffect: true });
+    await runtime.scheduler.idle();
+
+    expect(heldRuns).toBe(0);
+    expect(unrelatedRuns).toBe(1);
+
+    gate.release();
+    await runtime.scheduler.idle();
+    expect(heldRuns).toBe(1);
+  });
+
+  it("runs a gated action once at release, against current state", async () => {
+    const gate = createInitialRunGate();
+    const source = runtime.getCell<number>(
+      space,
+      "gated action source",
+      undefined,
+      tx,
+    );
+    source.set(1);
+    const sink = runtime.getCell<number>(
+      space,
+      "gated action sink",
+      undefined,
+      tx,
+    );
+    sink.set(0);
+    tx.commit();
+    tx = runtime.edit();
+
+    let runCount = 0;
+    const copy: Action = (tx) => {
+      runCount++;
+      sink.withTx(tx).send(source.withTx(tx).get());
+    };
+    runtime.scheduler.subscribe(copy, {
+      reads: [],
+      shallowReads: [],
+      writes: [],
+    }, { isEffect: true, initialRunGate: gate.gate });
+
+    // Writes landing while the registration is deferred do not accumulate
+    // runs: the single initial run at release reads the state they produced.
+    source.withTx(tx).send(2);
+    tx.commit();
+    tx = runtime.edit();
+    source.withTx(tx).send(3);
+    tx.commit();
+    tx = runtime.edit();
+    await runtime.scheduler.idle();
+    expect(runCount).toBe(0);
+
+    gate.release();
+    await runtime.scheduler.idle();
+    expect(runCount).toBe(1);
+    expect(sink.get()).toBe(3);
+
+    // After release the registration is an ordinary one: dependency changes
+    // re-run it.
+    source.withTx(tx).send(4);
+    tx.commit();
+    tx = runtime.edit();
+    await sink.pull();
+    expect(runCount).toBe(2);
+    expect(sink.get()).toBe(4);
+  });
+
+  it("registers immediately when the gate is already released", async () => {
+    const gate = createInitialRunGate();
+    gate.release();
+    let runs = 0;
+    const action: Action = () => {
+      runs++;
+    };
+    runtime.scheduler.subscribe(action, {
+      isEffect: true,
+      initialRunGate: gate.gate,
+    });
+    await runtime.scheduler.idle();
+    expect(runs).toBe(1);
+  });
+
+  it("discards a registration cancelled before its gate releases", async () => {
+    const gate = createInitialRunGate();
+    let runs = 0;
+    const held: Action = () => {
+      runs++;
+    };
+    const cancel = runtime.scheduler.subscribe(held, {
+      isEffect: true,
+      initialRunGate: gate.gate,
+    });
+    cancel();
+    gate.release();
+    await runtime.scheduler.idle();
+    expect(runs).toBe(0);
+  });
+
+  it("discards the pending registration when the gate is cancelled", async () => {
+    const gate = createInitialRunGate();
+    let runs = 0;
+    const held: Action = () => {
+      runs++;
+    };
+    const cancel = runtime.scheduler.subscribe(held, {
+      isEffect: true,
+      initialRunGate: gate.gate,
+    });
+    gate.cancel();
+    // A settled gate stays settled: releasing after cancellation is a no-op.
+    gate.release();
+    await runtime.scheduler.idle();
+    expect(runs).toBe(0);
+    expect(gate.gate.isReleased()).toBe(false);
+    // The registration's cancel stays safe to call.
+    cancel();
+  });
+
+  it("releases every initial-run callback when one callback throws", () => {
+    const gate = createInitialRunGate();
+    const calls: string[] = [];
+    gate.gate.onRelease(() => {
+      calls.push("first");
+      throw new Error("first callback failed");
+    });
+    gate.gate.onRelease(() => {
+      calls.push("second");
+    });
+
+    expect(() => gate.release()).toThrow("first callback failed");
+    expect(calls).toEqual(["first", "second"]);
+
+    gate.release();
+    expect(calls).toEqual(["first", "second"]);
+  });
+
+  it("invokes a release callback added after release synchronously", () => {
+    const gate = createInitialRunGate();
+    gate.release();
+    let calls = 0;
+    gate.gate.onRelease(() => calls++);
+    expect(calls).toBe(1);
+  });
+
+  it("does not invoke unsubscribed or cancelled-gate callbacks", () => {
+    const gate = createInitialRunGate();
+    let calls = 0;
+    const unsubscribe = gate.gate.onRelease(() => calls++);
+    unsubscribe();
+    gate.release();
+    expect(calls).toBe(0);
+
+    const cancelled = createInitialRunGate();
+    cancelled.cancel();
+    cancelled.gate.onRelease(() => calls++);
+    cancelled.release();
+    expect(calls).toBe(0);
   });
 
   it("schedule shouldn't run immediately", async () => {

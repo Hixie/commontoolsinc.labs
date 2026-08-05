@@ -47,6 +47,7 @@ import {
   type PersistedSchedulerObservationSnapshot,
 } from "./scheduler/persistent-observation.ts";
 import { RetryImmediately } from "./scheduler/retry-immediately.ts";
+import type { InitialRunGate } from "./scheduler/initial-run-gate.ts";
 import {
   findAllWriteRedirectCells,
   opaqueArgumentKeys,
@@ -792,6 +793,9 @@ type SchedulerRehydrationSubscriptionOptions = {
   awaitSyncBeforeInitialRun?: {
     space: MemorySpace;
   };
+  // Defer this run's action registrations until the gate releases. Passed to
+  // the scheduler for every action node and inherited by nested child runs.
+  initialRunGate?: InitialRunGate;
 };
 
 // Whether resumed nodes should hold their initial run until the space syncs,
@@ -814,6 +818,11 @@ type RunnerRunOptions = {
   // Resumed-from-synced-state: hold each action's initial rehydration/run until
   // the space has finished syncing, so consumers don't race the data.
   awaitSyncBeforeInitialRun?: boolean;
+  // Defer the run's action registrations until the gate releases; nested
+  // child runs inherit the gate. Event handler registration does not defer.
+  // Cancelling the gate discards the pending registrations; the caller still
+  // tears the run down through the run's cancel.
+  initialRunGate?: InitialRunGate;
 };
 
 // Placeholder standing in for an argument slot whose stored raw value is a
@@ -2306,6 +2315,7 @@ export class Runner {
       // Resumed-from-synced-state: hold each action's initial rehydration/run
       // until the space has finished syncing, so consumers don't race the data.
       awaitSyncBeforeInitialRun?: boolean;
+      initialRunGate?: InitialRunGate;
     } = {},
   ): Cancel {
     const {
@@ -2369,13 +2379,22 @@ export class Runner {
       // A boot snapshot belongs to exactly one pattern instantiation. A later
       // patternIdentity hot-swap must register fresh under the same durable
       // piece identity rather than replaying the old implementation's cache.
-      const schedulerRehydration = initialSchedulerRehydrationAvailable
+      const baseSchedulerRehydration = initialSchedulerRehydrationAvailable
         ? options.schedulerRehydration ?? this.schedulerRehydrationOptions(
           resultCell,
           undefined,
           options.awaitSyncBeforeInitialRun,
         )
         : this.schedulerRehydrationOptions(resultCell);
+      // The gate applies to every instantiation of this run, including a
+      // patternIdentity hot-swap while the gate is pending. A settled gate
+      // has no effect on later instantiations.
+      const schedulerRehydration = options.initialRunGate
+        ? {
+          ...baseSchedulerRehydration,
+          initialRunGate: options.initialRunGate,
+        }
+        : baseSchedulerRehydration;
       initialSchedulerRehydrationAvailable = false;
       try {
         for (const node of pattern.nodes) {
@@ -3045,6 +3064,7 @@ export class Runner {
       doNotUpdateOnPatternChange: options.doNotUpdateOnPatternChange,
       schedulePatternUpdate: options.schedulePatternUpdate,
       awaitSyncBeforeInitialRun: options.awaitSyncBeforeInitialRun,
+      initialRunGate: options.initialRunGate,
     });
   }
 
@@ -6887,6 +6907,7 @@ export class Runner {
         awaitSyncBeforeInitialRun: defersInitialRunUntilSynced(
           schedulerRehydration,
         ),
+        initialRunGate: schedulerRehydration.initialRunGate,
       },
     );
 
