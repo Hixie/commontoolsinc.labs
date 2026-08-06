@@ -300,10 +300,11 @@ Tests to extend first:
   `CF_HARNESS_HOME` location, create its directory with mode `0700`, write the
   credential file with mode `0600`, and replace it atomically. This adapter is
   for the local CLI, not the Loom credential backend.
-- [x] Define a Loom credential-store adapter contract that keeps refresh tokens
-  in Loom's approved encrypted secret store and indexes them by the authenticated
-  Common Tools principal plus provider. Do not place tokens in Cells, Spaces,
-  run manifests, session databases, or run artifacts.
+- [x] Keep Loom refresh tokens in Loom's approved encrypted secret store,
+  indexed by the authenticated Common Tools principal plus provider, and reach
+  them through the owner-bound credential resolver the host injects. Do not
+  place tokens in Cells, Spaces, run manifests, session databases, or run
+  artifacts.
 - [x] Serialize read/modify/write so concurrent prompt loops cannot refresh the
   same rotating token independently. Re-check expiry inside the serialized
   mutation before making a refresh request.

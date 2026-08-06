@@ -28,15 +28,6 @@ export interface HarnessCredentialStore {
   ): Promise<void>;
 }
 
-/**
- * Host-side Loom adapter contract. Implementations keep token material in
- * Loom's encrypted secret backend and resolve only opaque authenticated owner
- * keys; cf-harness never serializes this adapter or its values into run data.
- */
-export interface LoomHarnessCredentialStore extends HarnessCredentialStore {
-  readonly backend: "loom-encrypted-secret-store";
-}
-
 const credentialKey = (ownerKey: string, providerId: string): string =>
   `${ownerKey}\u0000${providerId}`;
 
