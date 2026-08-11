@@ -101,9 +101,15 @@ export function map(
   const elementRuns = new Map<string, ElementRun>();
 
   // Cleared when the coordinator is torn down, so the asynchronous resume work
-  // below stops writing to a container nothing owns any more. The same teardown
-  // releases the children the coordinator still holds; the ones whose elements
-  // left the list were released when they left.
+  // below stops writing to a container nothing owns any more. Each of those
+  // edits checks it again inside the action it hands `editWithRetry`, which is
+  // the last point a write can be withheld: staging nothing leaves an empty
+  // transaction, and every retry re-runs the action. An edit whose commit is
+  // already in flight when the teardown lands still writes. The value it writes
+  // is the one that was correct for the state it read, and a later coordinator
+  // start reconciles over it. The same teardown releases the children the
+  // coordinator still holds; the ones whose elements left the list were
+  // released when they left.
   let active = true;
   addCancel(() => {
     active = false;

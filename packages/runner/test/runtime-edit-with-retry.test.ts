@@ -295,4 +295,27 @@ describe("Runtime.editWithRetry", () => {
     expect(statuses).toEqual(["done"]);
     expect(cell.get()).toBe(1);
   });
+
+  it("writes a value whose transaction is aborted after `commit()` was called", async () => {
+    const cell = runtime.getCell<number>(
+      space,
+      "editWithRetry-abort-after-commit",
+      undefined,
+      tx,
+    );
+    cell.set(0);
+    await tx.commit();
+
+    // The point of no return the editWithRetry contract names. A transaction
+    // handed to commit() has left its ready state, so abort() on it reports an
+    // inactive transaction and discards nothing.
+    const edit = runtime.edit();
+    cell.withTx(edit).send(1);
+    const committing = edit.commit();
+    const aborted = edit.abort("after the commit started");
+    await committing;
+
+    expect(aborted.error?.name).toBe("StorageTransactionCompleteError");
+    expect(cell.get()).toBe(1);
+  });
 });

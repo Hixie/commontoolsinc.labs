@@ -1655,9 +1655,25 @@ export class Runtime {
    * the FIRST attempt, because re-running cannot change the outcome and each
    * doomed attempt costs a round-trip plus a subscriber revert notification.
    *
+   * A caller whose work can become obsolete while the edit is outstanding — a
+   * coordinator that may be torn down, say — has exactly one point at which it
+   * can still withhold the write, and that point is inside `fn`: staging
+   * nothing leaves an empty transaction, and an empty transaction's commit
+   * short-circuits without reaching storage. Because every retry re-runs `fn`,
+   * a check there covers each attempt.
+   *
+   * After `fn` returns there is no such point. `tx.commit()` moves the
+   * transaction out of its `ready` state, and `abort()` on it then returns
+   * `InactiveTransactionError` and discards nothing, so an attempt whose commit
+   * is already in flight writes whatever the caller has since decided. That
+   * window spans the round trip to storage and nothing here closes it. A caller
+   * for which such a write is more than a lost race reconciles the value
+   * itself.
+   *
    * @param fn - Function to execute with the transaction.
    * @param maxRetries - Maximum number of retries.
-   * @returns Promise<boolean> that resolves to true on success, or false after exhausting retries.
+   * @returns The value `fn` returned once its transaction committed, or the
+   * commit error once the retries were spent.
    */
   editWithRetry<T = void>(
     fn: (tx: IExtendedStorageTransaction) => T,

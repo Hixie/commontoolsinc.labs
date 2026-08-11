@@ -209,6 +209,34 @@ returned without any retry.
 
 The scheduler also provides automatic retry for handlers on transaction conflict.
 
+#### Withholding a write, and the point of no return
+
+A caller whose work can become obsolete while the edit is outstanding — a
+coordinator that may be torn down while its asynchronous work is in flight, for
+instance — has exactly one point at which it can still withhold the write, and
+that point is inside the function it hands to `editWithRetry`. Staging nothing
+leaves an empty transaction, whose commit short-circuits before reaching
+storage. Because every retry re-runs that function, one check there covers every
+attempt.
+
+```typescript
+// Shown for illustration only.
+await runtime.editWithRetry((tx) => {
+  if (!stillWanted) return;
+  cell.withTx(tx).set(1);
+});
+```
+
+After the function returns there is no such point. Committing is a round trip to
+storage, and a transaction that has entered it is no longer abortable: `abort()`
+applies only to a transaction still in its `ready` state, and returns
+`InactiveTransactionError` otherwise. An attempt whose commit is already in
+flight therefore writes whatever the caller has since decided.
+
+Nothing closes that window. A caller for which such a write is more than a lost
+race reconciles the value itself — typically by having whatever restarts the
+work read the durable state and write over it.
+
 ### Relationship to Handlers
 
 Handlers execute within transaction context:

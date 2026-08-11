@@ -49,7 +49,10 @@ export interface ResumeRepublisherOptions {
   /**
    * False once the coordinator is torn down. A republish outstanding at that
    * moment has a container nothing owns any more, so it is dropped rather than
-   * written.
+   * written. That check inside the republish action is the last point the write
+   * can be withheld: a republish whose commit is already in flight when the
+   * teardown lands still writes, and a later coordinator start reconciles over
+   * the value it wrote.
    */
   isActive: () => boolean;
   /**
