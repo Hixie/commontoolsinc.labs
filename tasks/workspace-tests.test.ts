@@ -3,11 +3,13 @@ import { fromFileUrl } from "@std/path";
 import { decode } from "@commonfabric/utils/encoding";
 import {
   assertTaskTestsIncluded,
+  formatInterruptReport,
   initializeDb,
   parseDisabledPackageList,
   readWorkspaceMembers,
   runTests,
   selectShardMembers,
+  stopTestTasks,
   testConcurrency,
   testPackage,
 } from "./workspace-tests.ts";
@@ -423,6 +425,47 @@ Deno.test("initializeDb runs the initialize-db task in the given directory", asy
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("formatInterruptReport shows how far each running package got", () => {
+  const report = formatInterruptReport("SIGTERM", [
+    {
+      packageName: "piece (1/3)",
+      elapsedMs: 1_800_000,
+      output: "running 3 tests from ./test/link-reactivity.test.ts\n",
+    },
+    { packageName: "cli (6/10)", elapsedMs: 65_000, output: "" },
+  ]);
+
+  assertEquals(report.split("\n"), [
+    "Interrupted by SIGTERM. These package test tasks were still running:",
+    "- piece (1/3), 1800s in:",
+    "    running 3 tests from ./test/link-reactivity.test.ts",
+    "- cli (6/10), 65s in: nothing printed yet",
+  ]);
+});
+
+Deno.test("formatInterruptReport says so when no package was running", () => {
+  assertEquals(
+    formatInterruptReport("SIGINT", []),
+    "Interrupted by SIGINT. No package test task was running.",
+  );
+});
+
+Deno.test("stopTestTasks signals the tasks that are left, ending or not", () => {
+  const signalled: string[] = [];
+  stopTestTasks([
+    {
+      child: {
+        kill: () => {
+          throw new TypeError("Child process has already terminated");
+        },
+      },
+    },
+    { child: { kill: (signal?: Deno.Signal) => signalled.push(signal!) } },
+  ], "SIGTERM");
+
+  assertEquals(signalled, ["SIGTERM"]);
 });
 
 // Write a workspace whose `slow` package announces that its tests are really

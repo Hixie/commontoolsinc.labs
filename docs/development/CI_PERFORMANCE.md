@@ -228,6 +228,16 @@ that package's captured output immediately and stops starting new package
 tests. Package tests that are already running finish before the summary is
 printed.
 
+A job that outruns its limit is killed, and the kill reaches the root task as a
+signal. The task answers before it goes: it names every package whose test task
+was still running, how long each had been running, and everything each had
+printed, and then signals those packages so nothing it started outlives it. A
+package's output is otherwise held until that package finishes, so this report
+is the only account there is of a package that never finished. Leaving a
+process behind costs more than tidiness: one that still holds the job's output
+open keeps the runner from finishing, and a runner that has to be killed in
+turn takes the whole job log with it, report included.
+
 When a shard becomes the long pole, start with the `Package timings:` block
 printed by `tasks/test.ts`. Update `WORKSPACE_TEST_WEIGHTS` in
 `tasks/test-timing-weights.ts` when package costs have drifted enough to affect

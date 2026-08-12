@@ -37,6 +37,100 @@ export async function initializeDb(cwd: string = Deno.cwd()): Promise<void> {
   }
 }
 
+// One package's test task while it is running, together with everything it has
+// printed so far. A finished package's output reaches the log through
+// `reportPackageFailure`; this is what a package that has not finished can
+// still be asked about.
+interface RunningTestTask {
+  packageName: string;
+  startedAt: number;
+  child: Deno.ChildProcess;
+  stdout: Uint8Array[];
+  stderr: Uint8Array[];
+}
+
+const runningTestTasks = new Set<RunningTestTask>();
+
+/** How far one package's test task has got. */
+export interface RunningPackage {
+  packageName: string;
+  elapsedMs: number;
+  output: string;
+}
+
+function joinChunks(chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
+  const joined = new Uint8Array(
+    chunks.reduce((total, chunk) => total + chunk.length, 0),
+  );
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return joined;
+}
+
+async function collectStream(
+  stream: ReadableStream<Uint8Array>,
+  chunks: Uint8Array[],
+): Promise<void> {
+  for await (const chunk of stream) chunks.push(chunk);
+}
+
+/** The packages whose test tasks are running right now, and their progress. */
+export function runningPackages(): RunningPackage[] {
+  const now = Date.now();
+  return [...runningTestTasks].map((task) => ({
+    packageName: task.packageName,
+    elapsedMs: now - task.startedAt,
+    output: decode(joinChunks(task.stdout)) + decode(joinChunks(task.stderr)),
+  }));
+}
+
+/**
+ * Signal every one of `tasks` that is still running. A task whose process
+ * ended between the caller reading the list and this call is left alone: it is
+ * the run's own bookkeeping that is a step behind, and the process is gone
+ * either way.
+ */
+export function stopTestTasks(
+  tasks: Iterable<{ child: Pick<Deno.ChildProcess, "kill"> }>,
+  signal: Deno.Signal,
+): void {
+  for (const task of tasks) {
+    try {
+      task.child.kill(signal);
+    } catch {
+      // the task's process is already gone
+    }
+  }
+}
+
+/** The message an interrupted run leaves behind, addressed to a log reader. */
+export function formatInterruptReport(
+  signal: string,
+  running: RunningPackage[],
+): string {
+  if (running.length === 0) {
+    return `Interrupted by ${signal}. No package test task was running.`;
+  }
+  const lines = [
+    `Interrupted by ${signal}. These package test tasks were still running:`,
+  ];
+  for (const { packageName, elapsedMs, output } of running) {
+    const elapsed = `${Math.round(elapsedMs / 1000)}s in`;
+    if (output.length === 0) {
+      lines.push(`- ${packageName}, ${elapsed}: nothing printed yet`);
+      continue;
+    }
+    lines.push(`- ${packageName}, ${elapsed}:`);
+    for (const line of output.replace(/\n$/, "").split("\n")) {
+      lines.push(`    ${line}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export async function testPackage(
   memberPath: string,
   packageName: string,
@@ -61,13 +155,39 @@ export async function testPackage(
       );
     }
 
-    result = await new Deno.Command(Deno.execPath(), {
+    const child = new Deno.Command(Deno.execPath(), {
       args: ["task", "test"],
       cwd: packagePath,
       env,
       stdout: "piped",
       stderr: "piped",
-    }).output();
+    }).spawn();
+    // Read both streams as they arrive rather than taking the whole output at
+    // the end, so the text is in hand while the task is still running.
+    const task: RunningTestTask = {
+      packageName,
+      startedAt,
+      child,
+      stdout: [],
+      stderr: [],
+    };
+    runningTestTasks.add(task);
+    try {
+      const [status] = await Promise.all([
+        child.status,
+        collectStream(child.stdout, task.stdout),
+        collectStream(child.stderr, task.stderr),
+      ]);
+      result = {
+        success: status.success,
+        code: status.code,
+        signal: status.signal,
+        stdout: joinChunks(task.stdout),
+        stderr: joinChunks(task.stderr),
+      };
+    } finally {
+      runningTestTasks.delete(task);
+    }
   } catch (e) {
     result = {
       success: false,
@@ -287,7 +407,30 @@ export async function runTests(
   return failedPackages.length === 0;
 }
 
+// The signals a kill arrives as, each with the exit code a process killed that
+// way conventionally reports: 128 plus the signal's number. Windows has no
+// SIGTERM to listen for.
+const INTERRUPT_SIGNALS: [Deno.Signal, number][] = Deno.build.os === "windows"
+  ? [["SIGINT", 130]]
+  : [["SIGINT", 130], ["SIGTERM", 143]];
+
+// CI kills a job that outruns its limit, and the kill arrives here as a
+// signal. Say which packages the run was waiting on and how far each of them
+// got, then take those packages down: a process the run started that outlives
+// it holds the job's output open, and the job log — the only record that
+// survives the kill — is discarded when the runner has to be killed in turn.
+function reportOnInterrupt(): void {
+  for (const [signal, exitCode] of INTERRUPT_SIGNALS) {
+    Deno.addSignalListener(signal, () => {
+      console.error(formatInterruptReport(signal, runningPackages()));
+      stopTestTasks(runningTestTasks, signal);
+      Deno.exit(exitCode);
+    });
+  }
+}
+
 export async function main(): Promise<void> {
+  reportOnInterrupt();
   const shardRaw = Deno.env.get("TEST_SHARD");
   const shard = shardRaw ? parseShard(shardRaw) : undefined;
   assertTaskTestsIncluded(await readWorkspaceMembers());
