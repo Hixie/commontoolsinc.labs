@@ -1,4 +1,6 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { fromFileUrl } from "@std/path";
+import { decode } from "@commonfabric/utils/encoding";
 import {
   assertTaskTestsIncluded,
   initializeDb,
@@ -13,6 +15,10 @@ import { WORKSPACE_TEST_WEIGHTS } from "./test-timing-weights.ts";
 
 const WORKSPACE_SHARDS = 8;
 const CLI_SHARDS = 10;
+
+const runnerEntryPoint = fromFileUrl(new URL("./test.ts", import.meta.url));
+const workspaceConfig = fromFileUrl(new URL("../deno.jsonc", import.meta.url));
+const workspaceLock = fromFileUrl(new URL("../deno.lock", import.meta.url));
 
 // Write a minimal workspace under `dir`: a root deno.jsonc listing the
 // members, and one directory per package whose `test` task records that it
@@ -415,6 +421,81 @@ Deno.test("initializeDb runs the initialize-db task in the given directory", asy
     await initializeDb(dir);
     await Deno.stat(`${dir}/initialized.txt`);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// Write a workspace whose `slow` package announces that its tests are really
+// under way — by connecting to `readyPort` — and then never finishes. The
+// connection lives as long as that package's process does, so a reader of it
+// learns when the process is gone.
+async function makeHangingWorkspace(
+  dir: string,
+  readyPort: number,
+): Promise<void> {
+  await makeWorkspace(dir, ["tasks", "slow"], { "initialize-db": "echo ok" });
+  await Deno.writeTextFile(
+    `${dir}/packages/slow/deno.jsonc`,
+    JSON.stringify({ tasks: { test: "deno run --allow-net hang.ts" } }),
+  );
+  await Deno.writeTextFile(
+    `${dir}/packages/slow/hang.ts`,
+    [
+      `console.log("the slow package is midway through its tests");`,
+      `await Deno.connect({ hostname: "127.0.0.1", port: ${readyPort} });`,
+      "await new Promise(() => {});",
+      "",
+    ].join("\n"),
+  );
+}
+
+// A package's output is held until that package finishes, so a package that
+// never finishes has shown nothing. CI kills a job that outruns its limit and
+// the kill arrives as a signal, which is the last moment the run has to say
+// which package it was waiting on — and the log is all that survives the kill.
+Deno.test("an interrupted run names the package it was waiting on", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "ws-interrupt-" });
+  const ready = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  try {
+    await makeHangingWorkspace(dir, (ready.addr as Deno.NetAddr).port);
+    const run = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-env",
+        "--allow-read",
+        "--allow-run",
+        "--config",
+        workspaceConfig,
+        "--lock",
+        workspaceLock,
+        "--frozen",
+        runnerEntryPoint,
+      ],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+
+    // Resolves once the slow package's test task is really running, so the
+    // signal lands on a run that is waiting on that package.
+    const slowPackage = await ready.accept();
+    run.kill("SIGINT");
+    const { code, signal, stderr } = await run.output();
+    const report = decode(stderr);
+
+    assertStringIncludes(report, "Interrupted by SIGINT");
+    assertStringIncludes(report, "- slow, ");
+    // Handled rather than died of: a run killed by the signal reports the
+    // signal here and never reaches its own reporting.
+    assertEquals(signal, null);
+    assertEquals(code, 130);
+
+    // The run takes its packages with it, so nothing it started is left
+    // holding the job's output open after it goes.
+    assertEquals(await slowPackage.read(new Uint8Array(1)), null);
+    slowPackage.close();
+  } finally {
+    ready.close();
     await Deno.remove(dir, { recursive: true });
   }
 });
