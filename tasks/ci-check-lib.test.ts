@@ -1128,3 +1128,33 @@ Deno.test("buildCoverageDebtUnattributedComment counts files and lines past the 
   assertStringIncludes(comment, "…and 5 more file(s)._");
   assertStringIncludes(comment, "…and 10 more");
 });
+
+// The marker is stripped when the comment renders, but the line break it sat
+// on is not, and it shows as a gap above the heading. Every coverage comment
+// therefore opens with the marker and the disclosure on one line.
+Deno.test("every coverage comment keeps the marker off a line of its own", () => {
+  const comments = [
+    buildCoverageDebtSuggestionComment({
+      groups: [{ group: "tasks", target: 0, current: 4 }],
+      files: [{
+        relativePath: "tasks/a.ts",
+        group: "tasks",
+        uncoveredCount: 4,
+      }],
+    }),
+    buildCoverageDebtUnattributedComment({
+      groups: [{ group: "tasks", target: 0, current: 4 }],
+      files: [{ relativePath: "tasks/a.ts", lines: [1, 2, 3, 4] }],
+    }),
+    buildCoverageResolvedComment(4, [
+      { group: "tasks", baseline: 4, current: 0 },
+    ]),
+  ];
+
+  for (const comment of comments) {
+    const firstLine = comment.split("\n")[0];
+    assertStringIncludes(firstLine, COVERAGE_SUGGESTION_MARKER);
+    assertStringIncludes(firstLine, "<details");
+    assertFalse(firstLine.trim() === COVERAGE_SUGGESTION_MARKER);
+  }
+});

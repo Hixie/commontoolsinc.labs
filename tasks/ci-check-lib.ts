@@ -903,6 +903,16 @@ function coverageSummary(
   return `<summary><${emphasis}>🕵🏻‍♀️ ${text}</${emphasis}></summary>`;
 }
 
+/**
+ * The comment's first line: the marker that identifies the comment, followed
+ * on the same line by the disclosure it opens. The marker cannot have a line
+ * of its own. Markdown strips the comment but keeps the line break it sat on,
+ * which renders as space above the heading.
+ */
+function coverageSuggestionOpening(open: boolean): string {
+  return `${COVERAGE_SUGGESTION_MARKER}<details${open ? " open" : ""}>`;
+}
+
 function formatTargetList(groups: CoverageSuggestionGroup[]): string[] {
   return groups.map((group) =>
     `  ${COVERAGE_METRIC_PREFIX} ${group.group} uncovered lines  <=  ${group.target}   (this PR: ${group.current})`
@@ -979,9 +989,8 @@ export function buildCoverageDebtSuggestionComment(
     (sum, group) => sum + (group.current - group.target),
     0,
   );
-  const out: string[] = [COVERAGE_SUGGESTION_MARKER];
+  const out: string[] = [coverageSuggestionOpening(true)];
 
-  out.push("<details open>");
   out.push(
     coverageSummary(`Test coverage regressed by ${uncoveredLineCount(overBy)}`),
   );
@@ -1156,8 +1165,7 @@ export function buildCoverageDebtUnattributedComment(
     0,
   );
 
-  const out: string[] = [COVERAGE_SUGGESTION_MARKER];
-  out.push("<details open>");
+  const out: string[] = [coverageSuggestionOpening(true)];
   out.push(
     coverageSummary(`Test coverage regressed by ${uncoveredLineCount(overBy)}`),
   );
@@ -1243,8 +1251,7 @@ export function buildCoverageResolvedComment(
     ? `Code coverage debt reduced by ${uncoveredLineCount(improvedLines)}!`
     : "Code coverage regression resolved.";
 
-  const out: string[] = [COVERAGE_SUGGESTION_MARKER];
-  out.push("<details>");
+  const out: string[] = [coverageSuggestionOpening(false)];
   out.push(coverageSummary(summary, "strong"));
   out.push("");
   out.push(
