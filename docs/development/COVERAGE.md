@@ -293,6 +293,53 @@ the line's coverage exactly as environment-dependent as it was.
 [The August 2026 record](../history/development/coverage-flake-idempotency-dedup-2026-08-12.md)
 follows one such line from a group-level `+2` down to the guard and the test.
 
+### Lines that need two functions to run in the same report
+
+A sharded suite writes one LCOV file per shard, and the combine step adds the
+per-line counts together. A line is therefore covered when at least one shard's
+report credits it. That makes the shard packing decide the outcome for any line
+whose credit depends on two things running in the same report rather than
+merely somewhere in the suite.
+
+`deno coverage` creates one such dependency. It projects V8's byte ranges onto
+source lines, and a range whose count is zero drops every line it touches to
+zero. Those ranges are collected against the emitted JavaScript and mapped back
+through a source map, and for some declarations that mapping runs an uncalled
+function's range past its own closing brace and across the parameter lines of
+the declaration that follows it. Those parameter lines then read as uncovered
+even though the function they introduce ran. Which declarations this reaches
+depends on the emitted layout of the whole file, so it cannot be read off the
+source. It has to be measured.
+
+`tasks/ci-check-lib.ts` had four such lines: the parameter lines of
+`fetchIssueComments()` and of `pullRequestBodyFromEvent()`. Each was credited
+only when the function declared above it ran in the same report, and the two
+functions involved had their only callers in different test files. The `tasks`
+group runs as three shards packed by recorded test timings, so those files sat
+in one shard until a pull request added a test file under `tasks/`. The new
+file re-packed the shards, the callers landed in different ones, and all four
+lines went to zero in every shard's report at once.
+
+Write the test for such a function in the file that already tests its
+neighbors, so that one shard's report credits the whole declaration. Reaching
+the function from somewhere else in the suite is not enough.
+
+Measure the file on its own to confirm it. Run it the way its package runs
+tests, taking the flags from the package's `deno.jsonc`, against a clean
+profile directory:
+
+```bash
+rm -rf coverage/raw/line-check && DENO_COVERAGE_DIR="$(pwd)/coverage/raw/line-check" deno test --no-check -A tasks/ci-check-lib.test.ts && deno coverage --lcov coverage/raw/line-check > line-check.lcov
+```
+
+Find the file's `SF:` record in the report and read the `DA:<line>,<hits>` entry
+for each line in question. Every one of them must show a nonzero hit count from
+that file alone. A line that only reaches a nonzero count once the rest of the
+suite runs is a line the next repacking can take away again.
+[The August 2026 record](../history/development/coverage-flake-signature-lines-2026-08-12.md)
+follows these four lines from the gate's comment down to the mapping and the
+tests.
+
 ### What the check says when the regression is not the pull request's
 
 The gate compares whole-group counts, so a flapping line fails whichever pull

@@ -34,6 +34,7 @@ import {
   parseBaselineOverrides,
   parseCacheStateFiles,
   parseCoverageBaselineDetailed,
+  pullRequestBodyFromEvent,
   REPO,
   serializeCoverageBaseline,
   shouldGateCoverageDebtMetric,
@@ -989,6 +990,58 @@ Deno.test("fetchPRFiles reads every changed-file page", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("fetchIssueComments reads every comment page", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  try {
+    globalThis.fetch = ((input, _init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      requestedUrls.push(`${url.pathname}?${url.searchParams}`);
+      const page = Number(url.searchParams.get("page"));
+      const comments = page === 1
+        ? Array.from({ length: 100 }, (_, index) => ({
+          id: index + 1,
+          body: `comment ${index + 1}`,
+        }))
+        : [{ id: 101, body: null }];
+
+      return Promise.resolve(
+        new Response(JSON.stringify(comments), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    const comments = await fetchIssueComments(123);
+
+    assertEquals(comments.length, 101);
+    assertEquals(comments[0], { id: 1, body: "comment 1" });
+    // A comment GitHub reports with a null body reads as an empty string, so
+    // callers can search every body without a null check.
+    assertEquals(comments.at(-1), { id: 101, body: "" });
+    assertEquals(requestedUrls, [
+      `/repos/${REPO}/issues/123/comments?per_page=100&page=1`,
+      `/repos/${REPO}/issues/123/comments?per_page=100&page=2`,
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("pullRequestBodyFromEvent distinguishes an absent body from an empty one", () => {
+  assertEquals(
+    pullRequestBodyFromEvent({ pull_request: { body: "EVENT BODY" } }),
+    "EVENT BODY",
+  );
+  // A pull request whose description was cleared carries a null body. That is
+  // an answer, so it reads as the empty string rather than as no answer.
+  assertEquals(pullRequestBodyFromEvent({ pull_request: { body: null } }), "");
+  assertEquals(pullRequestBodyFromEvent({ pull_request: {} }), undefined);
+  assertEquals(pullRequestBodyFromEvent({ action: "opened" }), undefined);
+  assertEquals(pullRequestBodyFromEvent(undefined), undefined);
 });
 
 Deno.test("downloadAndExtractArtifact retries transient artifact downloads", async () => {
