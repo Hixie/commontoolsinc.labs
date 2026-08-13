@@ -3655,8 +3655,8 @@ export class Server {
     // the event loop finishes, which is where `setImmediate` puts it: after
     // that turn's microtasks and before any timer. In-process emulation
     // configures a zero delay and arms this on every commit. "A zero-delay
-    // timer is a sleep, not a turn" in docs/development/DEVELOPMENT.md
-    // covers what a timer costs here.
+    // timer is a sleep, not a turn" in docs/development/DEVELOPMENT.md is
+    // the general rule this follows.
     if (delay > 0) {
       const timer = setTimeout(fire, delay);
       this.#cancelRefresh = () => clearTimeout(timer);

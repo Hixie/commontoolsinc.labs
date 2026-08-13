@@ -1663,7 +1663,7 @@ export const connect = Client.connect;
 // event loop open for exactly as long as a frame is queued — so a pending
 // delivery keeps a process alive and trips Deno's async-op sanitizer if a
 // test abandons one. "A zero-delay timer is a sleep, not a turn" in
-// docs/development/DEVELOPMENT.md covers what that choice costs.
+// docs/development/DEVELOPMENT.md is the general rule it follows.
 export const loopback = (server: Server): Transport => {
   let receiver = (_payload: string) => {};
   let closed = false;
