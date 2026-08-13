@@ -937,7 +937,10 @@ export class Server {
   #dirtySpaces = new Set<string>();
   #dirtyDocsBySpace = new Map<string, Set<string>>();
   #dirtyOriginsBySpace = new Map<string, Map<string, DirtyOrigin>>();
-  #refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  // Cancels the armed subscription fan-out, and is null when none is armed.
+  // A closure rather than a handle because a positive delay arms a timer and
+  // a zero delay arms an immediate, which are cancelled by different calls.
+  #cancelRefresh: (() => void) | null = null;
   #refreshing: Promise<void> | null = null;
   // Transactions and fan-out share one publication turn per space. A verdict
   // is sent while its transaction owns the turn, so a sync frame cannot expose
@@ -1422,7 +1425,7 @@ export class Server {
     // flushSessions(), so it drains them rather than returning with
     // pending work — "manual" gates the TIMER, not the explicit calls.
     if (
-      this.#refreshTimer !== null || this.#refreshing !== null ||
+      this.#cancelRefresh !== null || this.#refreshing !== null ||
       this.#dirtySpaces.size > 0
     ) {
       await this.flushSessions();
@@ -3638,17 +3641,29 @@ export class Server {
   private scheduleRefresh(): void {
     if (
       this.options.subscriptionRefreshDelayMs === "manual" ||
-      this.#dirtySpaces.size === 0 || this.#refreshTimer !== null
+      this.#dirtySpaces.size === 0 || this.#cancelRefresh !== null
     ) {
       return;
     }
-    this.#refreshTimer = setTimeout(
-      () => {
-        this.#refreshTimer = null;
-        void this.flushScheduledSessions();
-      },
-      this.options.subscriptionRefreshDelayMs ?? SUBSCRIPTION_REFRESH_DELAY_MS,
-    );
+    const fire = () => {
+      this.#cancelRefresh = null;
+      void this.flushScheduledSessions();
+    };
+    const delay = this.options.subscriptionRefreshDelayMs ??
+      SUBSCRIPTION_REFRESH_DELAY_MS;
+    // A delay of zero asks for the fan-out to run once the current turn of
+    // the event loop finishes, which is where `setImmediate` puts it: after
+    // that turn's microtasks and before any timer. In-process emulation
+    // configures a zero delay and arms this on every commit. "A zero-delay
+    // timer is a sleep, not a turn" in docs/development/DEVELOPMENT.md
+    // covers what a timer costs here.
+    if (delay > 0) {
+      const timer = setTimeout(fire, delay);
+      this.#cancelRefresh = () => clearTimeout(timer);
+    } else {
+      const immediate = setImmediate(fire);
+      this.#cancelRefresh = () => clearImmediate(immediate);
+    }
   }
 
   private async flushScheduledSessions(): Promise<void> {
@@ -3697,9 +3712,9 @@ export class Server {
   }
 
   private cancelScheduledRefresh(): void {
-    if (this.#refreshTimer !== null) {
-      clearTimeout(this.#refreshTimer);
-      this.#refreshTimer = null;
+    if (this.#cancelRefresh !== null) {
+      this.#cancelRefresh();
+      this.#cancelRefresh = null;
     }
     if (this.#connections.size === 0) {
       this.#dirtySpaces.clear();

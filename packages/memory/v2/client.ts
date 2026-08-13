@@ -1644,9 +1644,9 @@ export class WatchView {
 
 export const connect = Client.connect;
 
-// Loopback delivers server frames on zero-delay TIMER turns, one frame per
-// turn, like a socket: no response or push ever arrives inside the sender's
-// own await cascade, so code that accidentally depends on "nothing arrives
+// Loopback delivers server frames on EVENT-LOOP turns, one frame per turn,
+// like a socket: no response or push ever arrives inside the sender's own
+// await cascade, so code that accidentally depends on "nothing arrives
 // until I yield" fails here the way it would against a deployment. One
 // frame per macrotask also guarantees a frame's full microtask cascade
 // (response resolution, request() continuation, caller continuation)
@@ -1657,11 +1657,18 @@ export const connect = Client.connect;
 // staged at close() are dropped — nothing arrives after the socket is
 // gone. Remaining fidelity gap: setCloseReceiver is a no-op, so a
 // server-initiated disconnect is invisible over loopback.
+//
+// The turn comes from `setImmediate`, whose callback runs after the
+// current turn's microtasks and before any timer, and which holds the
+// event loop open for exactly as long as a frame is queued — so a pending
+// delivery keeps a process alive and trips Deno's async-op sanitizer if a
+// test abandons one. "A zero-delay timer is a sleep, not a turn" in
+// docs/development/DEVELOPMENT.md covers what that choice costs.
 export const loopback = (server: Server): Transport => {
   let receiver = (_payload: string) => {};
   let closed = false;
   const queue: string[] = [];
-  let pump: ReturnType<typeof setTimeout> | null = null;
+  let pump: ReturnType<typeof setImmediate> | null = null;
   const drainOne = () => {
     pump = null;
     if (closed) return;
@@ -1671,7 +1678,7 @@ export const loopback = (server: Server): Transport => {
     if (queue.length > 0) schedule();
   };
   const schedule = () => {
-    pump ??= setTimeout(drainOne, 0);
+    pump ??= setImmediate(drainOne);
   };
   const connection = server.connect((message) => {
     if (closed) return;
@@ -1685,7 +1692,7 @@ export const loopback = (server: Server): Transport => {
     close() {
       closed = true;
       if (pump !== null) {
-        clearTimeout(pump);
+        clearImmediate(pump);
         pump = null;
       }
       queue.length = 0;

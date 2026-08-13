@@ -19,7 +19,7 @@
 //     are a global `clock` with `settle()`, `tick(ms)`, and `reset()`.
 //
 //   - "freeze-all": every positive-delay timer FREEZES regardless of caller,
-//     and only `setTimeout`/`clearTimeout` are replaced (`setInterval`,
+//     and only the deferral primitives are replaced (`setInterval`,
 //     `Date.now`, and `performance.now` stay real). A zero-delay timer still
 //     fires, so scheduler dispatch and teardown resolve on their own, while a
 //     wall-clock sleep deadlocks and announces itself. The control is
@@ -34,11 +34,33 @@
 // present. `tick(ms)` advances logical time by `ms`, firing timers in lockstep;
 // the auto-advance pump is paused while it runs, so a test can observe a state
 // partway through a window.
+//
+// `setImmediate` is replaced in both modes too, and its callbacks join the
+// zero-delay timers: same queue, same kick, same fixpoint. Production code
+// reaches for it where it wants the next turn of the event loop rather than a
+// delay (the in-process memory transport delivers each frame on one), and a
+// deferral `settle()` cannot see is a deferral it can return in front of. Real
+// immediates would not do: the event loop runs a pending immediate before a
+// pending timer, but one armed from a microtask of an immediate's own callback
+// runs after that timer, so `settle()` would sometimes return with a delivery
+// still queued and the test would read a state one frame short.
 
 const realSetTimeout = globalThis.setTimeout;
 const realClearTimeout = globalThis.clearTimeout;
 const realSetInterval = globalThis.setInterval;
 const realClearInterval = globalThis.clearInterval;
+// `setImmediate` is a Node compatibility global, and its ambient declaration
+// reaches a module only through a graph that pulls Node's types in, which this
+// package's does not. Name the shape here rather than depend on that.
+const nodeTimers = globalThis as unknown as {
+  setImmediate: (
+    cb: (...args: unknown[]) => void,
+    ...args: unknown[]
+  ) => unknown;
+  clearImmediate: (handle: unknown) => void;
+};
+const realSetImmediate = nodeTimers.setImmediate;
+const realClearImmediate = nodeTimers.clearImmediate;
 const realDateNow = Date.now;
 const realPerformanceNow = performance.now.bind(performance);
 
@@ -385,12 +407,30 @@ function freezeAround(
       if (kind === "prod") scheduleAuto();
       return id;
     };
+    const fakeSetImmediate = (
+      cb: (...args: unknown[]) => void,
+      ...args: unknown[]
+    ): number => {
+      const id = seq++;
+      timers.set(id, {
+        id,
+        cb,
+        fireAt: elapsed,
+        args,
+        kind: "zero",
+        site: undefined,
+      });
+      scheduleKick();
+      return id;
+    };
     const fakeClear = (id: number): void => {
       timers.delete(id);
     };
 
     Reflect.set(globalThis, "setTimeout", fakeSetTimeout);
     Reflect.set(globalThis, "clearTimeout", fakeClear);
+    Reflect.set(globalThis, "setImmediate", fakeSetImmediate);
+    Reflect.set(globalThis, "clearImmediate", fakeClear);
     if (config.fakeInterval) {
       Reflect.set(globalThis, "setInterval", fakeSetInterval);
       Reflect.set(globalThis, "clearInterval", fakeClear);
@@ -418,6 +458,8 @@ function freezeAround(
       timers.clear();
       Reflect.set(globalThis, "setTimeout", realSetTimeout);
       Reflect.set(globalThis, "clearTimeout", realClearTimeout);
+      Reflect.set(globalThis, "setImmediate", realSetImmediate);
+      Reflect.set(globalThis, "clearImmediate", realClearImmediate);
       if (config.fakeInterval) {
         Reflect.set(globalThis, "setInterval", realSetInterval);
         Reflect.set(globalThis, "clearInterval", realClearInterval);

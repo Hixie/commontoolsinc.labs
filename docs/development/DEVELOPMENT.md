@@ -208,6 +208,35 @@ exercise. An interface method whose other implementations await, or an
 overridable hook that callers already await, are the usual cases. Write that
 reason in a comment next to the suppression.
 
+### A zero-delay timer is a sleep, not a turn
+
+`setTimeout(fn, 0)` is the usual way to write "run this on the next turn of
+the event loop", and it is an expensive way to write it. The delay is raised
+to a millisecond before the timer is armed, and the event loop then rounds
+that up to its own timer resolution, so one of them costs between one and
+two and a half milliseconds depending on the machine. Arming a hundred at
+once is cheap, because they all come due in the same turn; the cost lands on
+a chain, where each timer is armed by the one before it and every link pays
+in full. A commit against the in-process memory server is such a chain, five
+links long, against a millisecond of actual work — so written with timers it
+would spend nine tenths of its time asleep.
+
+Reach for `setImmediate` when what you want is the turn. Its callback runs
+after the current turn's microtasks and before any timer, which is the same
+boundary a zero-delay timer gives, and it costs about ten microseconds. It
+keeps the event loop alive while a callback is queued and no longer, so a
+process still waits for pending work and Deno's async-op sanitizer still
+catches work a test abandoned. It is a Deno and Node global with no browser
+equivalent, so code that also runs in a browser needs `setTimeout` or a
+`MessageChannel` instead.
+
+Use a real timer whenever the delay itself is the point — a coalescing
+window, a backoff, a throttle. The fake-clock test harness replaces both
+primitives, so either way a test keeps its control: it holds a positive
+delay frozen or advances it on demand, and it fires an immediate in the same
+pass as a zero-delay timer, which is what lets a settle cover a deferral of
+either kind. [Waiting in tests](waiting-in-tests.md) covers that harness.
+
 ### Keep the Module Graph clean
 
 We execute our JavaScript modules in many different environments:

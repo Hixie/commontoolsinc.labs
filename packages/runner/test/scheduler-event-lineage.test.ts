@@ -154,10 +154,11 @@ async function waitForSchedulerCondition(
   // Iteration-bounded, not wall-clock-bounded: zero-delay yields do not
   // advance the fake clock, so a time deadline could never expire and an
   // unreachable condition would spin forever. Each round drains the
-  // scheduler and yields one real timer turn — transport pumps and the
-  // emulated server's zero-delay flush ride zero-delay timers, which are
-  // exempt from the fake clock's test-armed freeze — so a condition the
-  // system will ever reach is reached within a bounded number of rounds.
+  // scheduler and yields one real timer turn — transport deliveries and the
+  // emulated server's flush ride immediates, which the fake clock holds in
+  // the same queue as its zero-delay timers and fires in the same pass — so
+  // a condition the system will ever reach is reached within a bounded
+  // number of rounds.
   for (let round = 0; round < 200 && !condition(); round++) {
     await runtime.idle();
     await new Promise((resolve) => setTimeout(resolve, 0));

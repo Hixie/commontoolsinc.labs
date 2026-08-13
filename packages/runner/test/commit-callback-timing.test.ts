@@ -3,10 +3,9 @@
 // callback fires at the verdict, while the commit callback and the commit
 // promise wait for marker coverage. The runtime talks to a real
 // MemoryV2Server through the plain loopback transport, so the verdict
-// arrives on a zero-delay delivery turn — inside a clock.settle() drain —
-// while the coverage marker rides the server's TIMED fan-out, whose
-// positive-delay timer the drain leaves unfired (settle pauses
-// auto-advance).
+// arrives on its own delivery turn — inside a clock.settle() drain — while
+// the coverage marker rides the server's TIMED fan-out, whose positive-delay
+// timer the drain leaves unfired (settle pauses auto-advance).
 
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";

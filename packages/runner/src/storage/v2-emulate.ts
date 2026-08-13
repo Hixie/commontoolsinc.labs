@@ -77,13 +77,13 @@ export class EmulatedStorageManager extends StorageManager {
         // resolves a storage address against this.
         memoryHost: new URL("memory://"),
       },
-      // Single-manager emulation wants prompt fan-out: a zero-delay flush
-      // timer keeps marker delivery in the same scheduling class as the
-      // request round trips that stage it (each is a zero-delay timer
-      // turn), so awaited commits settle without wall-clock coalescing.
-      // Harnesses that share one server across managers use connectTo()
-      // and pick their own cadence — "manual" for controlled-staleness
-      // premises that depend on frames NOT spreading until the test says.
+      // Single-manager emulation wants prompt fan-out: a zero delay keeps
+      // marker delivery in the same scheduling class as the request round
+      // trips that stage it (each is an event-loop turn), so awaited
+      // commits settle without wall-clock coalescing. Harnesses that share
+      // one server across managers use connectTo() and pick their own
+      // cadence — "manual" for controlled-staleness premises that depend
+      // on frames NOT spreading until the test says.
       () => newLoopbackServer({ subscriptionRefreshDelayMs: 0 }),
     );
   }

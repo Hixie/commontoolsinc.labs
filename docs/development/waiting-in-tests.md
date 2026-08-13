@@ -601,11 +601,25 @@ the earliest pending `src/`-armed timer regardless of its nominal delay, so a
 only ever worked by accident. Manual mode has no timer to fire, on any clock.
 
 Single-manager `StorageManager.emulate()` harnesses need none of this: their
-private server flushes on a zero-delay timer, so awaited round trips deliver
-their own fan-out and there is no second session to keep stale. The loopback
-transport itself delivers each server frame on its own zero-delay timer turn,
-so `clock.settle()` drains in-flight deliveries without letting any coalescing
-window elapse.
+private server flushes as soon as the current turn of the event loop
+finishes, so awaited round trips deliver their own fan-out and there is no
+second session to keep stale. The loopback transport itself delivers each
+server frame on its own turn, so `clock.settle()` drains in-flight deliveries
+without letting any coalescing window elapse.
+
+Both of those turns come from `setImmediate`, and the harness replaces that
+alongside `setTimeout`: an immediate registers as zero-delay work, fires
+through the same kick, and counts towards the same fixpoint. So
+`clock.settle()` covers a delivery exactly as it covers a scheduler
+dispatch, and a test that settles and then reads state cannot read it a
+frame short of the cascade.
+Leaving immediates real would not hold that up. The event loop runs a pending
+immediate before a pending timer, but an immediate armed from a microtask of
+another immediate's callback runs after that timer, and a timer is what each
+round of `settle()` waits on — so `settle()` would sometimes return with a
+delivery still queued.
+`packages/runner/test/settle-drains-delivery-turns.test.ts` pins the queue
+they share.
 
 ## The background-piece-service suite: the same clock for a polling loop
 
