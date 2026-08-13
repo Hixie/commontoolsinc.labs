@@ -9,7 +9,7 @@ import {
   readWorkspaceMembers,
   runTests,
   selectShardMembers,
-  stopTestTasks,
+  stopTasks,
   testConcurrency,
   testPackage,
 } from "./workspace-tests.ts";
@@ -427,34 +427,46 @@ Deno.test("initializeDb runs the initialize-db task in the given directory", asy
   }
 });
 
-Deno.test("formatInterruptReport shows how far each running package got", () => {
+Deno.test("formatInterruptReport shows how far each running task got", () => {
   const report = formatInterruptReport("SIGTERM", [
     {
-      packageName: "piece (1/3)",
+      name: "piece (1/3)",
       elapsedMs: 1_800_000,
       output: "running 3 tests from ./test/link-reactivity.test.ts\n",
     },
-    { packageName: "cli (6/10)", elapsedMs: 65_000, output: "" },
+    { name: "cli (6/10)", elapsedMs: 65_000, output: "" },
   ]);
 
   assertEquals(report.split("\n"), [
-    "Interrupted by SIGTERM. These package test tasks were still running:",
+    "Interrupted by SIGTERM. These tasks were still running:",
     "- piece (1/3), 1800s in:",
     "    running 3 tests from ./test/link-reactivity.test.ts",
     "- cli (6/10), 65s in: nothing printed yet",
   ]);
 });
 
-Deno.test("formatInterruptReport says so when no package was running", () => {
+Deno.test("formatInterruptReport keeps the tail of a long output, and says how much it left", () => {
+  const output = Array.from({ length: 203 }, (_, line) => `line ${line + 1}`);
+  const report = formatInterruptReport("SIGINT", [
+    { name: "cli (6/10)", elapsedMs: 1000, output: output.join("\n") },
+  ]).split("\n");
+
+  assertEquals(report[1], "- cli (6/10), 1s in:");
+  assertEquals(report[2], "    (3 earlier lines not shown)");
+  assertEquals(report[3], "    line 4");
+  assertEquals(report.at(-1), "    line 203");
+});
+
+Deno.test("formatInterruptReport says so when nothing was running", () => {
   assertEquals(
     formatInterruptReport("SIGINT", []),
-    "Interrupted by SIGINT. No package test task was running.",
+    "Interrupted by SIGINT. No task was running.",
   );
 });
 
-Deno.test("stopTestTasks signals the tasks that are left, ending or not", () => {
+Deno.test("stopTasks signals the tasks that are left, ending or not", () => {
   const signalled: string[] = [];
-  stopTestTasks([
+  stopTasks([
     {
       child: {
         kill: () => {
@@ -499,6 +511,7 @@ async function makeHangingWorkspace(
 Deno.test("an interrupted run names the package it was waiting on", async () => {
   const dir = await Deno.makeTempDir({ prefix: "ws-interrupt-" });
   const ready = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  let slowPackage: Deno.Conn | undefined;
   try {
     await makeHangingWorkspace(dir, (ready.addr as Deno.NetAddr).port);
     const run = new Deno.Command(Deno.execPath(), {
@@ -507,6 +520,9 @@ Deno.test("an interrupted run names the package it was waiting on", async () => 
         "--allow-env",
         "--allow-read",
         "--allow-run",
+        // The lockfile the workspace already has, resolution frozen against
+        // it, so this run cannot resolve the dependency graph afresh or write
+        // a new lockfile over the one it borrowed.
         "--config",
         workspaceConfig,
         "--lock",
@@ -515,13 +531,40 @@ Deno.test("an interrupted run names the package it was waiting on", async () => 
         runnerEntryPoint,
       ],
       cwd: dir,
+      // The run under test reads these, and this process has whatever the job
+      // running it set. Empty values leave it with the whole fixture
+      // workspace to run and its coverage where its own packages put theirs.
+      env: {
+        TEST_SHARD: "",
+        TEST_DISABLED_PACKAGES: "",
+        TEST_CONCURRENCY: "",
+        DENO_COVERAGE_DIR: "",
+      },
       stdout: "piped",
       stderr: "piped",
     }).spawn();
 
-    // Resolves once the slow package's test task is really running, so the
-    // signal lands on a run that is waiting on that package.
-    const slowPackage = await ready.accept();
+    // Whichever comes first: the slow package's test task announcing that it
+    // is really running, or the run ending without ever starting it. The
+    // second is a broken fixture, and saying so beats waiting on an
+    // announcement that is never coming.
+    const announced = ready.accept();
+    const ended = run.status;
+    const announcedFirst = await Promise.race([
+      announced.then(() => true),
+      ended.then(() => false),
+    ]);
+    if (!announcedFirst) {
+      announced.catch(() => {}); // the listener closes below
+      const { code, stderr } = await run.output();
+      throw new Error(
+        `the run ended before the slow package started, with code ${code}:\n${
+          decode(stderr)
+        }`,
+      );
+    }
+    slowPackage = await announced;
+
     run.kill("SIGINT");
     const { code, signal, stderr } = await run.output();
     const report = decode(stderr);
@@ -534,10 +577,10 @@ Deno.test("an interrupted run names the package it was waiting on", async () => 
     assertEquals(code, 130);
 
     // The run takes its packages with it, so nothing it started is left
-    // holding the job's output open after it goes.
+    // behind. This read ends when that package's process does.
     assertEquals(await slowPackage.read(new Uint8Array(1)), null);
-    slowPackage.close();
   } finally {
+    slowPackage?.close();
     ready.close();
     await Deno.remove(dir, { recursive: true });
   }
