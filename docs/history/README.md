@@ -347,6 +347,10 @@ One line per archived document; each document's header carries the fuller
   — which two lines a benchmark-only pull request was charged for, and why the
   suggestion comment could not name a file: a guard reached only when one
   action is caught non-idempotent twice in a process, August 2026.
+- [workspace-test-hang-no-log-2026-08-12.md](development/workspace-test-hang-no-log-2026-08-12.md)
+  — a workspace test shard that hung for its whole job limit: what the shard
+  was running, how often a job runs to its limit, and why the two that did
+  kept no log, August 2026.
 - [scoped-cells-field-notes.md](development/scoped-cells-field-notes.md) —
   field journal from the first scoped-cell patterns.
 - [2026-07-02-convergence-evidence-appendix.md](plans/2026-07-02-convergence-evidence-appendix.md)
