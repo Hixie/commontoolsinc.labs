@@ -211,15 +211,17 @@ reason in a comment next to the suppression.
 ### A zero-delay timer is a sleep, not a turn
 
 `setTimeout(fn, 0)` is the usual way to write "run this on the next turn of
-the event loop", and it is an expensive way to write it. The delay is raised
-to a millisecond before the timer is armed, and the event loop then rounds
-that up to its own timer resolution, so one of them costs between one and
-two and a half milliseconds depending on the machine. Arming a hundred at
-once is cheap, because they all come due in the same turn; the cost lands on
-a chain, where each timer is armed by the one before it and every link pays
-in full. A commit against the in-process memory server is such a chain, five
-links long, against a millisecond of actual work — so written with timers it
-would spend nine tenths of its time asleep.
+the event loop", and it is an expensive way to write it. What it costs is
+parking the event loop and waking it again for a timer that is the only
+thing pending, which takes about two and a third milliseconds under Deno on
+an Apple M5. A delay of one or two milliseconds costs the same as a delay of
+zero, and a delay of four costs its four, so this is a fixed wake-up rather
+than a clamp or a rounding. Arming a hundred timers together is cheap, at a
+few microseconds each, because one wake-up serves all of them. The cost
+lands on a chain, where each timer is armed by the one before it, so every
+link pays its own wake-up. A commit against the in-process memory server is
+such a chain, five links long, against a millisecond of actual work — so
+written with timers it would spend nine tenths of its time asleep.
 
 Reach for `setImmediate` when what you want is the turn. Its callback runs
 after the current turn's microtasks and before any timer, which is the same
