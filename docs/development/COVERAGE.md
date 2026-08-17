@@ -314,6 +314,39 @@ moved — a sibling branch in the same file is the next one to flap.
 [The investigation record](../history/development/coverage-flake-patch-remove-missing-key-2026-08-17.md)
 follows that line from a group-level `+2` down to the two integration hits that
 covered it in one run and not the next.
+### Declaration lines in a file that contains an emoji
+
+A fourth shape has nothing to do with what the code does. In a file holding an
+emoji — two Unicode scalar values outside the Basic Multilingual Plane, once it
+carries a skin-tone modifier — every coverage range after it is compared against
+line boundaries two scalar values to its left, and an uncovered function's range
+then appears to reach into the line that follows its closing brace. That line is
+the next function's declaration, so the declaration reads as uncovered whenever
+the function before it did not run — even when the function on that line ran and
+its whole body is covered.
+[The full mechanism](deno-coverage-astral-offset-shift.md) is written up
+separately, with a reproduction.
+
+The coupling turns into a moving measurement when the two functions are reached
+from different test files, because a shard computes its line counts from its own
+V8 profiles before its report is combined with the other shards'. Two functions
+in one shard merge before the counts are computed and the declaration is
+covered; in two shards each report holds a zero, and summing zeros keeps it
+there. Which files share a shard changes when the timing weights are
+regenerated.
+
+Cover such a declaration by testing the functions on either side of it from one
+test file. The `fetchIssueComments` and `pullRequestBodyFromEvent` cases in
+`tasks/ci-check-lib.test.ts` are the worked example: they sit beside the
+`fetchPRFiles` and `fetchCurrentPRBody` tests so that one file drives four
+consecutive functions, and the comment above them says why they stay together.
+[The August 2026 record](../history/development/coverage-flake-declaration-lines-2026-08-17.md)
+follows the four lines this was found through.
+
+To tell whether a file still has such a line, run each shard into its own
+coverage directory, and separately merge every shard's raw profiles into one
+directory. A line covered in the merged report and in none of the per-shard
+reports is a line whose coverage depends on the split.
 
 ### What the check says when the regression is not the pull request's
 
@@ -705,6 +738,9 @@ like a pattern nobody tested. Writing one warns.
 - [One-line guard coverage artifact](deno-coverage-guard-line-artifact.md) —
   why V8 can report a one-line conditional guard as uncovered when its branch
   is not taken.
+- [Emoji offset shift](deno-coverage-astral-offset-shift.md) — why a file
+  containing an emoji reports a function's declaration line as uncovered when
+  the function before it did not run.
 - [../common/workflows/pattern-testing.md](../common/workflows/pattern-testing.md)
   — writing the pattern unit tests that the `pattern-unit-test` job runs through
   `cf test`, the source of the gated authored-pattern coverage.

@@ -73,6 +73,9 @@ mapped in [`../README.md`](../README.md).
 - [`deno-coverage-guard-line-artifact.md`](deno-coverage-guard-line-artifact.md)
   — why `deno coverage` reports a one-line guard as uncovered whenever its
   branch is not taken
+- [`deno-coverage-astral-offset-shift.md`](deno-coverage-astral-offset-shift.md)
+  — why a file containing an emoji reports a function's declaration line as
+  uncovered whenever the function declared before it did not run
 - [`BENCHMARKS.md`](BENCHMARKS.md) — how the `deno bench` files run in
   continuous integration, where the results are charted, what a bench
   file must do to be tracked, and the end-to-end benchmark that navigates a

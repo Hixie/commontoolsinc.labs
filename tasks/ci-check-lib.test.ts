@@ -34,6 +34,7 @@ import {
   parseBaselineOverrides,
   parseCacheStateFiles,
   parseCoverageBaselineDetailed,
+  pullRequestBodyFromEvent,
   REPO,
   serializeCoverageBaseline,
   shouldGateCoverageDebtMetric,
@@ -1115,6 +1116,90 @@ Deno.test("fetchPRFiles reads every changed-file page", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// `fetchPRFiles`, `fetchIssueComments`, `pullRequestBodyFromEvent` and
+// `fetchCurrentPRBody` are declared one after another in ci-check-lib.ts, and
+// that file contains an emoji, so a declaration's own lines count as covered
+// only in a coverage profile where both that function and the function declared
+// before it ran. Keeping their tests in this one file is what covers those
+// lines whichever shard the file runs in. See
+// docs/development/deno-coverage-astral-offset-shift.md.
+
+Deno.test("fetchIssueComments reads every comment page", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls: string[] = [];
+  try {
+    globalThis.fetch = ((input, _init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      requestedUrls.push(`${url.pathname}?${url.searchParams}`);
+      const page = Number(url.searchParams.get("page"));
+      const comments = page === 1
+        ? Array.from({ length: 100 }, (_, index) => ({
+          id: index + 1,
+          body: `comment ${index + 1}`,
+        }))
+        // GitHub reports a comment with no text as a null body.
+        : [{ id: 101, body: null }];
+
+      return Promise.resolve(
+        new Response(JSON.stringify(comments), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    const comments = await fetchIssueComments(4242);
+    assertEquals(comments.length, 101);
+    assertEquals(comments[0], { id: 1, body: "comment 1" });
+    assertEquals(comments.at(-1), { id: 101, body: "" });
+    assertEquals(requestedUrls, [
+      `/repos/${REPO}/issues/4242/comments?per_page=100&page=1`,
+      `/repos/${REPO}/issues/4242/comments?per_page=100&page=2`,
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("fetchIssueComments stops after a short first page", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = ((_input, _init) => {
+      calls++;
+      return Promise.resolve(
+        new Response(JSON.stringify([{ id: 7, body: "only one" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    assertEquals(await fetchIssueComments(4242), [{ id: 7, body: "only one" }]);
+    assertEquals(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("pullRequestBodyFromEvent reads the body out of the event payload", () => {
+  assertEquals(
+    pullRequestBodyFromEvent({ pull_request: { body: "EVENT BODY" } }),
+    "EVENT BODY",
+  );
+  // A pull request whose description is empty arrives as a null body, which is
+  // an empty description rather than a missing one.
+  assertEquals(pullRequestBodyFromEvent({ pull_request: { body: null } }), "");
+  // No description field at all, no pull request, and no event each mean the
+  // event says nothing about the description.
+  assertEquals(pullRequestBodyFromEvent({ pull_request: {} }), undefined);
+  assertEquals(
+    pullRequestBodyFromEvent({ issue: { body: "ISSUE" } }),
+    undefined,
+  );
+  assertEquals(pullRequestBodyFromEvent(undefined), undefined);
 });
 
 Deno.test("downloadAndExtractArtifact retries transient artifact downloads", async () => {
