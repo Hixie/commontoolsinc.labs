@@ -4,8 +4,10 @@ import {
   linkRefFrom,
   linkRefPayload,
 } from "@commonfabric/data-model/cell-rep";
-import type { MutableFabricPlainObjectLayer } from "@commonfabric/data-model/fabric-value";
-import { isPlainObject } from "@commonfabric/utils/types";
+import {
+  isFabricPlainObject,
+  type MutableFabricPlainObjectLayer,
+} from "@commonfabric/data-model/fabric-value";
 
 export const REQUEST_SCHEMA_CAS_REF_PREFIX = "schema-cas@1:";
 
@@ -14,9 +16,6 @@ export type LinkSchemaTraversal = {
   visitNode(depth: number): void;
   visitSchemaPosition(): void;
 };
-
-const isPlainRecord = (value: FabricValue): value is FabricPlainObject =>
-  isPlainObject(value);
 
 /**
  * Maps schemas only in link-payload schema positions.
@@ -73,7 +72,7 @@ export const mapLinkSchemas = (
 
   if (isLinkRef(value)) {
     const payload = linkRefPayload(value);
-    if (isPlainRecord(payload)) {
+    if (isFabricPlainObject(payload)) {
       const mappedPayload = mapPayloadSchemas(
         payload,
         mapSchema,
@@ -89,7 +88,7 @@ export const mapLinkSchemas = (
     // throwing mid-sync on the malformed payload.
   }
 
-  if (!isPlainRecord(value)) return value;
+  if (!isFabricPlainObject(value)) return value;
 
   return mapRecordChildren(value, mapSchema, traversal, depth);
 };
