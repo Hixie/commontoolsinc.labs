@@ -13,8 +13,9 @@ import {
   jsonFromFabricValue,
 } from "@commonfabric/data-model/codecs";
 import { internPathSelector } from "@commonfabric/data-model/schema-utils";
+import { isFabricPlainObject } from "@commonfabric/data-model/fabric-value";
 import { hashStringOf } from "@commonfabric/data-model/value-hash";
-import { isObjectNotArray } from "@commonfabric/utils/types";
+import { isPlainObject } from "@commonfabric/utils/types";
 
 export const MEMORY_PROTOCOL = "memory" as const;
 export const DEFAULT_BRANCH = "" as const;
@@ -378,7 +379,7 @@ export type SessionOpenRequest = {
   requestId: string;
   space: string;
   session: SessionDescriptor;
-  invocation?: Record<string, unknown>;
+  invocation?: FabricPlainObject;
   authorization?: FabricValue;
 };
 
@@ -988,7 +989,7 @@ export const compatibleMemoryProtocolFlags = (
 export const parseMemoryProtocolFlags = (
   value: unknown,
 ): MemoryProtocolFlags | null => {
-  if (!isObjectNotArray(value)) {
+  if (!isPlainObject(value)) {
     return null;
   }
 
@@ -1160,8 +1161,8 @@ export const toDocumentSelector = (
   }) as DocumentSchemaPathSelector;
 
 export const isEntityDocument = (
-  value: unknown,
-): value is EntityDocument => isObjectNotArray(value);
+  value: FabricValue,
+): value is EntityDocument => isFabricPlainObject(value);
 
 export const getEntityDocumentMetadata = (
   document: EntityDocument,

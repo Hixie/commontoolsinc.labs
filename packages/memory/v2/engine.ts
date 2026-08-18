@@ -1,8 +1,10 @@
 import { Database } from "@db/sqlite";
 import type { FabricValue } from "@commonfabric/api";
-import { valueEqual } from "@commonfabric/data-model/fabric-value";
+import {
+  isFabricPlainObject,
+  valueEqual,
+} from "@commonfabric/data-model/fabric-value";
 import { internSchemaAsTaggedHashString } from "@commonfabric/data-model/schema-hash";
-import { isObjectNotArray } from "@commonfabric/utils/types";
 import type { JSONSchema } from "../../runner/src/builder/types.ts";
 import { collectExternalSchemaRefHashes } from "../../runner/src/schema-decompose.ts";
 import { isSubschema } from "../../runner/src/schema-walk.ts";
@@ -982,8 +984,8 @@ type SchedulerWriteAddress = SchedulerObservationAddress & {
   scopeKey?: string;
 };
 
-const isSchedulerObservationAddress = (value: unknown): boolean =>
-  isObjectNotArray(value) &&
+const isSchedulerObservationAddress = (value: FabricValue): boolean =>
+  isFabricPlainObject(value) &&
   !("scopeKey" in value) &&
   !("scope_key" in value) &&
   !("readScopeKey" in value) &&
@@ -995,15 +997,16 @@ const isSchedulerObservationAddress = (value: unknown): boolean =>
   Array.isArray(value.path) &&
   value.path.every((part) => typeof part === "string");
 
-const isSchedulerAddressArray = (value: unknown): boolean =>
+const isSchedulerAddressArray = (value: FabricValue): boolean =>
   Array.isArray(value) && value.every(isSchedulerObservationAddress);
 
 const isCompleteActionScopeSummary = (
-  value: unknown,
-  implementationFingerprint: unknown,
-  runtimeFingerprint: unknown,
+  value: FabricValue,
+  implementationFingerprint: FabricValue,
+  runtimeFingerprint: FabricValue,
 ): boolean =>
-  isObjectNotArray(value) && value.version === 1 && value.complete === true &&
+  isFabricPlainObject(value) && value.version === 1 &&
+  value.complete === true &&
   value.implementationFingerprint === implementationFingerprint &&
   value.runtimeFingerprint === runtimeFingerprint &&
   isSchedulerObservationAddress(value.piece) &&
@@ -1013,10 +1016,10 @@ const isCompleteActionScopeSummary = (
   isSchedulerAddressArray(value.directOutputs);
 
 export const schedulerObservationFromValue = (
-  value: unknown,
+  value: FabricValue,
 ): SchedulerActionObservation | undefined => {
   if (
-    !isObjectNotArray(value) ||
+    !isFabricPlainObject(value) ||
     "executionContextKey" in value ||
     "execution_context_key" in value ||
     (value.version !== 1 && value.version !== 2) ||
@@ -1055,7 +1058,7 @@ export const schedulerObservationFromValue = (
     (value.ignoredSchedulingWrites !== undefined &&
       !isSchedulerAddressArray(value.ignoredSchedulingWrites)) ||
     (value.actionOptions !== undefined &&
-      (!isObjectNotArray(value.actionOptions) ||
+      (!isFabricPlainObject(value.actionOptions) ||
         (value.actionOptions.debounceMs !== undefined &&
           (typeof value.actionOptions.debounceMs !== "number" ||
             !Number.isFinite(value.actionOptions.debounceMs) ||

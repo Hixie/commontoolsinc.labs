@@ -81,7 +81,21 @@
  *
  * `@commonfabric/data-model` asks the first of these questions of a value the
  * type system already says is a `FabricValue`, and spells it
- * `isFabricObjectOrArray()` for the same reason.
+ * `isFabricObjectOrArray()` for the same reason. It spells the third
+ * `isFabricPlainObject()`, which narrows to `FabricPlainObject` and so keeps
+ * an indexed value typed as a `FabricValue`.
+ *
+ * ## A value off a codec decode asks the plain-object question
+ *
+ * `JSON.parse()` builds objects rooted at `Object.prototype` and nothing
+ * else, so over its output `isObjectNotArray()` and `isPlainObject()` agree
+ * on every value, and a validator fed only from it may ask either. A richer
+ * codec has a wider range: the fabric JSON codec builds class instances, and
+ * each of those passes the non-array test while carrying no own properties.
+ * A validator that admits one and then reads named fields off it reads
+ * nothing, and has no field left to reject it by. Such a validator asks
+ * `isPlainObject()`, or `isFabricPlainObject()` where the value's declared
+ * type is already a `FabricValue`.
  */
 
 /**
