@@ -18,6 +18,7 @@ import {
   type FabricValue,
   valueEqual,
 } from "@commonfabric/data-model/fabric-value";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 type SchemaObject = Exclude<JSONSchema, boolean>;
 type SchemaRole = "argument" | "result";
@@ -498,7 +499,7 @@ const DEFAULT_STABLE_SCHEMA_KEYS = new Set([
 
 /** Whether inserting defaults below this schema leaves its own constraints true. */
 function schemaIsStableUnderDescendantDefaults(schema: JSONSchema): boolean {
-  if (typeof schema !== "object" || schema === null) return true;
+  if (!isObjectOrArray(schema)) return true;
   return Object.keys(schema).every((key) => {
     if (DEFAULT_STABLE_SCHEMA_KEYS.has(key)) return true;
     return (key === "anyOf" || key === "oneOf") &&
@@ -773,7 +774,7 @@ function matchingPatternPropertySchemas(
 }
 
 function declaresVerbStream(schema: JSONSchema): boolean {
-  if (typeof schema !== "object" || schema === null) return false;
+  if (!isObjectOrArray(schema)) return false;
   const asCell = (schema as SchemaObject).asCell;
   return Array.isArray(asCell) && asCell.includes("stream");
 }
@@ -1136,12 +1137,9 @@ function schemaHasUnsafeMaterializedDefault(
 ): boolean {
   const resolution = resolveSchema(input, root);
   const schema = resolution.schema;
-  if (typeof schema !== "object" || schema === null) return false;
+  if (!isObjectOrArray(schema)) return false;
 
-  const rootKey = typeof resolution.root === "object" &&
-      resolution.root !== null
-    ? resolution.root
-    : schema;
+  const rootKey = isObjectOrArray(resolution.root) ? resolution.root : schema;
   let active = activeByRoot.get(rootKey);
   if (active === undefined) {
     active = { stable: new WeakSet(), unstable: new WeakSet() };
@@ -1207,7 +1205,7 @@ function collectSchemaReferences(
   refs: Set<string>,
   seen: WeakSet<object>,
 ): void {
-  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  if (!isObjectOrArray(value) || seen.has(value)) return;
   seen.add(value);
   const record = value as Record<string, unknown>;
   if (typeof record.$ref === "string") refs.add(record.$ref);
@@ -1245,7 +1243,7 @@ function collectSchemaReferences(
     ]
   ) {
     const children = record[key];
-    if (children !== null && typeof children === "object") {
+    if (isObjectOrArray(children)) {
       for (const child of Object.values(children)) {
         collectSchemaReferences(child, refs, seen);
       }
@@ -1279,7 +1277,7 @@ function resolveSchema(
   root: JSONSchema,
 ): { schema: JSONSchema | undefined; root: JSONSchema } {
   const schemaRoot = cfcSchemaChildRoot(schema, root);
-  const hasRef = typeof schema === "object" && schema !== null &&
+  const hasRef = isObjectOrArray(schema) &&
     typeof schema.$ref === "string";
   const owningRoot = hasRef
     ? resolveCfcSchemaRefRoot(schema, schemaRoot)
@@ -1346,7 +1344,7 @@ function compatibilityRootKey(
   root: JSONSchema,
   fallback: object,
 ): object {
-  return typeof root === "object" && root !== null ? root : fallback;
+  return isObjectOrArray(root) ? root : fallback;
 }
 
 function unknownKeywordIssue(

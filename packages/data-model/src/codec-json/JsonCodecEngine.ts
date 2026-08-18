@@ -1,5 +1,10 @@
 import { backtickQuote } from "@commonfabric/utils/markdown";
-import { isPlainObject, isUnsafeObjectKey } from "@commonfabric/utils/types";
+import {
+  isObjectNotArray,
+  isObjectOrArray,
+  isPlainObject,
+  isUnsafeObjectKey,
+} from "@commonfabric/utils/types";
 import { utf8SortedKeysOf } from "@commonfabric/utils/utf8";
 
 import type { FabricValue } from "@/interface.ts";
@@ -626,7 +631,7 @@ export class JsonCodecEngine extends BaseCodecEngine<JsonCodecValue, string> {
    * the wire form of an encoded instance (tag-wrapped value).
    */
   static #isEncodedInstance(v: JsonCodecValue): boolean {
-    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    if (!isObjectNotArray(v)) return false;
     const keys = Object.keys(v);
     return keys.length === 1 && keys[0]!.startsWith("/");
   }
@@ -638,7 +643,7 @@ export class JsonCodecEngine extends BaseCodecEngine<JsonCodecValue, string> {
    * values (which `#unquote()` can collapse).
    */
   static #isQuoteSafe(v: JsonCodecValue): boolean {
-    if (v === null || typeof v !== "object") return true;
+    if (!isObjectOrArray(v)) return true;
     if (Array.isArray(v)) {
       return v.every((item) => JsonCodecEngine.#isQuoteSafe(item));
     }
@@ -656,7 +661,7 @@ export class JsonCodecEngine extends BaseCodecEngine<JsonCodecValue, string> {
    * literal and must not be recursed into.
    */
   static #unquote(v: JsonCodecValue): JsonCodecValue {
-    if (v === null || typeof v !== "object") {
+    if (!isObjectOrArray(v)) {
       return v;
     } else if (Array.isArray(v)) {
       const result = v.map(JsonCodecEngine.#unquote) as JsonCodecValue;

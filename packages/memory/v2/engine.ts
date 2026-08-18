@@ -2,7 +2,7 @@ import { Database } from "@db/sqlite";
 import type { FabricValue } from "@commonfabric/api";
 import { valueEqual } from "@commonfabric/data-model/fabric-value";
 import { internSchemaAsTaggedHashString } from "@commonfabric/data-model/schema-hash";
-import { isObjectNotArray } from "@commonfabric/utils/types";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import type { JSONSchema } from "../../runner/src/builder/types.ts";
 import { collectExternalSchemaRefHashes } from "../../runner/src/schema-decompose.ts";
 import { isSubschema } from "../../runner/src/schema-walk.ts";
@@ -5196,7 +5196,7 @@ const applyCommitTransaction = (
   let cidSetsInCommit: Map<string, unknown> | null = null;
   const requiredSchemaRefs = new Set<string>();
   const collectLinkSchemaRefs = (content: unknown): void => {
-    if (content === null || typeof content !== "object") return;
+    if (!isObjectOrArray(content)) return;
     mapLinkSchemas(content as FabricValue, (schema) => {
       for (
         const hash of collectExternalSchemaRefHashes(schema as JSONSchema)
@@ -5701,10 +5701,7 @@ const validateCommitPreconditions = (
   for (const precondition of commit.preconditions ?? []) {
     // Wire input: validate the shape deterministically so malformed entries
     // surface as ProtocolError instead of a TypeError-turned-TransactionError.
-    if (
-      precondition === null || typeof precondition !== "object" ||
-      Array.isArray(precondition)
-    ) {
+    if (!isObjectNotArray(precondition)) {
       throw new ProtocolError("malformed commit precondition: not an object");
     }
     switch (precondition.kind) {

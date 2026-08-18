@@ -59,6 +59,7 @@ import {
 } from "@commonfabric/runner";
 import type { RuntimeProgram } from "@commonfabric/runner";
 import { deepEqual } from "@commonfabric/utils/deep-equal";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import { Database } from "@db/sqlite";
 
 import type { NormalizedFullLink } from "../../runner/src/link-types.ts";
@@ -663,7 +664,7 @@ export function comparableState(value: unknown): unknown {
   // read. Only a genuine loop is cut.
   const onPath = new Set<object>();
   const walk = (current: unknown): unknown => {
-    if (current === null || typeof current !== "object") return current;
+    if (!isObjectOrArray(current)) return current;
     if (current instanceof FabricSpecialObject) {
       return { "[fabric]": taggedHashStringOf(current) };
     }
@@ -745,7 +746,7 @@ export function comparableState(value: unknown): unknown {
  */
 export function schemaRelaxedForComparison(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(schemaRelaxedForComparison);
-  if (typeof schema !== "object" || schema === null) return schema;
+  if (!isObjectOrArray(schema)) return schema;
   const relaxed: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema)) {
     // `type: "unknown"` and `type: [… "unknown" …]` both match anything, so
@@ -804,7 +805,7 @@ export async function readStateUnder(
     // Narrow rather than cast. A root is an object in practice, but asserting
     // it would hand `strandedKeys` a non-object to enumerate — and "no keys"
     // reads exactly like "nothing stranded".
-    if (typeof detached !== "object" || detached === null) return undefined;
+    if (!isObjectOrArray(detached)) return undefined;
     return detached as Record<string, unknown>;
   } catch {
     // A cell that cannot be read is `undefined`, not a throw. The caller treats
@@ -890,7 +891,7 @@ const REDUCTIONS: ReadonlySet<string> = new Set([
 
 /** Whether `value` is one of `comparableState`'s reductions. */
 export function isReduction(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const keys = Object.keys(value);
@@ -949,8 +950,8 @@ function isPreserved(before: unknown, after: unknown): boolean {
     return before.every((item, index) => isPreserved(item, after[index]));
   }
   if (
-    typeof before === "object" && before !== null &&
-    typeof after === "object" && after !== null && !Array.isArray(after)
+    isObjectOrArray(before) &&
+    isObjectNotArray(after)
   ) {
     return Object.entries(before as Record<string, unknown>).every(
       ([key, value]) =>
@@ -1062,7 +1063,7 @@ export function strandedKeys(
 ): StateFinding[] {
   const beforeState = comparableState(before) as Record<string, unknown>;
   const afterState = comparableState(after);
-  const afterView = typeof afterState === "object" && afterState !== null
+  const afterView = isObjectOrArray(afterState)
     ? afterState as Record<string, unknown>
     : undefined;
   const findings: StateFinding[] = [];
@@ -1121,16 +1122,14 @@ function lostAnything(before: unknown, after: unknown): boolean {
   // a whole object's worth of state gone, reported as a warning, and NOT the
   // pinned seeded-`.for()` limit, which is a moved key rather than a type
   // change.
-  const beforeIsObject = typeof before === "object" && before !== null;
+  const beforeIsObject = isObjectOrArray(before);
   if (Array.isArray(before)) {
     // A shorter array reaches this through the per-element `undefined`.
     if (!Array.isArray(after)) return true;
     return before.some((item, index) => lostAnything(item, after[index]));
   }
   if (beforeIsObject) {
-    if (
-      typeof after !== "object" || after === null || Array.isArray(after)
-    ) {
+    if (!isObjectNotArray(after)) {
       return true;
     }
     return Object.entries(before as Record<string, unknown>).some(

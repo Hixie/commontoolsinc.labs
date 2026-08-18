@@ -11,7 +11,7 @@ import {
   toResponsesTools,
 } from "./responses-protocol.ts";
 import type { OpenAICodexOAuthCredential } from "../auth/types.ts";
-import { isObjectNotArray } from "@commonfabric/utils/types";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import { HarnessControlError } from "../control-errors.ts";
 import type {
@@ -124,9 +124,7 @@ async function* parseSse(
             "Codex Responses stream contained malformed JSON",
           );
         }
-        if (
-          typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-        ) {
+        if (!isObjectNotArray(parsed)) {
           throw providerUnavailable(
             "Codex Responses stream contained a non-object event",
           );
@@ -274,7 +272,7 @@ export class OpenAICodexResponsesClient implements HarnessModelClient {
       );
     }
     return body.models.map((raw): HarnessModelCatalogEntry => {
-      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      if (!isObjectNotArray(raw)) {
         throw providerUnavailable(
           "OpenAI Codex model discovery returned an invalid model",
         );
@@ -290,7 +288,7 @@ export class OpenAICodexResponsesClient implements HarnessModelClient {
       }
       const efforts = Array.isArray(model.supported_reasoning_levels)
         ? model.supported_reasoning_levels.flatMap((entry) =>
-          typeof entry === "object" && entry !== null &&
+          isObjectOrArray(entry) &&
             typeof (entry as Record<string, unknown>).effort === "string"
             ? [(entry as Record<string, unknown>).effort as string]
             : []
@@ -493,10 +491,7 @@ export class OpenAICodexResponsesClient implements HarnessModelClient {
         type === "response.completed" || type === "response.done" ||
         type === "response.incomplete" || type === "response.failed"
       ) {
-        if (
-          typeof event.response !== "object" || event.response === null ||
-          Array.isArray(event.response)
-        ) {
+        if (!isObjectNotArray(event.response)) {
           throw providerUnavailable(
             "Codex Responses terminal event did not include a response object",
           );

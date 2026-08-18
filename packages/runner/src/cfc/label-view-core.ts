@@ -1,5 +1,6 @@
 import type { CfcAtom } from "@commonfabric/api/cfc";
 import { CFC_ATOM_TYPE } from "@commonfabric/api/cfc";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { encodePointer } from "../../../memory/v2/path.ts";
 import type { CfcConfClause } from "./clause.ts";
@@ -108,7 +109,7 @@ const redactCaveatSourceAtom = (atom: unknown): unknown => {
   if (Array.isArray(atom)) {
     return atom.map(redactCaveatSourceAtom);
   }
-  if (atom === null || typeof atom !== "object") {
+  if (!isObjectOrArray(atom)) {
     return atom;
   }
   const obj = atom as Record<string, unknown>;

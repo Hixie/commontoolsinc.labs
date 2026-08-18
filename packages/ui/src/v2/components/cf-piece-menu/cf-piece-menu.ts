@@ -28,6 +28,7 @@ import {
   preserveAppViewMode,
   urlToAppView,
 } from "@commonfabric/shell/shared";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import { css, html, nothing, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
@@ -141,7 +142,7 @@ export function isStreamHandle(value: unknown): value is CellHandle {
 
 /** The raw `{ $stream: true }` marker a schema-less read can surface. */
 function isRawStreamMarker(value: unknown): boolean {
-  return typeof value === "object" && value !== null &&
+  return isObjectOrArray(value) &&
     (value as { $stream?: unknown }).$stream === true;
 }
 
@@ -195,7 +196,7 @@ function toDisplay(
   // reaches the client through `postMessage`, and structured clone drops the
   // prototype and private fields on the way. Fixing this alone changes a `{}`
   // into a `{}` until the wire carries one.
-  if (typeof value === "object" && value !== null) {
+  if (isObjectOrArray(value)) {
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
       if (depth === 0 && VIEW_KEYS.has(key)) continue;
@@ -1650,9 +1651,7 @@ export class CFPieceMenu extends BaseElement {
       argument: this.#argumentCell,
     };
     const scan = (value: unknown, source: "result" | "argument") => {
-      if (
-        typeof value !== "object" || value === null || Array.isArray(value)
-      ) return;
+      if (!isObjectNotArray(value)) return;
       const declared = this.#schemaProperties(parents[source]);
       for (const [name, item] of Object.entries(value)) {
         const declaredStream = schemaDeclaresStream(declared[name]);

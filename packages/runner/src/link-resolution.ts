@@ -5,6 +5,7 @@ import {
   linkPayloadAtProbe,
   linkProbeSubPath,
 } from "@commonfabric/data-model/cell-rep";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { type CellLinkRefPayload } from "./sigil-types.ts";
 import { dataUriFromValueWithResolvedLinks } from "./data-uri.ts";
 import {
@@ -261,7 +262,7 @@ const resolutionMemoVariant = (
   lastNode: LastNode,
   preserveOverwrite: boolean,
 ): string => {
-  const schema = typeof link.schema === "object" && link.schema !== null
+  const schema = isObjectOrArray(link.schema)
     ? `#${identityTag(link.schema)}`
     : String(link.schema);
   const caps = link.scopeCaps === undefined

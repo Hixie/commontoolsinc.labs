@@ -77,8 +77,8 @@ expect.extend({
     const matches = (obj: unknown, subset: unknown): boolean => {
       if (Object.is(subset, obj)) return true;
       if (
-        typeof subset !== "object" || subset === null ||
-        typeof obj !== "object" || obj === null
+        !isObjectOrArray(subset) ||
+        !isObjectOrArray(obj)
       ) {
         return false;
       }
@@ -90,8 +90,8 @@ expect.extend({
         if (!context.equal(objValue, subsetValue)) {
           // For nested objects, apply partial matching
           if (
-            typeof objValue === "object" && objValue !== null &&
-            typeof subsetValue === "object" && subsetValue !== null
+            isObjectOrArray(objValue) &&
+            isObjectOrArray(subsetValue)
           ) {
             if (!matches(objValue, subsetValue)) return false;
           } else {

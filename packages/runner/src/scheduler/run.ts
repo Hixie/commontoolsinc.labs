@@ -1,5 +1,6 @@
 import { getLogger } from "@commonfabric/utils/logger";
 import { getPersistentSchedulerStateConfig } from "@commonfabric/memory/v2";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type { Runtime } from "../runtime.ts";
 import { toMemorySpaceAddress } from "../link-utils.ts";
 import { normalizeCellScope } from "../scope.ts";
@@ -791,7 +792,7 @@ function attachSchedulerActionObservation(
 }
 
 function isInactiveObservationTargetError(error: unknown): boolean {
-  return typeof error === "object" && error !== null &&
+  return isObjectOrArray(error) &&
     "name" in error &&
     (
       error.name === "StorageTransactionAborted" ||

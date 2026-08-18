@@ -16,7 +16,11 @@
 
 import { isInertArray } from "@commonfabric/utils/arrays";
 import { isInertPlainObject } from "@commonfabric/utils/objects";
-import { isPlainObject, unsafeObjectKeyIn } from "@commonfabric/utils/types";
+import {
+  isObjectOrArray,
+  isPlainObject,
+  unsafeObjectKeyIn,
+} from "@commonfabric/utils/types";
 
 import {
   type FabricPlainObject,
@@ -126,7 +130,7 @@ export function isFabricValue(value: unknown): value is FabricValue {
     // symbols are not portable across realms and are rejected, matching
     // `isFabricValueLayer()`.
     return Symbol.keyFor(value) !== undefined;
-  } else if (value === null || typeof value !== "object") {
+  } else if (!isObjectOrArray(value)) {
     // A non-function, non-symbol primitive -- a direct `FabricValue` member.
     return true;
   }
@@ -137,7 +141,7 @@ export function isFabricValue(value: unknown): value is FabricValue {
   const check = (item: unknown): boolean => {
     if (typeof item === "function") return false;
     if (typeof item === "symbol") return Symbol.keyFor(item) !== undefined;
-    if (item === null || typeof item !== "object") {
+    if (!isObjectOrArray(item)) {
       // A non-function, non-symbol primitive.
       return true;
     } else if (seen.has(item)) {
@@ -210,7 +214,7 @@ export function isFabricValue(value: unknown): value is FabricValue {
 export function isFabricObjectOrArray(
   value: FabricValue,
 ): value is FabricValue & object {
-  return typeof value === "object" && value !== null;
+  return isObjectOrArray(value);
 }
 
 /**

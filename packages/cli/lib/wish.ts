@@ -8,6 +8,7 @@ import {
   type MemorySpace,
   type Runtime,
 } from "@commonfabric/runner";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   type CellSelection,
   CellSelectionError,
@@ -277,7 +278,7 @@ function projectNode(
   if (isCell(value) || isStream(value) || typeof value === "function") {
     return streamMarker(key);
   }
-  if (value === null || typeof value !== "object") return value;
+  if (!isObjectOrArray(value)) return value;
 
   // TODO(danfuzz): the `typeof` gate admits a `FabricSpecialObject`, so the
   // `Object.entries` rebuild below renders one — a `FabricBytes` in a

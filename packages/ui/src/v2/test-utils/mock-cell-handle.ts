@@ -21,6 +21,7 @@ import {
   type InitializedRuntimeConnection,
   type RuntimeClient,
 } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 /** Default CellRef used when none is provided. */
 const DEFAULT_REF: CellRef = {
@@ -63,7 +64,7 @@ class MockCellNetwork {
 
     // Reconstruct the root's full value with the nested path updated
     const rootValue = root.get();
-    if (rootValue == null || typeof rootValue !== "object") return;
+    if (!isObjectOrArray(rootValue)) return;
 
     const updated = deepSet(
       rootValue as Record<string, unknown>,
@@ -84,7 +85,7 @@ function deepSet(
   const [head, ...rest] = path;
   const child = obj[head];
   const nested = rest.length === 0 ? value : deepSet(
-    (child != null && typeof child === "object" ? child : {}) as Record<
+    (isObjectOrArray(child) ? child : {}) as Record<
       string,
       unknown
     >,

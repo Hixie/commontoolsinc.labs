@@ -8,6 +8,7 @@
 import type { FabricValue } from "@commonfabric/data-model/fabric-value";
 import { hashStringOf } from "@commonfabric/data-model/value-hash";
 import { isCell } from "@commonfabric/runner";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 /**
  * Stands in for a value with no identity of its own to key by. A record cannot
@@ -37,7 +38,7 @@ const OPAQUE: FabricValue = { "@@vdom-key": "opaque" };
  */
 function keyProjection(node: unknown, seen: Set<object>): unknown {
   if (typeof node === "function") return OPAQUE;
-  if (node === null || typeof node !== "object") return node;
+  if (!isObjectOrArray(node)) return node;
   if (isCell(node)) return node.toSigilLinkOrNull() ?? OPAQUE;
 
   if (seen.has(node)) return OPAQUE;

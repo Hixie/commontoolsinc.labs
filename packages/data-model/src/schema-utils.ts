@@ -7,6 +7,7 @@ import type {
   MutableJSONSchemaObj,
   SchemaPathSelector,
 } from "@commonfabric/api";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { deepFreeze } from "./deep-freeze.ts";
 import { cloneIfNecessary, shallowMutableClone } from "./fabric-value.ts";
@@ -57,7 +58,7 @@ function getBasicSchema(key: string) {
 export function isNontrivialSchema(
   schema: JSONSchema | undefined | null,
 ): schema is JSONSchemaObj {
-  if ((schema === null) || (typeof schema !== "object")) {
+  if (!isObjectOrArray(schema)) {
     return false;
   }
 

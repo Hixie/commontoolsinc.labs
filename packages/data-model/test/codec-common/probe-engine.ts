@@ -22,6 +22,7 @@ import { CodecRegistry } from "@/codec-common/CodecRegistry.ts";
 import { DecodeAct } from "@/codec-common/DecodeAct.ts";
 import { EncodeAct } from "@/codec-common/EncodeAct.ts";
 import { ProblematicValue } from "@/codec-common/ProblematicValue.ts";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 /**
  * This format's tagged form. A class, so that it cannot be mistaken for a
@@ -373,7 +374,7 @@ export class ProbeEngine extends BaseCodecEngine<ProbeValue> {
     data: ProbeValue,
     act: DecodeAct,
   ): FabricValue {
-    if ((data === null) || (typeof data !== "object")) {
+    if (!isObjectOrArray(data)) {
       return data as FabricValue;
     }
 

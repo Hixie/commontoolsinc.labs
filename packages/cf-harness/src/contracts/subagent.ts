@@ -4,6 +4,7 @@ import {
   GOOGLE_SEARCH_NATIVE_MODEL_TOOL,
   type LLMNativeModelToolId,
 } from "@commonfabric/llm/types";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import type { HarnessFailureRecord } from "../diagnostics.ts";
 import type {
   HarnessModelAuthSource,
@@ -170,7 +171,7 @@ export const asHarnessSubagentFailureReport = (
   value: unknown,
 ): { code: HarnessSubagentFailureReasonCode } | undefined => {
   if (
-    typeof value !== "object" || value === null || Array.isArray(value) ||
+    !isObjectNotArray(value) ||
     (value as Record<string, unknown>).ok !== false
   ) {
     return undefined;

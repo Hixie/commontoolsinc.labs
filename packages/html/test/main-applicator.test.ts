@@ -13,6 +13,7 @@ import {
 } from "@std/assert";
 
 import { $conn, type CellRef } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { DomApplicator } from "../src/main/applicator.ts";
 import type { DomEventMessage } from "../src/main/events.ts";
@@ -661,8 +662,7 @@ Deno.test("DomApplicator - event handling", async (t) => {
       setProp: (target, key, value) => {
         if (
           key.startsWith("data-") &&
-          typeof target === "object" &&
-          target !== null &&
+          isObjectOrArray(target) &&
           "setAttribute" in target &&
           typeof target.setAttribute === "function"
         ) {
@@ -705,8 +705,7 @@ Deno.test("DomApplicator - event handling", async (t) => {
       setProp: (target, key, value) => {
         if (
           key.startsWith("data-") &&
-          typeof target === "object" &&
-          target !== null &&
+          isObjectOrArray(target) &&
           "setAttribute" in target &&
           typeof target.setAttribute === "function"
         ) {

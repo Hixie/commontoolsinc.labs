@@ -48,6 +48,7 @@
 
 import { Identity } from "@commonfabric/identity";
 import { StandaloneMemoryServer } from "@commonfabric/memory/v2/standalone";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type {
   TestResult,
   TestRunnerOptions,
@@ -79,7 +80,7 @@ export function multiUserDescriptorMeta(
   defaultExport: unknown,
 ): MultiUserDescriptorMeta | undefined {
   if (
-    typeof defaultExport !== "object" || defaultExport === null ||
+    !isObjectOrArray(defaultExport) ||
     typeof (defaultExport as { participants?: unknown }).participants !==
       "object"
   ) {
@@ -92,7 +93,7 @@ export function multiUserDescriptorMeta(
     if (typeof entry === "function") {
       participants.push({ name, user: name });
     } else if (
-      typeof entry === "object" && entry !== null &&
+      isObjectOrArray(entry) &&
       typeof (entry as { pattern?: unknown }).pattern === "function"
     ) {
       const user = (entry as { user?: unknown }).user;

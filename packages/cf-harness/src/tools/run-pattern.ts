@@ -20,7 +20,7 @@ import {
   PieceController,
   type PiecesController,
 } from "@commonfabric/piece/ops";
-import { isObjectNotArray } from "@commonfabric/utils/types";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import type { HarnessToolDescriptor } from "../contracts/tool-descriptor.ts";
 import { defineOwnEntry } from "../handle-table.ts";
 import {
@@ -129,7 +129,7 @@ export type RunPatternToolOutput =
 export const isRunPatternToolSuccessOutput = (
   output: unknown,
 ): output is RunPatternToolSuccessOutput =>
-  typeof output === "object" && output !== null &&
+  isObjectOrArray(output) &&
   "status" in output && output.status === "ok" &&
   "resultRef" in output && typeof output.resultRef === "string" &&
   "resultRefSchema" in output;

@@ -9,6 +9,7 @@ import {
   type FabricValue,
 } from "@commonfabric/data-model/fabric-value";
 import { isNativeError } from "@commonfabric/data-model/native-type-tags";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { isReactive } from "../builder/types.ts";
 import { hasEncodableForm } from "../encodable-form.ts";
@@ -50,7 +51,7 @@ function isPlainResultObject(value: object): boolean {
 function isSandboxResultContainer(
   value: unknown,
 ): value is unknown[] | Record<string, unknown> {
-  return value !== null && typeof value === "object" &&
+  return isObjectOrArray(value) &&
     (Array.isArray(value) || isPlainResultObject(value));
 }
 
@@ -121,7 +122,7 @@ function normalizeSandboxNativeLeaf(value: unknown): unknown {
 function typeNameForActionResult(value: unknown): string {
   if (typeof value === "function") return "function";
   if (typeof value === "symbol") return "Symbol";
-  if (value !== null && typeof value === "object") {
+  if (isObjectOrArray(value)) {
     return value.constructor?.name ?? "unknown type";
   }
   return typeof value;

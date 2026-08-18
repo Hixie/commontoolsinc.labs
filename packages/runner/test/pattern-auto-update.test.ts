@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { defer, type Deferred } from "@commonfabric/utils/defer";
 import { Identity } from "@commonfabric/identity";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import { StorageManager } from "../src/storage/cache.deno.ts";
 import {
   type Cell,
@@ -170,8 +171,7 @@ describe("lazy system-pattern auto-update", () => {
     const reached = defer<void>();
     const cancel = piece.sinkMeta("patternIdentity", (value) => {
       if (
-        typeof value === "object" && value !== null &&
-        !Array.isArray(value) &&
+        isObjectNotArray(value) &&
         (value as Record<string, unknown>).identity === target.identity &&
         (value as Record<string, unknown>).symbol === target.symbol
       ) {

@@ -10,6 +10,7 @@ import "../components/OmniLayout.ts";
 import { rendererVDOMSchema } from "@commonfabric/runner/schemas";
 import type { JSONSchema } from "@commonfabric/runner/shared";
 import { CellHandle, PageHandle, VNode } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 type SubPages = {
   sidebarUI?: VNode;
@@ -262,7 +263,7 @@ function loadErrorMessage(error: unknown): string {
     if (error instanceof Error) {
       message = error.message;
     } else if (
-      typeof error === "object" && error !== null && "message" in error &&
+      isObjectOrArray(error) && "message" in error &&
       typeof error.message === "string"
     ) {
       message = error.message;

@@ -796,7 +796,7 @@ export function snapshotQueryResult<T>(value: T): T {
     // and snapshots as `{}`, its codec contents lost. It wants the same
     // leaf-through treatment until a codec-contents walk exists.
     if (
-      current === null || typeof current !== "object" ||
+      !isObjectOrArray(current) ||
       current instanceof FabricPrimitive
     ) return current;
     const existing = seen.get(current);

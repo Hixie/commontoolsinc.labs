@@ -406,8 +406,7 @@ function recursiveStripAsCellFromSchema(
 ): any {
   // Handle null/undefined/boolean schemas
   if (
-    schema === null ||
-    typeof schema !== "object" ||
+    !isObjectOrArray(schema) ||
     typeof schema === "boolean"
   ) {
     return schema;
@@ -504,7 +503,7 @@ function recursiveStripAsCellFromSchema(
       } else if (Array.isArray(value)) {
         // Handle arrays
         result[key] = value.map((item) =>
-          typeof item === "object" && item !== null
+          isObjectOrArray(item)
             ? recursiveStripAsCellFromSchema(
               item,
               context,

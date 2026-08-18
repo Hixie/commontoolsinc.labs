@@ -1,6 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import type { JSONSchema } from "@commonfabric/api";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import type { PieceCallablesListing } from "../lib/piece.ts";
 import { listPieceCallables, partitionVerbListing } from "../lib/piece.ts";
 import { verbListingJson, verbListingLines } from "../commands/piece.ts";
@@ -28,10 +29,9 @@ function cell(value: unknown, schema?: JSONSchema): {
     getRaw: () => value,
     asSchemaFromLinks: () => self,
     key: (name: string) => {
-      const childValue =
-        typeof value === "object" && value !== null && !Array.isArray(value)
-          ? (value as Record<string, unknown>)[name]
-          : undefined;
+      const childValue = isObjectNotArray(value)
+        ? (value as Record<string, unknown>)[name]
+        : undefined;
       const childSchema =
         schema && typeof schema === "object" && "properties" in schema
           ? (schema.properties as Record<string, JSONSchema>)?.[name]

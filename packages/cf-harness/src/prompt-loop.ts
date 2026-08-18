@@ -8,6 +8,7 @@ import {
 } from "@commonfabric/runner/cfc";
 import {
   isObjectNotArray,
+  isObjectOrArray,
   type ReadonlyRecord,
 } from "@commonfabric/utils/types";
 
@@ -330,7 +331,7 @@ const annotatePromptLoopError = (
   error: unknown,
   modelTurns: number,
 ): void => {
-  if (typeof error !== "object" || error === null) {
+  if (!isObjectOrArray(error)) {
     return;
   }
   try {
@@ -346,7 +347,7 @@ const annotatePromptLoopError = (
 const promptLoopModelTurnsFromError = (
   error: unknown,
 ): number | undefined => {
-  if (typeof error !== "object" || error === null) {
+  if (!isObjectOrArray(error)) {
     return undefined;
   }
   const modelTurns = (error as PromptLoopErrorWithModelTurns)[
@@ -509,7 +510,7 @@ const summarizeToolInput = async (
       const edits = Array.isArray(input.edits) ? input.edits : [];
       for (const edit of edits) {
         if (
-          typeof edit === "object" && edit !== null &&
+          isObjectOrArray(edit) &&
           "oldText" in edit &&
           typeof edit.oldText === "string"
         ) {
@@ -518,7 +519,7 @@ const summarizeToolInput = async (
           oldTextDigests.push(summary.digest);
         }
         if (
-          typeof edit === "object" && edit !== null &&
+          isObjectOrArray(edit) &&
           "newText" in edit &&
           typeof edit.newText === "string"
         ) {

@@ -1,5 +1,9 @@
 import { backtickQuote } from "@commonfabric/utils/markdown";
-import { isPlainObject, isUnsafeObjectKey } from "@commonfabric/utils/types";
+import {
+  isObjectOrArray,
+  isPlainObject,
+  isUnsafeObjectKey,
+} from "@commonfabric/utils/types";
 
 import { FabricSpecialObject, type FabricValue } from "@/interface.ts";
 import { toCompactDebugString } from "@/value-debug.ts";
@@ -583,7 +587,7 @@ export abstract class BaseCodecEngine<
     matched: CodecForFormat<Encoded>,
     act: EncAct,
   ): Encoded {
-    const isObject = (value !== null) && (typeof value === "object");
+    const isObject = isObjectOrArray(value);
 
     if (isObject) {
       act.enter(value as object);

@@ -51,7 +51,7 @@ import {
 import type { CellRef } from "@commonfabric/runtime-client";
 import { deepEqual } from "@commonfabric/utils/deep-equal";
 import { getLogger } from "@commonfabric/utils/logger";
-import { isObjectOrArray } from "@commonfabric/utils/types";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
   getBindingPropName,
@@ -93,13 +93,13 @@ const TEXT_INTEGRITY_PROP_SINKS: ReadonlyMap<string, ReadonlySet<string>> =
 
 function isNestedPatternOutput(value: unknown, cell: Cell<unknown>): boolean {
   if (
-    typeof value !== "object" || value === null || !(UI in value) ||
+    !isObjectOrArray(value) || !(UI in value) ||
     !(value as Record<PropertyKey, unknown>)[UI]
   ) return false;
 
   try {
     const patternIdentity = cell.getMetaRaw("patternIdentity");
-    return typeof patternIdentity === "object" && patternIdentity !== null &&
+    return isObjectOrArray(patternIdentity) &&
       typeof (patternIdentity as Record<string, unknown>).identity ===
         "string" &&
       typeof (patternIdentity as Record<string, unknown>).symbol === "string";
@@ -698,10 +698,7 @@ export class WorkerReconciler {
     }
     try {
       const rawProps = node.props.getRawUntyped({ frozen: false });
-      return rawProps !== null && typeof rawProps === "object" &&
-          !Array.isArray(rawProps)
-        ? rawProps as WorkerProps
-        : undefined;
+      return isObjectNotArray(rawProps) ? rawProps as WorkerProps : undefined;
     } catch {
       return undefined;
     }
@@ -887,7 +884,7 @@ export class WorkerReconciler {
   ] {
     if (
       schema === undefined ||
-      (typeof schema === "object" && schema !== null &&
+      (isObjectOrArray(schema) &&
         Object.keys(schema).length === 0)
     ) {
       return true;
@@ -922,7 +919,7 @@ export class WorkerReconciler {
       return undefined;
     }
     for (const atom of this.integrityLabels(labelView)) {
-      if (typeof atom !== "object" || atom === null || Array.isArray(atom)) {
+      if (!isObjectNotArray(atom)) {
         continue;
       }
       const record = atom as Record<string, unknown>;
@@ -990,7 +987,7 @@ export class WorkerReconciler {
         return undefined;
       }
       if (
-        rawProps === null || typeof rawProps !== "object" ||
+        !isObjectOrArray(rawProps) ||
         !("$value" in rawProps)
       ) {
         return undefined;
@@ -1574,7 +1571,7 @@ export class WorkerReconciler {
   }
 
   private isRenderableObject(value: unknown): boolean {
-    return value !== null && typeof value === "object" && UI in value;
+    return isObjectOrArray(value) && UI in value;
   }
 
   private hasVisibleTextValue(value: unknown): boolean {
@@ -2305,8 +2302,7 @@ export class WorkerReconciler {
             cancel: () => {},
           });
         } else if (
-          key !== "style" && value !== null && value !== undefined &&
-          typeof value === "object"
+          key !== "style" && isObjectOrArray(value)
         ) {
           // Generic object/array values are deliberately capped in
           // rendererVDOMSchema, so they need a per-prop sink for deep
@@ -2531,7 +2527,7 @@ export class WorkerReconciler {
     try {
       const rawProps = propsCell.getRawUntyped({ frozen: false });
       if (
-        rawProps !== null && typeof rawProps === "object" && key in rawProps
+        isObjectOrArray(rawProps) && key in rawProps
       ) {
         return (rawProps as Record<string, unknown>)[key];
       }
@@ -2980,7 +2976,7 @@ export class WorkerReconciler {
     // Ensure props is an object or Cell
     if (
       !isCell(result.props) &&
-      (typeof result.props !== "object" || result.props === null)
+      !isObjectOrArray(result.props)
     ) {
       result = { ...result, props: {} };
     }

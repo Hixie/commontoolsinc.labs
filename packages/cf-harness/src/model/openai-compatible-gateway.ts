@@ -2,6 +2,7 @@ import {
   GOOGLE_SEARCH_NATIVE_MODEL_TOOL,
   type LLMNativeModelToolId,
 } from "@commonfabric/llm/types";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type {
   HarnessAssistantTranscriptMessage,
   HarnessNativeModelToolResult,
@@ -50,7 +51,7 @@ const normalizeTextContent = (
   // has to treat "absent" the same as "null" rather than assume an array.
   if (content === null || content === undefined) return "";
   return content.flatMap((part) =>
-    typeof part === "object" && part !== null && part.type === "text" &&
+    isObjectOrArray(part) && part.type === "text" &&
       typeof part.text === "string"
       ? [part.text]
       : []
@@ -345,7 +346,7 @@ const responsesInputReachesDiscoveryFloor = (
       remaining -= utf8ByteLengthUpTo(value, remaining);
     } else if (Array.isArray(value)) {
       for (const item of value) pending.push(item);
-    } else if (typeof value === "object" && value !== null) {
+    } else if (isObjectOrArray(value)) {
       for (const [key, child] of Object.entries(value)) {
         remaining -= utf8ByteLengthUpTo(key, remaining);
         if (remaining <= 0) return true;

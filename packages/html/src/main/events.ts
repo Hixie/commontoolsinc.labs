@@ -6,6 +6,7 @@
  */
 
 import type { JSONValue } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   type EventProvenance,
   getEventProvenance,
@@ -84,17 +85,11 @@ export interface DomEventMessage {
  * Type guard for DomEventMessage.
  */
 export function isDomEventMessage(value: unknown): value is DomEventMessage {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const msg = value as DomEventMessage;
-  return (
-    msg.type === "dom-event" &&
-    typeof msg.handlerId === "number" &&
-    typeof msg.event === "object" &&
-    msg.event !== null &&
-    typeof msg.nodeId === "number"
-  );
+  return isObjectOrArray(value) &&
+    value.type === "dom-event" &&
+    typeof value.handlerId === "number" &&
+    isObjectOrArray(value.event) &&
+    typeof value.nodeId === "number";
 }
 
 /**

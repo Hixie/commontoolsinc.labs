@@ -23,6 +23,7 @@ import { describe, it } from "@std/testing/bdd";
 import { Identity } from "@commonfabric/identity";
 import { assert, assertEquals } from "@std/assert";
 import { resolveSpaceDid } from "@commonfabric/lib-shell";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 type BrowserWriteTraceEntry = {
   recordedAt: number;
@@ -1627,7 +1628,7 @@ async function collectNotebookSourceState(page: Page): Promise<{
       if (!Array.isArray(manifest)) return resolved;
 
       for (const entry of manifest) {
-        if (entry === null || typeof entry !== "object") continue;
+        if (!isObjectOrArray(entry)) continue;
         const { partialCause, link } = entry as {
           partialCause?: unknown;
           link?: { sync?: () => Promise<unknown> };
@@ -1665,7 +1666,7 @@ async function collectNotebookSourceState(page: Page): Promise<{
       ?.notes;
     const resolvedArgumentNotes = Array.isArray(argumentNotes)
       ? argumentNotes
-      : argumentNotes !== null && typeof argumentNotes === "object" &&
+      : isObjectOrArray(argumentNotes) &&
           typeof (argumentNotes as { sync?: unknown }).sync === "function"
       ? await (argumentNotes as { sync: () => Promise<unknown> }).sync()
       : undefined;
@@ -1730,7 +1731,7 @@ const notebookSourceStateMatches = async (
     const resolved: Record<string, unknown> = {};
     if (!Array.isArray(manifest)) return resolved;
     for (const entry of manifest) {
-      if (entry === null || typeof entry !== "object") continue;
+      if (!isObjectOrArray(entry)) continue;
       const { partialCause, link } = entry as {
         partialCause?: unknown;
         link?: { sync?: () => Promise<unknown> };
@@ -1769,7 +1770,7 @@ const notebookSourceStateMatches = async (
     ?.notes;
   const resolvedArgumentNotes = Array.isArray(argumentNotes)
     ? argumentNotes
-    : argumentNotes !== null && typeof argumentNotes === "object" &&
+    : isObjectOrArray(argumentNotes) &&
         typeof (argumentNotes as { sync?: unknown }).sync === "function"
     ? await (argumentNotes as { sync: () => Promise<unknown> }).sync()
     : undefined;
@@ -2016,7 +2017,7 @@ async function collectNotebookCreateTraceSummary(page: Page): Promise<unknown> {
       if (!Array.isArray(manifest)) return resolved;
 
       for (const entry of manifest) {
-        if (entry === null || typeof entry !== "object") continue;
+        if (!isObjectOrArray(entry)) continue;
         const { partialCause, link } = entry as {
           partialCause?: unknown;
           link?: { sync?: () => Promise<unknown> };

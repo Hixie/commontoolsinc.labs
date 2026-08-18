@@ -589,7 +589,7 @@ const stripRequiredFields = (schema: JSONSchema): JSONSchema => {
       ]),
     );
   }
-  if (typeof result.items === "object" && result.items !== null) {
+  if (isObjectOrArray(result.items)) {
     result.items = stripRequiredFields(result.items as JSONSchema);
   }
   for (const key of ["anyOf", "oneOf", "allOf"] as const) {
@@ -597,7 +597,7 @@ const stripRequiredFields = (schema: JSONSchema): JSONSchema => {
       result[key] = (result[key] as JSONSchema[]).map(stripRequiredFields);
     }
   }
-  if (typeof result.not === "object" && result.not !== null) {
+  if (isObjectOrArray(result.not)) {
     result.not = stripRequiredFields(result.not as JSONSchema);
   }
 
@@ -1388,7 +1388,7 @@ const markSchemaValueActive = (
     context.activeByRoot.set(root, activity);
   }
   if (
-    (typeof value === "object" && value !== null) ||
+    isObjectOrArray(value) ||
     typeof value === "function"
   ) {
     const objectValue = value as object;
@@ -1421,7 +1421,7 @@ const unmarkSchemaValueActive = (
   const activity = context.activeByRoot.get(root);
   if (!activity) return;
   if (
-    (typeof value === "object" && value !== null) ||
+    isObjectOrArray(value) ||
     typeof value === "function"
   ) {
     activity.activeObjectValues.get(schema)?.delete(value as object);
@@ -1710,7 +1710,7 @@ const validateAgainstSchemaInternal = (
       // Keep the original root as `fullSchema` so nested $refs in the resolved
       // branch can still find sibling $defs entries, except when an embedded
       // external ref deliberately changes the owning root.
-      const resolvedRoot = typeof resolved === "object" && resolved !== null
+      const resolvedRoot = isObjectOrArray(resolved)
         ? resolveCfcSchemaRefRoot(schema, schemaRoot)
         : schemaRoot;
       return validateAgainstSchemaInternal(

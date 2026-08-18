@@ -14,7 +14,7 @@
  * other half of why the rule above is absolute rather than stylistic.
  */
 
-import { isInstance } from "@commonfabric/utils/types";
+import { isInstance, isObjectOrArray } from "@commonfabric/utils/types";
 
 import type { FabricValue } from "./fabric-value.ts";
 import type { LiveEnvironment } from "./codec-interface/interface.ts";
@@ -93,7 +93,7 @@ export function plainObjectFromJson<T extends object = object>(
 ): T {
   const result = fabricFromJsonValue(json, env);
 
-  if ((result === null) || (typeof result !== "object")) {
+  if (!isObjectOrArray(result)) {
     throw new Error(
       "`plainObjectFromJson()`: decoded to a primitive, not a plain object",
     );

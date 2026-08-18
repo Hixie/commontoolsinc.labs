@@ -14,6 +14,7 @@ import {
   FabricInstance,
   FabricPrimitive,
 } from "@commonfabric/data-model/fabric-value";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   assertCloneDataUnlabeled,
   assertNoCloneFabricInstance,
@@ -58,7 +59,7 @@ export function snapshotCloneValue(
     );
   }
   if (
-    value === null || typeof value !== "object" ||
+    !isObjectOrArray(value) ||
     value instanceof FabricPrimitive
   ) {
     return value;
@@ -144,7 +145,7 @@ export async function preloadCloneValue(
   assertCloneDataUnlabeled(cell);
   assertCloneDataUnlabeled(value);
   if (
-    value === null || typeof value !== "object" ||
+    !isObjectOrArray(value) ||
     value instanceof FabricPrimitive || value instanceof FabricInstance ||
     seen.has(value)
   ) {

@@ -76,6 +76,7 @@ import {
   resetAllCountBaselines,
   resetAllTimingBaselines,
 } from "@commonfabric/utils/logger";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
   getMetaLink,
@@ -482,7 +483,7 @@ function sanitizedBody(
 export const hasExplicitSubscriptionSchema = (schema: unknown): boolean =>
   schema === true ||
   (schema !== undefined && schema !== false &&
-    typeof schema === "object" && schema !== null &&
+    isObjectOrArray(schema) &&
     Object.keys(schema).length > 0);
 
 export class RuntimeProcessor {

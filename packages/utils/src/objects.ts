@@ -2,6 +2,7 @@
  * Pure utility functions for checking the property-key shape of plain objects.
  */
 
+import { isObjectOrArray } from "./types.ts";
 import type { ReadonlyRecord } from "./types.ts";
 
 /**
@@ -52,7 +53,7 @@ export function isInertPlainObject(value: unknown): value is ReadonlyRecord;
 export function isInertPlainObject(
   value: unknown,
 ): boolean {
-  if ((value === null) || (typeof value !== "object")) {
+  if (!isObjectOrArray(value)) {
     return false;
   }
 

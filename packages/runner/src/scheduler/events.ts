@@ -1,4 +1,5 @@
 import { getLogger } from "@commonfabric/utils/logger";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { recordTrustedEventPolicyInputs } from "../cfc/ui-contract.ts";
 import type { Cancel } from "../cancel.ts";
 import { ensurePieceRunning } from "../ensure-piece-running.ts";
@@ -63,7 +64,7 @@ function normalizeEventCommitRejection(reason: unknown): EventCommitError {
   if (reason instanceof Error) {
     return reason as EventCommitError;
   }
-  if (reason !== null && typeof reason === "object") {
+  if (isObjectOrArray(reason)) {
     const candidate = reason as Partial<EventCommitError>;
     const precondition = candidate.precondition === "origin-committed" ||
         candidate.precondition === "receipt-exists"

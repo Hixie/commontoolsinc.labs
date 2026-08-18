@@ -63,7 +63,11 @@ import {
 } from "@commonfabric/runner/cfc";
 import { StorageManager } from "@commonfabric/runner/storage/cache";
 import { isArrayIndexPropertyName } from "@commonfabric/utils/arrays";
-import { isObjectOrArray, isPlainObject } from "@commonfabric/utils/types";
+import {
+  isObjectNotArray,
+  isObjectOrArray,
+  isPlainObject,
+} from "@commonfabric/utils/types";
 import { utf8Compare } from "@commonfabric/utils/utf8";
 import { caseFold } from "unicode-case-folding";
 
@@ -403,7 +407,7 @@ function storageManagerCloseNow(
   storageManager: unknown,
 ): (() => Promise<unknown>) | undefined {
   if (
-    typeof storageManager === "object" && storageManager !== null &&
+    isObjectOrArray(storageManager) &&
     "closeNow" in storageManager
   ) {
     const closeNow = Reflect.get(storageManager, "closeNow");
@@ -1036,7 +1040,7 @@ async function searchTextMatches(
     }
     const current = next.value.value;
 
-    if (current !== null && typeof current === "object" && isCell(current)) {
+    if (isObjectOrArray(current) && isCell(current)) {
       if (!isReadableCell(current)) continue;
 
       try {
@@ -1082,7 +1086,7 @@ async function searchTextMatches(
       }
     }
 
-    if (current === null || typeof current !== "object") {
+    if (!isObjectOrArray(current)) {
       if (
         typeof current !== "function" &&
         foldedSearchTextContains(String(current), query)
@@ -1608,11 +1612,7 @@ export async function applyPieceInput(config: PieceConfig, input: object) {
 }
 
 function getCallableValue(rootValue: unknown, callableName: string): unknown {
-  if (
-    typeof rootValue !== "object" ||
-    rootValue === null ||
-    Array.isArray(rootValue)
-  ) {
+  if (!isObjectNotArray(rootValue)) {
     return undefined;
   }
   return (rootValue as Record<string, unknown>)[callableName];
@@ -1660,7 +1660,7 @@ async function tryResolvePieceCallableAt(
  * signals instead. Returns the cast cell, or null. */
 function probeForcedStreamCell(cell: any, name: string): any | null {
   if (
-    typeof cell !== "object" || cell === null ||
+    !isObjectOrArray(cell) ||
     typeof cell.asSchema !== "function"
   ) {
     return null;
@@ -3280,7 +3280,7 @@ export async function linkPieces(
       // Check source path resolves
       let current: any = sourceData;
       for (const segment of sourcePath) {
-        if (current == null || typeof current !== "object") {
+        if (!isObjectOrArray(current)) {
           errors.push(
             `Source path "${
               sourcePath.join("/")
@@ -3322,7 +3322,7 @@ export async function linkPieces(
       );
       let current: any = targetData;
       for (const segment of targetPath) {
-        if (current == null || typeof current !== "object") {
+        if (!isObjectOrArray(current)) {
           errors.push(
             `Target path "${
               targetPath.join("/")

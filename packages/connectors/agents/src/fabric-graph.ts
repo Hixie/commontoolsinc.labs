@@ -5,6 +5,7 @@ import {
   type MemorySpace,
   type Runtime,
 } from "@commonfabric/runner";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import { stableFabricValue } from "./stable-fabric-value.ts";
 
 export interface AgentFabricConnection {
@@ -27,7 +28,7 @@ export interface StableCellGraphEntry {
 const HYDRATION_BATCH_SIZE = 50;
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const prototype = Object.getPrototypeOf(value);

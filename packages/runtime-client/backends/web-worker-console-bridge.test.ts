@@ -5,6 +5,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { getLogger } from "@commonfabric/utils/logger";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { CompilerStackLoadError } from "../../runner/src/harness/deferred-compiler-stack.ts";
 import {
   ClientNotificationType,
@@ -52,7 +53,7 @@ describe("web worker console bridge", () => {
       const consoleMessages = () =>
         posted.filter(
           (m): m is { __workerConsole: { level: string; text: string } } =>
-            typeof m === "object" && m !== null && "__workerConsole" in m,
+            isObjectOrArray(m) && "__workerConsole" in m,
         ).map((m) => m.__workerConsole);
 
       // A request before initialization is rejected (not patched yet, so no
@@ -158,7 +159,7 @@ describe("web worker console bridge", () => {
       await dispatch({ msgId: 4, data: { type: "not-a-real-type" } });
       const errorResponse = posted.find(
         (m): m is { msgId: number; error: string } =>
-          typeof m === "object" && m !== null && "error" in m,
+          isObjectOrArray(m) && "error" in m,
       );
       expect(errorResponse?.msgId).toBe(4);
       expect(typeof errorResponse?.error).toBe("string");

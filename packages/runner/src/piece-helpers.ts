@@ -76,11 +76,11 @@ export function resolveCellPath<T>(
   // this returned `undefined` instead of raising the documented "property not
   // found" error. The `availableKeys` hint below already uses `Object.keys` —
   // own-only — so the two disagreed about what the record actually carries.
-  const keyMissing = parentValue != null && typeof parentValue === "object"
+  const keyMissing = isObjectOrArray(parentValue)
     ? !Object.hasOwn(parentValue as object, segment as string)
     : resolvedValue === undefined;
   if (path.length > 0 && keyMissing) {
-    const availableKeys = parentValue != null && typeof parentValue === "object"
+    const availableKeys = isObjectOrArray(parentValue)
       ? Object.keys(parentValue as Record<string, unknown>)
         .filter((k) => !k.startsWith("$"))
         .sort()

@@ -5,6 +5,7 @@ import { CFC_ATOM_TYPE, cfcAtom } from "@commonfabric/api/cfc";
 import type { FabricValue } from "@commonfabric/data-model/fabric-value";
 import { Identity } from "@commonfabric/identity";
 import type { MemorySpace, URI } from "@commonfabric/memory/interface";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import type { JSONSchema } from "../src/builder/types.ts";
 import { type CfcConfClause, clausesEqual } from "../src/cfc/clause.ts";
@@ -113,7 +114,7 @@ const isLinkReference = (atom: unknown): atom is {
   source: { space: string; id: string; path: string[] };
   target: { space: string; id: string; path: string[] };
 } =>
-  typeof atom === "object" && atom !== null &&
+  isObjectOrArray(atom) &&
   (atom as { type?: unknown }).type ===
     "https://commonfabric.org/cfc/atom/LinkReference";
 

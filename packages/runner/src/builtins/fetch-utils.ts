@@ -1,6 +1,7 @@
 import { internSchema } from "@commonfabric/data-model/schema-hash";
 import { hashStringOf } from "@commonfabric/data-model/value-hash";
 import { stripUndefinedProps } from "@commonfabric/utils/strip-undefined-props";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import type { Schema } from "../builder/types.ts";
 import { type Cell } from "../cell.ts";
@@ -78,10 +79,7 @@ export function computeInputHashFromValue<T extends Record<string, any>>(
     unknown
   >;
   const options = inputsOnly.options;
-  if (
-    options !== null && typeof options === "object" &&
-    !Array.isArray(options)
-  ) {
+  if (isObjectNotArray(options)) {
     const {
       mutexTimeoutMs: _mutexTimeoutMs,
       ...requestOptions

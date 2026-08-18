@@ -18,6 +18,7 @@ import { FabricEpochNsec } from "@/fabric-primitives/FabricEpochNsec.ts";
 import { FabricHash } from "@/fabric-primitives/FabricHash.ts";
 import { FabricBytes } from "@/fabric-primitives/FabricBytes.ts";
 import { FabricRegExp } from "@/fabric-primitives/FabricRegExp.ts";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { FabricInstance } from "./interface.ts";
 
 /**
@@ -149,7 +150,7 @@ export function tagFromNativeClass(
  * realm -- and to a prototype check for null-prototype objects.
  */
 export function tagFromNativeValue(value: unknown): NativeTag | null {
-  if (value === null || typeof value !== "object") {
+  if (!isObjectOrArray(value)) {
     return NATIVE_TAGS.Primitive;
   }
 

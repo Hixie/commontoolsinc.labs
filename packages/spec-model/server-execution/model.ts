@@ -19,6 +19,8 @@
 
 // ---------- identities and keys ----------
 
+import { isObjectNotArray } from "@commonfabric/utils/types";
+
 export type UserId = string;
 export type SessionId = string;
 export type SpaceId = string;
@@ -1032,7 +1034,7 @@ export function apply(w0: World, step: Step): World {
 
 function stableStringify(x: unknown): string {
   return JSON.stringify(x, function (this: unknown, _k, v) {
-    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+    if (isObjectNotArray(v)) {
       const o = v as Record<string, unknown>;
       const out: Record<string, unknown> = {};
       for (const k of Object.keys(o).sort()) out[k] = o[k];

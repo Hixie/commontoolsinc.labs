@@ -1,4 +1,5 @@
 import type { SchedulerExecutionContextKey } from "@commonfabric/memory/v2";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import { isCellScope } from "../scope.ts";
 import type {
@@ -187,7 +188,7 @@ export function buildSchedulerActionObservation(
 export function isSchedulerActionObservation(
   value: unknown,
 ): value is SchedulerActionObservation {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const candidate = value as Partial<SchedulerActionObservation>;
@@ -238,7 +239,7 @@ function isCompleteActionScopeSummary(
   implementationFingerprint: string,
   runtimeFingerprint: string,
 ): value is CompleteActionScopeSummary {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const candidate = value as Partial<CompleteActionScopeSummary>;
@@ -258,7 +259,7 @@ function isAddressArray(value: unknown): value is IMemorySpaceAddress[] {
 }
 
 function isMemorySpaceAddress(value: unknown): value is IMemorySpaceAddress {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const candidate = value as Partial<IMemorySpaceAddress>;
@@ -280,7 +281,7 @@ function cloneAddress(address: IMemorySpaceAddress): IMemorySpaceAddress {
 function isSchedulerActionOptions(
   value: unknown,
 ): value is SchedulerActionOptions {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const candidate = value as Partial<SchedulerActionOptions>;

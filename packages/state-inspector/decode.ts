@@ -19,7 +19,7 @@ import { fabricFromJsonValue } from "@commonfabric/data-model/codecs";
 import { FabricLink } from "@commonfabric/data-model/fabric-instances";
 import { toCompactDebugString } from "@commonfabric/data-model/value-debug";
 import { isArrayIndexPropertyName } from "@commonfabric/utils/arrays";
-import { isPlainObject } from "@commonfabric/utils/types";
+import { isObjectOrArray, isPlainObject } from "@commonfabric/utils/types";
 
 /** Decode a stored payload string, routing the `data-model` codec envelope. */
 export function decodeStored(data: string): unknown {
@@ -349,7 +349,7 @@ export function annotate(v: Json, maxDepth = 8): Json {
     }
 
     // A Fabric instance has no enumerable state to walk by property name.
-    if (typeof frame.value === "object" && frame.value !== null) {
+    if (isObjectOrArray(frame.value)) {
       assign({ $fabric: toCompactDebugString(frame.value) });
       continue;
     }

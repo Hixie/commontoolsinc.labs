@@ -14,6 +14,7 @@ import * as MemoryV2Client from "@commonfabric/memory/v2/client";
 import * as MemoryV2Server from "@commonfabric/memory/v2/server";
 import { PiecesController } from "@commonfabric/piece/ops";
 import { Runtime } from "@commonfabric/runner";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import {
   type Options as V2StorageOptions,
   type SessionFactory,
@@ -108,10 +109,7 @@ class SinkableCell {
   get() {
     let current = this.root._value;
     for (const segment of this.path) {
-      if (
-        typeof current !== "object" || current === null ||
-        Array.isArray(current)
-      ) {
+      if (!isObjectNotArray(current)) {
         return undefined;
       }
       current = (current as Record<string, unknown>)[segment];
@@ -2282,9 +2280,7 @@ Deno.test("CellBridge finalizes CFC annotations after committed writeback", asyn
       set: (value: unknown, path?: (string | number)[]) => {
         if (path?.length === 1 && typeof path[0] === "string") {
           resultValue = { ...resultValue, [path[0]]: value };
-        } else if (
-          typeof value === "object" && value !== null && !Array.isArray(value)
-        ) {
+        } else if (isObjectNotArray(value)) {
           resultValue = value as Record<string, unknown>;
         }
         return Promise.resolve();
@@ -2367,10 +2363,7 @@ Deno.test("CellBridge finalizes CFC annotations after namespace mutation writeba
   const getAtPath = (path?: (string | number)[]) => {
     let current: unknown = resultValue;
     for (const segment of path ?? []) {
-      if (
-        typeof current !== "object" || current === null ||
-        Array.isArray(current)
-      ) {
+      if (!isObjectNotArray(current)) {
         return undefined;
       }
       current = (current as Record<string, unknown>)[String(segment)];
@@ -2387,8 +2380,7 @@ Deno.test("CellBridge finalizes CFC annotations after namespace mutation writeba
     for (const segment of path.slice(0, -1)) {
       const key = String(segment);
       const child = current[key];
-      const cloned = typeof child === "object" && child !== null &&
-          !Array.isArray(child)
+      const cloned = isObjectNotArray(child)
         ? { ...(child as Record<string, unknown>) }
         : {};
       current[key] = cloned;

@@ -1695,9 +1695,7 @@ export class StorageManager implements IStorageManager {
     if (isObjectOrArray(value)) {
       for (const key of Object.keys(value)) {
         const child = value[key];
-        if (
-          child === null || child === undefined || typeof child !== "object"
-        ) {
+        if (!isObjectOrArray(child)) {
           continue;
         }
         const childSchema = schema

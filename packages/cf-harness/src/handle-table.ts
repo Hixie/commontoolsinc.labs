@@ -20,6 +20,7 @@ import {
   type NormalizedFullLink,
   parseLLMFriendlyLink,
 } from "@commonfabric/runner/shared";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import {
   ADDRESS_HANDLE_TOKEN_PREFIX,
   HANDLE_TOKEN_ALPHABET,
@@ -298,7 +299,7 @@ export const swapLinksForTokens = async (
     }
     return { table, value: swapped };
   }
-  if (typeof value === "object" && value !== null) {
+  if (isObjectOrArray(value)) {
     const record = value as Record<string, unknown>;
     const keys = Object.keys(record);
     const target = record["@link"];
@@ -401,7 +402,7 @@ export const swapTokensForRefs = (
   if (Array.isArray(value)) {
     return value.map((item) => swapTokensForRefs(table, item));
   }
-  if (typeof value === "object" && value !== null) {
+  if (isObjectOrArray(value)) {
     const swapped: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
       defineOwnEntry(
@@ -452,7 +453,7 @@ export const assertValidHarnessHandleTable = (
   const tokens = new Set<string>();
   const addressKeys = new Set<string>();
   for (const entry of table.entries) {
-    if (typeof entry !== "object" || entry === null) {
+    if (!isObjectOrArray(entry)) {
       throw new Error("invalid handle table: entry is not an object");
     }
     if (
@@ -481,8 +482,7 @@ export const assertValidHarnessHandleTable = (
     }
     if (
       entry.schema !== undefined && typeof entry.schema !== "boolean" &&
-      (typeof entry.schema !== "object" || entry.schema === null ||
-        Array.isArray(entry.schema))
+      !isObjectNotArray(entry.schema)
     ) {
       throw new Error(
         `invalid handle table: entry \`${entry.token}\` has a schema that is not a JSON Schema object or boolean`,

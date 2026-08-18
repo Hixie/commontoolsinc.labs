@@ -24,6 +24,7 @@ import {
 } from "@commonfabric/utils/async-local-store";
 import { deepEqual } from "@commonfabric/utils/deep-equal";
 import { isDeno } from "@commonfabric/utils/env";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { PatternEnvironment, setPatternEnvironment } from "./builder/env.ts";
 import {
@@ -141,7 +142,7 @@ const isFullNormalizedLinkShape = (
   space: MemorySpace;
   path: string[];
 } => {
-  if (typeof value !== "object" || value === null) return false;
+  if (!isObjectOrArray(value)) return false;
   const link = value as NormalizedLink;
   if (link.scope === "inherit") {
     throw new Error(

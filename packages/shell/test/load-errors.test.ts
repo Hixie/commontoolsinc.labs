@@ -6,6 +6,7 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { type DID, Identity } from "@commonfabric/identity";
 import { NotificationType } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 /** Install the browser globals Lit reads and return a restoration function. */
 function installBrowserGlobals(
@@ -91,7 +92,7 @@ function templateText(value: unknown): string {
 
 /** Find the load-error value passed through a nested Lit template. */
 function findLoadError(value: unknown): unknown {
-  if (value == null || typeof value !== "object") return undefined;
+  if (!isObjectOrArray(value)) return undefined;
   if (Array.isArray(value)) {
     for (const item of value) {
       const result = findLoadError(item);

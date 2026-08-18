@@ -19,6 +19,8 @@
 //    │    ▼                             ▼    │
 //    └────┘                             └────┘
 
+import { isObjectOrArray } from "@commonfabric/utils/types";
+
 export enum IPCHostMessageType {
   // Host initializing guest with data (namely, ID).
   Init = "init",
@@ -61,7 +63,7 @@ export type IPCGuestMessage =
 export function isIPCGuestMessage(
   message: unknown,
 ): message is IPCGuestMessage {
-  if (typeof message !== "object" || message === null) {
+  if (!isObjectOrArray(message)) {
     return false;
   }
   if (!("type" in message)) {
@@ -102,8 +104,7 @@ export interface GuestError {
 }
 
 export function isGuestError(e: object): e is GuestError {
-  return typeof e === "object" &&
-    e !== null &&
+  return isObjectOrArray(e) &&
     "description" in e && typeof e.description === "string" &&
     "source" in e && typeof e.source === "string" &&
     "lineno" in e && typeof e.lineno === "number" &&
@@ -137,8 +138,7 @@ export type GuestMessage =
 
 export function isGuestMessage(message: unknown): message is GuestMessage {
   if (
-    typeof message !== "object" ||
-    message === null ||
+    !isObjectOrArray(message) ||
     !("type" in message) ||
     typeof message.type !== "string" ||
     !("data" in message) ||

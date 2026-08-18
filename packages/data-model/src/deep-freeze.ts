@@ -12,6 +12,7 @@
  * shared across that boundary instead of restarting inside it.
  */
 
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type { FabricValue } from "./interface.ts";
 import {
   BaseFabricInstance,
@@ -271,7 +272,7 @@ export function deepFreeze<T>(value: T): T {
  */
 export function isDeepFrozenFabricValue(value: unknown): value is FabricValue {
   if (
-    typeof value === "object" && value !== null &&
+    isObjectOrArray(value) &&
     deepFrozenFabricValueCache.has(value)
   ) {
     return true;
@@ -287,7 +288,7 @@ export function isDeepFrozenFabricValue(value: unknown): value is FabricValue {
   // subtree.
   const result = isDeepFrozen(value) && isFabricValue(value);
 
-  if (result && typeof value === "object" && value !== null) {
+  if (result && isObjectOrArray(value)) {
     deepFrozenFabricValueCache.add(value);
   }
 
