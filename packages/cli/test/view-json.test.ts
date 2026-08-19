@@ -1,10 +1,9 @@
 /**
- * The JSON / JSONC language: a `.json` or `.jsonc` file (opened directly or seen
- * in a diff) is colored as data — object keys apart from string values,
- * numbers, `true`/`false`/`null`, rainbow brackets, JSONC comments — with its
- * object keys forming the navigation tree, and is never run through the
- * TypeScript parser. The highlighter is hand-written and lenient: malformed
- * input colors without throwing.
+ * The JSON, JSONC, and JSON Lines language: a selected file is colored as data
+ * with object keys apart from string values, numbers,
+ * `true`/`false`/`null`, rainbow brackets, and JSONC comments. Object keys in a
+ * single top-level value form the navigation tree. The highlighter is
+ * hand-written and lenient: malformed input colors without throwing.
  */
 
 import { assert, assertEquals } from "@std/assert";
@@ -37,11 +36,38 @@ function classesOf(lines: readonly Line[], token: string): Set<TokenClass> {
 Deno.test("json: language metadata selects JSON filenames", () => {
   assertEquals(languageForFile("deno.json").id, "json");
   assertEquals(languageForFile("/a/b/tsconfig.jsonc").id, "json");
+  assertEquals(languageForFile("records.jsonl").id, "json");
+  assertEquals(languageForFile("events.ndjson").id, "json");
+  assertEquals(languageForFile("EVENTS.NDJSON").id, "json");
   assertEquals(languageForFile("UPPER.JSON").id, "json");
   assertEquals(languageForFile("config.json.example").id, "json");
   assertEquals(languageForFile("main.ts").id, "typescript");
   assertEquals(languageForFile("README.md").id, "markdown");
   assertEquals(languageForFile(undefined).id, "plain-text");
+});
+
+Deno.test("json: line-oriented files use JSON token classes", () => {
+  const src = [
+    '{"testId":"old","canonicalId":"new"}',
+    '{"testId":"next","canonicalId":"current"}',
+  ].join("\n");
+  const lines = languageForFile("tasks/test-identity-aliases.jsonl")
+    .highlightLines(src);
+
+  assertEquals(classesOf(lines, '"testId"'), new Set(["propertyName"]));
+  assertEquals(classesOf(lines, '"old"'), new Set(["string"]));
+  assertEquals(classesOf(lines, '"current"'), new Set(["string"]));
+  assertEquals(verbatim(lines), src);
+});
+
+Deno.test("json: line-oriented documents expose no partial structure", () => {
+  const doc = jsonDocument([
+    '{"first":1}',
+    '{"second":2}',
+  ].join("\n"));
+
+  assertEquals(doc.structure, []);
+  assertEquals(doc.definitions.size, 0);
 });
 
 Deno.test("json: keys, values, and literals get distinct classes", () => {
