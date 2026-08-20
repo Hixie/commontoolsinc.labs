@@ -1270,16 +1270,19 @@ run_piece_data_files() {
   # recovered checkout: it is written to disk like any other file, with nothing
   # recording that it was data. `getsrc` has to say so, or the next `setsrc`
   # drops it from the revision without a word.
+  # Built in a copy rather than in the checked-in fixture tree, so a run that
+  # stops early leaves the repository as it found it.
+  local extra_src="$WORK_DIR/pattern-extra"
   local extra_dir="$WORK_DIR/datafiles-extra"
   mkdir -p "$extra_dir"
-  printf 'not read by the pattern\n' > "$SCRIPT_DIR/pattern/data/notes.txt"
+  cp -R "$SCRIPT_DIR/pattern" "$extra_src"
+  printf 'not read by the pattern\n' > "$extra_src/data/notes.txt"
   EXTRA_PIECE_ID=$(cf piece new $SPACE_ARGS \
-    --root "$SCRIPT_DIR/pattern" \
-    --datafile "$SCRIPT_DIR/pattern/data/notes.txt" \
-    "$data_pattern")
+    --root "$extra_src" \
+    --datafile "$extra_src/data/notes.txt" \
+    "$extra_src/data-reader.tsx")
   cf piece getsrc $SPACE_ARGS --piece $EXTRA_PIECE_ID "$extra_dir" \
     >"$WORK_DIR/getsrc-extra.out"
-  rm -f "$SCRIPT_DIR/pattern/data/notes.txt"
   if [ ! -f "$extra_dir/data/notes.txt" ]; then
     error "An unread data file should still come back with the source."
   fi

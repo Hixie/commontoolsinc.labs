@@ -290,6 +290,35 @@ describe("typescript/resolver.ts", () => {
       )).toEqual([]);
     });
 
+    it("ignores a call shadowed by a var written in a nested block", () => {
+      // `var` belongs to the function, so it shadows the whole body rather
+      // than the block it sits in.
+      expect(names(
+        'import { dataFile } from "commonfabric";\n' +
+          "export default function () {\n" +
+          "  if (true) {\n" +
+          "    var dataFile = (s: string) => s;\n" +
+          "  }\n" +
+          '  return dataFile("/shadowed.json");\n' +
+          "}\n",
+      )).toEqual([]);
+    });
+
+    it("reads a call where a var of that name is in another function", () => {
+      // A nested function starts a scope of its own, so its `var` shadows
+      // nothing out here.
+      expect(names(
+        'import { dataFile } from "commonfabric";\n' +
+          "export default function () {\n" +
+          "  function other() {\n" +
+          "    var dataFile = 1;\n" +
+          "    return dataFile;\n" +
+          "  }\n" +
+          '  return [other(), dataFile("/data/cities.json")];\n' +
+          "}\n",
+      )).toEqual(["/data/cities.json"]);
+    });
+
     it("finds nothing in a module that never imports it", () => {
       expect(names("export const x = 1;\n")).toEqual([]);
     });

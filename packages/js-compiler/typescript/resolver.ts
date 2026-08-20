@@ -220,6 +220,10 @@ function isShadowed(use: ts.Identifier): boolean {
 function bindsName(scope: ts.Node, name: string): boolean {
   if (ts.isFunctionLike(scope)) {
     if (scope.parameters.some((p) => patternBinds(p.name, name))) return true;
+    // A `var` belongs to the function however deeply it is written inside it,
+    // so it shadows for the whole body rather than for the block it sits in.
+    const body = (scope as { body?: ts.Node }).body;
+    if (body !== undefined && hasVarBinding(body, name)) return true;
   }
   if (
     (ts.isFunctionExpression(scope) || ts.isClassExpression(scope) ||
@@ -262,6 +266,28 @@ function bindsName(scope: ts.Node, name: string): boolean {
     }
     return false;
   });
+}
+
+/**
+ * Whether `body` declares `name` with `var`, at any depth short of a nested
+ * function, which starts a scope of its own.
+ */
+function hasVarBinding(body: ts.Node, name: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    if (
+      ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      node.declarations.some((d) => patternBinds(d.name, name))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return found;
 }
 
 /** Whether a binding name — plain, or destructured — binds `name`. */

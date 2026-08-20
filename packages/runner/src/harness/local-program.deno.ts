@@ -78,9 +78,22 @@ export async function resolveLocalProgram(
     }
   }
 
-  const declared = new Set(
-    [mainProgram, ...testPrograms].flatMap((p) => p.dataFiles ?? []),
-  );
+  const resolved = [mainProgram, ...testPrograms];
+  const declared = new Set(resolved.flatMap((p) => p.dataFiles ?? []));
+  // One entry may read a file as data while another imports it as a module.
+  // The program would then have to both compile it and store it uninterpreted,
+  // and which one it did would depend on the order the entries were merged.
+  for (const program of resolved) {
+    const data = new Set(program.dataFiles ?? []);
+    for (const file of program.files) {
+      if (!data.has(file.name) && declared.has(file.name)) {
+        throw new Error(
+          `"${file.name}" is a source module of this program and a data file ` +
+            `of another of its entry points.`,
+        );
+      }
+    }
+  }
   const program: RuntimeProgram = {
     main: mainProgram.main,
     files: [...files.values()],

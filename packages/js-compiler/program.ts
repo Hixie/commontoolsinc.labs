@@ -159,20 +159,21 @@ export class FileSystemProgramResolver implements ProgramResolver {
   // where it is called cannot be handled one way.
   async resolveDataFile(name: string): Promise<Source | undefined> {
     requireDeno("FileSystemProgramResolver");
-    let realPath: string | undefined;
     try {
-      realPath = this.#groundedRealPath(name, "Data file");
+      const realPath = this.#groundedRealPath(name, "Data file");
+      if (realPath === undefined) return undefined;
+      return {
+        name,
+        contents: decodeDataFile(await Deno.readFile(realPath), name),
+      };
     } catch (error) {
       // A name with nothing behind it is the caller's to report, against the
-      // module that read it. An escape is refused here, as it is for a module.
+      // module that read it — whether nothing was there to begin with or it
+      // went away between grounding the name and reading it. An escape is
+      // refused here, as it is for a module.
       if (error instanceof Deno.errors.NotFound) return undefined;
       throw error;
     }
-    if (realPath === undefined) return undefined;
-    return {
-      name,
-      contents: decodeDataFile(await Deno.readFile(realPath), name),
-    };
   }
 
   /**

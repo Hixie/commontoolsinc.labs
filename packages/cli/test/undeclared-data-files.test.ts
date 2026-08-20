@@ -65,6 +65,19 @@ describe("undeclaredDataFiles", () => {
     ).toEqual(["/extra.txt"]);
   });
 
+  it("never reads an attached data file as source", () => {
+    // These bytes happen to read as a module declaring another data file. The
+    // entry is data, so it is not parsed and accounts for nothing.
+    expect(
+      undeclaredDataFiles(
+        program({
+          "/main.tsx": "export default 1;\n",
+          "/data/sample.txt": READS_CITIES,
+        }, ["/data/sample.txt"]),
+      ),
+    ).toEqual(["/data/sample.txt"]);
+  });
+
   it("says nothing about a program carrying no data at all", () => {
     expect(undeclaredDataFiles(program({ "/main.tsx": "export default 1;\n" })))
       .toEqual([]);

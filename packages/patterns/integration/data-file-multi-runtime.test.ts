@@ -1,17 +1,19 @@
 /**
  * Multi-runtime regression test: a data file attached to a pattern reaches
- * every runtime that runs it, not just the one that compiled it.
+ * every runtime that runs it, not just the one that attached it.
  *
- * The harness compiles the pattern in a bootstrap worker process, so the
+ * The harness compiles the pattern in a throwaway bootstrap worker, so the
  * attachment cannot be made where the harness runs — the paths travel with the
- * `createPiece` request and the worker attaches them on the other side. Every
- * other session then opens the piece by id, which loads the pattern from
- * storage rather than from disk, in yet another process.
+ * `createPiece` request and the worker attaches them on the other side. That
+ * worker is then disposed. Every session opens the piece by id, which loads
+ * the pattern from storage rather than from disk, in a process that never saw
+ * the files.
  *
  * That is two boundaries, and a data file lost at either one is invisible
  * until the read: the program compiles, type-checks, and runs, and the pattern
- * is told the file is not there. Alice reads through the runtime that created
- * the piece; bob reads through a runtime that only ever saw the stored source.
+ * is told the file is not there. Neither session is the runtime that compiled
+ * the pattern; both reach it through what was stored, which is what a second
+ * session adds — the file is not held by one lucky opener.
  *
  * No toolshed or browser required (Deno workers + in-process storage server).
  */
@@ -39,9 +41,9 @@ describe("attached data files across runtimes", () => {
   let bob: MultiRuntimeSession;
 
   beforeAll(async () => {
-    // Session order matters: the harness bootstraps the piece with alice's
-    // identity (sessions[0]) and opens it in every session in order, so bob's
-    // runtime reaches the pattern only through what was stored.
+    // The bootstrap worker creates the piece with alice's identity
+    // (sessions[0]) and is disposed; both sessions then open it by id, so
+    // neither reaches the pattern by any route but the stored source.
     harness = await MultiRuntimeHarness.create({
       programPath: PROGRAM_PATH,
       rootPath: ROOT_PATH,
@@ -56,13 +58,13 @@ describe("attached data files across runtimes", () => {
     await harness?.dispose();
   });
 
-  it("reads the file in the runtime that compiled the pattern", async () => {
+  it("reads the file through a runtime that loaded the stored source", async () => {
     await harness.settle();
     assertEquals(await alice.read(["cities"]), ["Oslo", "Lima"]);
     assertEquals(await alice.read(["count"]), 2);
   });
 
-  it("reads the file in a runtime that only loaded the stored source", async () => {
+  it("reads the file in a second runtime, loading the same source", async () => {
     await harness.settle();
     assertEquals(await bob.read(["cities"]), ["Oslo", "Lima"]);
     assertEquals(await bob.read(["count"]), 2);

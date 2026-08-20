@@ -193,6 +193,43 @@ describe("resolveLocalProgram", () => {
     }
   });
 
+  it("refuses a file one entry reads as data and another imports", async () => {
+    const root = await tree({
+      "main.tsx": 'export { shared } from "./shared.ts";\n',
+      "shared.ts": "export const shared = 1;\n",
+      "main.test.tsx": "export const t = 1;\n",
+    });
+    try {
+      // The entry imports `/shared.ts`; the test entry reads the same name as
+      // data, which is what the resolve step returns for it.
+      const resolve = async (
+        resolver: ProgramResolver,
+      ): Promise<RuntimeProgram> => {
+        const main = await resolver.main();
+        const shared = await resolver.resolveSource("/shared.ts");
+        return main.name === "/main.test.tsx"
+          ? {
+            main: main.name,
+            files: [main, shared!],
+            dataFiles: ["/shared.ts"],
+          }
+          : { main: main.name, files: [main, shared!] };
+      };
+      await assertRejects(
+        () =>
+          resolveLocalProgram(resolve, {
+            main: join(root, "main.tsx"),
+            root,
+            testPaths: [join(root, "main.test.tsx")],
+          }),
+        Error,
+        "is a source module of this program and a data file",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("carries the named export through", async () => {
     const root = await tree({ "main.tsx": "export const view = 1;\n" });
     try {
