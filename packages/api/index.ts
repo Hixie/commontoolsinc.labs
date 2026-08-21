@@ -3365,18 +3365,32 @@ type StripDefaultUnion<T> = RemoveRedundantUnionMembers<StripDefaultBrand<T>>;
 type StripDefaultField<T> = IsAny<T> extends true ? T
   : StripDefaultFieldInner<StripDefaultUnion<T>>;
 
-type StripDefaultFieldInner<T> = T extends Cell<infer U>
-  ? Cell<StripDefaultUnion<U>>
-  : T extends OpaqueCell<infer U> ? OpaqueCell<StripDefaultUnion<U>>
+// A cell's inner type, recovered from the brand's phantom `[CELL_INNER_TYPE]`.
+// The inner must be read from that single covariant position rather than by
+// inferring `Cell<infer U>` from the whole cell interface: for a scope-branded
+// cell (`Cell<X> & PerSpace<...>`, an intersection) the checker also draws
+// candidates for `U` from the interface's methods, several of which mention
+// `FactoryInput` (which in turn reaches the JSX `VNode`/`UIRenderable` types).
+// That makes `Cell<infer U>` resolve `U` to one type under the automatic-JSX
+// runtime and another under the classic one, while the brand carries the inner
+// on its own and reads the same under both. The rebuild below therefore detects
+// the cell kind through the interface but takes the inner value from here.
+type CellInner<T> = T extends AnyBrandedCell<infer U> ? U : never;
+
+type StripDefaultFieldInner<T> = T extends Cell<any>
+  ? Cell<StripDefaultUnion<CellInner<T>>>
+  : T extends OpaqueCell<any> ? OpaqueCell<StripDefaultUnion<CellInner<T>>>
   // Rebuilt, so both halves are named explicitly: detection is
   // brand-based, but the reconstruction still has to carry R across or
   // a returning verb silently comes back value-less.
   : T extends AnyStream
     ? Stream<StripDefaultUnion<StreamEventOf<T>>, StreamResultOf<T>>
-  : T extends ComparableCell<infer U> ? ComparableCell<StripDefaultUnion<U>>
-  : T extends ReadonlyCell<infer U> ? ReadonlyCell<StripDefaultUnion<U>>
-  : T extends WriteonlyCell<infer U> ? WriteonlyCell<StripDefaultUnion<U>>
-  : T extends AnyCell<infer U> ? AnyCell<StripDefaultUnion<U>>
+  : T extends ComparableCell<any>
+    ? ComparableCell<StripDefaultUnion<CellInner<T>>>
+  : T extends ReadonlyCell<any> ? ReadonlyCell<StripDefaultUnion<CellInner<T>>>
+  : T extends WriteonlyCell<any>
+    ? WriteonlyCell<StripDefaultUnion<CellInner<T>>>
+  : T extends AnyCell<any> ? AnyCell<StripDefaultUnion<CellInner<T>>>
   : T extends AnyBrandedCell<infer U, infer Kind>
     ? AnyBrandedCell<StripDefaultUnion<U>, Kind>
   : T;
