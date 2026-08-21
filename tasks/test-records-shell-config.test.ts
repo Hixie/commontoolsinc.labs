@@ -11,6 +11,7 @@ import {
   MARKER,
   parseSetting,
   profileCandidates,
+  profilesToInspect,
   reloadHint,
   shellKind,
 } from "./test-records-shell-config.ts";
@@ -47,19 +48,19 @@ describe("test-records-shell-config", () => {
   });
 
   describe("profileCandidates()", () => {
-    it("returns the zsh profile under ZDOTDIR when one is set", () => {
+    it("returns the zsh profile every shell reads, under ZDOTDIR", () => {
       expect(
         profileCandidates(
           environment({ SHELL: "/bin/zsh", HOME: "/h", ZDOTDIR: "/z" }),
           "linux",
         ),
-      ).toEqual(["/z/.zshrc"]);
+      ).toEqual(["/z/.zshenv"]);
     });
 
     it("returns the home zsh profile without ZDOTDIR", () => {
       expect(
         profileCandidates(environment({ SHELL: "/bin/zsh", HOME: "/h" })),
-      ).toEqual(["/h/.zshrc"]);
+      ).toEqual(["/h/.zshenv"]);
     });
 
     it("orders the bash profiles by the ones the platform reads first", () => {
@@ -97,6 +98,19 @@ describe("test-records-shell-config", () => {
 
     it("returns nothing without a home directory", () => {
       expect(profileCandidates(environment({ SHELL: "/bin/zsh" }))).toEqual([]);
+    });
+  });
+
+  describe("profilesToInspect()", () => {
+    it("returns the zsh profile read after the one written", () => {
+      expect(profilesToInspect(environment({ SHELL: "/bin/zsh", HOME: "/h" })))
+        .toEqual(["/h/.zshrc"]);
+    });
+
+    it("returns nothing for a shell with one profile", () => {
+      expect(profilesToInspect(environment({ SHELL: "/bin/bash", HOME: "/h" })))
+        .toEqual([]);
+      expect(profilesToInspect(environment({ HOME: "/h" }))).toEqual([]);
     });
   });
 
@@ -253,25 +267,45 @@ describe("test-records-shell-config", () => {
       return environment({ SHELL: "/bin/zsh", HOME: home });
     }
 
+    it("reports a conflicting line in the profile read after it", async () => {
+      const key = join(home, ".config", "k.json");
+      await Deno.writeTextFile(
+        join(home, ".zshrc"),
+        `export ${VARIABLE}="/somewhere/else.json"\n`,
+      );
+
+      const updates = await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
+
+      // .zshrc is read after .zshenv, so what it says would win.
+      expect(updates).toEqual([
+        {
+          path: join(home, ".zshrc"),
+          outcome: "conflict",
+          existing: `export ${VARIABLE}="/somewhere/else.json"`,
+        },
+        { path: join(home, ".zshenv"), outcome: "added" },
+      ]);
+    });
+
     it("appends the marked line to the profile", async () => {
       const key = join(home, ".config", "k.json");
       const updates = await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
 
       expect(updates).toEqual([
-        { path: join(home, ".zshrc"), outcome: "added" },
+        { path: join(home, ".zshenv"), outcome: "added" },
       ]);
-      expect(await Deno.readTextFile(join(home, ".zshrc"))).toBe(
+      expect(await Deno.readTextFile(join(home, ".zshenv"))).toBe(
         `${MARKER}\nexport ${VARIABLE}="$HOME/.config/k.json"\n`,
       );
     });
 
     it("keeps an existing profile's contents and its trailing newline", async () => {
-      await Deno.writeTextFile(join(home, ".zshrc"), "alias l=ls");
+      await Deno.writeTextFile(join(home, ".zshenv"), "alias l=ls");
       const key = join(home, ".config", "k.json");
 
       await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
 
-      expect(await Deno.readTextFile(join(home, ".zshrc"))).toBe(
+      expect(await Deno.readTextFile(join(home, ".zshenv"))).toBe(
         `alias l=ls\n\n${MARKER}\nexport ${VARIABLE}="$HOME/.config/k.json"\n`,
       );
     });
@@ -279,20 +313,20 @@ describe("test-records-shell-config", () => {
     it("reports the same value as already present and writes nothing", async () => {
       const key = join(home, ".config", "k.json");
       await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
-      const before = await Deno.readTextFile(join(home, ".zshrc"));
+      const before = await Deno.readTextFile(join(home, ".zshenv"));
 
       const updates = await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
 
       expect(updates).toEqual([
-        { path: join(home, ".zshrc"), outcome: "present" },
+        { path: join(home, ".zshenv"), outcome: "present" },
       ]);
-      expect(await Deno.readTextFile(join(home, ".zshrc"))).toBe(before);
+      expect(await Deno.readTextFile(join(home, ".zshenv"))).toBe(before);
     });
 
     it("reports a value that only starts the same as a conflict", async () => {
       const key = join(home, ".config", "k.json");
       await Deno.writeTextFile(
-        join(home, ".zshrc"),
+        join(home, ".zshenv"),
         `export ${VARIABLE}="${key}.backup"\n`,
       );
 
@@ -304,7 +338,7 @@ describe("test-records-shell-config", () => {
     it("accepts an export that carries a comment after it", async () => {
       const key = join(home, ".config", "k.json");
       await Deno.writeTextFile(
-        join(home, ".zshrc"),
+        join(home, ".zshenv"),
         `export ${VARIABLE}="$HOME/.config/k.json" # the reporting key\n`,
       );
 
@@ -316,7 +350,7 @@ describe("test-records-shell-config", () => {
     it("reports a single-quoted $HOME as the other value it is", async () => {
       const key = join(home, ".config", "k.json");
       await Deno.writeTextFile(
-        join(home, ".zshrc"),
+        join(home, ".zshenv"),
         `export ${VARIABLE}='$HOME/.config/k.json'\n`,
       );
 
@@ -330,14 +364,14 @@ describe("test-records-shell-config", () => {
     it("reports an assignment that is never exported", async () => {
       const key = join(home, ".config", "k.json");
       await Deno.writeTextFile(
-        join(home, ".zshrc"),
+        join(home, ".zshenv"),
         `${VARIABLE}="$HOME/.config/k.json"\n`,
       );
 
       const updates = await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
 
       expect(updates).toEqual([{
-        path: join(home, ".zshrc"),
+        path: join(home, ".zshenv"),
         outcome: "unexported",
         existing: `${VARIABLE}="$HOME/.config/k.json"`,
       }]);
@@ -364,7 +398,7 @@ describe("test-records-shell-config", () => {
 
     it("reports a line pointing elsewhere as a conflict", async () => {
       await Deno.writeTextFile(
-        join(home, ".zshrc"),
+        join(home, ".zshenv"),
         `export ${VARIABLE}="/somewhere/else.json"\n`,
       );
       const key = join(home, ".config", "k.json");
@@ -372,7 +406,7 @@ describe("test-records-shell-config", () => {
       const updates = await exportFromProfiles(VARIABLE, key, zsh(), "darwin");
 
       expect(updates).toEqual([{
-        path: join(home, ".zshrc"),
+        path: join(home, ".zshenv"),
         outcome: "conflict",
         existing: `export ${VARIABLE}="/somewhere/else.json"`,
       }]);

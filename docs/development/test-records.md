@@ -41,14 +41,24 @@ append-only, no-double-mapping, acyclic rules.
   set it themselves when they own a run. Never point two concurrent runs
   at one directory by hand — each run owns its own spool.
 - `CF_TEST_RECORDS_KEY_FILE` — a personal reporting key
-  (see below), exported from the login shell's profile by
+  (see below), exported from the shell's profile by
   `deno task test-records-key setup`. Its presence is the local opt-in:
   with it, `deno task test`, `deno task integration`, and `deno task
   run-recorded` stamp a spool, ship it when the run ends, and sweep any
-  orphaned spools a killed run left behind.
+  orphaned spools a killed run left behind. It has to reach shells
+  nobody is typing into, since that is what an agent's run is: the
+  export goes in `.zshenv` rather than `.zshrc` for that reason, and a
+  bash workstation whose agents run non-interactive shells has no
+  equivalent file — there the variable belongs in whatever starts the
+  agent.
 - `CF_TEST_AGENT` — an opaque label for the operating agent, recorded
-  verbatim in the run context. Set it to tell an agent fleet's runs apart
-  from a person's; it is never required.
+  verbatim in the run context. Set it to tell one agent from another, or
+  one checkout of a fleet from the next; it is never required. Left
+  unset, a run started by an agent is still labeled, by the harness that
+  started it — `claude-code`, `cursor`, `codex`, or `agent` for anything
+  that announces itself only as one. A person's own terminal carries
+  none of those, so their runs stay unlabeled, and a consumer that wants
+  human runs alone reads the ones with no `agent` field.
 - `CF_TEST_RECORDS_SPOOL_ROOT` — overrides the per-user spool root, which
   is otherwise under the user cache directory
   (`~/.cache/common-fabric/test-records`). The root is deliberately not in

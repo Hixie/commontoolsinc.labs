@@ -477,14 +477,14 @@ describe("test-records-key", () => {
         return inner(name);
       };
       await Deno.writeTextFile(
-        join(home, ".zshrc"),
+        join(home, ".zshenv"),
         'export CF_TEST_RECORDS_KEY_FILE="/somewhere/else.json"\n',
       );
 
       expect(await collectCommand(deps)).toBe(0);
 
       // The profile is a person's file: the line that disagrees stays.
-      expect(await Deno.readTextFile(join(home, ".zshrc"))).toBe(
+      expect(await Deno.readTextFile(join(home, ".zshenv"))).toBe(
         'export CF_TEST_RECORDS_KEY_FILE="/somewhere/else.json"\n',
       );
     });
@@ -501,10 +501,10 @@ describe("test-records-key", () => {
       };
       const line = `export CF_TEST_RECORDS_KEY_FILE="$HOME/common-fabric/` +
         `test-records-key.json"\n`;
-      await Deno.writeTextFile(join(home, ".zshrc"), line);
+      await Deno.writeTextFile(join(home, ".zshenv"), line);
 
       expect(await collectCommand(deps)).toBe(0);
-      expect(await Deno.readTextFile(join(home, ".zshrc"))).toBe(line);
+      expect(await Deno.readTextFile(join(home, ".zshenv"))).toBe(line);
     });
 
     it("keeps the key beside the identity under a plain home", async () => {
@@ -540,10 +540,10 @@ describe("test-records-key", () => {
       };
       const line = `CF_TEST_RECORDS_KEY_FILE="$HOME/common-fabric/` +
         `test-records-key.json"\n`;
-      await Deno.writeTextFile(join(home, ".zshrc"), line);
+      await Deno.writeTextFile(join(home, ".zshenv"), line);
 
       expect(await collectCommand(deps)).toBe(0);
-      expect(await Deno.readTextFile(join(home, ".zshrc"))).toBe(line);
+      expect(await Deno.readTextFile(join(home, ".zshenv"))).toBe(line);
     });
 
     it("reports the login profile a shell reads and does not have", async () => {
@@ -679,7 +679,7 @@ describe("test-records-key", () => {
         if (name === "SHELL") return "/bin/zsh";
         return inner(name);
       };
-      return join(home, ".zshrc");
+      return join(home, ".zshenv");
     }
 
     it("dispatches, waits for the run, installs, and exports the key", async () => {
