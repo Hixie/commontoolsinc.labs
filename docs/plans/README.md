@@ -87,6 +87,13 @@ a record: archive it to `docs/history/plans/` following the procedure in
   confidentiality. Gated on a CFC review that has not happened.
 - [CFC runner implementation](runner_cfc_implementation.md) defines the
   commit-boundary enforcement workstreams and rollout.
+- [Pattern reach through a cell](pattern-reach-through-a-cell.md) settles where
+  the boundary goes for the reach the meta seam's write gate deliberately does
+  not cover: a handler holds a cell, a cell carries the runtime, and `run`
+  wires any result cell it is handed, so a handler can choose the program a
+  second running piece runs. It costs the three places the boundary could go,
+  records why the builder frame cannot carry the guard, and recommends gating
+  displacement first and separating the pattern-facing cell surface after.
 - [Finishing the piece source lifecycle](piece-source-lifecycle-completion.md)
   compares the lifecycle spec against the repository and orders the remainder
   as five pull requests in two tracks — what a revision records, and where a
