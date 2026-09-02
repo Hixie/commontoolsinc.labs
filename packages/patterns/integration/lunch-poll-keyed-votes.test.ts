@@ -199,11 +199,24 @@ describe("lunch poll: a vote is a keyed, mergeable write", () => {
         ),
       );
       await harness.settle();
+      // One vote per (voter, option) throughout: every send recasts a vote
+      // that is already there, so nothing joins or leaves the list. A round
+      // that moves the count cast a vote in the color it already held, which
+      // `castVote` reads as the voter clicking their own color again and
+      // answers by dropping the vote — a membership write on the one document
+      // every session shares, and the only write in the burst another
+      // session's commit can go stale against. What the rollback count below
+      // then measures is that contention rather than the cost of a keyed
+      // vote, and how much of it each session sees is a race.
+      expect(
+        await host.read(["voteCount"]),
+        `round ${round} left the poll holding a different number of votes ` +
+          "than it started with, so the burst is writing the shared vote " +
+          "list rather than recasting votes in place",
+      ).toBe(cast);
     }
     const rolledBack = await reverts(everyone) - before;
 
-    // One vote per (voter, option) throughout: the burst recast them in place.
-    expect(await host.read(["voteCount"])).toBe(cast);
     expect(
       rolledBack,
       `${rolledBack} rolled-back writes for ${cast * rounds} votes; a vote ` +
