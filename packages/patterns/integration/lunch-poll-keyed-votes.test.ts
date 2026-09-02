@@ -23,12 +23,15 @@
  * session's vote by key alone. Under a whole-list write the tally still reads
  * right and that read finds nothing.
  *
- * The second test is the same property in the units a person feels, and it is a
- * bound rather than an equality: a keyed vote still shares its commit with the
- * work the poll's derived views do, and that work reads the whole list. This
- * file's own burst — three voters, four options, three rounds — measured 25
- * rolled-back writes keyed against 63 whole-list (2026-09-01, this harness), so
- * the bound of one per vote sits between them with room either side.
+ * The burst test is the same property in the units a person feels, and it is a
+ * bound rather than an equality. A keyed vote still shares its commit with the
+ * work the poll's derived views do, and that work reads the whole list, so a
+ * round that puts a vote into the list or takes one out costs conflicts. This
+ * burst does neither: every send recasts a vote that is already there, which
+ * the check after each round holds it to. Three voters and four options over
+ * three rounds then roll back no writes at all, against 46 to 57 for the same
+ * burst over a whole-list write (2026-09-02, this harness), so the bound of
+ * one per vote sits between them with room either side.
  *
  * The poll's identity is a shared `#profile` cell and that wish does not resolve
  * in this harness, so the sessions claim identities through the
@@ -58,6 +61,16 @@ const PROGRAM_PATH = join(
 const NAMES = ["Alice", "Bob", "Carol"] as const;
 const TITLES = ["Cheeseboard", "Gregoire", "Saul's", "Fava"] as const;
 const COLORS = ["green", "yellow", "red"] as const;
+
+/**
+ * The color one voter casts for one option in one round of the burst below,
+ * counting the warm-up as round zero. Neighboring rounds never share a color,
+ * which is what makes every send after the warm-up a recast: `castVote` reads
+ * a vote cast in the color it already holds as the voter clicking their own
+ * color a second time, and removes the vote.
+ */
+const burstColor = (voter: number, option: number, round: number): string =>
+  COLORS[(voter + option + round) % COLORS.length];
 
 /**
  * Optimistic writes these sessions had rolled back — each one applied locally,
@@ -169,10 +182,15 @@ describe("lunch poll: a vote is a keyed, mergeable write", () => {
     // Everyone re-votes every option at once, repeatedly — the shape of a real
     // lunch decision, where a whole-list write makes each vote wait seconds.
     // Warm up first so no session is paying for a document it has never held; a
-    // cold first write conflicts either way and is not what this measures.
-    for (const session of everyone) {
-      for (const option of options) {
-        await session.send("castVote", { optionId: option, voteType: "green" });
+    // cold first write conflicts either way and is not what this measures. The
+    // warm-up is round zero of the same color rotation the burst continues, so
+    // the first round recasts each vote rather than clicking its own color.
+    for (let voter = 0; voter < everyone.length; voter++) {
+      for (let option = 0; option < options.length; option++) {
+        await everyone[voter].send("castVote", {
+          optionId: options[option],
+          voteType: burstColor(voter, option, 0),
+        });
         await harness.settle();
       }
     }
@@ -182,16 +200,13 @@ describe("lunch poll: a vote is a keyed, mergeable write", () => {
     await harness.settle();
     const before = await reverts(everyone);
     const rounds = 3;
-    for (let round = 0; round < rounds; round++) {
+    for (let round = 1; round <= rounds; round++) {
       await Promise.all(
         everyone.flatMap((session, voter) =>
           options.map((option, index) =>
             session.send(
               "castVote",
-              {
-                optionId: option,
-                voteType: COLORS[(voter + index + round) % COLORS.length],
-              },
+              { optionId: option, voteType: burstColor(voter, index, round) },
               undefined,
               { idle: false },
             )
