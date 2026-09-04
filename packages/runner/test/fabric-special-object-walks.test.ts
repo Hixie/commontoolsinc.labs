@@ -612,6 +612,11 @@ describe("fabric special objects through the runner's walks", () => {
         // sides -- two empty records, equal. Unproxied, the same two values
         // compare unequal.
         //
+        // Two raw errors built from one message compare unequal as well, which
+        // is correct rather than a second bug of the same kind:
+        // `fromNativeError` captures a stack, and two calls capture different
+        // ones.
+        //
         // Which arm a comparison site meets turns on how many of its operands
         // arrive through a cell read, so no single direction can be claimed
         // for the sites that adopt this comparison.
