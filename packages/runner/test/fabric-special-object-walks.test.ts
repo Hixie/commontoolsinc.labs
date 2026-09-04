@@ -459,6 +459,31 @@ describe("fabric special objects through the runner's walks", () => {
       expect((cell.get()[0] as { message: string }).message).toBe("boom");
     });
 
+    it("hands back a stored `FabricError` that is not one by `instanceof`", () => {
+      // The message above is what the assertion turns on because the class is
+      // not available: a read hands back a query-result proxy whose target is
+      // an empty stub with no `getPrototypeOf` trap, so `constructor` resolves
+      // through the get trap while `instanceof` consults `Object.prototype`.
+      // `query-result-proxy.ts` records that above the proxy construction,
+      // where a `TODO(danfuzz)` names the fix and says it lands at around ten
+      // guard sites at once. This pins the gap, so closing it turns this case
+      // red rather than letting it pass silently -- the treatment
+      // `test/llm-dialog-special-objects.test.ts` already gives the same gap.
+
+      const cell = runtime.getCell<unknown[]>(
+        space,
+        "walks-array-of-error-identity",
+        { type: "array" },
+        tx,
+      );
+
+      cell.set([FabricError.fromNativeError(new Error("boom"))] as never);
+
+      const read = cell.get()[0] as object;
+      expect(read.constructor.name).toBe("FabricError");
+      expect(read instanceof FabricError).toBe(false);
+    });
+
     it("appends a `FabricError` to a stored array", () => {
       const cell = runtime.getCell<unknown[]>(
         space,
