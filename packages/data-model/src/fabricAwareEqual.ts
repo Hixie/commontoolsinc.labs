@@ -69,8 +69,9 @@ function specialObjectEqual(a: object, b: object): boolean | undefined {
   if (!(aIsSpecial && bIsSpecial)) return false;
 
   // Two classes settle the pair without either one's contents, and so without
-  // a codec that can hash them. `valueEqual()` reaches the same verdict, by a
-  // route that hashes first when both operands are deep-frozen.
+  // asking a codec about either. `valueEqual()` settles it the same way when
+  // the two are not both deep-frozen, and when they are it asks whether each
+  // is deep-frozen first, which a `FabricMap` refuses to answer.
   if (a.constructor !== b.constructor) return false;
 
   return valueEqual(a, b);

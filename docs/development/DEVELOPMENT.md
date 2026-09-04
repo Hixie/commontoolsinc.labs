@@ -549,10 +549,13 @@ A value the runtime holds may be a `FabricSpecialObject` — a byte sequence, a
 temporal value, a content hash, a regular expression, an error, a link, a map,
 a set. Each of those keeps its state in private fields and has no own
 properties at all, so a walk that decides "may I read this by property name?"
-with `isObjectOrArray()`, `isObjectNotArray()`, or a bare
-`typeof value === "object"` gets the wrong result: it sees an empty record and
-then merges the value to `{}`, rebuilds it as `{}`, descends into it and finds
-nothing, or writes a property onto it.
+with `isObjectOrArray()`, `isReadonlyObjectOrArray()`, `isObjectNotArray()`, or
+a bare `typeof value === "object"` gets the wrong result: it sees an empty
+record and then merges the value to `{}`, rebuilds it as `{}`, descends into it
+and finds nothing, or writes a property onto it. Two sites already carry a
+`TODO(danfuzz)` naming that defect against `isReadonlyObjectOrArray()` —
+`schema.ts`'s default merge and `cfc/schema-merge.ts` — and they are what these
+predicates are for.
 
 These functions from `@commonfabric/data-model` are what a walk needs, and
 using them is not optional in code that can reach a stored value:
@@ -561,8 +564,11 @@ using them is not optional in code that can reach a stored value:
   `FabricSpecialObject` returns `false`, `FabricPrimitive` and any further
   subclass alike, and `false` says the value has no keys to reach. Everything
   outside the type is untouched: arrays and non-fabric class instances still
-  return `true`, so it is a drop-in wherever `isObjectOrArray()` was standing
-  in for the container question.
+  return `true`, so it is a drop-in for `isReadonlyObjectOrArray()`, which
+  narrows the same way. Against `isObjectOrArray()` the swap holds only where
+  the caller reads: that one narrows to a mutable `Record<string, unknown>`,
+  and a site that writes through the narrowed value fails to compile with
+  `TS2542`.
 - `isWalkableObjectOrArray(value)` is the same question with a `FabricInstance`
   refused rather than reported as having no keys. The two differ on an instance
   and nowhere else, and which one a walk wants turns on what a `false` would
@@ -582,21 +588,30 @@ using them is not optional in code that can reach a stored value:
   different shape but something it must not treat as a record.
 - `isFabricPlainContainer(value)` asks the same container question of a value
   the type system already says is a `FabricValue`, and is the one to reach for
-  where a caller holds one. The two differ only on values a `FabricValue`
-  cannot be — a `Cell`, a `Date`, a query-result proxy over one — which the
-  `isKeyable*` and `isWalkable*` pairs admit and this refuses.
+  where a caller holds one, with two differences to know. It rejects the values
+  a `FabricValue` cannot be — a `Cell`, a `Date`, a query-result proxy over
+  one — which the `isKeyable*` and `isWalkable*` pairs admit. And it returns
+  `false` for a `FabricInstance` rather than refusing one, so a walk that
+  would lose an instance gets no tripwire from it: reach for
+  `isWalkableObjectOrArray()` where that matters, even holding a
+  `FabricValue`.
 - `fabricAwareEqual(a, b)` is the comparison for operands that may hold a
   `FabricValue` without being known to be one — a schema `const` against a
   stored value, a schema default against a materialized one, a write against
   the value it replaces, a request against the snapshot a policy was checked
-  over. It is a structural walk that hands every `FabricSpecialObject` it
-  reaches to `valueEqual()`, so the value model decides each of those by
-  content wherever one sits. Neither half serves alone: `valueEqual()` throws
+  over. It is a structural walk that decides every `FabricSpecialObject` it
+  reaches by content rather than by properties: two of one class go to
+  `valueEqual()`, and a pair whose classes differ, or with a special object on
+  one side only, is unequal without either one's contents being read. Neither half serves alone: `valueEqual()` throws
   on a `Cell` or any other non-fabric instance, and `deepEqual()` compares by
   enumerable own properties, of which a special object has none. Where both
-  operands are known to be `FabricValue`s, use `valueEqual()` directly
-  instead — it decides a container by a content hash cached on identity, where
-  the walk pays for every level each time.
+  operands are known to be `FabricValue`s, `valueEqual()` is the cheaper
+  call — it decides a container by a content hash cached on identity, where the
+  walk pays for every level each time — but it is not a drop-in even there. It
+  decides a container by hashing it whole, so it throws on a value holding a
+  cycle and on one holding a class whose codec is a stub, both of which this
+  walk returns for. `valueEqual({ v: aFabricMap }, { v: 5 })` throws where
+  `fabricAwareEqual()` returns `false`.
 
 A walk that must not silently pass a `FabricInstance` by — one whose contents
 are reachable only through its codec — refuses it outright rather than walking

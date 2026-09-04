@@ -252,9 +252,10 @@ describe("fabricAwareEqual()", () => {
 
     it("returns `false` against another class whether or not it is frozen", () => {
       // Two classes settle the pair, so neither operand's contents are
-      // consulted and neither needs a codec that can hash it. The frozen half
-      // is the discriminating one: `valueEqual()` reaches a deep-frozen pair
-      // through its content hash, which a `FabricMap` has none of.
+      // consulted and no codec is asked about either. The frozen half is the
+      // discriminating one: handed a deep-frozen pair, `valueEqual()` asks
+      // whether each operand is deep-frozen, and a `FabricMap` refuses that
+      // question the same way it refuses to be hashed.
 
       const bytes = () => new FabricBytes(new Uint8Array([1]));
       const map = () => new FabricMap(new Map([["a", 1]]));
