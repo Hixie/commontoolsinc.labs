@@ -289,8 +289,9 @@ function resolveRefsForLLM(
     // `PRESERVE_KEYS`; this walk wants the same treatment for value-bearing
     // keys.
     //
-    // A `FabricSpecialObject` is carried by reference either way: the rebuild
-    // reads a node by property name and would answer `{}` for one.
+    // A `FabricPrimitive` is carried by reference either way: the rebuild
+    // reads a node by property name and would return `{}` for one. A
+    // `FabricInstance` is refused rather than carried, as everywhere else.
     const result: any = {};
     for (const [key, value] of Object.entries(nodeObj)) {
       if (key === "$defs") continue; // strip $defs from output

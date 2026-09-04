@@ -664,7 +664,7 @@ function recursiveStripAsCellFromSchema(
     if (key === "$ref") continue;
 
     // A fabric value is carried by reference: the rebuild below reads it by
-    // property name and would answer `{}`, so a fabric-valued default (which
+    // property name and would return `{}`, so a fabric-valued default (which
     // `Cell.of()` embeds into schemas) would be lost from the sanitized
     // schema that rides on links.
     if (isWalkableObjectOrArray(value)) {

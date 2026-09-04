@@ -2,10 +2,10 @@ import {
   type DebugValueOptions,
   FabricInstance,
   type FabricPlainObject,
-  FabricSpecialObject,
   type FabricValue,
   isWalkableObjectOrArray,
   toCompactDebugString,
+  toDebugKindString,
   valueEqual,
 } from "@commonfabric/data-model";
 import {
@@ -228,7 +228,7 @@ export const resolve = (
       return {
         error: TypeMismatchError(
           { ...address, path: path.slice(0, at + 1) },
-          value.constructor.name,
+          toDebugKindString(value),
           "read",
         ),
       };
@@ -246,14 +246,12 @@ export const resolve = (
           error: NotFound(source, address, path.slice(0, Math.max(0, at))),
         };
       }
-      // Type mismatch - trying to access property on non-object. A special
-      // object names its class, `typeof` "object" being no help in saying
-      // which value refused the path.
-      const actualType = value === null
-        ? "null"
-        : value instanceof FabricSpecialObject
-        ? value.constructor.name
-        : typeof value;
+      // Type mismatch - trying to access property on non-object.
+      // `toDebugKindString` is what names the value: `typeof` returns
+      // "object" for a special object, which says nothing about which value
+      // refused the path, and this is the one spelling the rest of the
+      // storage layer already uses for that.
+      const actualType = toDebugKindString(value);
       return {
         error: TypeMismatchError(
           { ...address, path: path.slice(0, at + 1) },

@@ -805,7 +805,7 @@ export function snapshotQueryResult<T>(value: T): T {
   const seen = new WeakMap<object, unknown>();
   const snapshot = (current: unknown): unknown => {
     // A special object leafs through whole. It has no own properties for the
-    // rebuild below to copy, so snapshotting one by its keys would answer
+    // rebuild below to copy, so snapshotting one by its keys would return
     // `{}` and lose the value.
     if (!isWalkableObjectOrArray(current)) return current;
     const existing = seen.get(current);

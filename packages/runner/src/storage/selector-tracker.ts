@@ -387,7 +387,7 @@ export class SelectorTracker<T = Result<Unit, Error>> {
     }
     // TODO(danfuzz): this rebuild filters by key name only, so it also
     // rebuilds `default`/`examples` VALUES, dropping an `asCell` that a
-    // default value happens to spell. Value-bearing keys want to pass
+    // default value happens to carry. Value-bearing keys want to pass
     // through by reference.
     //
     // A fabric value passes through by reference either way: the rebuild

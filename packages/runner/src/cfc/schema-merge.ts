@@ -499,9 +499,10 @@ const mergeRequired = (
   return merged;
 };
 
-// A fabric-valued default on either side takes the `candidate` arm: a special
-// object has no properties for the spread to copy, so merging one yields `{}`
-// and loses whichever side held the value.
+// A `FabricPrimitive` default on either side takes the `candidate` arm: it has
+// no properties for the spread to copy, so merging one yields `{}` and loses
+// whichever side held the value. A `FabricInstance` default is refused rather
+// than merged.
 const mergeDefaults = (
   existing: JSONSchemaObj["default"],
   candidate: JSONSchemaObj["default"],

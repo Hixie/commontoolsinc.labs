@@ -1,5 +1,8 @@
 import type { FabricValue } from "@commonfabric/api";
-import { isWalkableObjectOrArray } from "@commonfabric/data-model";
+import {
+  FabricInstance,
+  isWalkableObjectOrArray,
+} from "@commonfabric/data-model";
 import { isArrayIndexPropertyName } from "@commonfabric/utils/arrays";
 
 export type ReadPathOptions = {
@@ -17,12 +20,26 @@ const hasOwnPathSegment = (
   segment: string | number,
 ): boolean => Object.hasOwn(value, segment);
 
-// Both descents below stop at a `FabricPrimitive`, so a path into one reports
-// absent / `undefined` -- the same answer `getAtPath` in `traverse.ts` gives
-// for the same address, and the whole story for a leaf that no path addresses
-// anything inside of. A `FabricInstance` is refused rather than answered
-// about, by the same predicate and for the same reason it is refused
-// everywhere else.
+// Both descents below stop at a `FabricSpecialObject`, so a path into one
+// reports absent / `undefined` -- the same answer `getAtPath` in `traverse.ts`
+// gives for the same address, and the whole story for a leaf that no path
+// addresses anything inside of.
+//
+// A `FabricInstance` is tested for ahead of the walk question so that it takes
+// that answer too, rather than the refusal the question raises. These two are
+// read helpers on the write path: `normalizeAndDiff` reads the current value
+// at every slot it is about to write, so a write anywhere below a stored
+// instance reaches them. Reporting the slot absent lets the write proceed to
+// the storage layer, which refuses it with a `TypeMismatchError` naming the
+// path and the class it found; refusing here would replace that in-band,
+// typed error with an exception escaping `Cell.set()`.
+//
+// TODO(danfuzz): "absent" is an incomplete answer for an instance, whose codec
+// contents are real and simply not addressable by a path segment yet. When
+// that descent lands, this test goes and the contents speak for themselves.
+const isKeyable = (value: unknown): boolean =>
+  !(value instanceof FabricInstance) && isWalkableObjectOrArray(value);
+
 export const hasValueAtPath = (
   root: FabricValue | undefined,
   path: readonly string[],
@@ -45,7 +62,7 @@ export const hasValueAtPath = (
       current = current[index];
       continue;
     }
-    if (!isWalkableObjectOrArray(current)) {
+    if (!isKeyable(current)) {
       return false;
     }
     const record = current as Record<string, unknown>;
@@ -79,7 +96,7 @@ export const readValueAtPath = (
       current = current[index];
       continue;
     }
-    if (!isWalkableObjectOrArray(current)) {
+    if (!isKeyable(current)) {
       return undefined;
     }
     const record = current as Record<string, unknown>;

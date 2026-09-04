@@ -1,6 +1,7 @@
 import type { FabricValue, SchemaPathSelector } from "@commonfabric/api";
 import {
   cloneIfNecessary,
+  FabricInstance,
   hashStringOf,
   isWalkableObjectOrArray,
 } from "@commonfabric/data-model";
@@ -2164,7 +2165,13 @@ export class StorageManager implements IStorageManager {
     // found here and its target document is never synced — the later read
     // finds it absent. (Stopping at a `FabricPrimitive` costs nothing; it is a
     // leaf.)
-    if (isWalkableObjectOrArray(value)) {
+    //
+    // The instance is tested for ahead of the walk question so that it stops
+    // the walk rather than refusing: a scan that stops finds nothing, which is
+    // what the marker above records.
+    if (
+      !(value instanceof FabricInstance) && isWalkableObjectOrArray(value)
+    ) {
       for (const key of Object.keys(value)) {
         const child = value[key];
         if (

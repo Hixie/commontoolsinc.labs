@@ -1361,17 +1361,17 @@ const stripWriterIdentityStamp = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(stripWriterIdentityStamp);
   }
-  // A sigil link is carried whole. It is a reference rather than a record of
-  // the writer's, so there is no stamp inside one to strip.
+  // A link is carried whole. It is a reference rather than a record of the
+  // writer's, so there is no stamp inside one to strip.
   if (isPrimitiveCellLink(value)) {
     return value;
   }
   // A fabric-valued node -- a schema `default`, say -- is carried by
-  // reference: rebuilding one by its properties would answer `{}` and erase
+  // reference: rebuilding one by its properties would return `{}` and erase
   // the difference between two schemas that differ only there.
   //
-  // TODO(danfuzz): this still rebuilds every plain record it meets, schema
-  // `default` VALUES included, so a default that happens to spell `file`
+  // TODO(danfuzz): this still rebuilds every plain record it visits, schema
+  // `default` VALUES included, so a default that happens to carry `file`
   // beside `bundleId` has the stamp keys stripped out of it and compares
   // equal to one that never carried them. Value-bearing keys want to be
   // carried by reference too.
@@ -1921,9 +1921,9 @@ export const flowReadExcluded = (
 // non-link leaf (string, number, boolean, null) makes the value content.
 // Such writes get `structure` (shape-only) stamps instead of covering
 // `derived` ones — see `pureLinkContainerPaths`.
-// A `FabricSpecialObject` is a content leaf like any other: its state is
-// private, so enumerating it answers "no members" and would classify a byte
-// blob as pure structure.
+// A `FabricPrimitive` is a content leaf like any other: its state is private,
+// so enumerating it finds no members and would classify a byte blob as
+// pure structure. A `FabricInstance` is refused rather than classified.
 const isPureLinkStructure = (value: unknown): boolean => {
   if (value === undefined) return true;
   if (isPrimitiveCellLink(value)) return true;
@@ -3095,14 +3095,24 @@ const linkedWriteValueForPolicy = (
   });
 };
 
-// A path segment never addresses anything inside a `FabricSpecialObject`, so
-// this descent and `changedValuesAtPatternPath` below both stop at one rather
-// than resolving the segment against its class surface.
+// Whether a pattern-path descent may address `value` by key.
 //
-// TODO(danfuzz): for a `FabricInstance` that is still an incomplete answer.
-// No key of its codec contents is reachable by property name, so a pattern
-// path into one resolves to no values and the policy condition it feeds is
-// never evaluated for that content. Fails open.
+// A path segment never addresses anything inside a `FabricSpecialObject`, so
+// the two descents below stop at one rather than resolving the segment against
+// its class surface. A `FabricInstance` is tested for ahead of the walk
+// question so that it stops the descent too: these descents run over ordinary
+// stored values, a `FabricError` among them, so a refusal here would take down
+// policy evaluation rather than reporting a gap.
+//
+// TODO(danfuzz): stopping is an incomplete answer for an instance. No key of
+// its codec contents is reachable by property name, so a pattern path into one
+// resolves to no values and the policy condition it feeds is never evaluated
+// for that content. Fails open.
+const isPatternPathKeyable = (
+  value: unknown,
+): value is Record<string, unknown> =>
+  !(value instanceof FabricInstance) && isWalkableObjectOrArray(value);
+
 const valuesAtPatternPath = (
   value: unknown,
   path: readonly string[],
@@ -3121,11 +3131,12 @@ const valuesAtPatternPath = (
     );
   }
 
-  // A pattern path does not descend through a sigil link: the reference is
-  // the value at that slot, and what it points at is resolved elsewhere.
-  // Asked before the walk question, which reads a sigil link as the record it
-  // is written as and would descend into it.
-  if (isPrimitiveCellLink(value) || !isWalkableObjectOrArray(value)) {
+  // A pattern path does not descend through a link: the reference is the value
+  // at that slot, and what it points at is resolved elsewhere. Asked before
+  // the walk question, which under the legacy representation would descend the
+  // record a link is written as, and under `modernCellRep` would refuse the
+  // `FabricLink` it is.
+  if (isPrimitiveCellLink(value) || !isPatternPathKeyable(value)) {
     return [];
   }
   if (!(head in value)) {
@@ -3158,11 +3169,11 @@ const changedValuesAtPatternPath = (
 
   // As in `valuesAtPatternPath`: a link ends the descent, and the test comes
   // before the walk question for the same reason.
-  if (isPrimitiveCellLink(value) || !isWalkableObjectOrArray(value)) {
+  if (isPrimitiveCellLink(value) || !isPatternPathKeyable(value)) {
     return [];
   }
   const previousChild = !isPrimitiveCellLink(previousValue) &&
-      isWalkableObjectOrArray(previousValue)
+      isPatternPathKeyable(previousValue)
     ? (previousValue as Record<string, unknown>)[head]
     : undefined;
   if (!(head in value)) {
@@ -3287,13 +3298,16 @@ const policySchemaMatchesValue = (
       policySchemaMatchesValue(branch, value, schemaRoot)
     );
   }
-  // A special object has no property for a `properties` condition to read, so
-  // it falls past this arm rather than matching every child vacuously.
-  // A sigil link matches by what it is, not by what a `properties` condition
-  // would read off the record it is written as. Descending one reaches values
-  // the walk question refuses, which is what a modern argument link arriving
-  // here does; `isPrimitiveCellLink()` speaks only about the sigil form, so a
-  // `FabricLink` reaching this arm is refused rather than matched.
+  // A link matches by what it is, not by what a `properties` condition would
+  // read off the record a legacy one is written as. `isPrimitiveCellLink()`
+  // recognizes whichever form the active regime uses, so it takes a
+  // `FabricLink` out of the walk question's way as well; a modern argument
+  // link arriving here is what makes that load-bearing rather than tidy.
+  //
+  // A `FabricPrimitive` carries no property for a `properties` condition to
+  // read, so it falls past this arm to the same `true` a vacuous match
+  // produced. The answer does not move; what moves is that the walk below no
+  // longer reads keys off a value that has none.
   if (
     !isPrimitiveCellLink(value) && isWalkableObjectOrArray(value) &&
     isObjectOrArray(schema.properties)

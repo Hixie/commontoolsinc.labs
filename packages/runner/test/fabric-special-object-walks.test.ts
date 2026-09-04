@@ -1,19 +1,24 @@
 /**
  * A `FabricSpecialObject` survives the runner's structural walks.
  *
- * Every walk here used to ask `isObjectOrArray()` -- "is this an object?" --
+ * Several of these walks asked `isObjectOrArray()` -- "is this an object?" --
  * as a stand-in for "may I read this by property name?". A special object
- * answers yes to the first and no to the second: its state lives in private
- * fields and it has no own properties at all. So each walk saw an empty
- * record, and each lost the value in its own way -- merged it to `{}`, rebuilt
- * it as `{}`, descended into it and found nothing, or wrote a property onto
- * it. They now ask `isWalkableObjectOrArray()`, and the cases below are that
- * one predicate observed from each walk's own doorstep.
+ * returns `true` for the first and `false` for the second: its state lives in
+ * private fields and it has no own properties at all. Those walks saw an empty
+ * record and lost the value, each in its own way -- merged it to `{}`, rebuilt
+ * it as `{}`, or wrote a property onto it. They ask
+ * `isWalkableObjectOrArray()` now.
+ *
+ * Others already had the right answer by another route, `snapshotQueryResult()`
+ * through its own leaf test and the four path readers through `Object.hasOwn`,
+ * which consults no prototype. Their cases here pass before the change as well
+ * as after, and are pins rather than proofs: what one walk decides is easy to
+ * undo from a neighbor, and these are the walks a caller reaches in one pass.
  *
  * The suite runs over every special-object kind rather than a representative
  * one, because the kinds differ in what a naive walk does to them: a
- * `FabricBytes` answers to `"slice"` through its prototype where a
- * `FabricEpochNsec` does not, and a `FabricError` answers to `"message"`. A
+ * `FabricBytes` resolves `"slice"` through its prototype where a
+ * `FabricEpochNsec` does not, and a `FabricError` resolves `"message"`. A
  * walk fixed only for the kind it was reported against would keep passing a
  * one-kind test.
  *
@@ -25,8 +30,10 @@
  * at all, so they take part only in the walks that touch neither.
  */
 
-import { describe, it } from "@std/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
+
+import { Identity } from "@commonfabric/identity";
 
 import {
   FabricError,
@@ -60,6 +67,9 @@ import {
   hasValueAtPath as hasStoredValueAtPath,
   readValueAtPath,
 } from "../src/storage/v2-path.ts";
+import { Runtime } from "../src/runtime.ts";
+import { StorageManager } from "../src/storage/cache.deno.ts";
+import type { IExtendedStorageTransaction } from "../src/storage/interface.ts";
 import type { JSONSchema } from "../src/builder/types.ts";
 
 interface SpecialObjectKind {
@@ -157,6 +167,9 @@ const SPECIAL_OBJECTS: readonly SpecialObjectKind[] = [
  * that asserts carrying runs over the primitives. The instances get one suite
  * of their own, at the bottom, asserting the refusal instead.
  */
+const signer = await Identity.fromPassphrase("fabric walks operator");
+const space = signer.did();
+
 const FABRIC_PRIMITIVES = SPECIAL_OBJECTS.filter((k) => !k.isInstance);
 const FABRIC_INSTANCES = SPECIAL_OBJECTS.filter((k) => k.isInstance);
 const STORABLE_PRIMITIVES = FABRIC_PRIMITIVES.filter((k) => k.storable);
@@ -336,7 +349,9 @@ describe("fabric special objects through the runner's walks", () => {
       (_kind, special) => {
         const root = { a: special };
         // `"slice"` and `"message"` resolve through the prototype of some of
-        // these; a path names data, and none of that is data.
+        // these, so they are the segments worth naming: a path names data, and
+        // none of that is data. All four readers already consult own
+        // properties only, so these pin that rather than prove it.
         for (const segment of ["slice", "message", "length", "source"]) {
           expect(hasValueAtPath(root, ["a", segment])).toBe(false);
           expect(getValueAtPath(root, ["a", segment])).toBeUndefined();
@@ -349,7 +364,7 @@ describe("fabric special objects through the runner's walks", () => {
     );
 
     forEachSpecialObject(
-      FABRIC_PRIMITIVES,
+      SPECIAL_OBJECTS,
       (name) => `reads a \`${name}\` at its own path`,
       (_kind, special) => {
         const root = { a: special };
@@ -364,8 +379,8 @@ describe("fabric special objects through the runner's walks", () => {
   describe("a `FabricInstance` in any of them", () => {
     // The refusal is the whole point of separating the two kinds. A
     // `FabricPrimitive` is a leaf and every walk above carries one through; an
-    // instance is a container the walks cannot descend yet, so answering at all
-    // would be answering wrongly, in one direction or the other. When the
+    // instance is a container the walks cannot descend yet, so either boolean
+    // would be wrong, in one direction or the other. When the
     // codec-mediated descent lands, these are the cases that change.
 
     for (const kind of FABRIC_INSTANCES) {
@@ -389,15 +404,101 @@ describe("fabric special objects through the runner's walks", () => {
         );
       });
 
-      it(`is refused by the stored path read for a \`${kind.name}\``, () => {
+      it(`reports no path inside a \`${kind.name}\` to the stored read`, () => {
+        // The two stored path reads are the exception among these. They are
+        // read helpers on the write path, so refusing would take down an
+        // ordinary write; they answer "absent" for an instance, as they do
+        // for a leaf.
+
         const root = { a: kind.make() } as FabricValue;
-        expect(() => hasStoredValueAtPath(root, ["a", "b"])).toThrow(
-          "`FabricInstance`) in a structural walk",
-        );
-        expect(() => readValueAtPath(root, ["a", "b"])).toThrow(
-          "`FabricInstance`) in a structural walk",
-        );
+        expect(hasStoredValueAtPath(root, ["a", "b"])).toBe(false);
+        expect(readValueAtPath(root, ["a", "b"])).toBeUndefined();
       });
     }
+  });
+
+  describe("through `Cell.set()` rather than the walks directly", () => {
+    // Every case above calls a walk directly, and that is the gap these fill.
+    // A stored value reaches several walks in one pass, and the write path
+    // decides which, so a walk that refuses a value the write path hands it
+    // takes down an ordinary write while every direct case still passes. That
+    // is not hypothetical: writing an array holding a `FabricError` -- which
+    // `sandbox/result-normalization.ts` mints from any `Error` an action
+    // returns -- was broken for exactly that reason, with the whole suite
+    // green.
+
+    let storageManager: ReturnType<typeof StorageManager.emulate>;
+    let runtime: Runtime;
+    let tx: IExtendedStorageTransaction;
+
+    beforeEach(() => {
+      storageManager = StorageManager.emulate({ as: signer });
+      runtime = new Runtime({
+        apiUrl: new URL(import.meta.url),
+        storageManager,
+      });
+      tx = runtime.edit();
+    });
+
+    afterEach(async () => {
+      await tx.commit();
+      await runtime?.dispose();
+      await storageManager?.close();
+    });
+
+    it("stores an array holding a `FabricError`", () => {
+      const cell = runtime.getCell<unknown[]>(
+        space,
+        "walks-array-of-error",
+        { type: "array" },
+        tx,
+      );
+
+      cell.set([FabricError.fromNativeError(new Error("boom"))] as never);
+
+      expect((cell.get()[0] as { message: string }).message).toBe("boom");
+    });
+
+    it("appends a `FabricError` to a stored array", () => {
+      const cell = runtime.getCell<unknown[]>(
+        space,
+        "walks-append-error",
+        { type: "array" },
+        tx,
+      );
+
+      cell.set([FabricError.fromNativeError(new Error("one"))] as never);
+      cell.push(FabricError.fromNativeError(new Error("two")) as never);
+
+      expect(cell.get().length).toBe(2);
+    });
+
+    it("replaces a stored `FabricError` with a record", () => {
+      const cell = runtime.getCell<Record<string, unknown>>(
+        space,
+        "walks-record-over-error",
+        undefined,
+        tx,
+      );
+
+      cell.set({ r: FabricError.fromNativeError(new Error("boom")) } as never);
+      cell.set({ r: { a: 1 } } as never);
+
+      expect(cell.get()).toEqual({ r: { a: 1 } });
+    });
+
+    it("stores an array holding a `FabricBytes`", () => {
+      const cell = runtime.getCell<unknown[]>(
+        space,
+        "walks-array-of-bytes",
+        { type: "array" },
+        tx,
+      );
+
+      cell.set([new FabricBytes(new Uint8Array([1, 2]))] as never);
+
+      expect((cell.get()[0] as FabricBytes).slice())
+        .toEqual(new Uint8Array([1, 2]));
+    });
   });
 });

@@ -52,11 +52,13 @@ export function traverseValue(
     );
   }
 
-  // Traverse value. A `FabricSpecialObject` is an atomic value whose state
-  // lives in private fields (zero enumerable own-props); descending into one
-  // would rebuild it as `{}`, corrupting it. It has already been shown to `fn`
-  // above like any other leaf — here we just decline to descend, so the
-  // original instance passes through intact.
+  // Traverse value. A `FabricPrimitive` is an atomic value whose state lives
+  // in private fields (zero enumerable own-props); descending into one would
+  // rebuild it as `{}`, corrupting it. It has already been shown to `fn` above
+  // like any other leaf — here we just decline to descend, so the original
+  // value passes through intact. The test names the base class rather than
+  // that one: an instance is refused above, so the two select the same values
+  // here, and the class this walk declines to descend is the wider one.
   if (
     !isReactive(value) &&
     !isCell(value) &&

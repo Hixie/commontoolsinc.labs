@@ -886,8 +886,12 @@ export function findAllWriteRedirectCells<T>(
       //
       // TODO(danfuzz): a `FabricInstance` can hold one, and its contents are
       // reached by its codec rather than by property name, so a write redirect
-      // nested inside one is still missed here.
-    } else if (isWalkableObjectOrArray(binding) && !isCellLink(binding)) {
+      // nested inside one is still missed here. It is tested for ahead of the
+      // walk question so that it ends the walk rather than refusing.
+    } else if (
+      !isCellLink(binding) && !(binding instanceof FabricInstance) &&
+      isWalkableObjectOrArray(binding)
+    ) {
       // If the binding is an object, recurse into each value.
       for (const value of Object.values(binding)) find(value, baseCell);
     }

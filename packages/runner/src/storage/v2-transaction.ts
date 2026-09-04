@@ -750,11 +750,12 @@ const isSubsumedByTailSplice = (
     Number(childSegment) >= spliceCandidate.tailSpliceStartIndex;
 };
 
-// A special object on either side falls to the `valueEqual` comparison below
-// rather than being compared by key set: its state sits behind no key, so two
-// distinct ones would compare by their empty key sets and report "unchanged",
-// leaving an in-place fabric change at an ancestor prefix with no reactivity
-// path. `differential.ts` guards its sibling walk the same way.
+// A `FabricPrimitive` on either side falls to the `valueEqual` comparison
+// below rather than being compared by key set: its state sits behind no key,
+// so two distinct ones would compare by their empty key sets and report
+// "unchanged", leaving an in-place fabric change at an ancestor prefix with no
+// reactivity path. `differential.ts` guards its sibling walk the same way. A
+// `FabricInstance` is refused rather than compared either way.
 const shallowStructureChanged = (
   before: FabricValue | undefined,
   after: FabricValue | undefined,

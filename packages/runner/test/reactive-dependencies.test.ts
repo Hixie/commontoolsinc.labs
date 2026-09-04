@@ -2013,11 +2013,13 @@ describe("determineTriggeredActions", () => {
     });
 
     it("propagates the failure from a leaf it cannot compare", () => {
-      // The descent ends quietly at a value it cannot address by key, but a
-      // read landing on such a value still has to compare it, and a class
-      // whose comparison is an unimplemented stub cannot answer. That failure
-      // is left to propagate rather than being caught and turned into
-      // "unchanged", which would report a changed value as unchanged.
+      // A read landing on a special object has to compare it, and a class
+      // whose comparison is an unimplemented stub cannot. That failure is left
+      // to propagate rather than being caught and turned into "unchanged",
+      // which would report a changed value as unchanged. The descent is a
+      // separate question and does not decide this one: `isKeyable()` returns
+      // `true` for the `FabricMap` here, so the walk reaches it by descending
+      // rather than by stopping short.
 
       const action = createAction("nonRecursiveUncomparableLeaf");
       const dependencies = new Map<Action, SortedAndCompactPaths>([

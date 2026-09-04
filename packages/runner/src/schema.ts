@@ -859,9 +859,10 @@ export function mergeDefaults(
 
   // TODO(seefeld): What's the right thing to do for arrays?
   //
-  // A fabric-valued default on either side takes the `defaultValue` arm: a
-  // special object has no properties for the spread to copy, so merging one
-  // yields `{}` and loses whichever side held the value.
+  // A `FabricPrimitive` default on either side takes the `defaultValue` arm:
+  // it has no properties for the spread to copy, so merging one yields `{}`
+  // and loses whichever side held the value. A `FabricInstance` default is
+  // refused rather than merged.
   const mergedDefault = base.type === "object" &&
       isWalkableObjectOrArray(base.default) &&
       isWalkableObjectOrArray(defaultValue)

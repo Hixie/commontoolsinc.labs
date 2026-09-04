@@ -2222,13 +2222,20 @@ export function getAtPath(
         },
         value: curDoc.value.length,
       };
-    } else if (isWalkableObjectOrArray(curDoc.value) && part in curDoc.value) {
-      // A `FabricPrimitive` is not descended: `in` consults the prototype
+    } else if (
+      !(curDoc.value instanceof FabricInstance) &&
+      isWalkableObjectOrArray(curDoc.value) && part in curDoc.value
+    ) {
+      // A `FabricSpecialObject` is not descended: `in` consults the prototype
       // chain, which for one of these resolves the class surface rather than
       // the value -- `"slice"` on a `FabricBytes` would name a function as the
       // next doc value. Such a path falls to the arm below and reads as
-      // absent, which is what a path into a leaf is. A `FabricInstance` does
-      // not reach that arm at all: the predicate refuses one.
+      // absent, which is what a path into a leaf is.
+      //
+      // An instance is tested for ahead of the walk question so that it takes
+      // that answer too. `traverseDAG` above says why: this file carries live
+      // instance traffic, a `FabricError` stored by the fetch builtins being
+      // read back through it, so it cannot fail loudly here yet.
       const cursorObj = curDoc.value as Immutable<JSONObject>;
       curDoc = {
         ...curDoc,
