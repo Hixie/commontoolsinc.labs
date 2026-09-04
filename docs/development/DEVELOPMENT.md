@@ -24,22 +24,6 @@ about one aspect of the runtime, are indexed in
 - Use **double quotes** for strings.
 - Always run `deno fmt` before committing.
 
-### File names
-
-A source file's base name is `lower-kebab-case`, describing what the module
-holds: `type-check.ts`, `deep-freeze.ts`, `native-conversion.ts`.
-
-A file holding a single export takes that export's name exactly instead, so
-that the file name and the thing it defines are one word:
-`tagFromNativeBuiltinClass.ts`, `hashSchema.ts`, `FabricBytes.ts`,
-`CodecRegistry.ts`. Private helpers the export needs sit in that file and do
-not count against the rule; a second export does, and a module that grows one
-takes the kebab-case name for what the pair of them is.
-
-`docs/development/unit-test-coding-style.md` states the matching rule for a
-test file, which follows the source file it tests, and names the `describe()`
-title that goes with each form.
-
 ### Imports
 
 - Group imports by source: standard library, external, then internal, with a
