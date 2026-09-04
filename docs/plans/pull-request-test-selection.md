@@ -321,9 +321,9 @@ record of it exists.
 identities; the runners take file paths and section names. For a pattern
 test the identity name is its path, while the suite supplies its record
 surface and variant. For a unit test `locate()` needs the file the identity
-came from, which is metadata the store does not reliably carry today;
-closing that gap is the first thing [part
-one](#part-one--the-data-and-what-it-already-tells-us) does.
+came from, which is metadata the store carries for most identities and not
+all; what it does not carry, and what that costs, is under [What the store
+is missing](#what-the-store-is-missing).
 
 Most identities locate to an item and take part in scoring and item cost.
 An overlapping task-level record locates only to the suite. For example,
@@ -1105,48 +1105,51 @@ section](#how-far-back-each-term-looks).
 
 ### What the store is missing
 
-**Records do not carry the file for the suites that matter most.** The
-`file` field is optional metadata, and today only the package integration
-suites populate it, because their JUnit class names happen to be file
-paths. A sample of 5,333 unit records carried it zero times. Without it,
-`locate()` cannot map a unit identity to a file, and unit selection cannot
-work at all.
+**The file is recorded for most tests and not all.** Not every record
+needs one: a repository gate and a per-package type check name no file,
+and a pattern test's identity is its path, so the field would only repeat
+it. For the rest the field has three sources. The browser runner in
+`packages/deno-web-test/runner.ts` sets it directly. A JUnit report
+supplies it where the class name is the test file, which is what Deno
+writes for a case the test file registered itself — a bare `Deno.test`,
+or the implicit suite a top-level `it` belongs to. A leaf under a
+top-level `describe()`, which is how most of this repository's tests are
+written, is registered from inside the bdd machinery and takes that
+machinery's class name instead, so its file comes from the name map the
+registration preload leaves in the spool.
 
-The reason is mechanical. Deno's JUnit output names a leaf case by its
-describe chain and puts the describe chain in the class name too, so
-`ingestJUnit` has nothing that looks like a path to join onto its
-`filePrefix`. Only file-level suites, where the class name happens to be
-the path, come out with a file.
+The preload therefore decides the answer for most identities, and it does
+not reach every invocation. It writes a map only where the test process
+may read `CF_TEST_RECORDS_DIR`, write into the spool that variable names,
+and read the tree far enough to find the enclosing `.git`. A member's own
+`test` task is what grants those or withholds them, and several withhold
+one of the three. The three do not come apart cleanly: a process granted
+the first two and not the third installs the wrapper, captures nothing,
+and so gives up the class names it would otherwise have kept. The runner
+shard job in `deno.yml` grants all three deliberately, and its comment
+says why. The
+preload is not appended at all to a member that names its own import map,
+or to an integration run whose caller builds `INTEGRATION_TEST_FLAGS`
+itself rather than passing `--junit-dir` and letting
+`deno task integration` build them.
 
-Closing this comes first, and the mechanism that works without touching a
-single test file is a preload module. `deno test --preload` already runs
-in this repository — `packages/runner` uses it for its fake clock — and a
-preload runs before every test module. A module in
-`@commonfabric/test-support` wraps `Deno.test`, reads the registering
-module out of the stack at registration time, and writes the resulting
-name-to-file map into the spool beside the record fragments when the
-process unloads.
+Where the preload does install, two joins are declined on purpose. A name
+registered from outside the member's own directory — a shared
+fixture-suite builder, say — is dropped rather than attributed to the
+helper that registered it. A name that two of the member's files both
+register is dropped rather than attributed to whichever was read last,
+and that is a collision the report tool surfaces as one.
 
-A file written in the repository's `describe`/`it` style registers exactly
-one `Deno.test`, named for its single top-level `describe()`, so the
-captured map is from that title to the file. Every leaf identity from that
-file begins with the same title followed by the separator, which is the
-join `ingestJUnit` performs to set each leaf's file. Two files sharing a
-top-level title make the join ambiguous, and that is already a name
-collision the report tool surfaces as one.
-
-This was tried before being written down: wrapping `Deno.test` from a
-preload works on Deno 2.9.4, the stack names the registering module, and
-the unload handler runs.
-
-That covers everything built on `Deno.test`, which is the workspace unit
-suites, the runner suite, and the generated-pattern suites. The browser
-runner in `packages/deno-web-test/runner.ts` records through
-`FragmentWriter` directly and sets the file there. The pattern suites need
-nothing: their identity is the path already.
-
-The record schema already carries the field, so no format changes, and
-nothing downstream of the store has to know this happened.
+What is left costs an item that is never selected rather than a selection
+that cannot run. `locate()` places a unit or integration record on an
+item by its file, so a member enumerated one file at a time whose leaves
+record none has no identity landing on any of those files. Each of them
+is then an item no manifest knows, and [an identity with no records must
+run](#two-rules-that-force-a-test-in) makes every one of them mandatory.
+They run in full on every pull request, and the budget they take is
+charged to every other suite. The record schema carries the field
+already, so closing this is a change to the invocations rather than to
+the store.
 
 **Compaction is live.** The compactor's identity was provisioned on
 2026-08-31 and its daily workflow has rolled up every day from 2026-08-19
@@ -3268,8 +3271,8 @@ answers somewhere people can see them.
 
 - [x] A preload module in `@commonfabric/test-support` that captures the
       registering module for every `Deno.test` and writes the name-to-file
-      map into the spool; `ingestJUnit` joins on it; every `deno test`
-      invocation carries the preload.
+      map into the spool; `ingestJUnit` joins on it; the runners append the
+      preload to the invocations that can take one.
 - [x] `packages/deno-web-test/runner.ts` sets `file` on the records it
       writes directly.
 - [x] `tasks/test-selection/{policy,score,manifest,store}.ts` — the dials,
