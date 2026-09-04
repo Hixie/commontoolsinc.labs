@@ -65,6 +65,14 @@ interface Member {
 
   /** Whether the member also names a browser half. */
   browserTest: boolean;
+
+  /**
+   * Repository-relative files that half runs. The half is one unit
+   * rather than one per file, so these are what the suite accounts for
+   * beyond its units: without them a file only the browser runs is a
+   * test surface no suite claims.
+   */
+  browserFiles: string[];
 }
 
 /** The record scope of a member: its path with `packages/` taken off. */
@@ -88,6 +96,11 @@ async function readMember(
   const memberDir = path.resolve(root, memberPath);
   const tasks = await memberTasks(memberDir);
   if (!tasks.present) return undefined;
+  // Normalized against the repository root, because a member's task may
+  // name a file outside its own directory and a unit is a path anyone
+  // else can resolve.
+  const repositoryRelative = (files: string[]): string[] =>
+    files.map((file) => path.relative(root, path.resolve(memberDir, file)));
   const member: Member = {
     memberPath,
     scope: memberScope(memberPath),
@@ -95,13 +108,19 @@ async function readMember(
     denoTestTask: tasks.denoTestTask ?? "test",
     denoHalf: tasks.denoHalf,
     browserTest: tasks.browserTest,
+    browserFiles: tasks.browserPaths.length === 0 ? [] : repositoryRelative(
+      await memberTestFiles(memberDir, {
+        env: {},
+        flags: [],
+        paths: tasks.browserPaths,
+        ignores: [],
+      }),
+    ),
   };
   if (tasks.denoTest === undefined) return member;
-  // Normalized against the repository root, because a member's task may
-  // name a file outside its own directory and a unit is a path anyone
-  // else can resolve.
-  member.files = (await memberTestFiles(memberDir, tasks.denoTest))
-    .map((file) => path.relative(root, path.resolve(memberDir, file)));
+  member.files = repositoryRelative(
+    await memberTestFiles(memberDir, tasks.denoTest),
+  );
   member.run = { flags: tasks.denoTest.flags, env: tasks.denoTest.env };
   return member;
 }
@@ -155,6 +174,9 @@ function unitSuite(
     recordSurfaces,
     needs,
     units,
+    // A browser half runs as one unit, so the files it runs are named
+    // here rather than enumerated as units of their own.
+    sources: members.flatMap((member) => member.browserFiles),
     unavailable: [],
 
     locate(record: LocatableRecord): Location | undefined {

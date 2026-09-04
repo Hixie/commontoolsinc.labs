@@ -3333,7 +3333,7 @@ exercised on the branch on its own.
       matrix. `tasks/weighted-shards.ts` stays and the lane packer calls
       it. Nothing may be balanced by a transcribed number afterwards, and
       `check-test-topology` is what proves the items are all still there.
-- [ ] `tasks/workspace-tests.ts` gives a member's `deno-test` task, where
+- [x] `tasks/workspace-tests.ts` gives a member's `deno-test` task, where
       it defines one, a coverage directory separate from the rest of its
       `test` task, and `packages/ui` and `packages/iframe-sandbox` split
       their one-string test tasks the way `packages/static` already writes

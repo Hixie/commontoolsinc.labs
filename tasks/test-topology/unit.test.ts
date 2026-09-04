@@ -81,6 +81,31 @@ describe("the workspace unit suites", () => {
     ]);
   });
 
+  it("accounts for the files only the browser half runs", async () => {
+    const root = await workspace({
+      "./packages/bakery": {
+        tasks: {
+          test: { dependencies: ["deno-test", "browser-test"] },
+          "deno-test": "deno test --allow-read --ignore='**/*.browser.test.ts'",
+          "browser-test":
+            "deno run -A ../deno-web-test/cli.ts **/*.browser.test.ts",
+        },
+        files: ["test/glaze.test.ts", "test/oven.browser.test.ts"],
+      },
+    });
+    const suite = workspaceUnit(await loadUnitSuites(root));
+    expect(suite.units).toEqual([
+      "packages/bakery/test/glaze.test.ts",
+      "packages/bakery#browser-test",
+    ]);
+    // The half is one unit rather than one unit per file, so the files it
+    // runs are named as sources. A file the Deno-only half ignores and no
+    // source claims is a test surface the topology would let vanish.
+    expect(suite.sources).toEqual([
+      "packages/bakery/test/oven.browser.test.ts",
+    ]);
+  });
+
   it("leaves a member that says it has no tests out entirely", async () => {
     const root = await workspace({
       "./packages/bakery": { tasks: { test: "echo 'No tests defined.'" } },

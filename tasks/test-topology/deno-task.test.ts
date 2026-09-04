@@ -174,6 +174,9 @@ describe("resolving which task a member's tests run through", () => {
     const tasks = await memberTasks(dir);
     expect(tasks.denoTestTask).toBe("deno-test");
     expect(tasks.browserTest).toBe(true);
+    // The words after the harness's own script are the files that half
+    // runs, which is what the browser unit accounts for.
+    expect(tasks.browserPaths).toEqual(["test/*.test.ts"]);
   });
 
   it("reaches through a task written as a dependency list", async () => {

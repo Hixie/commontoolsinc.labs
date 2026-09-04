@@ -21,6 +21,14 @@ import { assignWeightedShards } from "./weighted-shards.ts";
 
 export const ALL_DISABLED: string[] = [];
 
+/**
+ * The task a member names for the half of its tests that need only Deno.
+ * A member that has a half of that kind separates it under this name, and
+ * the per-package coverage gate measures that half rather than the whole
+ * of the member's `test` task.
+ */
+const DENO_HALF_TASK = "deno-test";
+
 export function getPackageName(memberPath: string): string {
   const relativePath = memberPath.replace(/^\.\//, "");
   return relativePath.replace(/^packages\//, "");
@@ -48,14 +56,73 @@ export async function initializeDb(cwd: string = Deno.cwd()): Promise<boolean> {
   return true;
 }
 
+/**
+ * Where one of a member's test tasks writes its coverage profiles, or
+ * nothing at all when the run is not measuring coverage.
+ *
+ * The member's own directory holds the half the per-package coverage gate
+ * measures, which is `deno-test` where the member names one and `test`
+ * everywhere else. Every other task of a split test run writes beside it,
+ * under a name that carries a character no package name has, so a walk
+ * over the coverage root can tell the two apart. Both stay under the
+ * root, so the report that merges the whole root is unchanged.
+ */
+function coverageEnvironment(
+  coverageRoot: string | undefined,
+  packageName: string,
+  task: string,
+): Record<string, string> {
+  if (!coverageRoot) return {};
+  const slug = packageName.replaceAll("/", "__");
+  const directory = task === "test" || task === DENO_HALF_TASK
+    ? slug
+    : `${slug}#${task}`;
+  return { DENO_COVERAGE_DIR: path.join(coverageRoot, directory) };
+}
+
+/**
+ * One result for a member that ran several tasks: the first failure's
+ * exit, and every task's output in the order the tasks were named.
+ */
+function combineOutputs(outputs: Deno.CommandOutput[]): Deno.CommandOutput {
+  if (outputs.length === 1) return outputs[0]!;
+  const failure = outputs.find((output) => !output.success);
+  const join = (parts: Uint8Array[]) =>
+    encode(parts.map((part) => decode(part)).join(""));
+  return {
+    success: failure === undefined,
+    code: failure?.code ?? 0,
+    signal: failure?.signal ?? null,
+    stdout: join(outputs.map((output) => output.stdout)),
+    stderr: join(outputs.map((output) => output.stderr)),
+  };
+}
+
+/** How one member's test run is invoked, beyond the member itself. */
+export interface TestPackageOptions {
+  /**
+   * The tasks to run, each in its own `deno task` process. Defaults to
+   * `test`, which is what a member that keeps its whole test run in one
+   * task runs.
+   */
+  tasks?: readonly string[];
+
+  /** Environment for the member, on top of the run's own. */
+  env?: Record<string, string>;
+
+  /** Where the member's leaf writes its JUnit report, where it takes one. */
+  junitPath?: string;
+
+  /** Whether that leaf also takes the preload. */
+  preload?: boolean;
+}
+
 export async function testPackage(
   memberPath: string,
   packageName: string,
   packagePath: string,
   coverageRoot: string | undefined,
-  extraEnv?: Record<string, string>,
-  junitPath?: string,
-  preload = true,
+  options: TestPackageOptions = {},
 ): Promise<{
   memberPath: string;
   packageName: string;
@@ -63,43 +130,51 @@ export async function testPackage(
   durationMs: number;
   result: Deno.CommandOutput;
 }> {
+  const { tasks = ["test"], env: extraEnv, junitPath, preload = true } =
+    options;
   const startedAt = Date.now();
-  let result: Deno.CommandOutput;
-  try {
-    const env: Record<string, string> = { ENV: "test", ...extraEnv };
-    if (coverageRoot) {
-      env.DENO_COVERAGE_DIR = path.join(
-        coverageRoot,
-        packageName.replaceAll("/", "__"),
-      );
-    }
-
-    // Trailing arguments to `deno task` append to the task's command line,
-    // which is what threads the flags down to the leaf `deno test`. The
-    // preload travels with the JUnit path because both reach the leaf the
-    // same way and the report is what the preload's map is joined onto; a
-    // member whose task cannot take one cannot take the other.
-    const args = ["task", "test"];
-    if (junitPath !== undefined) {
-      args.push(`--junit-path=${junitPath}`);
-      if (preload) args.push(preloadArgument());
-    }
-    result = await new Deno.Command(Deno.execPath(), {
-      args,
-      cwd: packagePath,
-      env,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-  } catch (e) {
-    result = {
-      success: false,
-      stdout: new Uint8Array(),
-      stderr: encode(`${e}`),
-      code: 1,
-      signal: null,
-    };
+  // Trailing arguments to `deno task` append to the task's command line,
+  // which is what threads the flags down to the leaf `deno test`. The
+  // preload travels with the JUnit path because both reach the leaf the
+  // same way and the report is what the preload's map is joined onto; a
+  // member whose task cannot take one cannot take the other. A member
+  // running several tasks takes neither, because each task would write
+  // over the last one's report.
+  const trailing: string[] = [];
+  if (junitPath !== undefined && tasks.length === 1) {
+    trailing.push(`--junit-path=${junitPath}`);
+    if (preload) trailing.push(preloadArgument());
   }
+  // The tasks run together, which is what `deno task test` does with the
+  // dependencies a split test task names. Each one catches its own
+  // failure to start, so a member whose directory cannot be spawned in
+  // reports that as a failed task rather than leaving the tasks beside it
+  // running with nobody waiting on them.
+  const result = combineOutputs(
+    await Promise.all(tasks.map(async (task) => {
+      try {
+        return await new Deno.Command(Deno.execPath(), {
+          args: ["task", task, ...trailing],
+          cwd: packagePath,
+          env: {
+            ENV: "test",
+            ...extraEnv,
+            ...coverageEnvironment(coverageRoot, packageName, task),
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+      } catch (e) {
+        return {
+          success: false,
+          stdout: new Uint8Array(),
+          stderr: encode(`${e}`),
+          code: 1,
+          signal: null,
+        };
+      }
+    })),
+  );
 
   const durationMs = Date.now() - startedAt;
   const duration = (durationMs / 1000).toFixed(1);
@@ -215,8 +290,10 @@ const INTERNALLY_SHARDED_PACKAGES: Record<
 //
 // A task carrying a shell metacharacter puts the appended flag somewhere
 // other than the test command: `api` chains a type-performance benchmark
-// after its tests, and `patterns` and `ui` run two test commands each, so
-// the flag would reach only the last one.
+// after its tests, and `patterns` runs two test commands, so the flag
+// would reach only the last one. A member that splits its test run into
+// halves has no `test` command at all, and takes neither flag for a
+// reason of its own: each half would write over the last one's report.
 //
 // A task that runs a script cannot show what the script does with the
 // flags it is handed. The members listed here route through a runner that
@@ -249,15 +326,41 @@ function directoryUrl(root: string | URL): URL {
  * may carry one. An object with no `command` is defined by its `dependencies`
  * instead, and Deno runs those.
  */
-type TaskDefinition = string | { command?: string };
+type TaskDefinition = string | {
+  command?: string;
+  dependencies?: string[];
+};
 
-/** The manifest Deno resolves for a member, and its `test` task. */
+/** The manifest Deno resolves for a member, and what its tests run through. */
 interface MemberManifest {
   /** Path to the manifest, relative to the workspace root. */
   readonly path: string;
 
   /** The `test` task it defines, where it defines one. */
   readonly testTask: TaskDefinition | undefined;
+
+  /** The tasks one test run of this member invokes, in order. */
+  readonly testTasks: readonly string[];
+}
+
+/**
+ * The tasks a member's test run invokes, read from its manifest.
+ *
+ * A member that names a Deno-only half and joins it into `test` through
+ * dependencies runs each of those dependencies on its own, so that the
+ * coverage the Deno-only half produces stands apart from the coverage the
+ * rest of the run produces. Every other member runs `test`, which is one
+ * task: a `test` task that carries a command of its own runs whole,
+ * because the dependencies alone would leave that command out.
+ */
+function testTasksOf(
+  tasks: Record<string, TaskDefinition> | undefined,
+): readonly string[] {
+  const test = tasks?.test;
+  if (tasks?.[DENO_HALF_TASK] === undefined) return ["test"];
+  if (typeof test !== "object" || test.command !== undefined) return ["test"];
+  const dependencies = test.dependencies ?? [];
+  return dependencies.includes(DENO_HALF_TASK) ? dependencies : ["test"];
 }
 
 /**
@@ -288,9 +391,29 @@ async function memberManifest(
     const tasks = (parseJsonc(text) as {
       tasks?: Record<string, TaskDefinition>;
     })?.tasks;
-    return { path: manifestPath, testTask: tasks?.test };
+    return {
+      path: manifestPath,
+      testTask: tasks?.test,
+      testTasks: testTasksOf(tasks),
+    };
   }
-  return { path: `${member}/deno.jsonc`, testTask: undefined };
+  return {
+    path: `${member}/deno.jsonc`,
+    testTask: undefined,
+    testTasks: ["test"],
+  };
+}
+
+/**
+ * The tasks a member's test run invokes, each in its own `deno task`
+ * process, in the order the manifest names them. A member that keeps its
+ * whole test run in one task gives `["test"]`.
+ */
+export async function memberTestTasks(
+  member: string,
+  root: string | URL = Deno.cwd(),
+): Promise<readonly string[]> {
+  return (await memberManifest(member, root)).testTasks;
 }
 
 /**
@@ -539,6 +662,10 @@ export async function runTests(
   const preloadable = junitRoot !== undefined
     ? await preloadCapableMembers(memberPaths, workspaceUrl)
     : new Set<string>();
+  const taskLists = new Map<string, readonly string[]>();
+  for (const member of new Set(memberPaths)) {
+    taskLists.set(member, await memberTestTasks(member, workspaceUrl));
+  }
 
   const results: PackageResult[] = [];
   let nextUnit = 0;
@@ -557,9 +684,12 @@ export async function runTests(
         unit.packageName,
         packagePath,
         coverageRoot,
-        unit.env,
-        junitPath,
-        preloadable.has(unit.memberPath),
+        {
+          tasks: taskLists.get(unit.memberPath),
+          env: unit.env,
+          junitPath,
+          preload: preloadable.has(unit.memberPath),
+        },
       );
       results.push(result);
       if (

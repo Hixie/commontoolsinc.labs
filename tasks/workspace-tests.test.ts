@@ -12,6 +12,7 @@ import {
   initializeDb,
   junitCapableMembers,
   memberTestTask,
+  memberTestTasks,
   parseDisabledPackageList,
   readWorkspaceMembers,
   runTests,
@@ -758,4 +759,179 @@ Deno.test("every workspace member defines a test task of its own", async () => {
   const rootUrl = new URL("../", import.meta.url);
   const members = await readWorkspaceMembers(new URL("deno.jsonc", rootUrl));
   await assertMemberTestTasksDefined(members, rootUrl);
+});
+
+//
+// Where a member's test run writes its coverage
+//
+// The per-package coverage gate measures a package by its own unit tests
+// over its own source, so the coverage a member's Deno-only tests produce
+// has to be separable from the coverage its browser tests produce. A
+// member that names a `deno-test` half is what makes that separation
+// possible, and running the halves apart is what carries it out.
+//
+
+Deno.test("memberTestTasks reads a split test run from the manifest", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "ws-halves-" });
+  try {
+    const write = async (name: string, tasks: unknown) => {
+      await Deno.mkdir(`${dir}/packages/${name}`, { recursive: true });
+      await Deno.writeTextFile(
+        `${dir}/packages/${name}/deno.jsonc`,
+        JSON.stringify({ tasks }),
+      );
+    };
+    await write("split", {
+      test: { dependencies: ["deno-test", "browser-test"] },
+      "deno-test": "deno test --ignore='**/*.browser.test.ts'",
+      "browser-test": "deno run -A ../deno-web-test/cli.ts a.browser.test.ts",
+    });
+    assertEquals(await memberTestTasks("./packages/split", dir), [
+      "deno-test",
+      "browser-test",
+    ]);
+
+    // A member with no half of its own runs `test`, which is one task and
+    // is what every member ran before any of them named a half.
+    await write("plain", { test: "deno test" });
+    assertEquals(await memberTestTasks("./packages/plain", dir), ["test"]);
+    await write("grouped", {
+      check: "deno check .",
+      "just-test": "deno test",
+      test: { dependencies: ["check", "just-test"] },
+    });
+    assertEquals(await memberTestTasks("./packages/grouped", dir), ["test"]);
+
+    // A `test` task that names a half without depending on it, and one
+    // that carries a command of its own beside the dependency: running the
+    // dependencies alone would leave out what the task itself runs.
+    await write("unjoined", {
+      "deno-test": "deno test",
+      test: { dependencies: ["browser-test"] },
+      "browser-test": "deno run -A ../deno-web-test/cli.ts a.browser.test.ts",
+    });
+    assertEquals(await memberTestTasks("./packages/unjoined", dir), ["test"]);
+    await write("commanded", {
+      "deno-test": "deno test",
+      test: { dependencies: ["deno-test"], command: "deno bench" },
+    });
+    assertEquals(await memberTestTasks("./packages/commanded", dir), ["test"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("testPackage gives a member's Deno-only half a coverage directory of its own", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "ws-half-coverage-" });
+  try {
+    await makeWorkspace(dir, ["plain", "split"]);
+    await Deno.writeTextFile(
+      `${dir}/packages/split/deno.jsonc`,
+      JSON.stringify({
+        tasks: {
+          test: { dependencies: ["deno-test", "browser-test"] },
+          "deno-test": 'echo "$DENO_COVERAGE_DIR" > deno.txt',
+          "browser-test": 'echo "$DENO_COVERAGE_DIR" > browser.txt',
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${dir}/packages/plain/deno.jsonc`,
+      JSON.stringify({
+        tasks: { test: 'echo "$DENO_COVERAGE_DIR" > cov.txt' },
+      }),
+    );
+    const coverageRoot = `${dir}/coverage`;
+    const wrote = async (file: string) =>
+      (await Deno.readTextFile(`${dir}/packages/${file}`)).trim();
+
+    const split = await testPackage(
+      "./packages/split",
+      "split",
+      `${dir}/packages/split`,
+      coverageRoot,
+      { tasks: await memberTestTasks("./packages/split", dir) },
+    );
+    assertEquals(split.result.success, true);
+    // The member's own directory holds the half the gate measures; the
+    // rest of the run writes beside it, under a name no member can have.
+    assertEquals(await wrote("split/deno.txt"), `${coverageRoot}/split`);
+    assertEquals(
+      await wrote("split/browser.txt"),
+      `${coverageRoot}/split#browser-test`,
+    );
+
+    // A member that runs `test` whole keeps the directory it always had,
+    // which is the one the gate reads for it.
+    const plain = await testPackage(
+      "./packages/plain",
+      "plain",
+      `${dir}/packages/plain`,
+      coverageRoot,
+      { tasks: await memberTestTasks("./packages/plain", dir) },
+    );
+    assertEquals(plain.result.success, true);
+    assertEquals(await wrote("plain/cov.txt"), `${coverageRoot}/plain`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runTests runs both halves of a member's split test task", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "ws-half-run-" });
+  try {
+    await makeWorkspace(dir, ["split"]);
+    await Deno.writeTextFile(
+      `${dir}/packages/split/deno.jsonc`,
+      JSON.stringify({
+        tasks: {
+          test: { dependencies: ["deno-test", "browser-test"] },
+          "deno-test": "echo ok > deno-ran.txt",
+          "browser-test": "echo ok > browser-ran.txt",
+        },
+      }),
+    );
+
+    assertEquals(await runTests([], undefined, dir), true);
+    // Splitting the run apart is a change to how the two halves are
+    // grouped, not to what runs: both still run.
+    await Deno.stat(`${dir}/packages/split/deno-ran.txt`);
+    await Deno.stat(`${dir}/packages/split/browser-ran.txt`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("testPackage reports the first failure of a member that ran several tasks", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "ws-half-failure-" });
+  try {
+    await makeWorkspace(dir, ["split"]);
+    await Deno.writeTextFile(
+      `${dir}/packages/split/deno.jsonc`,
+      JSON.stringify({
+        tasks: {
+          test: { dependencies: ["deno-test", "browser-test"] },
+          "deno-test": "echo half-failed && exit 3",
+          "browser-test": "echo other-half-ran",
+        },
+      }),
+    );
+
+    const outcome = await testPackage(
+      "./packages/split",
+      "split",
+      `${dir}/packages/split`,
+      undefined,
+      { tasks: await memberTestTasks("./packages/split", dir) },
+    );
+    assertEquals(outcome.result.success, false);
+    assertEquals(outcome.result.code, 3);
+    // The report a failure prints carries every task's output, so the one
+    // that failed is read beside the one that did not.
+    const stdout = new TextDecoder().decode(outcome.result.stdout);
+    assertStringIncludes(stdout, "half-failed");
+    assertStringIncludes(stdout, "other-half-ran");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

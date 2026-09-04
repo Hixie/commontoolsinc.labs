@@ -122,6 +122,24 @@ export function parseTestTask(
   return { env, flags, paths, ignores };
 }
 
+/**
+ * The arguments a `deno run` task hands to the script it runs.
+ *
+ * A browser half is a harness invocation — flags, the harness's own
+ * script, then the files the harness runs — so the words after that
+ * script are what the half runs. A task of any other shape gives nothing,
+ * and the member it belongs to has no browser files to account for.
+ */
+export function scriptArguments(task: string): string[] {
+  const words = task.trim().split(/\s+/).filter((word) => word.length > 0);
+  let index = 0;
+  while (index < words.length && ASSIGNMENT.test(words[index]!)) index++;
+  if (words[index] !== "deno" || words[index + 1] !== "run") return [];
+  index += 2;
+  while (index < words.length && words[index]!.startsWith("-")) index++;
+  return words.slice(index + 1).map(unquote);
+}
+
 /** What Deno takes for a test file when it walks a directory. */
 export const DENO_TEST_FILE =
   /(^|[/\\])(test\.(ts|tsx|mts|js|mjs|jsx)|.*[._]test\.(ts|tsx|mts|js|mjs|jsx))$/;
@@ -259,6 +277,9 @@ export interface MemberTasks {
   /** Whether the member names a browser half, which runs as one unit. */
   browserTest: boolean;
 
+  /** The paths that half runs, as its task names them. */
+  browserPaths: string[];
+
   /** Whether the member defines any test task at all. */
   present: boolean;
 
@@ -320,11 +341,17 @@ export async function memberTasks(
     return typeof task === "string" ? [] : task?.dependencies ?? [];
   };
   const browserTest = tasks["browser-test"] !== undefined;
+  const browserPaths = scriptArguments(commandOf("browser-test") ?? "");
   const half = tasks["deno-test"] !== undefined ? "deno-test" : "test";
   if (tasks[half] === undefined) {
     // A member with only a browser half is still a test surface: it runs
     // whole, as one unit, and its records come from the browser harness.
-    return { browserTest, present: browserTest, denoHalf: false };
+    return {
+      browserTest,
+      browserPaths,
+      present: browserTest,
+      denoHalf: false,
+    };
   }
   const candidates = [half, ...dependenciesOf(half)];
   for (const name of candidates) {
@@ -336,6 +363,7 @@ export async function memberTasks(
         denoTest: parsed,
         denoTestTask: name,
         browserTest,
+        browserPaths,
         present: true,
         denoHalf: true,
       };
@@ -343,6 +371,7 @@ export async function memberTasks(
   }
   return {
     browserTest,
+    browserPaths,
     denoHalf: true,
     present: true,
     // A member whose only test task echoes that it has none is not a
