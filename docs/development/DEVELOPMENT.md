@@ -611,12 +611,13 @@ caller. Four shapes cover the tree today:
   for anything it cannot measure against the schema.
 - **Answer the way a leaf is answered.** The stored path reads in
   `storage/v2-path.ts` report the slot absent, and `traverse.ts`'s `getAtPath`
-  lets the instance leaf through. Both sit on paths that carry live instance
-  traffic, a `FabricError` stored by the fetch builtins among it, so a refusal
-  would take down an ordinary read or write. `storage/v2-path.ts` is the sharp
-  case: `normalizeAndDiff()` reads the current value at every slot it is about
-  to write, so refusing there replaces the storage layer's typed, in-band
-  error with an exception escaping `Cell.set()`.
+  reports a path continuing past an instance absent as well. Both sit on paths
+  that carry live instance traffic, a `FabricError` stored by the fetch
+  builtins among it, so a refusal would take down an ordinary read or write.
+  `storage/v2-path.ts` is the sharp case: `normalizeAndDiff()` reads the
+  current value at every slot it is about to write, so refusing there replaces
+  the storage layer's typed, in-band error with an exception escaping
+  `Cell.set()`.
 - **Stop the scan.** A walk that only collects — links to pre-sync in
   `runner.ts` and `storage/v2.ts`, write redirects in `pattern-binding.ts` —
   finds nothing inside an instance either way. Stopping is what its marker

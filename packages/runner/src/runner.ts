@@ -654,10 +654,6 @@ const recordRawBuiltinBindingSchemaPolicyInputs = (
   // descent stops at a `FabricSpecialObject`, so a link inside a
   // `FabricInstance`'s codec contents records no policy input. Fails closed,
   // as there.
-  // A `FabricInstance` is tested for ahead of the walk question so that it
-  // stops this scan rather than refusing: a scan that stops finds nothing,
-  // which is what the marker above records, where a refusal would take the
-  // caller down.
   if (
     !isCellLink(outputBinding) &&
     !(outputBinding instanceof FabricInstance) &&
@@ -820,10 +816,6 @@ export function firstResolvedOutputRedirect(
   // write-redirect link inside a `FabricInstance`'s codec contents is
   // invisible here. The caller then sees no redirect and silently skips the
   // sub-pattern's owned-cell pre-sync keyed off it.
-  // A `FabricInstance` is tested for ahead of the walk question so that it
-  // stops this scan rather than refusing: a scan that stops finds nothing,
-  // which is what the marker above records, where a refusal would take the
-  // caller down.
   if (
     !isCellLink(binding) && !(binding instanceof FabricInstance) &&
     isWalkableObjectOrArray(binding)
@@ -5911,9 +5903,7 @@ export class Runner {
       ) {
         // TODO(danfuzz): the walk stops at a `FabricSpecialObject`, so a link
         // nested in a `FabricInstance`'s codec contents is never synced here
-        // — the cold target this pre-sync exists to warm. The instance is
-        // tested for ahead of the walk question so that it stops the walk
-        // rather than refusing.
+        // — the cold target this pre-sync exists to warm.
         for (const key in value) syncAllMentionedCells(value[key]);
       }
     };
@@ -6234,7 +6224,6 @@ export class Runner {
         if (
           value instanceof FabricInstance || !isWalkableObjectOrArray(value)
         ) {
-          // An instance ends the scan rather than refusing, as above.
           return;
         }
         if (!declared) {

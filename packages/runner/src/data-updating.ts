@@ -675,9 +675,7 @@ export function normalizeAndDiff(
     // needs no promotion; the plain link below is stable.
     //
     // A `FabricInstance` is excluded here alongside the other atomic special
-    // objects, tested for ahead of the walk question so that it takes this
-    // answer rather than the refusal that question raises. The instance
-    // branch below emits it whole, which is what an atomic element needs.
+    // objects: the instance branch below emits it whole.
     if (
       state.nextAnchorId !== undefined &&
       isArrayElement &&
@@ -1320,9 +1318,6 @@ export function normalizeAndDiff(
   // from the instance branch below, and the mergeable invariant for those
   // elements rests on the write layer eliding that identical write from the
   // journal rather than on this guard.
-  // An instance is tested for ahead of the walk question, so that it takes
-  // the exclusion this comment describes rather than the refusal that
-  // question raises.
   if (
     state.nextAnchorId !== undefined &&
     isArrayElement &&
@@ -1597,9 +1592,7 @@ export function normalizeAndDiff(
     // A stored special object gets that same reset, for the same reason: it
     // reaches storage whole via the branch above, its zero keys yield no
     // removals, and without a reset the per-key child writes would land in
-    // slots whose stored parent is still the special object. An instance is
-    // tested for first, because the reset is a better answer than the refusal
-    // the walk question raises and is the same answer its sibling gets.
+    // slots whose stored parent is still the special object.
     if (
       currentValue instanceof FabricInstance ||
       !isWalkableObjectNotArray(currentValue) ||

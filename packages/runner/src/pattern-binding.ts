@@ -882,15 +882,15 @@ export function findAllWriteRedirectCells<T>(
       // If the binding is an array, recurse into each element.
       for (const value of binding) find(value, baseCell);
       // A special object ends the walk. A `FabricPrimitive` is an opaque
-      // scalar and can contain no redirect.
+      // scalar and can contain no redirect. An instance ends it here too; the
+      // link arm above has already returned for every link, so this arm sees
+      // no link of either representation.
       //
-      // TODO(danfuzz): a `FabricInstance` can hold one, and its contents are
-      // reached by its codec rather than by property name, so a write redirect
-      // nested inside one is still missed here. It is tested for ahead of the
-      // walk question so that it ends the walk rather than refusing.
+      // TODO(danfuzz): a `FabricInstance` can hold a write redirect, and its
+      // contents are reached by its codec rather than by property name, so one
+      // nested inside is missed here.
     } else if (
-      !isCellLink(binding) && !(binding instanceof FabricInstance) &&
-      isWalkableObjectOrArray(binding)
+      !(binding instanceof FabricInstance) && isWalkableObjectOrArray(binding)
     ) {
       // If the binding is an object, recurse into each value.
       for (const value of Object.values(binding)) find(value, baseCell);

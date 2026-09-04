@@ -1,6 +1,5 @@
 import type { JSONSchemaObj } from "@commonfabric/api";
 import {
-  FabricInstance,
   hashStringOf,
   isWalkableObjectOrArray,
   toCompactDebugString,
@@ -940,17 +939,13 @@ function assignComputedCellKinds(
       }
       return;
     }
-    // A special object falls to the fail-safe `collectAll()` below: its
+    // A `FabricPrimitive` falls to the fail-safe `collectAll()` below: its
     // contents are not reachable by property name, so walking one here would
     // collect nothing and leave a cell root inside it undisqualified from the
     // `computed` tag -- the ack-and-drop this function exists to prevent. An
-    // instance is tested for ahead of the walk question so that it takes that
-    // fail-safe rather than the refusal, which would turn this function's
-    // conservative arm into a throw.
-    if (
-      !(target instanceof FabricInstance) &&
-      isWalkableObjectOrArray(target) && !isReactive(target)
-    ) {
+    // instance is refused. `collectAll()` reaches `traverseValue`, which
+    // refuses one as well, so both arms end the same way.
+    if (isWalkableObjectOrArray(target) && !isReactive(target)) {
       const properties = isObjectNotArray(schema.properties)
         ? schema.properties
         : undefined;

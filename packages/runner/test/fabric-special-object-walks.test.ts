@@ -380,8 +380,15 @@ describe("fabric special objects through the runner's walks", () => {
     // The refusal is the whole point of separating the two kinds. A
     // `FabricPrimitive` is a leaf and every walk above carries one through; an
     // instance is a container the walks cannot descend yet, so either boolean
-    // would be wrong, in one direction or the other. When the
-    // codec-mediated descent lands, these are the cases that change.
+    // would be wrong, in one direction or the other. When the codec-mediated
+    // descent lands, these are the cases that change.
+    //
+    // These cases hand each walk a raw instance. That is not what a walk
+    // reached through a cell read gets: a query-result proxy erases the
+    // prototype, so `instanceof FabricInstance` is `false` for a proxied one
+    // and neither the refusal here nor any of the guards that test for an
+    // instance ahead of it fires. `query-result-proxy.ts` carries that gap and
+    // the marker for closing it, and the identity case above pins it.
 
     for (const kind of FABRIC_INSTANCES) {
       it(`is refused by \`mergeAnyOfMatches()\` for a \`${kind.name}\``, () => {
@@ -495,7 +502,8 @@ describe("fabric special objects through the runner's walks", () => {
       cell.set([FabricError.fromNativeError(new Error("one"))] as never);
       cell.push(FabricError.fromNativeError(new Error("two")) as never);
 
-      expect(cell.get().length).toBe(2);
+      const read = cell.get() as { message: string }[];
+      expect(read.map((entry) => entry.message)).toEqual(["one", "two"]);
     });
 
     it("replaces a stored `FabricError` with a record", () => {
@@ -512,7 +520,44 @@ describe("fabric special objects through the runner's walks", () => {
       expect(cell.get()).toEqual({ r: { a: 1 } });
     });
 
+    it("writes below a `FabricError` stored by an earlier transaction", () => {
+      // The cases around this one share the suite's `tx`, so the document's
+      // value at transaction start is empty and no ancestor prefix ever holds
+      // an instance. `buildReactivityPathsForChange` reads those prefixes from
+      // the document as it stood when the transaction opened, so the walk it
+      // feeds sees an instance only across a commit boundary.
+
+      const first = runtime.edit();
+      const before = runtime.getCell<Record<string, unknown>>(
+        space,
+        "walks-across-transactions",
+        undefined,
+        first,
+      );
+      before.set(
+        { r: FabricError.fromNativeError(new Error("boom")) } as never,
+      );
+      return first.commit().then(() => {
+        const second = runtime.edit();
+        const after = runtime.getCell<Record<string, unknown>>(
+          space,
+          "walks-across-transactions",
+          undefined,
+          second,
+        );
+        after.set({ r: { a: 1 } } as never);
+        return second.commit().then((result) => {
+          expect(result?.error).toBeUndefined();
+          expect(after.get()).toEqual({ r: { a: 1 } });
+        });
+      });
+    });
+
     it("stores an array holding a `FabricBytes`", () => {
+      // The primitive half of the same write. No instance guard is consulted
+      // for one, so this passes on every tree; it is here because the walks
+      // decide both halves and a change to either can move the other.
+
       const cell = runtime.getCell<unknown[]>(
         space,
         "walks-array-of-bytes",

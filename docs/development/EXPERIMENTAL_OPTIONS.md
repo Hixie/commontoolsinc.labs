@@ -1351,9 +1351,14 @@ refusals, being reached from around twenty-five walks across `runner` and
 the claim is that `FabricError` is the one instance with live traffic today —
 the fetch builtins store one as a result — and that writing, appending,
 reading, replacing and deleting one through `Cell` was measured against each
-walk. The two sites that turned out to be reachable that way, the stored path
-reads in `storage/v2-path.ts` and three sites in `data-updating.ts`, answer
-rather than refuse.
+walk, across a commit boundary as well as within one transaction. The walks
+that turned out to be reachable that way answer rather than refuse: the two
+stored path reads in `storage/v2-path.ts`, three sites in `data-updating.ts`,
+the shallow structure comparison in `storage/v2-transaction.ts` that the
+commit-time reactivity pass feeds, and `getAtPath` in `traverse.ts`. The last
+two were each found by one operation the earlier rounds had not run — a write
+below an instance stored by an earlier transaction, and a read past one — so
+treat the list as what has been measured rather than as a proof of the rest.
 
 Worked example: with [`modernCellRep`](#moderncellrep) on, a link is a
 `FabricLink` and therefore a `FabricInstance`, so ordinary links reach these

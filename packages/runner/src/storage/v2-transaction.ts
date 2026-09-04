@@ -2,6 +2,7 @@ import type { FabricValue } from "@commonfabric/api";
 import {
   cloneIfNecessary,
   deepFreeze,
+  FabricInstance,
   isDeepFrozen,
   isWalkableObjectOrArray,
   valueEqual,
@@ -750,17 +751,25 @@ const isSubsumedByTailSplice = (
     Number(childSegment) >= spliceCandidate.tailSpliceStartIndex;
 };
 
-// A `FabricPrimitive` on either side falls to the `valueEqual` comparison
+// A `FabricSpecialObject` on either side falls to the `valueEqual` comparison
 // below rather than being compared by key set: its state sits behind no key,
 // so two distinct ones would compare by their empty key sets and report
 // "unchanged", leaving an in-place fabric change at an ancestor prefix with no
-// reactivity path. `differential.ts` guards its sibling walk the same way. A
-// `FabricInstance` is refused rather than compared either way.
+// reactivity path. `differential.ts` guards its sibling walk the same way.
+//
+// That covers a `FabricInstance` too. `buildReactivityPathsForChange` calls
+// this with the value at every proper ancestor prefix of a written path, read
+// from the document as it stood when the transaction opened, so a write
+// anywhere below a stored `FabricError` arrives here at commit time.
 const shallowStructureChanged = (
   before: FabricValue | undefined,
   after: FabricValue | undefined,
 ): boolean => {
-  if (isWalkableObjectOrArray(before) && isWalkableObjectOrArray(after)) {
+  if (
+    !(before instanceof FabricInstance) &&
+    !(after instanceof FabricInstance) &&
+    isWalkableObjectOrArray(before) && isWalkableObjectOrArray(after)
+  ) {
     const beforeKeys = Object.keys(before);
     const afterKeys = Object.keys(after);
     if (beforeKeys.length !== afterKeys.length) {

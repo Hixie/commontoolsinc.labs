@@ -4,6 +4,7 @@ import {
   isWalkableObjectOrArray,
 } from "@commonfabric/data-model";
 import { isArrayIndexPropertyName } from "@commonfabric/utils/arrays";
+import type { ReadonlyRecord } from "@commonfabric/utils/types";
 
 export type ReadPathOptions = {
   allowArrayLength?: boolean;
@@ -24,20 +25,14 @@ const hasOwnPathSegment = (
 // reports absent / `undefined` -- the same answer `getAtPath` in `traverse.ts`
 // gives for the same address, and the whole story for a leaf that no path
 // addresses anything inside of.
-//
-// A `FabricInstance` is tested for ahead of the walk question so that it takes
-// that answer too, rather than the refusal the question raises. These two are
-// read helpers on the write path: `normalizeAndDiff` reads the current value
-// at every slot it is about to write, so a write anywhere below a stored
-// instance reaches them. Reporting the slot absent lets the write proceed to
-// the storage layer, which refuses it with a `TypeMismatchError` naming the
-// path and the class it found; refusing here would replace that in-band,
-// typed error with an exception escaping `Cell.set()`.
+// An instance reads as absent as well. These two are read helpers on the write
+// path: `normalizeAndDiff` reads the current value at every slot it is about
+// to write, so a write anywhere below a stored instance reaches them.
 //
 // TODO(danfuzz): "absent" is an incomplete answer for an instance, whose codec
 // contents are real and simply not addressable by a path segment yet. When
 // that descent lands, this test goes and the contents speak for themselves.
-const isKeyable = (value: unknown): boolean =>
+const isAddressableByKey = (value: unknown): value is ReadonlyRecord =>
   !(value instanceof FabricInstance) && isWalkableObjectOrArray(value);
 
 export const hasValueAtPath = (
@@ -62,7 +57,7 @@ export const hasValueAtPath = (
       current = current[index];
       continue;
     }
-    if (!isKeyable(current)) {
+    if (!isAddressableByKey(current)) {
       return false;
     }
     const record = current as Record<string, unknown>;
@@ -96,7 +91,7 @@ export const readValueAtPath = (
       current = current[index];
       continue;
     }
-    if (!isKeyable(current)) {
+    if (!isAddressableByKey(current)) {
       return undefined;
     }
     const record = current as Record<string, unknown>;

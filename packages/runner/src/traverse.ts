@@ -2230,12 +2230,9 @@ export function getAtPath(
       // chain, which for one of these resolves the class surface rather than
       // the value -- `"slice"` on a `FabricBytes` would name a function as the
       // next doc value. Such a path falls to the arm below and reads as
-      // absent, which is what a path into a leaf is.
-      //
-      // An instance is tested for ahead of the walk question so that it takes
-      // that answer too. `traverseDAG` above says why: this file carries live
-      // instance traffic, a `FabricError` stored by the fetch builtins being
-      // read back through it, so it cannot fail loudly here yet.
+      // absent, which is what a path into a leaf is. An instance reads as
+      // absent here as well; `traverseDAG` above carries the marker for the
+      // codec-mediated descent both want.
       const cursorObj = curDoc.value as Immutable<JSONObject>;
       curDoc = {
         ...curDoc,

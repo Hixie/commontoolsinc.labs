@@ -213,17 +213,10 @@ export const resolve = (
 
   while (++at < path.length) {
     const key = path[at];
-    // A `FabricInstance` is tested for before the walk question is asked,
-    // because this function has a better answer than the refusal that question
-    // raises: it is declared to return a `TypeMismatchError`, and a path
-    // reaching a value it cannot address by key is what that error is for. The
-    // resolution stops either way; saying so in band lets a caller handle it
-    // like every other unresolvable address instead of unwinding.
-    //
-    // Live traffic arrives here: the fetch builtins store a `FabricError` as a
-    // result, and resolving a link whose path continues past one lands exactly
-    // on this. Before this test the slot read as absent AND writable, which
-    // invited a write onto a value holding no such slot.
+    // A path reaching a `FabricInstance` reports the `TypeMismatchError` this
+    // function is declared to return, so a caller handles it like every other
+    // unresolvable address. The fetch builtins store a `FabricError` as a
+    // result, and resolving a link whose path continues past one lands here.
     if (value instanceof FabricInstance) {
       return {
         error: TypeMismatchError(
@@ -234,7 +227,7 @@ export const resolve = (
       };
     }
     // A `FabricPrimitive` takes the mismatch arm below alongside the scalars:
-    // a path does not address anything inside a leaf.
+    // a path addresses nothing inside a leaf.
     if (isWalkableObjectOrArray(value)) {
       const record = value as FabricPlainObject;
       value = Object.hasOwn(record, key) ? record[key] : undefined;
@@ -247,10 +240,8 @@ export const resolve = (
         };
       }
       // Type mismatch - trying to access property on non-object.
-      // `toDebugKindString` is what names the value: `typeof` returns
-      // "object" for a special object, which says nothing about which value
-      // refused the path, and this is the one spelling the rest of the
-      // storage layer already uses for that.
+      // `toDebugKindString` names the class, where `typeof` returns "object"
+      // for every special object alike.
       const actualType = toDebugKindString(value);
       return {
         error: TypeMismatchError(

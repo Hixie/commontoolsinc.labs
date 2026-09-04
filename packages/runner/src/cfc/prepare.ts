@@ -26,7 +26,11 @@ import {
 import type { MemorySpace, URI } from "@commonfabric/memory/interface";
 import { isArrayIndexPropertyName } from "@commonfabric/utils/arrays";
 import { deepEqual } from "@commonfabric/utils/deep-equal";
-import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
+import {
+  isObjectNotArray,
+  isObjectOrArray,
+  type ReadonlyRecord,
+} from "@commonfabric/utils/types";
 
 import { encodePointer } from "../../../memory/v2/path.ts";
 import type { JSONSchema } from "../builder/types.ts";
@@ -3099,18 +3103,14 @@ const linkedWriteValueForPolicy = (
 //
 // A path segment never addresses anything inside a `FabricSpecialObject`, so
 // the two descents below stop at one rather than resolving the segment against
-// its class surface. A `FabricInstance` is tested for ahead of the walk
-// question so that it stops the descent too: these descents run over ordinary
-// stored values, a `FabricError` among them, so a refusal here would take down
-// policy evaluation rather than reporting a gap.
+// its class surface. That covers a `FabricInstance` as well: these descents run
+// over ordinary stored values, a `FabricError` among them.
 //
 // TODO(danfuzz): stopping is an incomplete answer for an instance. No key of
 // its codec contents is reachable by property name, so a pattern path into one
 // resolves to no values and the policy condition it feeds is never evaluated
 // for that content. Fails open.
-const isPatternPathKeyable = (
-  value: unknown,
-): value is Record<string, unknown> =>
+const isAddressableByKey = (value: unknown): value is ReadonlyRecord =>
   !(value instanceof FabricInstance) && isWalkableObjectOrArray(value);
 
 const valuesAtPatternPath = (
@@ -3136,7 +3136,7 @@ const valuesAtPatternPath = (
   // the walk question, which under the legacy representation would descend the
   // record a link is written as, and under `modernCellRep` would refuse the
   // `FabricLink` it is.
-  if (isPrimitiveCellLink(value) || !isPatternPathKeyable(value)) {
+  if (isPrimitiveCellLink(value) || !isAddressableByKey(value)) {
     return [];
   }
   if (!(head in value)) {
@@ -3169,11 +3169,11 @@ const changedValuesAtPatternPath = (
 
   // As in `valuesAtPatternPath`: a link ends the descent, and the test comes
   // before the walk question for the same reason.
-  if (isPrimitiveCellLink(value) || !isPatternPathKeyable(value)) {
+  if (isPrimitiveCellLink(value) || !isAddressableByKey(value)) {
     return [];
   }
   const previousChild = !isPrimitiveCellLink(previousValue) &&
-      isPatternPathKeyable(previousValue)
+      isAddressableByKey(previousValue)
     ? (previousValue as Record<string, unknown>)[head]
     : undefined;
   if (!(head in value)) {
@@ -3305,9 +3305,7 @@ const policySchemaMatchesValue = (
   // link arriving here is what makes that load-bearing rather than tidy.
   //
   // A `FabricPrimitive` carries no property for a `properties` condition to
-  // read, so it falls past this arm to the same `true` a vacuous match
-  // produced. The answer does not move; what moves is that the walk below no
-  // longer reads keys off a value that has none.
+  // read, so it falls past this arm.
   if (
     !isPrimitiveCellLink(value) && isWalkableObjectOrArray(value) &&
     isObjectOrArray(schema.properties)
