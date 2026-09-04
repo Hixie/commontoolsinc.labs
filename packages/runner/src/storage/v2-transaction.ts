@@ -2,9 +2,8 @@ import type { FabricValue } from "@commonfabric/api";
 import {
   cloneIfNecessary,
   deepFreeze,
-  FabricInstance,
   isDeepFrozen,
-  isWalkableObjectOrArray,
+  isFabricPlainContainer,
   valueEqual,
 } from "@commonfabric/data-model";
 import { hasDataUriScheme } from "@commonfabric/data-model/codec-data-uri";
@@ -765,11 +764,7 @@ const shallowStructureChanged = (
   before: FabricValue | undefined,
   after: FabricValue | undefined,
 ): boolean => {
-  if (
-    !(before instanceof FabricInstance) &&
-    !(after instanceof FabricInstance) &&
-    isWalkableObjectOrArray(before) && isWalkableObjectOrArray(after)
-  ) {
+  if (isFabricPlainContainer(before) && isFabricPlainContainer(after)) {
     const beforeKeys = Object.keys(before);
     const afterKeys = Object.keys(after);
     if (beforeKeys.length !== afterKeys.length) {

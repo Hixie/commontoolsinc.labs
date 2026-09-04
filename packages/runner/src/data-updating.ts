@@ -9,11 +9,10 @@ import {
   assertValidFabricValueLayer,
   cloneIfNecessary,
   fabricFromNativeValue,
-  FabricInstance,
   type FabricPlainObject,
   FabricSpecialObject,
   type FabricValue,
-  isWalkableObjectNotArray,
+  isKeyableObjectNotArray,
   shallowFabricFromNativeObjectElseUndefined,
   toCompactDebugString,
 } from "@commonfabric/data-model";
@@ -679,8 +678,7 @@ export function normalizeAndDiff(
     if (
       state.nextAnchorId !== undefined &&
       isArrayElement &&
-      !(newValue instanceof FabricInstance) &&
-      isWalkableObjectNotArray(newValue) &&
+      isKeyableObjectNotArray(newValue) &&
       !isCellLink(newValue) &&
       seenLink.path.length > 0
     ) {
@@ -1321,8 +1319,7 @@ export function normalizeAndDiff(
   if (
     state.nextAnchorId !== undefined &&
     isArrayElement &&
-    !(newValue instanceof FabricInstance) &&
-    isWalkableObjectNotArray(newValue) &&
+    isKeyableObjectNotArray(newValue) &&
     !isCellLink(newValue)
   ) {
     if (Object.is(currentValue, newValue)) {
@@ -1594,8 +1591,7 @@ export function normalizeAndDiff(
     // removals, and without a reset the per-key child writes would land in
     // slots whose stored parent is still the special object.
     if (
-      currentValue instanceof FabricInstance ||
-      !isWalkableObjectNotArray(currentValue) ||
+      !isKeyableObjectNotArray(currentValue) ||
       isPrimitiveCellLink(currentValue)
     ) {
       diffLogger.debug(

@@ -4,6 +4,7 @@ import {
   fabricAwareEqual,
   FabricInstance,
   FabricPrimitive,
+  isKeyableObjectOrArray,
   isWalkableObjectOrArray,
   toCompactDebugString,
   valueEqual,
@@ -889,9 +890,7 @@ export function findAllWriteRedirectCells<T>(
       // TODO(danfuzz): a `FabricInstance` can hold a write redirect, and its
       // contents are reached by its codec rather than by property name, so one
       // nested inside is missed here.
-    } else if (
-      !(binding instanceof FabricInstance) && isWalkableObjectOrArray(binding)
-    ) {
+    } else if (isKeyableObjectOrArray(binding)) {
       // If the binding is an object, recurse into each value.
       for (const value of Object.values(binding)) find(value, baseCell);
     }

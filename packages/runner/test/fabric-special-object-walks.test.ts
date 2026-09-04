@@ -48,9 +48,10 @@ import {
   FabricHash,
   FabricRegExp,
 } from "@commonfabric/data-model/fabric-primitives";
-import type {
+import {
+  fabricAwareEqual,
   FabricSpecialObject,
-  FabricValue,
+  type FabricValue,
 } from "@commonfabric/data-model";
 
 import { mergeDefaults } from "../src/schema.ts";
@@ -383,12 +384,13 @@ describe("fabric special objects through the runner's walks", () => {
     // would be wrong, in one direction or the other. When the codec-mediated
     // descent lands, these are the cases that change.
     //
-    // These cases hand each walk a raw instance. That is not what a walk
-    // reached through a cell read gets: a query-result proxy erases the
-    // prototype, so `instanceof FabricInstance` is `false` for a proxied one
-    // and neither the refusal here nor any of the guards that test for an
-    // instance ahead of it fires. `query-result-proxy.ts` carries that gap and
-    // the marker for closing it, and the identity case above pins it.
+    // These cases hand each walk a raw instance, which is what a walk reading
+    // stored values gets. A walk handed the result of a cell read gets
+    // something else: a query-result proxy erases the prototype, so
+    // `instanceof FabricInstance` is `false` for a proxied one and neither this
+    // refusal nor a guard testing for an instance ahead of it fires.
+    // `query-result-proxy.ts` carries that gap and the marker for closing it,
+    // and the identity case above pins it.
 
     for (const kind of FABRIC_INSTANCES) {
       it(`is refused by \`mergeAnyOfMatches()\` for a \`${kind.name}\``, () => {
@@ -425,14 +427,12 @@ describe("fabric special objects through the runner's walks", () => {
   });
 
   describe("through `Cell.set()` rather than the walks directly", () => {
-    // Every case above calls a walk directly, and that is the gap these fill.
-    // A stored value reaches several walks in one pass, and the write path
-    // decides which, so a walk that refuses a value the write path hands it
-    // takes down an ordinary write while every direct case still passes. That
-    // is not hypothetical: writing an array holding a `FabricError` -- which
-    // `sandbox/result-normalization.ts` mints from any `Error` an action
-    // returns -- was broken for exactly that reason, with the whole suite
-    // green.
+    // A stored value reaches several walks in one pass and the write path
+    // decides which, so what each walk answers on its own settles nothing
+    // about the write. These drive the write instead. `FabricError` is the
+    // instance they use because it is the one with live traffic:
+    // `sandbox/result-normalization.ts` mints one from any `Error` an action
+    // returns.
 
     let storageManager: ReturnType<typeof StorageManager.emulate>;
     let runtime: Runtime;
@@ -473,9 +473,11 @@ describe("fabric special objects through the runner's walks", () => {
       // through the get trap while `instanceof` consults `Object.prototype`.
       // `query-result-proxy.ts` records that above the proxy construction,
       // where a `TODO(danfuzz)` names the fix and says it lands at around ten
-      // guard sites at once. This pins the gap, so closing it turns this case
-      // red rather than letting it pass silently -- the treatment
-      // `test/llm-dialog-special-objects.test.ts` already gives the same gap.
+      // guard sites at once.
+      //
+      // TODO(danfuzz): this test asserts the WRONG behavior on purpose. Once a
+      // proxied `FabricInstance` is perceived as one, the class comes back and
+      // this inverts. The work is at that `TODO` in `query-result-proxy.ts`.
 
       const cell = runtime.getCell<unknown[]>(
         space,
@@ -553,6 +555,59 @@ describe("fabric special objects through the runner's walks", () => {
       });
     });
 
+    it("compares a stored `FabricBytes` read back by content", () => {
+      // What a cell read hands back decides what `fabricAwareEqual()` is given
+      // at the comparison sites this change adopts. A `FabricPrimitive` comes
+      // back raw -- the proxy exempts one -- so the comparison reaches the
+      // value model and decides it by content.
+
+      const cell = runtime.getCell<Record<string, unknown>>(
+        space,
+        "walks-compare-bytes",
+        undefined,
+        tx,
+      );
+      cell.set({ v: new FabricBytes(new Uint8Array([1, 2])) } as never);
+      const read = cell.get().v;
+
+      expect(read instanceof FabricSpecialObject).toBe(true);
+      expect(fabricAwareEqual(read, new FabricBytes(new Uint8Array([1, 2]))))
+        .toBe(true);
+      expect(fabricAwareEqual(read, new FabricBytes(new Uint8Array([9]))))
+        .toBe(false);
+    });
+
+    it("compares a stored `FabricError` read back as unequal to its twin", () => {
+      // A `FabricInstance` comes back proxied, and the proxy erases the class,
+      // so `fabricAwareEqual()` never reaches the value model for one and
+      // returns `false` for two errors that hold the same message.
+      //
+      // TODO(danfuzz): this test asserts the WRONG behavior on purpose. Two
+      // equal errors are equal, and this says they are not. It inverts once a
+      // proxied `FabricInstance` is perceived as one, at that `TODO` in
+      // `query-result-proxy.ts`.
+      //
+      // Every comparison site this change adopts fails closed on that answer:
+      // a release gate refuses, an `exactCopyOf` claim fails, an ifc entry
+      // applies, a committed-link match does not skip the rebuild rules. The
+      // `deepEqual` these sites used before answered `true` for any two of
+      // them, which is the fail-open each of their markers described.
+
+      const cell = runtime.getCell<Record<string, unknown>>(
+        space,
+        "walks-compare-error",
+        undefined,
+        tx,
+      );
+      cell.set({ v: FabricError.fromNativeError(new Error("boom")) } as never);
+      const read = cell.get().v;
+
+      expect(read instanceof FabricSpecialObject).toBe(false);
+      expect(
+        fabricAwareEqual(read, FabricError.fromNativeError(new Error("boom"))),
+      ).toBe(false);
+    });
+
     it("refuses to store a stub-codec instance at all", () => {
       // What a stored ancestor prefix can hold decides what the commit-time
       // comparison above can be handed. `FabricMap` and `FabricSet` do not
@@ -574,9 +629,10 @@ describe("fabric special objects through the runner's walks", () => {
     });
 
     it("stores an array holding a `FabricBytes`", () => {
-      // The primitive half of the same write. No instance guard is consulted
-      // for one, so this passes on every tree; it is here because the walks
-      // decide both halves and a change to either can move the other.
+      // The primitive half of the same write. The walks decide both halves
+      // with one predicate, and no instance guard is consulted for a
+      // primitive, so this fixes the answer for the half the instance cases
+      // do not cover.
 
       const cell = runtime.getCell<unknown[]>(
         space,

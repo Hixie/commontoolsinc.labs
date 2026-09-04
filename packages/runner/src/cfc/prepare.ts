@@ -19,6 +19,7 @@ import {
   FabricInstance,
   FabricPrimitive,
   isFabricObjectOrArray,
+  isKeyableObjectOrArray,
   isWalkableObjectOrArray,
   refuseFabricInstance,
   valueEqual,
@@ -26,11 +27,7 @@ import {
 import type { MemorySpace, URI } from "@commonfabric/memory/interface";
 import { isArrayIndexPropertyName } from "@commonfabric/utils/arrays";
 import { deepEqual } from "@commonfabric/utils/deep-equal";
-import {
-  isObjectNotArray,
-  isObjectOrArray,
-  type ReadonlyRecord,
-} from "@commonfabric/utils/types";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import { encodePointer } from "../../../memory/v2/path.ts";
 import type { JSONSchema } from "../builder/types.ts";
@@ -3110,9 +3107,6 @@ const linkedWriteValueForPolicy = (
 // its codec contents is reachable by property name, so a pattern path into one
 // resolves to no values and the policy condition it feeds is never evaluated
 // for that content. Fails open.
-const isAddressableByKey = (value: unknown): value is ReadonlyRecord =>
-  !(value instanceof FabricInstance) && isWalkableObjectOrArray(value);
-
 const valuesAtPatternPath = (
   value: unknown,
   path: readonly string[],
@@ -3132,11 +3126,12 @@ const valuesAtPatternPath = (
   }
 
   // A pattern path does not descend through a link: the reference is the value
-  // at that slot, and what it points at is resolved elsewhere. Asked before
-  // the walk question, which under the legacy representation would descend the
-  // record a link is written as, and under `modernCellRep` would refuse the
-  // `FabricLink` it is.
-  if (isPrimitiveCellLink(value) || !isAddressableByKey(value)) {
+  // at that slot, and what it points at is resolved elsewhere. Under the
+  // legacy representation a link is written as a record, which the container
+  // question below reads as keyable, so this test is what stops the descent
+  // there. Under `modernCellRep` a link is a `FabricLink`, which that question
+  // stops at on its own.
+  if (isPrimitiveCellLink(value) || !isKeyableObjectOrArray(value)) {
     return [];
   }
   if (!(head in value)) {
@@ -3169,11 +3164,11 @@ const changedValuesAtPatternPath = (
 
   // As in `valuesAtPatternPath`: a link ends the descent, and the test comes
   // before the walk question for the same reason.
-  if (isPrimitiveCellLink(value) || !isAddressableByKey(value)) {
+  if (isPrimitiveCellLink(value) || !isKeyableObjectOrArray(value)) {
     return [];
   }
   const previousChild = !isPrimitiveCellLink(previousValue) &&
-      isAddressableByKey(previousValue)
+      isKeyableObjectOrArray(previousValue)
     ? (previousValue as Record<string, unknown>)[head]
     : undefined;
   if (!(head in value)) {

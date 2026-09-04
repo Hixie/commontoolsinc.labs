@@ -5,6 +5,7 @@ import {
   hashOf,
   hashStringOf,
   isDeepFrozen,
+  isKeyableObjectOrArray,
   isWalkableObjectOrArray,
   nativeFromFabricValue,
   refuseFabricInstance,
@@ -575,9 +576,10 @@ const recordOutputSchemaPolicyInputs = (
     );
   }
 
-  // The refusal above has already returned for every `FabricInstance`, so the
-  // link test here decides nothing a `FabricLink` reaches; it matches the two
-  // sibling walks below, where no such refusal stands.
+  // The refusal above has already returned for every `FabricInstance`, so this
+  // walk never reaches one and the link test decides nothing a `FabricLink`
+  // reaches. The two sibling walks below carry no such refusal, and ask the
+  // keyable question instead.
   if (!isCellLink(outputBinding) && isWalkableObjectOrArray(outputBinding)) {
     for (const [key, child] of Object.entries(outputBinding)) {
       recordOutputSchemaPolicyInputs(
@@ -657,11 +659,7 @@ const recordRawBuiltinBindingSchemaPolicyInputs = (
   // descent stops at a `FabricSpecialObject`, so a link inside a
   // `FabricInstance`'s codec contents records no policy input. Fails closed,
   // as there.
-  if (
-    !isCellLink(outputBinding) &&
-    !(outputBinding instanceof FabricInstance) &&
-    isWalkableObjectOrArray(outputBinding)
-  ) {
+  if (!isCellLink(outputBinding) && isKeyableObjectOrArray(outputBinding)) {
     for (const child of Object.values(outputBinding)) {
       recordRawBuiltinBindingSchemaPolicyInputs(
         tx,
@@ -819,10 +817,7 @@ export function firstResolvedOutputRedirect(
   // write-redirect link inside a `FabricInstance`'s codec contents is
   // invisible here. The caller then sees no redirect and silently skips the
   // sub-pattern's owned-cell pre-sync keyed off it.
-  if (
-    !isCellLink(binding) && !(binding instanceof FabricInstance) &&
-    isWalkableObjectOrArray(binding)
-  ) {
+  if (!isCellLink(binding) && isKeyableObjectOrArray(binding)) {
     for (const child of Object.values(binding)) {
       const found = firstResolvedOutputRedirect(
         runtime,
@@ -5901,9 +5896,7 @@ export class Runner {
 
       if (link) {
         promises.add(this.runtime.getCellFromLink(link).sync());
-      } else if (
-        !(value instanceof FabricInstance) && isWalkableObjectOrArray(value)
-      ) {
+      } else if (isKeyableObjectOrArray(value)) {
         // TODO(danfuzz): the walk stops at a `FabricSpecialObject`, so a link
         // nested in a `FabricInstance`'s codec contents is never synced here
         // — the cold target this pre-sync exists to warm.
@@ -6224,11 +6217,7 @@ export class Runner {
           );
           return;
         }
-        if (
-          value instanceof FabricInstance || !isWalkableObjectOrArray(value)
-        ) {
-          return;
-        }
+        if (!isKeyableObjectOrArray(value)) return;
         if (!declared) {
           // TODO(danfuzz): the walk stops at a `FabricSpecialObject`, so a
           // link inside a `FabricInstance` held in a raw argument value is

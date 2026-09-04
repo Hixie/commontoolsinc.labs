@@ -1349,16 +1349,22 @@ refusals, being reached from around twenty-five walks across `runner` and
 `piece`. Its strength at those sites is de facto rather than structural: a
 `FabricInstance` can be constructed and handed to any of them. What supports
 the claim is that `FabricError` is the one instance with live traffic today —
-the fetch builtins store one as a result — and that writing, appending,
-reading, replacing and deleting one through `Cell` was measured against each
-walk, across a commit boundary as well as within one transaction. The walks
-that turned out to be reachable that way answer rather than refuse: the two
-stored path reads in `storage/v2-path.ts`, three sites in `data-updating.ts`,
-the shallow structure comparison in `storage/v2-transaction.ts` that the
-commit-time reactivity pass feeds, and `getAtPath` in `traverse.ts`. The last
-two were each found by one operation the earlier rounds had not run — a write
-below an instance stored by an earlier transaction, and a read past one — so
-treat the list as what has been measured rather than as a proof of the rest.
+the fetch builtins store one as a result. Writing one, appending one, reading
+one back, replacing one and deleting it were each driven through `Cell` within
+a single transaction, and replacing one was driven again across a commit
+boundary. Four walks refused something those operations reach, and each now
+answers instead: the two stored path reads in `storage/v2-path.ts`, three sites
+in `data-updating.ts`, and the shallow structure comparison in
+`storage/v2-transaction.ts` that the commit-time reactivity pass feeds. The
+last was found only by the cross-boundary replace, which is why the list is a
+record of what has been driven rather than a claim about what has not.
+
+Three walks were given the same treatment without a reachable operation to
+justify it, and are recorded here as untested rather than measured: `getAtPath`
+in `traverse.ts`, `mergeAnyOfMatches` in the same file, and
+`sendValueToBindingInner` in `pattern-binding.ts`. `getAtPath` follows the
+decision `traverseDAG` states a few hundred lines above it, that this file
+cannot fail loudly on an instance yet; the other two keep the refusal.
 
 Worked example: with [`modernCellRep`](#moderncellrep) on, a link is a
 `FabricLink` and therefore a `FabricInstance`, so ordinary links reach these

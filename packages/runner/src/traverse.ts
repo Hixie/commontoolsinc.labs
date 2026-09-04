@@ -11,8 +11,8 @@ import {
   type FabricValue,
   hashStringOf,
   isDeepFrozen,
+  isKeyableObjectOrArray,
   isWalkableObjectNotArray,
-  isWalkableObjectOrArray,
   toIndentedDebugString,
 } from "@commonfabric/data-model";
 import { linkRefFrom } from "@commonfabric/data-model/cell-rep";
@@ -2223,16 +2223,19 @@ export function getAtPath(
         value: curDoc.value.length,
       };
     } else if (
-      !(curDoc.value instanceof FabricInstance) &&
-      isWalkableObjectOrArray(curDoc.value) && part in curDoc.value
+      isKeyableObjectOrArray(curDoc.value) && part in curDoc.value
     ) {
       // A `FabricSpecialObject` is not descended: `in` consults the prototype
       // chain, which for one of these resolves the class surface rather than
       // the value -- `"slice"` on a `FabricBytes` would name a function as the
       // next doc value. Such a path falls to the arm below and reads as
-      // absent, which is what a path into a leaf is. An instance reads as
-      // absent here as well; `traverseDAG` above carries the marker for the
-      // codec-mediated descent both want.
+      // absent, which is what a path into a leaf is.
+      //
+      // TODO(danfuzz): an instance reads as absent here too, and for it that
+      // is an under-report rather than the whole story: its codec contents
+      // are real, so a path addressing one resolves to nothing and the caller
+      // reads the slot as missing. `traverseDAG` above takes the same
+      // position for the same reason.
       const cursorObj = curDoc.value as Immutable<JSONObject>;
       curDoc = {
         ...curDoc,

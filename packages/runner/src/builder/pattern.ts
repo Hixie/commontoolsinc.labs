@@ -942,9 +942,8 @@ function assignComputedCellKinds(
     // A `FabricPrimitive` falls to the fail-safe `collectAll()` below: its
     // contents are not reachable by property name, so walking one here would
     // collect nothing and leave a cell root inside it undisqualified from the
-    // `computed` tag -- the ack-and-drop this function exists to prevent. An
-    // instance is refused. `collectAll()` reaches `traverseValue`, which
-    // refuses one as well, so both arms end the same way.
+    // `computed` tag -- the ack-and-drop this function exists to prevent. A
+    // `FabricInstance` is refused here.
     if (isWalkableObjectOrArray(target) && !isReactive(target)) {
       const properties = isObjectNotArray(schema.properties)
         ? schema.properties
