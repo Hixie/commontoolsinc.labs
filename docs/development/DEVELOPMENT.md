@@ -546,7 +546,11 @@ using them is not optional in code that can reach a stored value:
 
 - `isKeyableObjectOrArray(value)` is the container question. Every
   `FabricSpecialObject` returns `false`, `FabricPrimitive` and any further
-  subclass alike, and `false` says the value has no keys to reach. Everything
+  subclass alike. For a `FabricPrimitive` that says the value has no keys to
+  reach, which is the whole story about one; for a `FabricInstance` it says
+  only that this walk cannot reach what it holds, which is incomplete rather
+  than wrong, and a walk taking that answer records what it under-reports.
+  Everything
   outside the type is untouched: arrays and non-fabric class instances still
   return `true`, so it is a drop-in for `isReadonlyObjectOrArray()`, which
   narrows the same way. Against `isObjectOrArray()` the swap holds only where

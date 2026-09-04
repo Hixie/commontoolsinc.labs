@@ -51,7 +51,9 @@ import { valueEqual } from "./valueEqual.ts";
  * value model. This walk separates them on their constructors.
  *
  * This is the compare-side half of admitting special objects; the walk-side
- * half is `isWalkableObjectOrArray()`.
+ * half is `isKeyableObjectOrArray()`, with `isWalkableObjectOrArray()` the
+ * same question for a walk that must refuse a `FabricInstance` rather than
+ * report one as unreachable.
  */
 export function fabricAwareEqual(a: unknown, b: unknown): boolean {
   return deepEqual(a, b, specialObjectEqual);

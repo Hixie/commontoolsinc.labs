@@ -1229,6 +1229,15 @@ describe("type-check", () => {
       expect(isKeyableObjectNotArray([1, 2, 3])).toBe(false);
     });
 
+    it("returns `true` for a non-fabric class instance", () => {
+      // The whole of the difference from the plain-object question: this
+      // subtracts the fabric special objects from `isObjectNotArray()` and
+      // nothing else.
+
+      expect(isKeyableObjectNotArray(new Date())).toBe(true);
+      expect(isKeyableObjectNotArray(new Map())).toBe(true);
+    });
+
     it("returns `false` for a `FabricPrimitive`", () => {
       expect(isKeyableObjectNotArray(new FabricBytes(new Uint8Array([1]))))
         .toBe(false);
@@ -1350,6 +1359,15 @@ describe("type-check", () => {
     it("returns `false` for an array", () => {
       expect(isWalkableObjectNotArray([])).toBe(false);
       expect(isWalkableObjectNotArray([1, 2, 3])).toBe(false);
+    });
+
+    it("returns `true` for a non-fabric class instance", () => {
+      // The whole of the difference from the plain-object question: this
+      // subtracts the fabric special objects from `isObjectNotArray()` and
+      // nothing else.
+
+      expect(isWalkableObjectNotArray(new Date())).toBe(true);
+      expect(isWalkableObjectNotArray(new Map())).toBe(true);
     });
 
     it("returns `false` for a `FabricPrimitive`", () => {

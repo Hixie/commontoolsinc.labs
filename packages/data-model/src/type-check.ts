@@ -22,13 +22,15 @@
  * one it needs answered. Outside the `FabricValue` type they subtract nothing:
  * a `Date`, a `Map`, a `Cell` and a query-result proxy over one all still
  * return `true`, which is what leaves a walk's treatment of them where it
- * found it. Inside the type they return `false` for a special object, which
- * has no own properties to read.
+ * found it. Inside the type, a `FabricPrimitive` and any other special object
+ * that is not a `FabricInstance` returns `false`, having no own properties to
+ * read.
  *
- * The four differ on one value, in two ways. `isKeyable*` returns `false` for
- * a `FabricInstance`, reporting that this walk cannot reach what one holds;
- * `isWalkable*` refuses one, for a walk that would carry a `false` forward as
- * an empty record. And each pair settles the array question in its name.
+ * The four differ on a `FabricInstance`, and nowhere else. `isKeyable*`
+ * returns `false` for one, reporting that the asking walk cannot reach what it
+ * holds; `isWalkable*` refuses one, for a walk that would carry a `false`
+ * forward as an empty record. Each pair settles the array question in its
+ * name.
  */
 
 import { backtickQuote } from "@commonfabric/utils/markdown";
@@ -76,9 +78,10 @@ import { BaseFabricPrimitive } from "./fabric-bases/BaseFabricPrimitive.ts";
  * A `FabricInstance` returns `false` here as well, and that answer is
  * incomplete rather than wrong: an instance holds other `FabricValue`s, so a
  * path below one addresses something that exists and this reports it as
- * unreachable. Reach for this where that is the honest thing to report --
- * a walk deciding what a path finds, or what a change triggers, whose own
- * marker already records the gap. Reach for {@link isWalkableObjectOrArray}
+ * unreachable. Reach for this where that is the honest thing to report, and
+ * record what it under-reports where the report lands -- a walk that decides
+ * what a path finds, or what a change triggers, is reporting an absence rather
+ * than handing back a wrong value. Reach for {@link isWalkableObjectOrArray}
  * instead where a `false` would make the walk hand back a wrong value rather
  * than report an absence; that one refuses an instance for exactly that
  * reason. The two differ on an instance and nowhere else.
@@ -95,8 +98,8 @@ import { BaseFabricPrimitive } from "./fabric-bases/BaseFabricPrimitive.ts";
  * sibling {@link isKeyableObjectNotArray} is the same test with arrays
  * removed. This is a structural predicate, so it narrows in one direction only
  * and is overloaded accordingly; see the header of `@commonfabric/utils/types`
- * for what that means. The narrowed type is read-only: the walks this serves
- * rebuild containers rather than write through them.
+ * for what that means. The narrowed type is read-only, these callers only
+ * reading what they narrow.
  */
 export function isKeyableObjectOrArray(value: ReadonlyRecord): boolean;
 export function isKeyableObjectOrArray(
@@ -145,15 +148,16 @@ export function isKeyableObjectNotArray(value: unknown): boolean {
  * tripwires" in `docs/development/EXPERIMENTAL_OPTIONS.md` governs them all.
  * Its strength here is de facto rather than by construction: no flag stands
  * between an instance and this predicate, and a `FabricError` is ungated and
- * exposed to pattern authors, so what keeps the refusal quiet is the callers
- * that exist rather than the ones that could be written.
+ * exposed to pattern authors, so nothing but the absence of such a call keeps
+ * it from firing.
  *
  * `docs/development/DEVELOPMENT.md` under "Walking or comparing a value" says
  * which of the four a walk reaches for, including where a caller with a better
  * answer than a throw tests for an instance ahead of this one.
  *
- * This is the walk-side half of admitting special objects; the compare-side
- * half is `fabricAwareEqual()`.
+ * The walk-side half of admitting special objects is
+ * {@link isKeyableObjectOrArray} and this disposition toward an instance; the
+ * compare-side half is `fabricAwareEqual()`.
  *
  * @throws If given a `FabricInstance`.
  */
