@@ -1344,6 +1344,17 @@ than at any one of the sites:
   so the walk stays quiet, and swapping a throwing call for a non-throwing one
   without recording what the site now under-reports is that.
 
+The container question `isWalkableObjectOrArray()` asks is the widest of these
+refusals, being reached from around twenty-five walks across `runner` and
+`piece`. Its strength at those sites is de facto rather than structural: a
+`FabricInstance` can be constructed and handed to any of them. What supports
+the claim is that `FabricError` is the one instance with live traffic today —
+the fetch builtins store one as a result — and that writing, appending,
+reading, replacing and deleting one through `Cell` was measured against each
+walk. The two sites that turned out to be reachable that way, the stored path
+reads in `storage/v2-path.ts` and three sites in `data-updating.ts`, answer
+rather than refuse.
+
 Worked example: with [`modernCellRep`](#moderncellrep) on, a link is a
 `FabricLink` and therefore a `FabricInstance`, so ordinary links reach these
 checks and throw. That is expected, and the set of sites it lights up is a

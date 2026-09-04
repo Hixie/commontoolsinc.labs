@@ -601,6 +601,45 @@ using them is not optional in code that can reach a stored value:
   walk returns for. `valueEqual({ v: aFabricMap }, { v: 5 })` throws where
   `fabricAwareEqual()` returns `false`.
 
+Around a dozen walks in `runner` and `piece` take one of the two
+non-refusing answers, and what each says is decided by what it owes its
+caller. Four shapes cover the tree today:
+
+- **Report the error the signature already carries.** `attestation.ts`'s
+  `resolve()` returns its `TypeMismatchError`, and `cfc/structured-result.ts`
+  seals the value, which is the answer its unmodeled-key policy already gives
+  for anything it cannot measure against the schema.
+- **Answer the way a leaf is answered.** The stored path reads in
+  `storage/v2-path.ts` report the slot absent, and `traverse.ts`'s `getAtPath`
+  lets the instance leaf through. Both sit on paths that carry live instance
+  traffic, a `FabricError` stored by the fetch builtins among it, so a refusal
+  would take down an ordinary read or write. `storage/v2-path.ts` is the sharp
+  case: `normalizeAndDiff()` reads the current value at every slot it is about
+  to write, so refusing there replaces the storage layer's typed, in-band
+  error with an exception escaping `Cell.set()`.
+- **Stop the scan.** A walk that only collects — links to pre-sync in
+  `runner.ts` and `storage/v2.ts`, write redirects in `pattern-binding.ts` —
+  finds nothing inside an instance either way. Stopping is what its marker
+  already says happens, and throwing would turn a recorded gap into a crash.
+- **Treat it as the atomic value it is.** Three sites in `data-updating.ts`
+  hand it to the branch that emits it whole: two exclude it from array
+  anchoring, and one resets the slot before the per-key writes that follow.
+
+`reactive-dependencies.ts` is the one that fits none of those. It keeps
+descending an instance by property name through its own `isKeyable()`. A throw
+there costs the rest of the notification being delivered, and `false` would
+make an instance indistinguishable from a leaf, so a read below one would stop
+triggering when the instance is deleted or replaced by a scalar.
+
+Separately from those, a walk that ends its descent at a link tests for one
+before it asks the container question, and the order is load-bearing rather
+than tidy. `isPrimitiveCellLink()` recognizes whichever form the active regime
+uses: a record under the legacy representation, which the container question
+would descend, and a `FabricLink` under
+[`modernCellRep`](EXPERIMENTAL_OPTIONS.md#moderncellrep), which the container
+question would refuse. Asking it second means an ordinary link takes the
+refusal meant for a value nothing knows how to walk.
+
 A walk that must not silently pass a `FabricInstance` by — one whose contents
 are reachable only through its codec — refuses it outright rather than walking
 it. Those refusals are discovery instruments; see "Flag-gated tripwires" in
