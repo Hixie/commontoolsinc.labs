@@ -292,12 +292,12 @@ function resolveRefsForLLM(
       if (key === "$defs") continue; // strip $defs from output
       if (Array.isArray(value)) {
         result[key] = value.map((item) =>
-          typeof item === "object" && item !== null || typeof item === "boolean"
+          isObjectOrArray(item) || typeof item === "boolean"
             ? resolve(item, refDepth, activeRefs)
             : item
         );
       } else if (
-        typeof value === "object" && value !== null ||
+        isObjectOrArray(value) ||
         typeof value === "boolean"
       ) {
         result[key] = resolve(value, refDepth, activeRefs);
@@ -317,7 +317,7 @@ function resolveRefsForLLM(
  * 2. Inlining all $ref references
  */
 function prepareSchemaForLLM(schema: JSONSchema): JSONSchema {
-  if (typeof schema !== "object" || schema === null) return schema;
+  if (!isObjectOrArray(schema)) return schema;
   const sanitized = sanitizeSchemaForLinks(schema);
   return resolveRefsForLLM(sanitized);
 }
@@ -480,8 +480,7 @@ function simplifySchemaForContext(
     // Preserve semantic markers and other primitive values, but skip complex
     // objects not handled above
     if (
-      PRESERVE_KEYS.includes(key) || typeof value !== "object" ||
-      value === null
+      PRESERVE_KEYS.includes(key) || !isObjectOrArray(value)
     ) {
       simplified[key] = value;
     }

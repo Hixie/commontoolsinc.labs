@@ -24,6 +24,7 @@
 
 import { parseArgs } from "@std/cli/parse-args";
 import { join } from "@std/path";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type { HarnessTranscriptMessage } from "../src/contracts/transcript.ts";
 
 /** Where the console writes its runs, relative to its working directory. */
@@ -749,9 +750,7 @@ export const measureTranscript = (
   // unreadable run rather than aborting the whole report.
   const messages = transcript.filter((
     message,
-  ): message is typeof transcript[number] =>
-    typeof message === "object" && message !== null
-  );
+  ): message is typeof transcript[number] => isObjectOrArray(message));
   for (const message of messages) {
     if (message.role === "tool") {
       if (typeof message.toolCallId !== "string") continue;

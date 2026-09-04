@@ -139,6 +139,7 @@ import {
 } from "./runner.ts";
 import { ExtendedStorageTransaction } from "./storage/extended-storage-transaction.ts";
 import { getLogger } from "@commonfabric/utils/logger";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   markRendererInputTx,
   markUiInputBlindWriteTx,
@@ -177,7 +178,7 @@ const isFullNormalizedLinkShape = (
   space: MemorySpace;
   path: string[];
 } => {
-  if (typeof value !== "object" || value === null) return false;
+  if (!isObjectOrArray(value)) return false;
   const link = value as NormalizedLink;
   if (link.scope === "inherit") {
     throw new Error(

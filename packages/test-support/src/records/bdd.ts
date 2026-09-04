@@ -22,6 +22,7 @@
  */
 
 import { describe as realDescribe, it as realIt } from "@std/testing/bdd/real";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   activeCapture,
   NAME_SEPARATOR,
@@ -54,7 +55,7 @@ const chain: string[] = [];
 export function nameOf(args: readonly unknown[]): string | undefined {
   for (const arg of args) {
     if (typeof arg === "string") return arg;
-    if (typeof arg === "object" && arg !== null) {
+    if (isObjectOrArray(arg)) {
       const named = (arg as { name?: unknown }).name;
       if (typeof named === "string" && named.length > 0) return named;
     }
@@ -75,7 +76,7 @@ export function bodyOf(
     if (typeof arg === "function") {
       return { index, body: arg as AnyFunction };
     }
-    if (typeof arg === "object" && arg !== null) {
+    if (isObjectOrArray(arg)) {
       const fn = (arg as { fn?: unknown }).fn;
       if (typeof fn === "function") {
         return { index: -1, body: fn as AnyFunction };
@@ -122,7 +123,7 @@ export function wrapDescribe(
     }
     return through(
       ...args.map((arg) =>
-        typeof arg === "object" && arg !== null &&
+        isObjectOrArray(arg) &&
           typeof (arg as { fn?: unknown }).fn === "function"
           ? { ...arg, fn: wrapped }
           : arg

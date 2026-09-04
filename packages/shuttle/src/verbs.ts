@@ -34,6 +34,7 @@ import {
 import { projectWishValue, readWish } from "@commonfabric/cli/lib/wish";
 import { isDID } from "@commonfabric/identity";
 import type { MemorySpace } from "@commonfabric/memory/interface";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import type { HeldConnection } from "./connection.ts";
 import { splitLine } from "./line.ts";
@@ -493,7 +494,7 @@ async function resolveTarget(
  * is a wish that resolved to no address at all.
  */
 function addressIn(result: unknown): string | undefined {
-  if (result === null || typeof result !== "object") return undefined;
+  if (!isObjectOrArray(result)) return undefined;
   const address = (result as Record<string, unknown>)[LINK_MARKER_KEY];
   return typeof address === "string" ? address : undefined;
 }

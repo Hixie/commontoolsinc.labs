@@ -1,6 +1,10 @@
 import type { FabricPlainObject, FabricValue } from "@commonfabric/api";
 import { toCompactDebugString } from "@commonfabric/data-model";
-import { unsafeObjectKeyIn } from "@commonfabric/utils/types";
+import {
+  isObjectNotArray,
+  isObjectOrArray,
+  unsafeObjectKeyIn,
+} from "@commonfabric/utils/types";
 
 import {
   type ClientCommit,
@@ -2116,7 +2120,7 @@ const requireSessionOpenAuthMetadata = (
       "memory server did not provide session.open authentication metadata",
     );
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     throw protocolError(
       "memory server sent malformed session.open authentication metadata",
     );
@@ -2141,11 +2145,7 @@ const requireSessionOpenAuthMetadata = (
       "memory server sent malformed session.open authentication metadata",
     );
   }
-  if (
-    typeof sessionOpen.challenge !== "object" ||
-    sessionOpen.challenge === null ||
-    Array.isArray(sessionOpen.challenge)
-  ) {
+  if (!isObjectNotArray(sessionOpen.challenge)) {
     throw protocolError(
       "memory server sent malformed session.open authentication metadata",
     );
@@ -2177,7 +2177,7 @@ const parseHelloOk = (
   flags: MemoryProtocolFlags;
   sessionOpen?: unknown;
 } | null => {
-  if (typeof message !== "object" || message === null) {
+  if (!isObjectOrArray(message)) {
     return null;
   }
   const obj = message as {
@@ -2199,14 +2199,14 @@ const parseHelloOk = (
 const isSessionEffect = (
   message: unknown,
 ): message is SessionEffectMessage => {
-  return typeof message === "object" && message !== null &&
+  return isObjectOrArray(message) &&
     (message as { type?: string }).type === "session/effect";
 };
 
 const isSessionRevoked = (
   message: unknown,
 ): message is SessionRevokedMessage => {
-  if (typeof message !== "object" || message === null) return false;
+  if (!isObjectOrArray(message)) return false;
   const { type, space, sessionId, reason } = message as {
     type?: string;
     space?: string;
@@ -2220,7 +2220,7 @@ const isSessionRevoked = (
 };
 
 const isResponse = (message: unknown): message is ResponseMessage<unknown> => {
-  return typeof message === "object" && message !== null &&
+  return isObjectOrArray(message) &&
     (message as { type?: string }).type === "response" &&
     typeof (message as { requestId?: string }).requestId === "string";
 };

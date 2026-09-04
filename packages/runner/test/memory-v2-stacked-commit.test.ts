@@ -40,6 +40,7 @@ import {
   resetServerExecutionConfig,
   setServerExecutionConfig,
 } from "@commonfabric/memory/v2";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   parentPath,
   parsePointer,
@@ -840,7 +841,7 @@ const applyOperation = (
 };
 
 const isEntityDocumentValue = (value: unknown): value is { value: RootValue } =>
-  typeof value === "object" && value !== null && "value" in value;
+  isObjectOrArray(value) && "value" in value;
 
 const createLocalModel = (): Map<URI, LocalDocModel> =>
   new Map(

@@ -11,6 +11,7 @@
  */
 
 import { matchLLMFriendlyLink } from "@commonfabric/runner/shared";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import {
   HANDLE_TOKEN_PATTERN,
   type HarnessHandleEntry,
@@ -311,9 +312,7 @@ export const handleTokensIn = (value: unknown): string[] =>
   );
 
 const asRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  isObjectNotArray(value) ? value as Record<string, unknown> : {};
 
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value !== "" ? value : undefined;
@@ -359,7 +358,7 @@ const longestNumericRun = (value: unknown): number => {
     }
     return best;
   }
-  if (typeof value === "object" && value !== null) {
+  if (isObjectOrArray(value)) {
     let best = 0;
     for (const item of Object.values(value)) {
       best = Math.max(best, longestNumericRun(item));
@@ -380,7 +379,7 @@ const sealedPositions = (value: unknown): number => {
       0,
     );
   }
-  if (typeof value === "object" && value !== null) {
+  if (isObjectOrArray(value)) {
     const record = value as Record<string, unknown>;
     if (typeof record["@link"] === "string") {
       return String(record["@link"]).startsWith("opaque:") ? 1 : 0;
@@ -399,7 +398,7 @@ const sealedPositions = (value: unknown): number => {
  * something.
  */
 const disclosureOf = (output: unknown): ConsoleDisclosure | undefined => {
-  const record = typeof output === "object" && output !== null
+  const record = isObjectOrArray(output)
     ? output as Record<string, unknown>
     : undefined;
   if (record === undefined || !Object.hasOwn(record, "value")) {
@@ -503,7 +502,7 @@ const statusOf = (
   // answered with the reference to the result whose values the boundary held
   // back, so the step's outcome is the one its own answer states, below; the
   // boundary shows as the withheld marker beside the CFC line instead.
-  const record = typeof output === "object" && output !== null
+  const record = isObjectOrArray(output)
     ? output as Record<string, unknown>
     : undefined;
   const status = record?.status;
@@ -520,7 +519,7 @@ const statusOf = (
 
 /** The child run a `delegate_task` result names, when it names one. */
 const childRunIdOf = (output: unknown): string | undefined => {
-  const record = typeof output === "object" && output !== null
+  const record = isObjectOrArray(output)
     ? output as { subagent?: { childRunId?: unknown } }
     : undefined;
   const childRunId = record?.subagent?.childRunId;
@@ -551,7 +550,7 @@ const valueAtJsonPointer = (
       continue;
     }
     if (
-      typeof current !== "object" || current === null ||
+      !isObjectOrArray(current) ||
       !Object.hasOwn(current, segment)
     ) {
       return { available: false };
@@ -1132,7 +1131,7 @@ const argumentAtomNames = (
       continue;
     }
     for (const clause of entry.label?.confidentiality ?? []) {
-      const type = typeof clause === "object" && clause !== null
+      const type = isObjectOrArray(clause)
         ? (clause as { type?: unknown }).type
         : undefined;
       if (typeof type === "string") {

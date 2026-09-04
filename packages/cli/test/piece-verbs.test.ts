@@ -1,6 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import type { JSONSchema } from "@commonfabric/api";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import type { PieceCallablesListing } from "../lib/piece.ts";
 import { listPieceCallables, partitionVerbListing } from "../lib/piece.ts";
 import { verbListingJson, verbListingLines } from "../commands/piece.ts";
@@ -24,8 +25,7 @@ function namedHandles(
   value: unknown,
   child: (name: string) => unknown,
 ): { get: () => unknown } {
-  const named = typeof value === "object" && value !== null &&
-      !Array.isArray(value)
+  const named = isObjectNotArray(value)
     ? Object.fromEntries(
       Object.keys(value as Record<string, unknown>).map((
         name,
@@ -101,10 +101,9 @@ function cell(value: unknown, schema?: JSONSchema): {
     asSchema: (_schema: unknown) => namedHandles(value, self.key),
     asSchemaFromLinks: () => self,
     key: (name: string) => {
-      const childValue =
-        typeof value === "object" && value !== null && !Array.isArray(value)
-          ? (value as Record<string, unknown>)[name]
-          : undefined;
+      const childValue = isObjectNotArray(value)
+        ? (value as Record<string, unknown>)[name]
+        : undefined;
       const childSchema =
         schema && typeof schema === "object" && "properties" in schema
           ? (schema.properties as Record<string, JSONSchema>)?.[name]

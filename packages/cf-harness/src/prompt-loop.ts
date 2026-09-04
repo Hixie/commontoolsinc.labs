@@ -8,6 +8,7 @@ import {
 } from "@commonfabric/runner/cfc";
 import {
   isObjectNotArray,
+  isObjectOrArray,
   type ReadonlyRecord,
 } from "@commonfabric/utils/types";
 
@@ -384,7 +385,7 @@ const annotatePromptLoopError = (
   error: unknown,
   modelTurns: number,
 ): void => {
-  if (typeof error !== "object" || error === null) {
+  if (!isObjectOrArray(error)) {
     return;
   }
   try {
@@ -400,7 +401,7 @@ const annotatePromptLoopError = (
 const promptLoopModelTurnsFromError = (
   error: unknown,
 ): number | undefined => {
-  if (typeof error !== "object" || error === null) {
+  if (!isObjectOrArray(error)) {
     return undefined;
   }
   const modelTurns = (error as PromptLoopErrorWithModelTurns)[
@@ -596,7 +597,7 @@ const summarizeToolInput = async (
       const edits = Array.isArray(input.edits) ? input.edits : [];
       for (const edit of edits) {
         if (
-          typeof edit === "object" && edit !== null &&
+          isObjectOrArray(edit) &&
           "oldText" in edit &&
           typeof edit.oldText === "string"
         ) {
@@ -605,7 +606,7 @@ const summarizeToolInput = async (
           oldTextDigests.push(summary.digest);
         }
         if (
-          typeof edit === "object" && edit !== null &&
+          isObjectOrArray(edit) &&
           "newText" in edit &&
           typeof edit.newText === "string"
         ) {
@@ -1099,7 +1100,7 @@ export const scrubHandleSkillTextDeep = (
   if (Array.isArray(value)) {
     return value.map((entry) => scrubHandleSkillTextDeep(entry, skillText));
   }
-  if (value !== null && typeof value === "object") {
+  if (isObjectOrArray(value)) {
     // Keys as well as values: a decoded payload can stand in key position.
     return Object.fromEntries(
       Object.entries(value).map((
@@ -1207,7 +1208,7 @@ const restrictedSkillContextToken = (
     }
     return undefined;
   }
-  if (value !== null && typeof value === "object") {
+  if (isObjectOrArray(value)) {
     for (const [key, entry] of Object.entries(value)) {
       const keyMatch = restrictedSkillContextToken(
         table,

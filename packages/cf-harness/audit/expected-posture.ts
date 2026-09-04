@@ -11,6 +11,7 @@
  */
 
 import type { CfcPostureReport } from "@commonfabric/runner/cfc";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 
 /** What a spec may assert about a posture record. */
 export interface ExpectedPosture {
@@ -94,7 +95,7 @@ const stringList = (
  * @throws Error naming the problem, for a caller to print.
  */
 export const parseExpectedPosture = (input: unknown): ExpectedPosture => {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isObjectNotArray(input)) {
     throw new Error("an expected-posture spec must be a JSON object");
   }
   const raw = input as Record<string, unknown>;

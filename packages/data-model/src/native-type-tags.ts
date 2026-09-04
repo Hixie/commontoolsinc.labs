@@ -21,6 +21,7 @@
  */
 
 import { constructorOfPrototype } from "@commonfabric/utils/objects";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { VALUE_TAGS, type ValueTag } from "./VALUE_TAGS.ts";
 import { tagFromNativeBuiltinClass } from "./tagFromNativeBuiltinClass.ts";
@@ -97,7 +98,7 @@ export function tagFromNativeClass(
  * a prototype check for null-prototype objects.
  */
 export function tagFromNativeValue(value: unknown): ValueTag | null {
-  if (value === null || typeof value !== "object") {
+  if (!isObjectOrArray(value)) {
     return VALUE_TAGS.Primitive;
   }
 

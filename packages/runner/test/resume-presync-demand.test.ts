@@ -7,6 +7,7 @@ import { rawMetaWriteAuthorization } from "../src/meta-seam.ts";
 import { documentBoundedResumeCell } from "../src/runner.ts";
 import { newSharedServer } from "./memory-v2-test-utils.ts";
 import type { JSONSchema } from "@commonfabric/api";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { ContextualFlowControl } from "../src/cfc.ts";
 import type { RuntimeProgram } from "../src/harness/types.ts";
 
@@ -259,7 +260,7 @@ describe("resume-presync-demand", () => {
     // And the declared reads genuinely happened and kept their shapes.
     expect(
       syncedSchemas.some((schema) =>
-        typeof schema === "object" && schema !== null &&
+        isObjectOrArray(schema) &&
         !ContextualFlowControl.isTrueSchema(schema)
       ),
     ).toBe(true);

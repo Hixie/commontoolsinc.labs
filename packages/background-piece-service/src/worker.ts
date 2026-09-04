@@ -20,6 +20,7 @@ import {
 } from "@commonfabric/runner";
 import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
 import { attachRuntimeTelemetryOtelBridge } from "@commonfabric/runner/telemetry-otel-bridge";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import { env } from "./env.ts";
 import {
@@ -442,7 +443,7 @@ export async function handleWorkerMessage(
     handlers.postMessage({ msgId: message.msgId });
   } catch (error) {
     handlers.error(`Worker error:`, error);
-    const msgId = typeof message === "object" && message !== null &&
+    const msgId = isObjectOrArray(message) &&
         "msgId" in message
       ? (message as { msgId: unknown }).msgId
       : undefined;

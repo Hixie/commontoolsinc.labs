@@ -28,6 +28,7 @@ import { FabricEpochNsec } from "@/fabric-primitives/FabricEpochNsec.ts";
 import { FabricHash } from "@/fabric-primitives/FabricHash.ts";
 import { FabricKeyPair } from "@/fabric-primitives/FabricKeyPair.ts";
 import { FabricRegExp } from "@/fabric-primitives/FabricRegExp.ts";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { LAYER_CORPUS } from "./fabric-value-corpus.ts";
 
 describe("native-type-tags", () => {
@@ -341,7 +342,7 @@ describe("native-type-tags", () => {
     ];
 
     const constructors = LAYER_CORPUS
-      .filter(([, value]) => (value !== null) && (typeof value === "object"))
+      .filter(([, value]) => isObjectOrArray(value))
       .map(([label, value]) =>
         [label, Object.getPrototypeOf(value as object)?.constructor] as const
       )

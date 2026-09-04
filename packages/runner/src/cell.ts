@@ -3980,7 +3980,7 @@ function containsCycle(value: unknown): boolean {
 
   const walk = (node: unknown): boolean => {
     if (
-      node === null || typeof node !== "object" || isCell(node) ||
+      !isObjectOrArray(node) || isCell(node) ||
       isCellLink(node) || node instanceof FabricSpecialObject
     ) {
       return false;
@@ -4509,7 +4509,7 @@ export function schemaCellScope(
  * objects is trap-free, and a proxy is detected before recursing into it.
  */
 function containsCellResult(value: unknown): boolean {
-  if (value === null || typeof value !== "object") return false;
+  if (!isObjectOrArray(value)) return false;
   if (isCellResultForDereferencing(value)) return true;
   for (const v of Object.values(value)) {
     if (containsCellResult(v)) return true;

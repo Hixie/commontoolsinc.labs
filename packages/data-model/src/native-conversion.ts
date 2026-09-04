@@ -625,7 +625,7 @@ export function nativeFromFabricValue(
   // through unchanged.
   if (value instanceof FabricSpecialObject) return value;
 
-  if (value === null || value === undefined || typeof value !== "object") {
+  if (!isObjectOrArray(value)) {
     return value;
   }
 

@@ -8,6 +8,7 @@
  * subagent depth invariant out of this path: `query_docs` starts no child run.
  */
 
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   EXPLORE_RETURN_SCHEMA,
   EXPLORE_SUBAGENT_CODEX_MODEL,
@@ -118,7 +119,7 @@ export const admitCitations = (
   const admitted: HarnessDocsCitation[] = [];
   const seen = new Set<string>();
   for (const entry of Array.isArray(value) ? value : []) {
-    if (typeof entry !== "object" || entry === null) {
+    if (!isObjectOrArray(entry)) {
       continue;
     }
     const { path, heading } = entry as Record<string, unknown>;
@@ -152,7 +153,7 @@ export const readExploreQueryReply = (
     emptyMessage: "explore reply was empty",
     invalidMessage: "explore reply was not valid JSON",
   });
-  const record = typeof parsed === "object" && parsed !== null
+  const record = isObjectOrArray(parsed)
     ? parsed as Record<string, unknown>
     : {};
   const answer = typeof record.answer === "string" ? record.answer : "";

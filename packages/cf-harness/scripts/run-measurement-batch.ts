@@ -43,6 +43,7 @@ import { ensureDir } from "@std/fs";
 import { isAbsolute, join } from "@std/path";
 
 import { toCompactDebugString } from "@commonfabric/data-model";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import type { ConsolePolicyReport } from "../console/policy.ts";
 import type {
@@ -163,7 +164,7 @@ export interface MeasurementSuite {
  * spent three runs to find out something readable up front.
  */
 export const parseMeasurementSuite = (input: unknown): MeasurementSuite => {
-  if (typeof input !== "object" || input === null) {
+  if (!isObjectOrArray(input)) {
     throw new Error("a task suite must be a JSON object");
   }
   const {
@@ -207,10 +208,7 @@ export const parseMeasurementSuite = (input: unknown): MeasurementSuite => {
     (supersededPatternIds ?? []) as readonly string[],
   );
   if (supersededReasons !== undefined) {
-    if (
-      typeof supersededReasons !== "object" || supersededReasons === null ||
-      Array.isArray(supersededReasons)
-    ) {
+    if (!isObjectNotArray(supersededReasons)) {
       throw new Error("a task suite's supersededReasons must be a JSON object");
     }
     for (const [id, reason] of Object.entries(supersededReasons)) {
@@ -236,7 +234,7 @@ export const parseMeasurementSuite = (input: unknown): MeasurementSuite => {
   }
   const seen = new Set<string>();
   const parsed = tasks.map((task, index) => {
-    if (typeof task !== "object" || task === null) {
+    if (!isObjectOrArray(task)) {
       throw new Error(`task ${index} is not a JSON object`);
     }
     const { id, text } = task as Record<string, unknown>;
@@ -419,11 +417,10 @@ export const readServerMeta = async (
     const body = await response.json() as Record<string, unknown>;
     return {
       ...(typeof body.gitSha === "string" ? { gitSha: body.gitSha } : {}),
-      ...(typeof body.cfc === "object" && body.cfc !== null
+      ...(isObjectOrArray(body.cfc)
         ? { cfc: body.cfc as Record<string, unknown> }
         : {}),
-      ...(typeof body.experimentalFlags === "object" &&
-          body.experimentalFlags !== null
+      ...(isObjectOrArray(body.experimentalFlags)
         ? {
           experimentalFlags: body.experimentalFlags as Record<string, unknown>,
         }
@@ -694,7 +691,7 @@ export const indexChangeOf = (
 };
 
 const indexSnapshotOf = (answer: unknown): IndexSnapshot => {
-  if (typeof answer !== "object" || answer === null) {
+  if (!isObjectOrArray(answer)) {
     return { kind: "unread", reason: "the index answered with no object" };
   }
   const patterns = (answer as Record<string, unknown>).patterns;
@@ -713,7 +710,7 @@ const indexSnapshotOf = (answer: unknown): IndexSnapshot => {
         patternId: String(pattern.patternId ?? "(unnamed)"),
         description: String(pattern.description ?? ""),
         score: typeof pattern.score === "number" ? pattern.score : Number.NaN,
-        events: typeof pattern.events === "object" && pattern.events !== null
+        events: isObjectOrArray(pattern.events)
           ? pattern.events as Record<string, number>
           : {},
         ...(typeof discoverable === "boolean" ? { discoverable } : {}),
@@ -836,7 +833,7 @@ export class ConsoleClient {
         reason: `/api/status could not be read: ${describeError(error)}`,
       };
     }
-    if (typeof answer !== "object" || answer === null) {
+    if (!isObjectOrArray(answer)) {
       return {
         kind: "refused",
         reason: "/api/status did not return a JSON object",
@@ -881,7 +878,7 @@ export class ConsoleClient {
         error: `/api/policy could not be read: ${describeError(error)}`,
       };
     }
-    if (typeof answer !== "object" || answer === null) {
+    if (!isObjectOrArray(answer)) {
       return { error: "/api/policy did not return a JSON object" };
     }
     // Every field is required, and the two nullable ones have to arrive as an
@@ -1294,9 +1291,7 @@ const runCandidates = async (
     let runState: Record<string, unknown>;
     try {
       const parsed = JSON.parse(await Deno.readTextFile(runStatePath));
-      if (
-        typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-      ) {
+      if (!isObjectNotArray(parsed)) {
         unread.push(`${entry.name}/run-state.json was not an object`);
         continue;
       }
@@ -1342,7 +1337,7 @@ const runCandidates = async (
       continue;
     }
     const firstUser = transcript.find((message) =>
-      typeof message === "object" && message !== null &&
+      isObjectOrArray(message) &&
       (message as Record<string, unknown>).role === "user"
     ) as Record<string, unknown> | undefined;
     if (firstUser?.content !== taskText) continue;

@@ -34,6 +34,7 @@
 import { HttpProgramResolver } from "@commonfabric/js-compiler/program";
 import { deepEqual } from "@commonfabric/utils/deep-equal";
 import { getLogger } from "@commonfabric/utils/logger";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import type { Pattern } from "./builder/types.ts";
 import type { Cell } from "./cell.ts";
@@ -1199,8 +1200,7 @@ export class SourceReconciler {
         sourcePrimed = true;
         const candidate = value as Record<string, unknown>;
         if (
-          typeof value === "object" && value !== null &&
-          !Array.isArray(value) &&
+          isObjectNotArray(value) &&
           candidate.identity === targetRef.identity &&
           candidate.symbol === targetRef.symbol
         ) return;

@@ -11,6 +11,7 @@ import { join } from "@std/path";
 import { normalize } from "@std/path/posix";
 
 import type { CfcSandboxResult } from "@commonfabric/runner/cfc";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
   createFileSystemHarnessArtifactStore,
@@ -6233,8 +6234,7 @@ const labelHasConfidentialityValue = (
   label: unknown,
   value: unknown,
 ): boolean =>
-  typeof label === "object" &&
-  label !== null &&
+  isObjectOrArray(label) &&
   "confidentiality" in label &&
   Array.isArray(label.confidentiality) &&
   label.confidentiality.some((entry) =>

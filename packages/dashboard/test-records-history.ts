@@ -19,6 +19,7 @@ import {
   readObject,
   testIdentityKey,
 } from "@commonfabric/test-support/records";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { dashboardCacheFile } from "./history-files.ts";
 
 export const TEST_RECORDS_BUCKET = "cf-ci-metadata";
@@ -49,7 +50,7 @@ export interface DayAggregate {
 }
 
 export function isDayAggregate(value: unknown): value is DayAggregate {
-  if (typeof value !== "object" || value === null) return false;
+  if (!isObjectOrArray(value)) return false;
   const aggregate = value as Record<string, unknown>;
   if (
     typeof aggregate.key !== "string" ||
@@ -150,10 +151,10 @@ interface StoredHistory {
 }
 
 function isStoredHistory(value: unknown): value is StoredHistory {
-  if (typeof value !== "object" || value === null) return false;
+  if (!isObjectOrArray(value)) return false;
   const stored = value as Record<string, unknown>;
   if (stored.version !== 1) return false;
-  if (typeof stored.days !== "object" || stored.days === null) return false;
+  if (!isObjectOrArray(stored.days)) return false;
   return Object.entries(stored.days as Record<string, unknown>).every(
     ([day, aggregates]) =>
       Array.isArray(aggregates) &&

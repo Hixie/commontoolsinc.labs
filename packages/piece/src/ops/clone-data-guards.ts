@@ -11,6 +11,7 @@ import {
 import { cfcLabelViewForCellFailClosed } from "@commonfabric/runner/cfc";
 import { FabricInstance, FabricPrimitive } from "@commonfabric/data-model";
 import { commitPreconditionValueHash } from "@commonfabric/memory/v2";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 export function cloneCellKey(cell: Cell<unknown>): string {
   const link = cell.getAsNormalizedFullLink();
@@ -35,7 +36,7 @@ export function assertNoCloneFabricInstance(
     );
   }
   if (
-    value === null || typeof value !== "object" ||
+    !isObjectOrArray(value) ||
     value instanceof FabricPrimitive || seen.has(value)
   ) {
     return;
@@ -72,7 +73,7 @@ export function cloneInternalManifest(
   }
   return manifest.map((entry) => {
     if (
-      typeof entry !== "object" || entry === null ||
+      !isObjectOrArray(entry) ||
       !("partialCause" in entry) || !("link" in entry)
     ) {
       throw new Error("piece has invalid internal data metadata");

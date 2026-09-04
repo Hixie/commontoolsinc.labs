@@ -4,6 +4,7 @@
 // was built from.
 
 /** Build metadata for a compiled binary. */
+import { isObjectOrArray } from "./types.ts";
 export interface BuildInfo {
   /** Commit the binary was built from, or `null` if not recorded. */
   commitSha: string | null;
@@ -42,7 +43,7 @@ export function readBuildInfoFrom(path: URL | string): BuildInfo {
   } catch {
     return { commitSha: null, builtAt: null };
   }
-  if (typeof parsed !== "object" || parsed === null) {
+  if (!isObjectOrArray(parsed)) {
     return { commitSha: null, builtAt: null };
   }
   const obj = parsed as Partial<BuildInfo>;

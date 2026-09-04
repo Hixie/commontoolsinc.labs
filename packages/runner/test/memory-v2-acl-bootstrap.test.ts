@@ -5,6 +5,7 @@ import type { MemorySpace, Signer, URI } from "@commonfabric/memory/interface";
 import * as MemoryV2Client from "@commonfabric/memory/v2/client";
 import * as MemoryV2Server from "@commonfabric/memory/v2/server";
 import { selectDocHead } from "@commonfabric/memory/v2/engine";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 import {
   type Options,
   type SessionFactory,
@@ -283,7 +284,7 @@ Deno.test("concurrent named-space bootstrap has one owner and both sessions succ
     );
 
     const acl = (await server.readDocument(space, `of:${space}`))?.value;
-    assert(acl !== null && typeof acl === "object" && !Array.isArray(acl));
+    assert(isObjectNotArray(acl));
     const grants = acl as Record<string, unknown>;
     assertEquals(grants["*"], "WRITE");
     assertEquals(

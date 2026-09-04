@@ -69,6 +69,7 @@ import {
 import { safeStringify } from "../lib/render.ts";
 import { cf, checkStderr, stripAnsi } from "./utils.ts";
 import { rawMetaWriteAuthorization } from "@commonfabric/runner/meta-seam";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 const API_URL = "https://cf.dev";
 const SPACE = "common-knowledge";
@@ -2085,7 +2086,7 @@ describe("cli piece parsing", () => {
         key: (...segments: (string | number)[]) => {
           let child: unknown = value;
           for (const segment of segments) {
-            child = typeof child === "object" && child !== null
+            child = isObjectOrArray(child)
               ? (child as Record<string | number, unknown>)[segment]
               : undefined;
           }
@@ -2098,7 +2099,7 @@ describe("cli piece parsing", () => {
     const readPath = (value: unknown, path: (string | number)[]): unknown =>
       path.reduce(
         (current: unknown, segment) =>
-          typeof current === "object" && current !== null
+          isObjectOrArray(current)
             ? (current as Record<string | number, unknown>)[segment]
             : undefined,
         value,

@@ -218,7 +218,7 @@ function parseValueForSchema(
     }
     if (
       type === "object" &&
-      (typeof value !== "object" || value === null || Array.isArray(value))
+      !isObjectNotArray(value)
     ) {
       throw new Error(`Invalid value for ${flagName}: expected object JSON`);
     }
@@ -749,7 +749,7 @@ export function normalizeCallableInputForExecution(
   if (spec.callableKind !== "tool") {
     return input;
   }
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isObjectNotArray(input)) {
     return input;
   }
 

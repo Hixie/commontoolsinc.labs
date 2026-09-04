@@ -35,6 +35,7 @@ import {
 } from "@commonfabric/runner/entity-kind";
 import { nameSchema } from "@commonfabric/runner/schemas";
 import { HttpProgramResolver } from "@commonfabric/js-compiler/program";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 /**
  * How an origin URL resolves.
@@ -647,7 +648,7 @@ function tryClassifyOrigin(
 function isPatternRef(
   value: unknown,
 ): value is { identity: string; symbol: string } {
-  return typeof value === "object" && value !== null &&
+  return isObjectOrArray(value) &&
     typeof (value as { identity?: unknown }).identity === "string" &&
     typeof (value as { symbol?: unknown }).symbol === "string";
 }

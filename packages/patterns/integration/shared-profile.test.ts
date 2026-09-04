@@ -2,6 +2,7 @@ import { env, Page } from "@commonfabric/integration";
 import { Identity } from "@commonfabric/identity";
 import { ShellIntegration } from "@commonfabric/integration/shell-utils";
 import { resolveLocalProgram } from "@commonfabric/runner/local-program.deno";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { join } from "@std/path";
 import {
@@ -235,7 +236,7 @@ async function readProfileCreateProbe(page: Page) {
           }
           return {
             id: render.cell?.id?.(),
-            value: typeof value === "object" && value !== null
+            value: isObjectOrArray(value)
               ? Object.keys(value as Record<string, unknown>)
               : value,
             attrs: Array.from(element.attributes).map((attr) => [
@@ -261,7 +262,7 @@ async function readProfileCreateProbe(page: Page) {
             initialNameApplied: link.cell?.key?.("initialNameApplied")?.get?.(),
             keys: (() => {
               const value = link.cell?.get?.();
-              return typeof value === "object" && value !== null
+              return isObjectOrArray(value)
                 ? Object.keys(value as Record<string, unknown>)
                 : value;
             })(),

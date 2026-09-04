@@ -22,6 +22,7 @@ import {
 import { cfcLabelViewForCell } from "@commonfabric/runner/cfc";
 import { nameSchema } from "@commonfabric/runner/schemas";
 import { linkRefPayload } from "@commonfabric/runner/shared";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
   type CfcLabel,
@@ -70,7 +71,7 @@ import { FsTree, type TransplantChanges } from "./tree.ts";
 function expandSchemaReference(
   schema: JSONSchema | undefined,
 ): JSONSchema | undefined {
-  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+  if (!isObjectNotArray(schema)) {
     return schema;
   }
   const ref = schema.$ref;
@@ -80,7 +81,7 @@ function expandSchemaReference(
   try {
     const recomposed = recomposeSchema(ref, lookupSchemaDocument);
     const { $ref: _expanded, ...siblings } = schema as Record<string, unknown>;
-    return typeof recomposed === "object" && recomposed !== null
+    return isObjectOrArray(recomposed)
       ? { ...recomposed, ...siblings } as JSONSchema
       : recomposed;
   } catch {
@@ -93,7 +94,7 @@ function getInputSchema(
   schema: JSONSchema | undefined,
 ): JSONSchema | undefined {
   schema = expandSchemaReference(schema);
-  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+  if (!isObjectNotArray(schema)) {
     return undefined;
   }
   const { asCell: _c, ...rest } = schema as Record<
@@ -115,12 +116,11 @@ function displayCallableInputType(
     return "void";
   }
 
-  const defs =
-    typeof schema === "object" && schema !== null && !Array.isArray(schema)
-      ? (schema as Record<string, unknown>).$defs as
-        | Record<string, JSONSchema>
-        | undefined
-      : undefined;
+  const defs = isObjectNotArray(schema)
+    ? (schema as Record<string, unknown>).$defs as
+      | Record<string, JSONSchema>
+      | undefined
+    : undefined;
   return schemaToTypeString(schema, { defs, maxDepth: 3 });
 }
 
@@ -773,9 +773,7 @@ export class CellBridge {
   }
 
   #extractSummary(value: unknown): string {
-    if (
-      typeof value !== "object" || value === null || Array.isArray(value)
-    ) {
+    if (!isObjectNotArray(value)) {
       return "";
     }
     return typeof (value as Record<string, unknown>).summary === "string"
@@ -2489,10 +2487,7 @@ export class CellBridge {
           "$FS",
           "frontmatter",
         ]);
-        if (
-          typeof current === "object" && current !== null &&
-          !Array.isArray(current)
-        ) {
+        if (isObjectNotArray(current)) {
           existingFrontmatter = current as Record<string, unknown>;
         }
       } catch {
@@ -2521,7 +2516,7 @@ export class CellBridge {
       } catch {
         return false;
       }
-      if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
+      if (!isObjectNotArray(obj)) {
         return false;
       }
       // Plain-object shorthand stores keys directly under $FS instead of
@@ -2530,7 +2525,7 @@ export class CellBridge {
       let existingContent: Record<string, unknown> | null = null;
       try {
         const fsRaw = await writePath.piece.result.get(["$FS"]);
-        isPlainObjectShorthand = typeof fsRaw === "object" && fsRaw !== null &&
+        isPlainObjectShorthand = isObjectOrArray(fsRaw) &&
           !("type" in (fsRaw as Record<string, unknown>));
         const contentRaw = isPlainObjectShorthand
           ? fsRaw
@@ -3419,9 +3414,7 @@ export class CellBridge {
 
     try {
       const parsed = JSON.parse(new TextDecoder().decode(metaNode.content));
-      if (
-        typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-      ) {
+      if (!isObjectNotArray(parsed)) {
         return;
       }
       this.tree.updateFile(
@@ -3524,10 +3517,7 @@ export class CellBridge {
     );
 
     this.#addVNodeJsonFiles(parentIno, treeValue, annotator);
-    if (
-      typeof treeValue === "object" && treeValue !== null &&
-      !Array.isArray(treeValue)
-    ) {
+    if (isObjectNotArray(treeValue)) {
       for (const [key, value] of Object.entries(treeValue)) {
         if (isVNode(value)) entries.add(`${encodeFuseComponent(key)}.json`);
       }
@@ -3608,8 +3598,7 @@ export class CellBridge {
     const schemaProperties = schema?.properties as
       | Record<string, unknown>
       | undefined;
-    const valueObject = typeof value === "object" && value !== null &&
-        !Array.isArray(value)
+    const valueObject = isObjectNotArray(value)
       ? value as Record<string, unknown>
       : null;
     const candidateKeys = new Set<string>([
@@ -3671,7 +3660,7 @@ export class CellBridge {
         schema: getInputSchema(childSchema),
       });
       callableKinds.set(key, callableKind);
-      if (typeof candidate === "object" && candidate !== null) {
+      if (isObjectOrArray(candidate)) {
         callableValues.add(candidate);
       }
     }
@@ -3679,7 +3668,7 @@ export class CellBridge {
     return {
       callables,
       skipEntry: (candidate: unknown) =>
-        (typeof candidate === "object" && candidate !== null &&
+        (isObjectOrArray(candidate) &&
           callableValues.has(candidate)) ||
         isVNode(candidate),
       classifyEntry: (key: string) => callableKinds.get(key) ?? null,
@@ -3710,10 +3699,9 @@ export class CellBridge {
       return value;
     }
 
-    const materialized: Record<string, unknown> =
-      typeof value === "object" && value !== null && !Array.isArray(value)
-        ? { ...(value as Record<string, unknown>) }
-        : {};
+    const materialized: Record<string, unknown> = isObjectNotArray(value)
+      ? { ...(value as Record<string, unknown>) }
+      : {};
     for (const key of Object.keys(properties)) {
       const childCell = rootCell.key(key).asSchemaFromLinks();
       let childValue: unknown;
@@ -3796,7 +3784,7 @@ export class CellBridge {
   ): void {
     const currentVNodeKeys = new Set<string>();
 
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    if (isObjectNotArray(value)) {
       for (
         const [key, val] of Object.entries(value as Record<string, unknown>)
       ) {
@@ -3918,7 +3906,7 @@ export class CellBridge {
     result: unknown,
   ): FsValue | null {
     if (
-      typeof result !== "object" || result === null ||
+      !isObjectOrArray(result) ||
       !("$FS" in (result as Record<string, unknown>))
     ) {
       return null;
@@ -3930,7 +3918,7 @@ export class CellBridge {
 
       // Plain-object shorthand: no `type` field → treat entire value as JSON content
       if (
-        typeof fsRaw === "object" && fsRaw !== null &&
+        isObjectOrArray(fsRaw) &&
         !("type" in (fsRaw as Record<string, unknown>))
       ) {
         return {
@@ -4123,7 +4111,7 @@ export class CellBridge {
 
             // Read $NAME from the sink value directly — piece.name() may
             // return a stale cached value that hasn't updated yet.
-            const sinkName = typeof newValue === "object" && newValue !== null
+            const sinkName = isObjectOrArray(newValue)
               ? (newValue as Record<string, unknown>)["$NAME"]
               : undefined;
             const rawName = typeof sinkName === "string"
@@ -4278,10 +4266,7 @@ export class CellBridge {
       if (isHandlerCell(value)) return null;
 
       const rawLinkData: unknown = linkRefPayload(value);
-      if (
-        typeof rawLinkData !== "object" || rawLinkData === null ||
-        Array.isArray(rawLinkData)
-      ) {
+      if (!isObjectNotArray(rawLinkData)) {
         return null;
       }
       const linkData = rawLinkData as {

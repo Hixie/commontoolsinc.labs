@@ -96,7 +96,11 @@ import {
   resetAllTimingBaselines,
 } from "@commonfabric/utils/logger";
 import { backtickQuote } from "@commonfabric/utils/markdown";
-import { isPlainObject } from "@commonfabric/utils/types";
+import {
+  isObjectNotArray,
+  isObjectOrArray,
+  isPlainObject,
+} from "@commonfabric/utils/types";
 
 import {
   getMetaLink,
@@ -639,7 +643,7 @@ export function toConsoleDebugValue(value: unknown): FabricValue {
 export const hasExplicitSubscriptionSchema = (schema: unknown): boolean =>
   schema === true ||
   (schema !== undefined && schema !== false &&
-    typeof schema === "object" && schema !== null &&
+    isObjectOrArray(schema) &&
     Object.keys(schema).length > 0);
 
 /**
@@ -1860,7 +1864,7 @@ export class RuntimeProcessor {
     await cell.pull();
     const raw = cell.getRaw({ lastNode: "value" });
     const missing = raw === undefined ||
-      (raw !== null && typeof raw === "object" && !Array.isArray(raw) &&
+      (isObjectNotArray(raw) &&
         Object.keys(raw).length === 0);
     if (missing) {
       // A resolved scoped target can be demanded while its lazy factory write

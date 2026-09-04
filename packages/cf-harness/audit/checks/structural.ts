@@ -15,6 +15,7 @@
  */
 
 import type { CfcEnforcementMode } from "@commonfabric/runner/cfc";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import { handleTokensIn } from "../../console/steps.ts";
 import type { HarnessCfcInvocationContext } from "../../src/contracts/cfc-invocation-context.ts";
@@ -228,7 +229,7 @@ export const isEnforcing = (mode: CfcEnforcementMode): boolean =>
   mode === "enforce-explicit" || mode === "enforce-strict";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  isObjectNotArray(value);
 
 /** A tool message's parsed contents, or `undefined` when it is not JSON. */
 const parsedToolContent = (message: HarnessToolTranscriptMessage): unknown => {

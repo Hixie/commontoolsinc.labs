@@ -7,6 +7,7 @@
  */
 
 import { join } from "@std/path";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import type {
   HarnessChatEventEnvelope,
@@ -76,7 +77,7 @@ const isTranscriptMessage = (
   value: unknown,
 ): value is HarnessTranscriptMessage => {
   if (
-    typeof value !== "object" || value === null || !("role" in value) ||
+    !isObjectOrArray(value) || !("role" in value) ||
     !("content" in value) || typeof value.content !== "string"
   ) {
     return false;
@@ -106,7 +107,7 @@ const currentTranscriptIndex = (
   value: unknown,
 ): number | "malformed" | undefined => {
   if (
-    typeof value !== "object" || value === null ||
+    !isObjectOrArray(value) ||
     !("kind" in value) || value.kind !== "transcript_message"
   ) {
     return undefined;
@@ -152,7 +153,7 @@ const readTurnRunArtifacts = async (
     if (
       !Array.isArray(transcriptValue) ||
       !transcriptValue.every(isTranscriptMessage) ||
-      typeof reportValue !== "object" || reportValue === null ||
+      !isObjectOrArray(reportValue) ||
       !("timeline" in reportValue) || !Array.isArray(reportValue.timeline) ||
       !("finalAssistantText" in reportValue) ||
       typeof reportValue.finalAssistantText !== "string"
@@ -196,7 +197,7 @@ const pieceFromAssignSlug = (
     return undefined;
   }
   if (
-    typeof output !== "object" || output === null ||
+    !isObjectOrArray(output) ||
     !("status" in output) || output.status !== "ok" ||
     !("slug" in output) || typeof output.slug !== "string" ||
     !("url" in output) || typeof output.url !== "string"

@@ -8,6 +8,7 @@ import type {
   RuntimeClient,
   SpaceAclView,
 } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   CFPieceMenu,
   formatPieceValue,
@@ -71,7 +72,7 @@ function liveRegionText(menu: CFPieceMenu): string {
       for (const child of node) visit(child);
       return;
     }
-    if (node === null || typeof node !== "object") return;
+    if (!isObjectOrArray(node)) return;
     const template = node as {
       strings?: readonly string[];
       values?: unknown[];
@@ -129,7 +130,7 @@ function templateForTestId(
       for (const child of node) visit(child);
       return;
     }
-    if (node === null || typeof node !== "object") return;
+    if (!isObjectOrArray(node)) return;
     const template = node as {
       strings?: readonly string[];
       values?: unknown[];
@@ -203,7 +204,7 @@ function eventHandler(
       for (const child of node) visit(child);
       return;
     }
-    if (node === null || typeof node !== "object") return;
+    if (!isObjectOrArray(node)) return;
     const template = node as {
       strings?: readonly string[];
       values?: unknown[];
@@ -393,7 +394,7 @@ function entryTemplate(
       for (const child of node) visit(child);
       return;
     }
-    if (node === null || typeof node !== "object") return;
+    if (!isObjectOrArray(node)) return;
     const template = node as {
       strings?: readonly string[];
       values?: unknown[];
@@ -436,7 +437,7 @@ function subjectOf(menu: CFPieceMenu): unknown {
       }
       return undefined;
     }
-    if (node === null || typeof node !== "object") return undefined;
+    if (!isObjectOrArray(node)) return undefined;
     const template = node as {
       strings?: readonly string[];
       values?: unknown[];

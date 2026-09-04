@@ -63,6 +63,7 @@ import type {
   HarnessModelProviderId,
 } from "../src/config.ts";
 import type { CfcPosture } from "@commonfabric/runner";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   type HarnessChatError,
   type HarnessChatEventEnvelope,
@@ -331,7 +332,7 @@ const parseTaskInputCells = (
   const specs: HarnessInputCellSpec[] = [];
   const names = new Set<string>();
   for (const entry of value) {
-    if (typeof entry !== "object" || entry === null) {
+    if (!isObjectOrArray(entry)) {
       throw new Error("each input cell must be an object");
     }
     const { name, ref } = entry as { name?: unknown; ref?: unknown };
@@ -1257,7 +1258,7 @@ export class ConsoleServer {
       });
     }
     const body: { text?: unknown; sessionId?: unknown; inputCells?: unknown } =
-      typeof parsed === "object" && parsed !== null ? parsed : {};
+      isObjectOrArray(parsed) ? parsed : {};
     const text = body.text;
     if (typeof text !== "string" || text.trim() === "") {
       return Response.json({ error: "text is required" }, { status: 400 });
@@ -1346,17 +1347,17 @@ export class ConsoleServer {
         status: 400,
       });
     }
-    const envelope: { fn?: unknown; body?: unknown } =
-      typeof parsed === "object" && parsed !== null ? parsed : {};
+    const envelope: { fn?: unknown; body?: unknown } = isObjectOrArray(parsed)
+      ? parsed
+      : {};
     if (!isIndexFunction(envelope.fn)) {
       return Response.json({
         error: `fn must be one of ${INDEX_FUNCTIONS.join(", ")}`,
       }, { status: 400 });
     }
-    const body: Record<string, unknown> =
-      typeof envelope.body === "object" && envelope.body !== null
-        ? envelope.body as Record<string, unknown>
-        : {};
+    const body: Record<string, unknown> = isObjectOrArray(envelope.body)
+      ? envelope.body as Record<string, unknown>
+      : {};
     if (envelope.fn === "getPattern" && typeof body.patternId !== "string") {
       return Response.json({ error: "patternId is required" }, { status: 400 });
     }

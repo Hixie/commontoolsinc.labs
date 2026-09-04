@@ -2,6 +2,7 @@ import { BoundedKeyMap } from "@commonfabric/utils/cache";
 import { ensureNotRenderThread } from "@commonfabric/utils/env";
 import { getLogger } from "@commonfabric/utils/logger";
 import type { CellScope, ScopeKeyIdentity } from "@commonfabric/memory/v2";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type { Cancel } from "../cancel.ts";
 import { getTopFrame } from "../builder/pattern.ts";
 import { ConsoleEvent } from "../harness/console.ts";
@@ -206,8 +207,7 @@ type SchedulerRegisterOptions = {
 
 function isReactivityLog(value: unknown): value is ReactivityLog {
   const candidate = value as Partial<ReactivityLog> | null;
-  return candidate !== null &&
-    typeof candidate === "object" &&
+  return isObjectOrArray(candidate) &&
     Array.isArray(candidate.reads) &&
     Array.isArray(candidate.shallowReads) &&
     Array.isArray(candidate.writes);
