@@ -578,20 +578,15 @@ describe("fabric special objects through the runner's walks", () => {
     });
 
     it("compares a stored `FabricError` read back as unequal to its twin", () => {
-      // A `FabricInstance` comes back proxied, and the proxy erases the class,
-      // so `fabricAwareEqual()` never reaches the value model for one and
-      // returns `false` for two errors that hold the same message.
+      // A `FabricInstance` comes back proxied, and the proxy erases the
+      // class, so `specialObjectEqual()` declines a pair holding one and
+      // `fabricAwareEqual()` never reaches the value model for it. What that
+      // answers depends on how many operands are proxied, and the case below
+      // is the other half.
       //
-      // TODO(danfuzz): this test asserts the WRONG behavior on purpose. Two
-      // equal errors are equal, and this says they are not. It inverts once a
-      // proxied `FabricInstance` is perceived as one, at that `TODO` in
-      // `query-result-proxy.ts`.
-      //
-      // Every comparison site this change adopts fails closed on that answer:
-      // a release gate refuses, an `exactCopyOf` claim fails, an ifc entry
-      // applies, a committed-link match does not skip the rebuild rules. The
-      // `deepEqual` these sites used before answered `true` for any two of
-      // them, which is the fail-open each of their markers described.
+      // TODO(danfuzz): this test asserts the WRONG behavior on purpose. It
+      // inverts once a proxied `FabricInstance` is perceived as one, at that
+      // `TODO` in `query-result-proxy.ts`.
 
       const cell = runtime.getCell<Record<string, unknown>>(
         space,
@@ -607,6 +602,47 @@ describe("fabric special objects through the runner's walks", () => {
         fabricAwareEqual(read, FabricError.fromNativeError(new Error("boom"))),
       ).toBe(false);
     });
+
+    it(
+      "compares two stored `FabricError`s read back as equal whatever they hold",
+      () => {
+        // Both operands proxied is the arm that inverts rather than coarsens.
+        // Neither is `instanceof FabricSpecialObject`, so `fabricAwareEqual()`
+        // reduces to a property walk, and a proxy's `ownKeys` is empty on both
+        // sides -- two empty records, equal. Unproxied, the same two values
+        // compare unequal.
+        //
+        // Which arm a comparison site meets turns on how many of its operands
+        // arrive through a cell read, so no single direction can be claimed
+        // for the sites that adopt this comparison.
+        //
+        // TODO(danfuzz): this test asserts the WRONG behavior on purpose, and
+        // this arm is the dangerous one: it is the `deepEqual` fail-open the
+        // markers at those sites described, reached by another route. It
+        // inverts at that `TODO` in `query-result-proxy.ts`.
+
+        const write = (id: string, message: string) => {
+          const cell = runtime.getCell<Record<string, unknown>>(
+            space,
+            id,
+            undefined,
+            tx,
+          );
+          cell.set(
+            { v: FabricError.fromNativeError(new Error(message)) } as never,
+          );
+          return cell.get().v;
+        };
+
+        expect(
+          fabricAwareEqual(
+            write("walks-cmp-a", "AAA"),
+            write("walks-cmp-b", "ZZZ"),
+          ),
+        )
+          .toBe(true);
+      },
+    );
 
     it("refuses to store a stub-codec instance at all", () => {
       // What a stored ancestor prefix can hold decides what the commit-time
