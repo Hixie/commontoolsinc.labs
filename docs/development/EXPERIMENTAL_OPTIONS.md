@@ -1315,6 +1315,12 @@ on its own, is not this: without the record it is the quiet exemption the next
 obligation rules out, and the two are told apart by what the site does with the
 answer rather than by which identifier it calls.
 
+`reactive-dependencies.ts` is the worked example. Its `isKeyable()` descends a
+`FabricInstance` by property name, because refusing would cost the rest of a
+notification's changes and reporting one as having no keys would lose
+reachability the walk already reports. The marker above it records what the
+descent still misses, which is the record the paragraph above requires.
+
 So the tripwire is its own enforcement, which is why an ungated site is
 legitimate. What it is not is a flag, so do not cite this section as though one
 stood behind every throw.
