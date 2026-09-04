@@ -281,6 +281,42 @@ describe("fabricAwareEqual()", () => {
     });
   });
 
+  describe("given a special object behind a proxy", () => {
+    // The boundary the doc comment states: operands arrive unwrapped. A
+    // special object is recognized by `instanceof`, which a proxy decides
+    // rather than the value behind it, and `data-model` sits below whatever
+    // built the proxy and cannot unwrap one. Both answers here are wrong about
+    // the values; what they pin is that the wrongness is the proxy's, so a
+    // change that starts unwrapping will fail these rather than pass silently.
+
+    const distinct = () =>
+      [
+        new FabricBytes(new Uint8Array([1])),
+        new FabricBytes(new Uint8Array([2])),
+      ] as const;
+
+    it("throws where the proxy forwards `instanceof`", () => {
+      const [a, b] = distinct();
+
+      expect(() => fabricAwareEqual(new Proxy(a, {}), new Proxy(b, {})))
+        .toThrow(TypeError);
+    });
+
+    it("returns `true` for two distinct ones where it does not", () => {
+      // A proxy over a stub target hides the class, so the pair falls to the
+      // property walk, which finds no properties on either side.
+
+      const [a, b] = distinct();
+      const hide = (value: object) =>
+        new Proxy({} as Record<string, unknown>, {
+          get: (_target, key) =>
+            (value as Record<string | symbol, unknown>)[key],
+        });
+
+      expect(fabricAwareEqual(hide(a), hide(b))).toBe(true);
+    });
+  });
+
   describe("given values the data model does not own", () => {
     it("compares scalars the way `deepEqual()` does", () => {
       expect(fabricAwareEqual(1, 1)).toBe(true);

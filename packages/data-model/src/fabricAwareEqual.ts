@@ -18,6 +18,14 @@ import { valueEqual } from "./valueEqual.ts";
  * over `FabricValue`s and throws on any other class instance, which these
  * operands still carry -- a `Cell`, a query-result proxy.
  *
+ * Operands arrive unwrapped. A special object is recognized by `instanceof`,
+ * which a proxy decides rather than the value behind it, so a proxy that does
+ * not forward the test hides the special object from this comparison and two
+ * distinct ones read as equal -- the answer this function exists to prevent.
+ * One that does forward it reaches `valueEqual()`, which reads a private field
+ * through the proxy and throws. `data-model` sits below whatever built the
+ * proxy and cannot unwrap one, so this is the caller's to do.
+ *
  * So the walk is the frame, and the model decides the values only it can
  * decide. A special object is one of those, whatever it sits inside: two of
  * one class are compared by content hash, and one paired with anything else is
