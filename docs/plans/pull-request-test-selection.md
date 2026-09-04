@@ -4,10 +4,9 @@ Status: in progress. Part one is built apart from the one-off bootstrap
 dispatch and one dashboard tile; part two is built apart from its
 continuous-integration configuration and the coverage work; part three has
 not started. [The work](#the-work) carries the detail. The record store
-this plan consumes is live and holds the data the design needs; the gaps
-it does not yet hold are listed under [What the store is
-missing](#what-the-store-is-missing) and closed by the first part of the
-work.
+this plan consumes is live and holds the data the design needs; what it
+does not hold, and what each gap costs, is under [What the store is
+missing](#what-the-store-is-missing).
 
 Continuous integration for a pull request currently runs 67 jobs and every
 test in the repository. This plan replaces that with five jobs that run a
