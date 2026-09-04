@@ -295,6 +295,12 @@ describe("fabricAwareEqual()", () => {
         new FabricBytes(new Uint8Array([2])),
       ] as const;
 
+    /** Wraps a value so that `instanceof` no longer reaches its class. */
+    const hide = (value: object) =>
+      new Proxy({} as Record<string, unknown>, {
+        get: (_target, key) => (value as Record<string | symbol, unknown>)[key],
+      });
+
     it("throws where the proxy forwards `instanceof`", () => {
       const [a, b] = distinct();
 
@@ -307,13 +313,28 @@ describe("fabricAwareEqual()", () => {
       // property walk, which finds no properties on either side.
 
       const [a, b] = distinct();
-      const hide = (value: object) =>
-        new Proxy({} as Record<string, unknown>, {
-          get: (_target, key) =>
-            (value as Record<string | symbol, unknown>)[key],
-        });
 
       expect(fabricAwareEqual(hide(a), hide(b))).toBe(true);
+    });
+
+    it("returns `true` for two distinct instances hidden the same way", () => {
+      // The arm a runtime proxy actually reaches. Two errors carrying
+      // different messages are unequal in the open and equal behind the
+      // proxy, so the hiding inverts the answer rather than merely coarsening
+      // it.
+
+      const errorWith = (message: string) =>
+        new FabricError({
+          type: "Error",
+          name: "Error",
+          message,
+          stack: undefined,
+          cause: undefined,
+        });
+
+      expect(fabricAwareEqual(errorWith("AAA"), errorWith("ZZZ"))).toBe(false);
+      expect(fabricAwareEqual(hide(errorWith("AAA")), hide(errorWith("ZZZ"))))
+        .toBe(true);
     });
   });
 
