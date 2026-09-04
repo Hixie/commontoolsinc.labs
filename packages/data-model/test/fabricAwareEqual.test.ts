@@ -324,13 +324,7 @@ describe("fabricAwareEqual()", () => {
       // it.
 
       const errorWith = (message: string) =>
-        new FabricError({
-          type: "Error",
-          name: "Error",
-          message,
-          stack: undefined,
-          cause: undefined,
-        });
+        new FabricError(errorState(message));
 
       expect(fabricAwareEqual(errorWith("AAA"), errorWith("ZZZ"))).toBe(false);
       expect(fabricAwareEqual(hide(errorWith("AAA")), hide(errorWith("ZZZ"))))
