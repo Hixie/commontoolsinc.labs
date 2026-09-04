@@ -48,7 +48,8 @@ export function setValueAtPath(
     // A special object at a spine slot is replaced rather than descended, the
     // same as a scalar: it holds no slot for the next segment, so writing
     // through it would raise a `TypeError` on a frozen value or graft a
-    // property its codec never reads onto an unfrozen one.
+    // property its codec never reads onto an unfrozen one. `null` is replaced
+    // for the same reason, its `typeof` being `"object"` as well.
     if (!isWalkableObjectOrArray(ownSegment(parent, key))) {
       parent[key] = typeof path[i + 1] === "number" ? [] : {};
     }
