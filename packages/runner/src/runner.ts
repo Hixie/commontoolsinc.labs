@@ -575,6 +575,9 @@ const recordOutputSchemaPolicyInputs = (
     );
   }
 
+  // The refusal above has already returned for every `FabricInstance`, so the
+  // link test here decides nothing a `FabricLink` reaches; it matches the two
+  // sibling walks below, where no such refusal stands.
   if (!isCellLink(outputBinding) && isWalkableObjectOrArray(outputBinding)) {
     for (const [key, child] of Object.entries(outputBinding)) {
       recordOutputSchemaPolicyInputs(

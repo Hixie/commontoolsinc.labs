@@ -553,6 +553,26 @@ describe("fabric special objects through the runner's walks", () => {
       });
     });
 
+    it("refuses to store a stub-codec instance at all", () => {
+      // What a stored ancestor prefix can hold decides what the commit-time
+      // comparison above can be handed. `FabricMap` and `FabricSet` do not
+      // reach it: storage deep-clones a written value, and their codecs
+      // refuse that, so the comparison meets only instances whose codecs are
+      // real.
+
+      const cell = runtime.getCell<Record<string, unknown>>(
+        space,
+        "walks-stub-codec",
+        undefined,
+        tx,
+      );
+
+      expect(() => cell.set({ r: new FabricMap(new Map([["a", 1]])) } as never))
+        .toThrow("deep cloning of `FabricMap`");
+      expect(() => cell.set({ r: new FabricSet(new Set([1])) } as never))
+        .toThrow("deep cloning of `FabricSet`");
+    });
+
     it("stores an array holding a `FabricBytes`", () => {
       // The primitive half of the same write. No instance guard is consulted
       // for one, so this passes on every tree; it is here because the walks
