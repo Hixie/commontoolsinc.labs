@@ -5,6 +5,7 @@ import {
   FabricInstance,
   FabricPrimitive,
   type FabricValue,
+  refuseFabricInstance,
 } from "@commonfabric/data-model";
 import {
   entityRefToString,
@@ -76,7 +77,6 @@ import {
 } from "../cfc/types.ts";
 import { getEntityId } from "../create-ref.ts";
 import { entityUriSchemePrefix } from "../entity-kind.ts";
-import { refuseFabricInstance } from "../fabric-special-object.ts";
 import { resolveLink } from "../link-resolution.ts";
 import {
   createLLMFriendlyLink,

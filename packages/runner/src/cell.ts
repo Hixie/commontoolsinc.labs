@@ -11,6 +11,7 @@ import {
   type FabricValue,
   type FabricValueLayer,
   hashStringOf,
+  refuseFabricInstance,
   shallowCleanArray,
   shallowCleanPlainObject,
   shallowFabricFromNativeObjectElseUndefined,
@@ -119,7 +120,6 @@ import {
   dataUriFromValueWithResolvedLinks,
   findAndInlineDataUriLinks,
 } from "./data-uri.ts";
-import { refuseFabricInstance } from "./fabric-special-object.ts";
 import { type LastNode, resolveLink } from "./link-resolution.ts";
 import {
   areLinksSame,

@@ -18,6 +18,7 @@ import {
   FabricInstance,
   FabricPrimitive,
   isFabricObjectOrArray,
+  refuseFabricInstance,
   valueEqual,
 } from "@commonfabric/data-model";
 import type { MemorySpace, URI } from "@commonfabric/memory/interface";
@@ -29,7 +30,6 @@ import { encodePointer } from "../../../memory/v2/path.ts";
 import type { JSONSchema } from "../builder/types.ts";
 import { ContextualFlowControl } from "../cfc.ts";
 import { entityKindOfIdString } from "../entity-kind.ts";
-import { refuseFabricInstance } from "../fabric-special-object.ts";
 import {
   containsExternalSchemaRef,
   decomposeSchema,
