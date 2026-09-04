@@ -28,16 +28,20 @@ Deno.test("normalizeEntityId prefixes bare ids and passes schemed ids through", 
 });
 
 Deno.test("SchedulerGraphView preserves entity URI schemes when parsing action ids", () => {
-  const helpers = XSchedulerGraph.accessForTestingOnly;
+  const proto = XSchedulerGraph.prototype as unknown as {
+    extractEntityId(actionId: string): string | undefined;
+    truncateLabel(label: string, maxLen?: number): string;
+  };
 
   // extractEntityId: the scheme precedes the entity id and remains part of its
   // identity.
   assertEquals(
-    helpers.extractEntityId("sink:did:key:z6Mkabc/of:fid1:AAA/path"),
+    proto.extractEntityId.call(proto, "sink:did:key:z6Mkabc/of:fid1:AAA/path"),
     "of:fid1:AAA",
   );
   assertEquals(
-    helpers.extractEntityId(
+    proto.extractEntityId.call(
+      proto,
       "action:pattern:did:key:z6Mkabc/computed:fid1:BBB/value",
     ),
     "computed:fid1:BBB",
@@ -45,12 +49,14 @@ Deno.test("SchedulerGraphView preserves entity URI schemes when parsing action i
 
   // truncateLabel: schemed segments are recognized so the label keeps the
   // entity tail and path instead of blind truncation.
-  const ofLabel = helpers.truncateLabel(
+  const ofLabel = proto.truncateLabel.call(
+    proto,
     "sink:did:key:z6MkabcdefghijkLMNOP/of:fid1:AAAABBBBCCCCDDDD/value",
   );
   assertEquals(ofLabel.includes("DDDD"), true);
   assertEquals(ofLabel.includes("value"), true);
-  const computedLabel = helpers.truncateLabel(
+  const computedLabel = proto.truncateLabel.call(
+    proto,
     "sink:did:key:z6MkabcdefghijkLMNOP/computed:fid1:EEEEFFFFGGGGHHHH/count",
   );
   assertEquals(computedLabel.includes("HHHH"), true);

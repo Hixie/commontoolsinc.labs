@@ -1080,12 +1080,14 @@ describe("the tap-through guard actually releases", () => {
       );
 
       // Before the timer fires, accept is inert...
-      view.accessForTestingOnly.finish(true);
+      // deno-lint-ignore no-explicit-any
+      (view as any).finish(true);
       assertEquals(answers, [], "accept must be inert during the guard");
 
       assert(fire, "the guard timer must have been scheduled");
       fire!(); // ...and after it fires, accept works.
-      view.accessForTestingOnly.finish(true);
+      // deno-lint-ignore no-explicit-any
+      (view as any).finish(true);
       assertEquals(answers, [true], "accept must work once the guard lifts");
     } finally {
       globalThis.setTimeout = realSet;

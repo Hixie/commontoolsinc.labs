@@ -132,10 +132,12 @@ describe("XRootView", () => {
       const { XRootView } = await import("../src/views/RootView.ts");
       const view = new XRootView();
       const runs: unknown[] = [];
-      view.accessForTestingOnly.rt = {
-        run: (args: unknown) => runs.push(args),
-      } as never;
-      const failedGeneration = view.accessForTestingOnly.runtimeGeneration;
+      const internals = view as unknown as {
+        _rt: { run(args: unknown): void };
+        _runtimeGeneration: number;
+      };
+      internals._rt = { run: (args) => runs.push(args) };
+      const failedGeneration = internals._runtimeGeneration;
       const event: ErrorNotification = {
         type: NotificationType.ErrorReport,
         message: "Failed to load the compiler stack",
@@ -194,7 +196,12 @@ describe("XRootView", () => {
           "root-view-runtime-error-callback-test",
         ),
       };
-      const task = view.accessForTestingOnly.rt;
+      const task = (view as unknown as {
+        _rt: {
+          run(args: [typeof view.app]): void;
+          taskComplete: Promise<unknown>;
+        };
+      })._rt;
 
       task.run([view.app]);
       await task.taskComplete;
@@ -431,7 +438,12 @@ describe("XRootView", () => {
       await view.spaceResolved();
       expect(view.getRuntimeSpaceDID()).toBe(atlas);
 
-      const task = view.accessForTestingOnly.rt;
+      const task = (view as unknown as {
+        _rt: {
+          run(args: [typeof view.app]): void;
+          taskComplete: Promise<unknown>;
+        };
+      })._rt;
 
       // One runtime creation starts and a second supersedes it, which is what
       // a compiler stack reload does to a creation already under way.
@@ -467,26 +479,27 @@ describe("XRootView", () => {
       view.connectedCallback();
       view.disconnectedCallback();
 
-      const handler = view.accessForTestingOnly.onBeforeUnload;
-      // A cancelable event records the prompt as `defaultPrevented`.
-      const unload = () => {
-        const event = new Event("beforeunload", { cancelable: true });
-        handler(event as BeforeUnloadEvent);
-        return event.defaultPrevented;
-      };
+      const handler = (view as unknown as {
+        _onBeforeUnload: (event: { preventDefault: () => void }) => void;
+      })._onBeforeUnload;
+      let prevented = 0;
+      const event = () => ({ preventDefault: () => prevented++ });
       const setRuntime = (runtime: unknown) =>
         (view as unknown as { runtime: unknown }).runtime = runtime;
 
       // No runtime yet: nothing to lose, so no prompt.
-      expect(unload()).toBe(false);
+      handler(event());
+      expect(prevented).toBe(0);
 
       // A runtime with no unconfirmed writes: no prompt.
       setRuntime({ hasPendingWrites: () => false });
-      expect(unload()).toBe(false);
+      handler(event());
+      expect(prevented).toBe(0);
 
       // Unconfirmed writes in flight: prompt the user before unload.
       setRuntime({ hasPendingWrites: () => true });
-      expect(unload()).toBe(true);
+      handler(event());
+      expect(prevented).toBe(1);
     } finally {
       restore();
     }

@@ -24,6 +24,22 @@ about one aspect of the runtime, are indexed in
 - Use **double quotes** for strings.
 - Always run `deno fmt` before committing.
 
+### File names
+
+A source file's base name is `lower-kebab-case`, describing what the module
+holds: `type-check.ts`, `deep-freeze.ts`, `native-conversion.ts`.
+
+A file holding a single export takes that export's name exactly instead, so
+that the file name and the thing it defines are one word:
+`tagFromNativeBuiltinClass.ts`, `hashSchema.ts`, `FabricBytes.ts`,
+`CodecRegistry.ts`. Private helpers the export needs sit in that file and do
+not count against the rule; a second export does, and a module that grows one
+takes the kebab-case name for what the pair of them is.
+
+`docs/development/unit-test-coding-style.md` states the matching rule for a
+test file, which follows the source file it tests, and names the `describe()`
+title that goes with each form.
+
 ### Imports
 
 - Group imports by source: standard library, external, then internal, with a
@@ -526,6 +542,67 @@ function processData(data: Data) {
   data.process();
 }
 ```
+
+### Walking or comparing a value
+
+A value the runtime holds may be a `FabricSpecialObject` — a byte sequence, a
+temporal value, a content hash, a regular expression, an error, a link, a map,
+a set. Each of those keeps its state in private fields and has no own
+properties at all, so a walk that decides "may I read this by property name?"
+with `isObjectOrArray()`, `isObjectNotArray()`, or a bare
+`typeof value === "object"` gets the wrong result: it sees an empty record and
+then merges the value to `{}`, rebuilds it as `{}`, descends into it and finds
+nothing, or writes a property onto it.
+
+These functions from `@commonfabric/data-model` are what a walk needs, and
+using them is not optional in code that can reach a stored value:
+
+- `isKeyableObjectOrArray(value)` is the container question. Every
+  `FabricSpecialObject` returns `false`, `FabricPrimitive` and any further
+  subclass alike, and `false` says the value has no keys to reach. Everything
+  outside the type is untouched: arrays and non-fabric class instances still
+  return `true`, so it is a drop-in wherever `isObjectOrArray()` was standing
+  in for the container question.
+- `isWalkableObjectOrArray(value)` is the same question with a `FabricInstance`
+  refused rather than reported as having no keys. The two differ on an instance
+  and nowhere else, and which one a walk wants turns on what a `false` would
+  cost it. An instance is a container a walk is meant to descend and cannot
+  yet, so a walk that rebuilds, merges, or carries a value forward takes
+  `false` as "carry this whole" and ships an empty record in place of the
+  value: that walk wants the refusal. A walk that only reports what a path
+  finds, or what a change triggers, reports an absence instead — incomplete,
+  not wrong — and takes `isKeyableObjectOrArray()` with a marker recording the
+  gap. So does a walk running where a throw cannot be delivered, under a
+  storage subscription that has to keep delivering.
+- A walk that can reach an instance and has a better answer than either tests
+  for one first — an error its own signature already carries, or a disposition
+  its caller can act on. Refusing is for a walk with nothing else to say.
+- `isKeyableObjectNotArray(value)` and `isWalkableObjectNotArray(value)` are
+  those two with arrays removed, for a walk to which an array is not merely a
+  different shape but something it must not treat as a record.
+- `isFabricPlainContainer(value)` asks the same container question of a value
+  the type system already says is a `FabricValue`, and is the one to reach for
+  where a caller holds one. The two differ only on values a `FabricValue`
+  cannot be — a `Cell`, a `Date`, a query-result proxy over one — which the
+  `isKeyable*` and `isWalkable*` pairs admit and this refuses.
+- `fabricAwareEqual(a, b)` is the comparison for operands that may hold a
+  `FabricValue` without being known to be one — a schema `const` against a
+  stored value, a schema default against a materialized one, a write against
+  the value it replaces, a request against the snapshot a policy was checked
+  over. It is a structural walk that hands every `FabricSpecialObject` it
+  reaches to `valueEqual()`, so the value model decides each of those by
+  content wherever one sits. Neither half serves alone: `valueEqual()` throws
+  on a `Cell` or any other non-fabric instance, and `deepEqual()` compares by
+  enumerable own properties, of which a special object has none. Where both
+  operands are known to be `FabricValue`s, use `valueEqual()` directly
+  instead — it decides a container by a content hash cached on identity, where
+  the walk pays for every level each time.
+
+A walk that must not silently pass a `FabricInstance` by — one whose contents
+are reachable only through its codec — refuses it outright rather than walking
+it. Those refusals are discovery instruments; see "Flag-gated tripwires" in
+[EXPERIMENTAL_OPTIONS.md](EXPERIMENTAL_OPTIONS.md), which states the obligation
+each new one carries.
 
 ### Avoid representing invalid state
 

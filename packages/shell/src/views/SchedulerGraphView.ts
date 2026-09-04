@@ -1153,18 +1153,6 @@ export class XSchedulerGraph extends LitElement {
   // Minimum effective node size before we boost triggered nodes
   static readonly #READABLE_THRESHOLD = 50;
 
-  /** The two action-id label helpers, which a test drives directly. */
-  static get accessForTestingOnly(): {
-    extractEntityId(actionId: string): string | undefined;
-    truncateLabel(label: string, maxLen?: number): string;
-  } {
-    return {
-      extractEntityId: (actionId) => XSchedulerGraph.#extractEntityId(actionId),
-      truncateLabel: (label, maxLen) =>
-        XSchedulerGraph.#truncateLabel(label, maxLen),
-    };
-  }
-
   override connectedCallback() {
     super.connectedCallback();
     this.#updateLayout();
@@ -1275,7 +1263,7 @@ export class XSchedulerGraph extends LitElement {
       if (hiddenNodes.has(node.id)) continue;
 
       g.setNode(node.id, {
-        label: XSchedulerGraph.#truncateLabel(node.id),
+        label: this.truncateLabel(node.id),
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
         type: node.type,
@@ -1364,8 +1352,11 @@ export class XSchedulerGraph extends LitElement {
    * Examples:
    * - "sink:did:key:z6Mkk.../of:fid1:abc.../value" → "sink:...c.../value"
    * - "parentAction" → "parentAction"
+   *
+   * TypeScript-private rather than a `#` name:
+   * `test/entity-id-scheme-parsing.test.ts` drives this member directly.
    */
-  static #truncateLabel(label: string, maxLen = 20): string {
+  private truncateLabel(label: string, maxLen = 20): string {
     // Simple case - short enough already
     if (label.length <= maxLen) return label;
 
@@ -1444,8 +1435,11 @@ export class XSchedulerGraph extends LitElement {
    * Handles formats like:
    * - sink:did:key:.../of:entityId/path
    * - action:pattern:did:key:.../computed:entityId/path
+   *
+   * TypeScript-private rather than a `#` name:
+   * `test/entity-id-scheme-parsing.test.ts` drives this member directly.
    */
-  static #extractEntityId(actionId: string): string | undefined {
+  private extractEntityId(actionId: string): string | undefined {
     const entityUri = entityUriFromActionId(actionId);
     if (entityUri) return entityUri;
 
@@ -1475,7 +1469,7 @@ export class XSchedulerGraph extends LitElement {
     // Group nodes by entity ID
     const nodesByEntity = new Map<string, SchedulerGraphNode[]>();
     for (const node of nodes) {
-      const entityId = XSchedulerGraph.#extractEntityId(node.id);
+      const entityId = this.extractEntityId(node.id);
       if (entityId) {
         if (!nodesByEntity.has(entityId)) {
           nodesByEntity.set(entityId, []);
@@ -2146,7 +2140,7 @@ export class XSchedulerGraph extends LitElement {
       if (group.children.length === 0) continue;
 
       const { bounds, parent } = group;
-      const label = XSchedulerGraph.#truncateLabel(parent.label, 12);
+      const label = this.truncateLabel(parent.label, 12);
 
       results.push(svgTag`
         <g class="parent-group">
