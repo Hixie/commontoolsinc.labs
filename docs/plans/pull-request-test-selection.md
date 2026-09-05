@@ -1104,51 +1104,53 @@ section](#how-far-back-each-term-looks).
 
 ### What the store is missing
 
-**The file is recorded for most tests and not all.** Not every record
-needs one: a repository gate and a per-package type check name no file,
-and a pattern test's identity is its path, so the field would only repeat
-it. For the rest the field has three sources. The browser runner in
-`packages/deno-web-test/runner.ts` sets it directly. A JUnit report
-supplies it where the class name is the test file, which is what Deno
-writes for a case the test file registered itself — a bare `Deno.test`,
-or the implicit suite a top-level `it` belongs to. A leaf under a
-top-level `describe()`, which is how most of this repository's tests are
-written, is registered from inside the bdd machinery and takes that
-machinery's class name instead, so its file comes from the name map the
-registration preload leaves in the spool.
+**The store cannot place every test in a file.** Not every test needs
+placing: a repository gate and a per-package type check name no file, and
+a pattern test's identity is its path already. The browser runner in
+`packages/deno-web-test/runner.ts` sets the field itself. Everything else
+is ingested from a JUnit report, and one report has one source of files
+rather than two. A class name names the module that called `Deno.test`,
+which is the test file only where nothing of this repository's own sits
+between the file and the registration; the `describe` and `it` the import
+map resolves to do sit there, and ingestion rejects a class name naming
+them. Installing the registration preload wraps `Deno.test` and moves
+every class name onto the wrapper, so a run that records reads every file
+from the name map the preload leaves in the spool, and a run that does
+not keeps only what its own class names happened to carry.
 
-The preload therefore decides the answer for most identities, and it does
-not reach every invocation. It writes a map only where the test process
-may read `CF_TEST_RECORDS_DIR`, write into the spool that variable names,
-and read the tree far enough to find the enclosing `.git`. A member's own
-`test` task is what grants those or withholds them, and several withhold
-one of the three. The three do not come apart cleanly: a process granted
-the first two and not the third installs the wrapper, captures nothing,
-and so gives up the class names it would otherwise have kept. The runner
-shard job in `deno.yml` grants all three deliberately, and its comment
-says why. The
-preload is not appended at all to a member that names its own import map,
-or to an integration run whose caller builds `INTEGRATION_TEST_FLAGS`
-itself rather than passing `--junit-dir` and letting
-`deno task integration` build them.
+The preload therefore settles this for most identities, and neither it
+nor the report reaches every member. A member's `test` task is what
+decides both. A task that is not a single `deno test` — one defined by
+the tasks it depends on, or one joining two commands — cannot be handed
+a `--junit-path`, so its member records nothing at all, and several
+members' tasks are of that shape. A task naming its own import map takes
+the report but not the preload. A task that takes the preload has still
+to permit it, because the preload writes a map only where the process may
+read `CF_TEST_RECORDS_DIR`, write into the spool that variable names, and
+read the tree far enough to find the enclosing `.git`; several tasks
+withhold at least one of the three. The runner shard job in `deno.yml`
+grants all three deliberately and its comment says why. The preload is
+also not appended to an integration run whose caller builds
+`INTEGRATION_TEST_FLAGS` itself rather than passing `--junit-dir` and
+letting `deno task integration` build them.
 
-Where the preload does install, two joins are declined on purpose. A name
-registered from outside the member's own directory — a shared
+Where the preload does write a map, two joins are declined on purpose. A
+name registered from outside the member's own directory — a shared
 fixture-suite builder, say — is dropped rather than attributed to the
 helper that registered it. A name that two of the member's files both
-register is dropped rather than attributed to whichever was read last,
-and that is a collision the report tool surfaces as one.
+register is dropped rather than attributed to whichever was read last.
 
-What is left costs an item that is never selected rather than a selection
+What this costs is an item that is never scored rather than a selection
 that cannot run. `locate()` places a unit or integration record on an
-item by its file, so a member enumerated one file at a time whose leaves
-record none has no identity landing on any of those files. Each of them
-is then an item no manifest knows, and [an identity with no records must
-run](#two-rules-that-force-a-test-in) makes every one of them mandatory.
-They run in full on every pull request, and the budget they take is
-charged to every other suite. The record schema carries the field
-already, so closing this is a change to the invocations rather than to
-the store.
+item by its file, so a member enumerated one file at a time whose records
+carry none has no identity landing on any of those files. Each of them is
+then an item no manifest knows, and [an identity with no records must
+run](#two-rules-that-force-a-test-in) makes every one of them mandatory,
+so all of them run. Nor can the packer charge for them: an item the
+manifest has never seen is placed at no cost, so a lane holding those
+items is packed as though they were free and runs for longer than the
+budget it was packed to. Closing this reaches the invocations rather than
+the store, which carries the field already.
 
 **Compaction is live.** The compactor's identity was provisioned on
 2026-08-31 and its daily workflow has rolled up every day from 2026-08-19
