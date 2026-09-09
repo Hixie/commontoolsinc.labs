@@ -2,16 +2,21 @@ import {
   type AgentDriver,
   type AgentSessionCommandReceipt,
   type AgentSourceConfig,
-  type CollectedSource,
-  collectSource,
   type CommandTarget,
   type CommandTaskFailure,
   CommandWorker,
   type DriverCapabilities,
 } from "@commonfabric/agents-connector";
 import type { CommandLedger } from "@commonfabric/agents-connector/command-ledger";
+import type {
+  ArchiveCollectionOptions,
+  ArchiveSourceResult,
+} from "@commonfabric/agents-connector/archive";
 import { abortable } from "./abort.ts";
-import { discoverGitCheckoutDirectories } from "./checkout-discovery.ts";
+import {
+  streamGitCheckoutDirectories,
+  type ValidateGitCheckout,
+} from "./checkout-discovery.ts";
 
 export type AgentsHostStatus =
   | "created"
@@ -61,6 +66,7 @@ export interface AgentsHostSyncHealth {
   status: "running" | "complete" | "failed";
   startedAt: string;
   completedAt?: string;
+  durationMs?: number;
   sessionCount?: number;
   error?: string;
 }
@@ -70,6 +76,7 @@ export interface AgentsHostTargetDescription {
   ownerDid: string;
   debugPieceId?: string;
   cells: {
+    catalog?: string;
     recentIndex: string;
     allIndex: string;
     health: string;
@@ -91,20 +98,15 @@ export interface AgentsHostHealth {
     lastError?: string;
   };
   sync?: AgentsHostSyncHealth;
+  nextCollectionAt?: string | null;
   sources: AgentsHostSourceHealth[];
   activity: AgentsHostActivity[];
 }
 
 export interface AgentsHostTarget extends CommandTarget {
-  beginSessionObservation(): number;
-  publish(
-    collected: CollectedSource[],
-    options?: {
-      observationSequence?: number;
-      checkoutDirectories?: string[];
-      signal?: AbortSignal;
-      onCommit?: () => void;
-    },
+  publishStreams(
+    drivers: Iterable<AgentDriver>,
+    options?: Omit<ArchiveCollectionOptions, "scratchDirectory">,
   ): Promise<number>;
   validateCheckout(
     directory: string,
@@ -126,10 +128,15 @@ export interface AgentsHostOptions {
   ledger: CommandLedger;
   createDriver: (config: AgentSourceConfig) => AgentDriver;
   clock?: () => Date;
+  monotonicClock?: () => number;
   logger?: Pick<Console, "error" | "info">;
   activityLimit?: number;
   checkoutRoots?: string[];
-  discoverCheckouts?: typeof discoverGitCheckoutDirectories;
+  discoverCheckouts?: (
+    roots: string[],
+    signal: AbortSignal | undefined,
+    validateCheckout: ValidateGitCheckout,
+  ) => AsyncIterable<string> | Iterable<string> | Promise<Iterable<string>>;
 }
 
 export interface AgentsHostStopOptions {
@@ -149,10 +156,13 @@ export class AgentsHost {
   readonly #ledger: CommandLedger;
   readonly #createDriver: AgentsHostOptions["createDriver"];
   readonly #clock: () => Date;
+  readonly #monotonicClock: () => number;
   readonly #logger: Pick<Console, "error" | "info">;
   readonly #activityLimit: number;
   readonly #checkoutRoots: string[];
-  readonly #discoverCheckouts: typeof discoverGitCheckoutDirectories;
+  readonly #discoverCheckouts: NonNullable<
+    AgentsHostOptions["discoverCheckouts"]
+  >;
   readonly #drivers = new Map<string, AgentDriver>();
   readonly #cleanupDrivers = new Map<string, AgentDriver>();
   readonly #sources = new Map<string, AgentsHostSourceHealth>();
@@ -162,6 +172,8 @@ export class AgentsHost {
   #updatedAt: string;
   #status: AgentsHostStatus = "created";
   #lastSync?: AgentsHostSyncHealth;
+  #syncStartedAt = 0;
+  #nextCollectionAt: string | null = null;
   #commandWorker?: CommandWorker;
   #cancelCommands?: () => void;
   #acceptingCommands = false;
@@ -187,11 +199,15 @@ export class AgentsHost {
     this.#ledger = options.ledger;
     this.#createDriver = options.createDriver;
     this.#clock = options.clock ?? (() => new Date());
+    this.#monotonicClock = options.monotonicClock ?? (() => performance.now());
     this.#logger = options.logger ?? console;
     this.#activityLimit = options.activityLimit ?? 200;
     this.#checkoutRoots = [...(options.checkoutRoots ?? [])];
     this.#discoverCheckouts = options.discoverCheckouts ??
-      discoverGitCheckoutDirectories;
+      streamGitCheckoutDirectories;
+    if (this.#configs.length > 16) {
+      throw new Error("Agent host supports at most 16 configured sources");
+    }
     if (!Number.isSafeInteger(this.#activityLimit) || this.#activityLimit < 1) {
       throw new Error("activityLimit must be a positive safe integer");
     }
@@ -210,6 +226,14 @@ export class AgentsHost {
   }
 
   health(): AgentsHostHealth {
+    const sync = this.#lastSync && {
+      ...this.#lastSync,
+      durationMs: this.#lastSync.durationMs ??
+        Math.max(
+          0,
+          this.#monotonicClock() - this.#syncStartedAt,
+        ),
+    };
     return structuredClone({
       service: "agents-host",
       status: this.#status,
@@ -224,9 +248,23 @@ export class AgentsHost {
           ? { lastError: [...this.#commandFailures.values()].at(-1) }
           : {}),
       },
-      ...(this.#lastSync ? { sync: this.#lastSync } : {}),
+      ...(sync ? { sync } : {}),
+      nextCollectionAt: this.#nextCollectionAt,
       sources: [...this.#sources.values()],
       activity: this.#activity,
+    });
+  }
+
+  /** Publishes the next periodic deadline, or clears it while no timer is armed. */
+  setNextCollectionAt(at?: Date): void {
+    const next = at?.toISOString() ?? null;
+    if (this.#nextCollectionAt === next) return;
+    this.#nextCollectionAt = next;
+    this.#updatedAt = this.#now();
+    void this.#publishHealth().catch((error) => {
+      this.#logger.error(
+        `collection schedule health publication failed: ${errorMessage(error)}`,
+      );
     });
   }
 
@@ -235,6 +273,9 @@ export class AgentsHost {
     acceptCommands?: boolean;
     deferHealthUntilReady?: boolean;
     onHealthOwnership?: () => void;
+    prepareCommandTarget?: () => Promise<
+      { debugPieceId?: string; acceptCommands: boolean }
+    >;
   } = {}): Promise<number> {
     if (this.#started || this.#stopping || this.#stopped) {
       throw new Error("agent host has already been started");
@@ -319,7 +360,12 @@ export class AgentsHost {
     const sessionCount = await this.synchronize("startup", options.signal);
     options.signal?.throwIfAborted();
 
-    if (options.acceptCommands ?? true) {
+    const commandTarget = await options.prepareCommandTarget?.();
+    if (commandTarget?.debugPieceId) {
+      this.#targetDescription.debugPieceId = commandTarget.debugPieceId;
+    }
+    options.signal?.throwIfAborted();
+    if (commandTarget?.acceptCommands ?? options.acceptCommands ?? true) {
       this.#acceptingCommands = true;
       try {
         this.#subscriptionTask = this.#target.subscribeCommands(
@@ -643,8 +689,10 @@ export class AgentsHost {
       publicationCommitted = true;
       onPublicationCommit?.();
     };
-    const observationSequence = this.#target.beginSessionObservation();
     const startedAt = this.#now();
+    this.#syncStartedAt = this.#monotonicClock();
+    const elapsedMs = () =>
+      Math.max(0, this.#monotonicClock() - this.#syncStartedAt);
     const previousSourceStates = new Map(
       [...this.#drivers.keys()].map((sourceId) => {
         const state = this.#sources.get(sourceId)!;
@@ -665,12 +713,6 @@ export class AgentsHost {
 
     try {
       await this.#publishHealth(signal);
-      const collected = await Promise.all(
-        [...this.#drivers.entries()].map(([sourceId, driver]) =>
-          this.#collectSource(sourceId, driver, signal)
-        ),
-      );
-      signal?.throwIfAborted();
       const checkoutDirectories = this.#checkoutRoots.length > 0
         ? await this.#discoverCheckouts(
           this.#checkoutRoots,
@@ -680,18 +722,22 @@ export class AgentsHost {
         )
         : [];
       signal?.throwIfAborted();
-      const sessionCount = await this.#target.publish(collected, {
-        observationSequence,
-        checkoutDirectories,
-        signal,
-        onCommit: markPublicationCommitted,
-      });
+      const sessionCount = await this.#target.publishStreams(
+        this.#drivers.values(),
+        {
+          checkoutDirectories,
+          signal,
+          onCommit: markPublicationCommitted,
+          onSource: (result) => this.#collectedSource(result),
+        },
+      );
       const completedAt = this.#now();
       this.#lastSync = {
         reason,
         status: "complete",
         startedAt,
         completedAt,
+        durationMs: elapsedMs(),
         sessionCount,
       };
       if (!this.#stopping) this.#setStatus(this.#operationalStatus());
@@ -710,11 +756,13 @@ export class AgentsHost {
         state.lastCollectionStartedAt = previous.lastCollectionStartedAt;
       }
       if (signal?.aborted && !publicationCommitted) {
+        const completedAt = this.#now();
         this.#lastSync = {
           reason,
           status: "failed",
           startedAt,
-          completedAt: this.#now(),
+          completedAt,
+          durationMs: elapsedMs(),
           error: errorMessage(signal.reason),
         };
         this.#recordActivity(
@@ -733,11 +781,13 @@ export class AgentsHost {
         throw signal.reason;
       }
       const message = errorMessage(error);
+      const completedAt = this.#now();
       this.#lastSync = {
         reason,
         status: "failed",
         startedAt,
-        completedAt: this.#now(),
+        completedAt,
+        durationMs: elapsedMs(),
         error: message,
       };
       if (!this.#stopping) this.#setStatus("failed");
@@ -755,33 +805,11 @@ export class AgentsHost {
     }
   }
 
-  async #collectSource(
-    sourceId: string,
-    driver: AgentDriver,
-    signal?: AbortSignal,
-  ): Promise<CollectedSource> {
+  #collectedSource(collected: ArchiveSourceResult): void {
+    const sourceId = collected.source.id;
     const state = this.#sources.get(sourceId)!;
-    this.#recordActivity(
-      "source-collection-started",
-      "Source collection began",
-      undefined,
-      sourceId,
-    );
-    let collected: CollectedSource;
-    try {
-      collected = await collectSource(driver, signal);
-    } catch (error) {
-      signal?.throwIfAborted();
-      collected = {
-        source: driver.source,
-        sessions: [],
-        errors: [{ message: errorMessage(error) }],
-        complete: false,
-      };
-    }
-
-    state.capabilities = structuredClone(driver.source.capabilities);
-    state.sessionCount = collected.sessions.length;
+    state.capabilities = structuredClone(collected.source.capabilities);
+    state.sessionCount = collected.sessionCount;
     state.complete = collected.complete;
     state.errors = structuredClone(collected.errors);
     state.lastCollectionCompletedAt = this.#now();
@@ -792,12 +820,11 @@ export class AgentsHost {
       "Source collection completed",
       {
         complete: collected.complete,
-        errorCount: collected.errors.length,
-        sessionCount: collected.sessions.length,
+        errorCount: collected.errorCount,
+        sessionCount: collected.sessionCount,
       },
       sourceId,
     );
-    return collected;
   }
 
   #operationalStatus(): "ready" | "degraded" {

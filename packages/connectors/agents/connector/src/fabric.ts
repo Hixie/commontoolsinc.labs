@@ -1,5 +1,11 @@
 import type { Cancel, Cell } from "@commonfabric/runner";
 import {
+  type AgentArchiveCatalog,
+  AgentArchivePublisher,
+  type ArchiveCollectionOptions,
+} from "./archive.ts";
+import { requireArchiveLimits } from "@commonfabric/memory/v2/archive";
+import {
   AGENT_CONNECTOR_WRITER_ID,
   type AgentFabricConnection,
   agentOwnerSchema,
@@ -48,6 +54,7 @@ import { isAbsolute as isPosixAbsolute } from "@std/path/posix";
 import { isAbsolute as isWindowsAbsolute } from "@std/path/windows";
 
 export interface AgentFabricCells {
+  catalog: Cell<unknown>;
   index: Cell<unknown>;
   allIndex: Cell<unknown>;
   health: Cell<unknown>;
@@ -204,6 +211,11 @@ function storedCheckoutObservations(
 
 export function agentFabricCauses(spaceDid: string, ownerDid: string) {
   return {
+    catalog: {
+      spaceDid,
+      ownerDid,
+      agentConnector: "native-archive-catalog-v2",
+    },
     index: {
       spaceDid,
       ownerDid,
@@ -403,6 +415,11 @@ export function createAgentFabricCells(
   const connectorSchema = agentOwnerSchema(conn.ownerDid);
   const commandSchema = agentOwnerSchema(conn.ownerDid, false);
   return {
+    catalog: conn.runtime.getCell(
+      conn.spaceDid,
+      causes.catalog,
+      connectorSchema,
+    ),
     index: conn.runtime.getCell(conn.spaceDid, causes.index, connectorSchema),
     allIndex: conn.runtime.getCell(
       conn.spaceDid,
@@ -433,11 +450,13 @@ export async function ensureAgentFabricCells(
 
 async function syncAgentFabricCells(
   conn: AgentFabricConnection,
+  native = false,
 ): Promise<AgentFabricCells> {
   const cells = createAgentFabricCells(conn);
   await Promise.all([
-    cells.index.sync(),
-    cells.allIndex.sync(),
+    ...(native
+      ? [cells.catalog.sync()]
+      : [cells.index.sync(), cells.allIndex.sync()]),
     cells.health.sync(),
     cells.commands.sync(),
     cells.receipts.sync(),
@@ -449,6 +468,7 @@ async function syncAgentFabricCells(
 async function claimAgentFabricRoots(
   conn: AgentFabricConnection,
   cells: AgentFabricCells,
+  native = false,
 ): Promise<void> {
   const generatedAt = new Date().toISOString();
   const roots: Array<{
@@ -506,7 +526,11 @@ async function claimAgentFabricRoots(
     builtinId: AGENT_CONNECTOR_WRITER_ID,
   });
   try {
-    for (const root of roots) {
+    for (
+      const root of roots.filter((root) =>
+        !native || (root.cell !== cells.index && root.cell !== cells.allIndex)
+      )
+    ) {
       const link = root.cell.getAsNormalizedFullLink();
       const value = tx.readValueOrThrow(link);
       if (value !== undefined) {
@@ -793,12 +817,18 @@ export class AgentFabricTarget implements CommandTarget {
   readonly cells: AgentFabricCells;
   readonly #gitContext: GitContextResolver;
   readonly #mutations = new AsyncSerialQueue();
+  readonly #archivePublications = new AsyncSerialQueue();
   readonly #latestObservationBySession = new Map<string, number>();
   readonly #latestCompleteObservationBySource = new Map<string, number>();
   readonly #latestDescriptorObservationBySource = new Map<string, number>();
   #nextObservationSequence = 1;
   #commandCellBound = false;
   #storageClaimed: boolean;
+  #archive?: AgentArchivePublisher;
+  #archiveOptions?: Pick<
+    ArchiveCollectionOptions,
+    "scratchDirectory" | "limits" | "observe"
+  >;
 
   private constructor(
     conn: AgentFabricConnection,
@@ -828,10 +858,89 @@ export class AgentFabricTarget implements CommandTarget {
     return new AgentFabricTarget(conn, cells, gitContext, false);
   }
 
+  /** Opens a native archive connection before any source starts collecting. */
+  static async connectArchive(
+    conn: AgentFabricConnection,
+    gitContext = new GitContextResolver(),
+  ): Promise<AgentFabricTarget> {
+    const provider = conn.runtime.storageManager.open(conn.spaceDid);
+    if (!provider.archive || !provider.archiveLimits) {
+      throw new Error(
+        "Fabric storage does not support bounded native archives",
+      );
+    }
+    const connection = {
+      archive: provider.archive.bind(provider),
+      archiveLimits: provider.archiveLimits.bind(provider),
+    };
+    requireArchiveLimits(await connection.archiveLimits());
+    const cells = await syncAgentFabricCells(conn, true);
+    const target = new AgentFabricTarget(conn, cells, gitContext, false);
+    const priorCatalog = cells.catalog.getRawUntyped({ frozen: false });
+    target.#archive = new AgentArchivePublisher(
+      connection,
+      stableCellId(cells.catalog),
+      conn.ownerDid,
+      async (catalog) => {
+        await target.#mutations.run(() =>
+          pushStableCellGraph(conn, [{
+            cell: cells.catalog,
+            value: () => ({ ...catalog }),
+          }])
+        );
+      },
+      isRecord(priorCatalog) &&
+        priorCatalog.schema === "commonfabric.agent-connector.catalog.v2"
+        ? priorCatalog as unknown as AgentArchiveCatalog
+        : undefined,
+    );
+    await target.#archive.ready();
+    return target;
+  }
+
+  /** Sets the private scratch location used by full scans and command refreshes. */
+  configureArchive(
+    options: Pick<
+      ArchiveCollectionOptions,
+      "scratchDirectory" | "limits" | "observe"
+    >,
+  ): void {
+    this.#archiveOptions = options;
+  }
+
+  /** Whether this target publishes the native archive schema. */
+  hasArchive(): boolean {
+    return this.#archive !== undefined;
+  }
+
+  /** Serializes collection and refresh while all session rows remain on disk. */
+  publishStreams(
+    drivers: Iterable<AgentDriver>,
+    options: Omit<ArchiveCollectionOptions, "scratchDirectory"> = {},
+  ): Promise<number> {
+    this.#assertStorageClaimed();
+    const archive = this.#archive;
+    const configured = this.#archiveOptions;
+    if (!archive || !configured) {
+      throw new Error("Native archive collection has not been configured");
+    }
+    return this.#archivePublications.run(() =>
+      archive.publish(drivers, {
+        ...configured,
+        ...options,
+        gitContext: this.#gitContext.beginObservation(),
+      })
+    );
+  }
+
   claimStorage(): Promise<void> {
     return this.#mutations.run(async () => {
       if (this.#storageClaimed) return;
-      await claimAgentFabricRoots(this.conn, this.cells);
+      await claimAgentFabricRoots(
+        this.conn,
+        this.cells,
+        this.#archive !== undefined,
+      );
       this.#storageClaimed = true;
     });
   }
@@ -1515,6 +1624,10 @@ export class AgentFabricTarget implements CommandTarget {
     driver: AgentDriver,
     nativeSessionId: string,
   ): Promise<void> {
+    if (this.#archive) {
+      await this.publishStreams([driver], { nativeSessionId });
+      return;
+    }
     const observationSequence = this.beginSessionObservation();
     const snapshot = await driver.readSession(nativeSessionId);
     await this.publish(

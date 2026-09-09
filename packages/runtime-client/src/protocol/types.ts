@@ -1,3 +1,8 @@
+import type {
+  ArchiveReadCommand,
+  ArchiveReadTransfer,
+  ArchiveResult,
+} from "@commonfabric/memory/v2/archive";
 import type { CellScope } from "@commonfabric/api";
 import type { MetaField } from "@commonfabric/runner";
 import type {
@@ -195,6 +200,15 @@ export enum RequestType {
 
   /** Commits a SQL write through a SQLite database cell. */
   SqliteExec = "sqlite:exec",
+
+  /** Reads bounded catalog metadata without creating a result cell. */
+  ArchiveRead = "archive:read",
+
+  /** Mints a native read for direct HTTP delivery to the caller. */
+  ArchivePrepareRead = "archive:prepare-read",
+
+  /** Acknowledges a native response after consumption or cancellation. */
+  ArchiveAcknowledge = "archive:acknowledge",
 
   // Runtime operations
 
@@ -1345,6 +1359,34 @@ export type SqliteParams =
     /** The bindings, as name/value pairs in no particular order. */
     entries: readonly (readonly [string, FabricValue])[];
   };
+
+/** An imperative archive catalog read in an authenticated space. */
+export type ArchiveReadRequest = BaseRequest & {
+  type: RequestType.ArchiveRead;
+  cell: CellRef;
+  command: Exclude<ArchiveReadCommand, { op: "read" }>;
+};
+
+/** A direct native page read through the cell's space session. */
+export type ArchivePrepareReadRequest = BaseRequest & {
+  type: RequestType.ArchivePrepareRead;
+  cell: CellRef;
+  command: Extract<ArchiveReadCommand, { op: "read" }>;
+};
+
+/** Release of a capability held by the cell's space session. */
+export type ArchiveAcknowledgeRequest = BaseRequest & {
+  type: RequestType.ArchiveAcknowledge;
+  cell: CellRef;
+  token: string;
+  consumed: boolean;
+};
+
+/** Bounded metadata delivered directly to the imperative caller. */
+export type ArchiveReadResponse = { result: ArchiveResult };
+
+/** A native response is fetched directly using this capability. */
+export type ArchivePrepareReadResponse = { transfer: ArchiveReadTransfer };
 
 /** The {@link RequestType.SqliteQuery} request. */
 export type SqliteQueryRequest = BaseRequest & {
@@ -2830,6 +2872,9 @@ export type IPCClientRequest =
   | OperationSubscribeRequest
   | OperationUnsubscribeRequest
   | OperationSessionCloseRequest
+  | ArchiveReadRequest
+  | ArchivePrepareReadRequest
+  | ArchiveAcknowledgeRequest
   | SqliteQueryRequest
   | SqliteExecRequest
   | GetCellRequest
@@ -3443,6 +3488,8 @@ export type RemoteResponse =
   | CellGetResponse
   | CellResponse
   | CfcLabelViewResponse
+  | ArchiveReadResponse
+  | ArchivePrepareReadResponse
   | SqliteQueryResponse
   | GraphSnapshotResponse
   | LoggerCountsResponse
@@ -3677,6 +3724,18 @@ export type Commands = {
   [RequestType.OperationSessionClose]: {
     request: OperationSessionCloseRequest;
     response: BooleanResponse;
+  };
+  [RequestType.ArchiveRead]: {
+    request: ArchiveReadRequest;
+    response: ArchiveReadResponse;
+  };
+  [RequestType.ArchivePrepareRead]: {
+    request: ArchivePrepareReadRequest;
+    response: ArchivePrepareReadResponse;
+  };
+  [RequestType.ArchiveAcknowledge]: {
+    request: ArchiveAcknowledgeRequest;
+    response: EmptyResponse;
   };
   [RequestType.SqliteQuery]: {
     request: SqliteQueryRequest;

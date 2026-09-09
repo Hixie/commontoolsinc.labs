@@ -4,7 +4,7 @@
     "check": "deno check .",
     "just-test": {
       "description": "Run unit tests",
-      "command": "deno test --allow-read --allow-write --allow-net --allow-ffi --allow-env --allow-run"
+      "command": "deno test --allow-read --allow-write --allow-net --allow-ffi --allow-env --allow-run --allow-sys=uid"
     },
     "test": {
       "description": "Type check & run tests",
@@ -26,6 +26,8 @@
     "./acl": "./acl.ts",
     "./interface": "./interface.ts",
     "./v2": "./v2.ts",
+    "./v2/archive": "./v2/archive.ts",
+    "./v2/archive-store": "./v2/archive-store.ts",
     "./v2/patch": "./v2/patch.ts",
     "./v2/path": "./v2/path.ts",
     "./v2/operation-codec": "./v2/operation-codec.ts",

@@ -1,4 +1,5 @@
 import * as defaultSdk from "@anthropic-ai/claude-agent-sdk";
+import { LRUCache } from "@commonfabric/utils/cache";
 import type {
   AgentDriver,
   AgentSourceConfig,
@@ -12,6 +13,15 @@ import type {
 } from "../types.ts";
 import { AsyncSerialQueue } from "../serial-queue.ts";
 import { normalizeSourceId } from "../session-contract.ts";
+import type {
+  NativeCollectionOptions,
+  SessionStream,
+} from "../session-stream.ts";
+import { streamNativeSessions } from "./native-source.ts";
+
+const SESSION_CWD_CACHE_BYTES = 32 * 1024;
+const cwdCacheWeight = (id: string, cwd: string | null) =>
+  2 * (id.length + (cwd?.length ?? 0));
 
 interface ClaudeSessionInfo {
   sessionId: string;
@@ -191,7 +201,11 @@ export class ClaudeAgentSdkDriver implements AgentDriver {
   readonly #queryBaseEnvironment: Record<string, string>;
   readonly #activeQueries = new Map<string, ClaudeQuery>();
   readonly #pendingPrompts = new Map<string, PendingClaudePrompt>();
-  readonly #sessionCwds = new Map<string, string | null>();
+  readonly #sessionCwds = new LRUCache<string, string | null>({
+    capacity: 64,
+    weigh: cwdCacheWeight,
+    maxWeight: SESSION_CWD_CACHE_BYTES,
+  });
   readonly #sessionModes = new Map<string, string>();
   readonly #sessionModels = new Map<string, string>();
   #stopped = false;
@@ -269,6 +283,13 @@ export class ClaudeAgentSdkDriver implements AgentDriver {
         ? String(offset + PAGE_SIZE)
         : undefined,
     };
+  }
+
+  /** Streams project logs without the SDK's full-transcript message projection. */
+  streamSessions(
+    options: NativeCollectionOptions,
+  ): AsyncIterable<SessionStream> {
+    return streamNativeSessions(this.#config, options);
   }
 
   async readSession(nativeSessionId: string): Promise<NativeSessionSnapshot> {
@@ -467,11 +488,16 @@ export class ClaudeAgentSdkDriver implements AgentDriver {
     );
     if (!info) return undefined;
     this.#rememberSessionCwd(info);
-    return this.#sessionCwds.get(nativeSessionId);
+    return info.cwd || null;
   }
 
   #rememberSessionCwd(info: ClaudeSessionInfo): void {
-    this.#sessionCwds.set(info.sessionId, info.cwd || null);
+    const cwd = info.cwd || null;
+    if (cwdCacheWeight(info.sessionId, cwd) > SESSION_CWD_CACHE_BYTES) {
+      this.#sessionCwds.delete(info.sessionId);
+      return;
+    }
+    this.#sessionCwds.put(info.sessionId, cwd);
   }
 
   async cancel(nativeSessionId: string): Promise<CommandExecutionResult> {

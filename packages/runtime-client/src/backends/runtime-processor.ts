@@ -1,3 +1,11 @@
+import { validateArchiveCommand } from "@commonfabric/memory/v2/archive";
+import type {
+  ArchiveAcknowledgeRequest,
+  ArchivePrepareReadRequest,
+  ArchivePrepareReadResponse,
+  ArchiveReadRequest,
+  ArchiveReadResponse,
+} from "../protocol/mod.ts";
 import {
   cloneIfNecessary,
   fabricFromNativeValue,
@@ -1762,6 +1770,61 @@ export class RuntimeProcessor {
     return response;
   }
 
+  /** Returns bounded archive metadata after server authorization. */
+  async handleArchiveRead(
+    request: ArchiveReadRequest,
+  ): Promise<ArchiveReadResponse> {
+    validateArchiveCommand(request.command);
+    if (
+      !([
+        "pin",
+        "pin-status",
+        "release",
+        "list",
+        "count",
+        "get",
+        "pages",
+        "legacy-read",
+      ]
+        .includes(request.command.op))
+    ) throw new Error("Imperative archive command is not a catalog read");
+    const provider = this.#runtime.storageManager.open(request.cell.space);
+    if (!provider.archive) throw new Error("Archive reads are unavailable");
+    const result = await provider.archive(request.command);
+    if (result instanceof Uint8Array) {
+      throw new Error(
+        "Native archive bytes cannot cross the runtime message codec",
+      );
+    }
+    return { result };
+  }
+
+  /** Mints a direct page response without reading its bytes in the worker. */
+  async handleArchivePrepareRead(
+    request: ArchivePrepareReadRequest,
+  ): Promise<ArchivePrepareReadResponse> {
+    validateArchiveCommand(request.command);
+    if (request.command.op !== "read") {
+      throw new Error("Archive capability is not a page read");
+    }
+    const provider = this.#runtime.storageManager.open(request.cell.space);
+    if (!provider.prepareArchiveRead) {
+      throw new Error("Direct archive reads are unavailable");
+    }
+    return { transfer: await provider.prepareArchiveRead(request.command) };
+  }
+
+  /** Releases a response even when its consumer canceled before fetching it. */
+  async handleArchiveAcknowledge(
+    request: ArchiveAcknowledgeRequest,
+  ): Promise<void> {
+    const provider = this.#runtime.storageManager.open(request.cell.space);
+    if (!provider.acknowledgeArchive) {
+      throw new Error("Archive acknowledgement is unavailable");
+    }
+    await provider.acknowledgeArchive(request.token, request.consumed);
+  }
+
   async handleSqliteQuery(
     request: SqliteQueryRequest,
   ): Promise<SqliteQueryResponse> {
@@ -2806,6 +2869,12 @@ export class RuntimeProcessor {
         return this.handleOperationUnsubscribe(request, client);
       case RequestType.OperationSessionClose:
         return this.handleOperationSessionClose(request, client);
+      case RequestType.ArchiveRead:
+        return await this.handleArchiveRead(request);
+      case RequestType.ArchivePrepareRead:
+        return await this.handleArchivePrepareRead(request);
+      case RequestType.ArchiveAcknowledge:
+        return await this.handleArchiveAcknowledge(request);
       case RequestType.SqliteQuery:
         return await this.handleSqliteQuery(request);
       case RequestType.SqliteExec:

@@ -1,6 +1,7 @@
 import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
 import { join } from "@std/path";
+import { stub } from "@std/testing/mock";
 import { discoverGitCheckoutDirectories } from "../src/checkout-discovery.ts";
 
 describe("discoverGitCheckoutDirectories", () => {
@@ -65,6 +66,37 @@ describe("discoverGitCheckoutDirectories", () => {
       ).rejects.toThrow(
         `checkout search root is not a directory: ${file}`,
       );
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+
+  it("reads a linked-worktree marker through short file reads", async () => {
+    const directory = await Deno.makeTempDir();
+    try {
+      const checkout = join(directory, "checkout");
+      const gitDirectory = join(directory, "git-directory");
+      await Deno.mkdir(checkout);
+      await Deno.mkdir(gitDirectory);
+      await Deno.writeTextFile(join(gitDirectory, "HEAD"), "ref: main\n");
+      const marker = join(checkout, ".git");
+      await Deno.writeTextFile(marker, "gitdir: ../git-directory\n");
+      const original = Deno.open;
+      using shortReads = stub(Deno, "open", async (...args) => {
+        const file = await original(...args);
+        if (args[0] !== marker) return file;
+        const read = file.read.bind(file);
+        file.read = (buffer) => read(buffer.subarray(0, 2));
+        return file;
+      });
+      expect(
+        await discoverGitCheckoutDirectories(
+          [checkout],
+          undefined,
+          () => Promise.resolve(true),
+        ),
+      ).toEqual([checkout]);
+      expect(shortReads.calls.length).toBe(1);
     } finally {
       await Deno.remove(directory, { recursive: true });
     }

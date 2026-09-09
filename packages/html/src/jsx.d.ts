@@ -2939,6 +2939,7 @@ interface CFKeybindElement extends CFHTMLElement {}
 interface CFRenderElement extends CFHTMLElement {}
 interface CFCFCAuthorshipElement extends CFHTMLElement {}
 interface CFCFCLabelElement extends CFHTMLElement {}
+interface CFAgentArchiveElement extends CFHTMLElement {}
 interface CFCFCRenderBoundaryElement extends CFHTMLElement {}
 interface CFDragSourceElement extends CFHTMLElement {}
 interface CFDropZoneElement extends CFHTMLElement {}
@@ -3603,6 +3604,13 @@ interface CFRenderAttributes<T> extends CFHTMLAttributes<T> {
   "$cell": CellLike<any>;
   // CT-1321 UI-variant spectrum (see cf-render.ts UIVariant).
   "variant"?: "full" | "chip" | "tile";
+}
+
+interface CFAgentArchiveAttributes<T> extends CFHTMLAttributes<T> {
+  "$value"?: CellLike<unknown>;
+  "oncf-select-session"?: (
+    event: { detail: { sourceId: string; nativeSessionId: string } },
+  ) => void;
 }
 
 interface CFCFCLabelAttributes<T> extends CFHTMLAttributes<T> {
@@ -5144,6 +5152,10 @@ declare global {
       "cf-cfc-authorship": CFDOM.DetailedHTMLProps<
         CFCFCAuthorshipAttributes<CFCFCAuthorshipElement>,
         CFCFCAuthorshipElement
+      >;
+      "cf-agent-archive": CFDOM.DetailedHTMLProps<
+        CFAgentArchiveAttributes<CFAgentArchiveElement>,
+        CFAgentArchiveElement
       >;
       "cf-cfc-label": CFDOM.DetailedHTMLProps<
         CFCFCLabelAttributes<CFCFCLabelElement>,

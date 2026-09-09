@@ -842,12 +842,20 @@ async function deployAgentSessionsDebugViewNow(
   const cause = debugPieceCause(target.conn.ownerDid, patternRef);
   const setupArguments = {
     ownerDid: target.conn.ownerDid,
-    recentIndex: target.cells.index,
-    allIndex: target.cells.allIndex,
+    ...(target.hasArchive()
+      ? {
+        nativeCatalog: target.cells.catalog,
+        nativeCatalogCell: target.cells.catalog,
+      }
+      : { recentIndex: target.cells.index, allIndex: target.cells.allIndex }),
     health: target.cells.health,
     receipts: target.cells.receipts,
-    recentIndexCell: target.cells.index,
-    allIndexCell: target.cells.allIndex,
+    recentIndexCell: target.hasArchive()
+      ? target.cells.catalog
+      : target.cells.index,
+    allIndexCell: target.hasArchive()
+      ? target.cells.catalog
+      : target.cells.allIndex,
     healthCell: target.cells.health,
     commandsCell: target.cells.commands,
     receiptsCell: target.cells.receipts,
@@ -980,6 +988,9 @@ export function describeAgentFabricTarget(
     ownerDid: target.conn.ownerDid,
     ...(debugPieceId ? { debugPieceId } : {}),
     cells: {
+      ...(target.hasArchive()
+        ? { catalog: stableCellId(target.cells.catalog) }
+        : {}),
       recentIndex: stableCellId(target.cells.index),
       allIndex: stableCellId(target.cells.allIndex),
       health: stableCellId(target.cells.health),

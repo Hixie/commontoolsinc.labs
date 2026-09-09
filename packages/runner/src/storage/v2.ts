@@ -51,6 +51,12 @@ import {
   toDocumentPath,
 } from "@commonfabric/memory/v2";
 import * as MemoryV2Client from "@commonfabric/memory/v2/client";
+import type {
+  ArchiveCommand,
+  ArchiveLimits,
+  ArchiveReadTransfer,
+  ArchiveResult,
+} from "@commonfabric/memory/v2/archive";
 import { mapLinkSchemas } from "@commonfabric/memory/v2/schema-table-links";
 import type { AppliedCommit } from "@commonfabric/memory/v2/engine";
 import { BoundedKeyMap } from "@commonfabric/utils/cache";
@@ -2943,6 +2949,32 @@ class Provider implements IStorageProvider, IOperationStorageCapability {
     return this.#followReplacement((replica) => replica.pullToServerHead());
   }
 
+  /** Negotiates the connected server's bounded archive capability. */
+  archiveLimits(): Promise<ArchiveLimits> {
+    return this.replica.archiveLimits();
+  }
+
+  /** Mints a direct page-read capability on the active session. */
+  prepareArchiveRead(
+    command: Extract<ArchiveCommand, { op: "read" }>,
+  ): Promise<ArchiveReadTransfer> {
+    return this.replica.prepareArchiveRead(command);
+  }
+
+  /** Releases a direct page-read capability. */
+  acknowledgeArchive(token: string, consumed: boolean): Promise<void> {
+    return this.replica.acknowledgeArchive(token, consumed);
+  }
+
+  /** Transfers one bounded native page through the authenticated session. */
+  archive(
+    command: ArchiveCommand,
+    data?: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResult | Uint8Array> {
+    return this.replica.archive(command, data, signal);
+  }
+
   sqliteQuery(
     db: SqliteDbRef,
     sql: string,
@@ -4072,6 +4104,36 @@ export class SpaceReplica
         console.warn("failed to remove operation watch", error);
       }
     }
+  }
+
+  /** Negotiates archive limits on this replica's active Memory session. */
+  async archiveLimits(): Promise<ArchiveLimits> {
+    const { session } = await this.#activeSessionHandle();
+    return session.archiveLimits();
+  }
+
+  /** Mints a capability without moving native bytes into the replica. */
+  async prepareArchiveRead(
+    command: Extract<ArchiveCommand, { op: "read" }>,
+  ): Promise<ArchiveReadTransfer> {
+    const { session } = await this.#activeSessionHandle();
+    return session.prepareArchiveRead(command);
+  }
+
+  /** Releases a capability through the active authenticated session. */
+  async acknowledgeArchive(token: string, consumed: boolean): Promise<void> {
+    const { session } = await this.#activeSessionHandle();
+    return session.acknowledgeArchive(token, consumed);
+  }
+
+  /** Transfers native bytes independently of the replica's document state. */
+  async archive(
+    command: ArchiveCommand,
+    data?: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResult | Uint8Array> {
+    const { session } = await this.#activeSessionHandle();
+    return session.archive(command, data, signal);
   }
 
   async sqliteQuery(

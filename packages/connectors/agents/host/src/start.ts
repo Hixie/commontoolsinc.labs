@@ -166,22 +166,15 @@ export async function startAgentsHost(
       fabric.spaceDid,
       fabric.ownerDid,
     );
+    fabric.target.configureArchive({
+      scratchDirectory: `${ledgerPath}.native-scan`,
+    });
     options.signal?.throwIfAborted();
     processLocks.push(
       await dependencies.acquireProcessLock(`${ledgerPath}.lock`),
     );
     options.signal?.throwIfAborted();
-    const debugPieceId = options.debugView === false
-      ? undefined
-      : await waitForStartup(
-        dependencies.deployDebugView(
-          fabric.manager,
-          fabric.target,
-          undefined,
-          options.signal,
-        ),
-      );
-    options.signal?.throwIfAborted();
+    let debugPieceId: string | undefined;
     const ledger = await waitForStartup(
       dependencies.openLedger(ledgerPath),
     );
@@ -200,8 +193,25 @@ export async function startAgentsHost(
     });
     const hostStartTask = trackStartup(host.start({
       signal: options.signal,
-      acceptCommands: options.acceptCommands !== false &&
-        debugPieceId !== undefined && fabric.target.commandsAreBound(),
+      prepareCommandTarget: async () => {
+        const activeFabric = fabric!;
+        debugPieceId = options.debugView === false
+          ? undefined
+          : await waitForStartup(
+            dependencies.deployDebugView(
+              activeFabric.manager,
+              activeFabric.target,
+              undefined,
+              options.signal,
+            ),
+          );
+        return {
+          debugPieceId,
+          acceptCommands: options.acceptCommands !== false &&
+            debugPieceId !== undefined &&
+            activeFabric.target.commandsAreBound(),
+        };
+      },
       deferHealthUntilReady: true,
       onHealthOwnership: () => {
         healthOwnership = true;

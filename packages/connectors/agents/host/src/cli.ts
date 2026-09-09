@@ -8,6 +8,7 @@ export interface AgentsHostCliDependencies {
   start: typeof startAgentsHost;
   addSignalListener: typeof Deno.addSignalListener;
   removeSignalListener: typeof Deno.removeSignalListener;
+  now: () => number;
   scheduleEvery: (
     intervalMs: number,
     callback: () => void,
@@ -21,6 +22,7 @@ const defaultDependencies: AgentsHostCliDependencies = {
   start: startAgentsHost,
   addSignalListener: Deno.addSignalListener,
   removeSignalListener: Deno.removeSignalListener,
+  now: Date.now,
   scheduleEvery: (intervalMs, callback) => {
     const interval = setInterval(callback, intervalMs);
     return () => clearInterval(interval);
@@ -41,9 +43,35 @@ export async function runAgentsHostCli(
   let stopAttempted = false;
   let collectionRequests: CollectionRequestQueue | undefined;
   let stopPeriodicCollection: (() => void) | undefined;
+  let collectionIntervalMs = 0;
+  let shutdownRequested = false;
   const installedSignals: Array<[Deno.Signal, () => void]> = [];
 
+  const cancelPeriodicCollection = () => {
+    stopPeriodicCollection?.();
+    stopPeriodicCollection = undefined;
+    running?.host.setNextCollectionAt();
+  };
+  const schedulePeriodicCollection = () => {
+    if (
+      !running || !collectionRequests || collectionRequests.hasPending ||
+      shutdownRequested ||
+      collectionIntervalMs === 0
+    ) return;
+    running.host.setNextCollectionAt(
+      new Date(dependencies.now() + collectionIntervalMs),
+    );
+    stopPeriodicCollection = dependencies.scheduleEvery(
+      collectionIntervalMs,
+      () => {
+        cancelPeriodicCollection();
+        collectionRequests?.request("periodic");
+      },
+    );
+  };
+
   const terminate = (signal: "SIGINT" | "SIGTERM") => {
+    shutdownRequested = true;
     if (startupInProgress && !startupAbort.signal.aborted) {
       startupCancellation = new Error(`received ${signal}`);
       startupAbort.abort(startupCancellation);
@@ -53,6 +81,7 @@ export async function runAgentsHostCli(
   const onSigint = () => terminate("SIGINT");
   const onSigterm = () => terminate("SIGTERM");
   const onSighup = () => {
+    if (shutdownRequested) return;
     if (!collectionRequests) {
       dependencies.log("Ignoring SIGHUP while startup is still in progress");
       return;
@@ -80,6 +109,7 @@ export async function runAgentsHostCli(
       return 0;
     }
     const config = await loadAgentsHostConfig(options.configPath);
+    collectionIntervalMs = config.collectionIntervalMs;
 
     addSignal("SIGINT", onSigint);
     addSignal("SIGTERM", onSigterm);
@@ -99,6 +129,7 @@ export async function runAgentsHostCli(
       });
       if (!options.once) {
         collectionRequests = new CollectionRequestQueue(async (reason) => {
+          cancelPeriodicCollection();
           dependencies.log(`${reason} collection started`);
           try {
             const sessionCount = await running!.host.synchronize(reason);
@@ -107,6 +138,8 @@ export async function runAgentsHostCli(
             );
           } catch (error) {
             dependencies.error(`${reason} collection failed: ${error}`);
+          } finally {
+            schedulePeriodicCollection();
           }
         });
       }
@@ -133,27 +166,23 @@ export async function runAgentsHostCli(
       return 0;
     }
 
-    if (config.collectionIntervalMs > 0) {
-      stopPeriodicCollection = dependencies.scheduleEvery(
-        config.collectionIntervalMs,
-        () => collectionRequests?.request("periodic"),
-      );
-    }
+    schedulePeriodicCollection();
     dependencies.log(
       config.collectionIntervalMs > 0
-        ? `Ready; collecting every ${config.collectionIntervalMs}ms, send SIGHUP to collect sooner, or SIGINT/SIGTERM to stop`
+        ? `Ready; collecting ${config.collectionIntervalMs}ms after each completion, send SIGHUP to collect sooner, or SIGINT/SIGTERM to stop`
         : "Ready; send SIGHUP to collect again, or SIGINT/SIGTERM to stop",
     );
     const signal = await shutdown.promise;
     dependencies.log(`${signal} received; shutting down`);
-    stopPeriodicCollection?.();
-    stopPeriodicCollection = undefined;
+    cancelPeriodicCollection();
     const collectionDrain = collectionRequests?.close();
     stopAttempted = true;
     await running.stop(signal);
     await collectionDrain;
     return 0;
   } catch (error) {
+    shutdownRequested = true;
+    cancelPeriodicCollection();
     if (running && !stopAttempted) {
       stopAttempted = true;
       await running.stop("cli-error").catch((stopError) => {
@@ -168,7 +197,8 @@ export async function runAgentsHostCli(
     );
     return 1;
   } finally {
-    stopPeriodicCollection?.();
+    shutdownRequested = true;
+    cancelPeriodicCollection();
     await collectionRequests?.close();
     for (const [signal, listener] of installedSignals.reverse()) {
       dependencies.removeSignalListener(signal, listener);

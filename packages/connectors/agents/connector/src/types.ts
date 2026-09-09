@@ -1,3 +1,8 @@
+import type {
+  NativeCollectionOptions,
+  SessionStream,
+} from "./session-stream.ts";
+
 export type DriverKind =
   | "claude-agent-sdk"
   | "codex-app-server"
@@ -107,6 +112,10 @@ export interface AgentDriver {
   stop(): Promise<void>;
   listSessions(cursor?: string): Promise<SessionPage>;
   readSession(nativeSessionId: string): Promise<NativeSessionSnapshot>;
+  /** Pulls native bytes without hydrating provider session objects. */
+  streamSessions?(
+    options: NativeCollectionOptions,
+  ): AsyncIterable<SessionStream>;
   prompt(
     nativeSessionId: string,
     input: PromptInput,

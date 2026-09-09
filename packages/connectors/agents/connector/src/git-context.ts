@@ -48,12 +48,33 @@ const runGitCommand: GitCommandRunner = async (args, signal) => {
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
   try {
-    const output = await child.output();
+    const buffer = new Uint8Array(64 * 1024);
+    let length = 0;
+    const reader = child.stdout.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (length + value.length > buffer.length) {
+          throw new Error("Git metadata exceeds 64 KiB");
+        }
+        buffer.set(value, length);
+        length += value.length;
+      }
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+    }
+    const status = await child.status;
     signal?.throwIfAborted();
     return {
-      code: output.code,
-      stdout: new TextDecoder().decode(output.stdout),
+      code: status.code,
+      stdout: new TextDecoder().decode(buffer.subarray(0, length)),
     };
+  } catch (error) {
+    abort();
+    await child.status;
+    throw error;
   } finally {
     signal?.removeEventListener("abort", abort);
   }
@@ -78,6 +99,14 @@ export interface GitContextObservation {
     snapshot: NativeSessionSnapshot,
     signal?: AbortSignal,
   ): Promise<NativeSessionSnapshot>;
+}
+
+/** Keeps recent checkout observations within a fixed entry budget. */
+function remember<K, V>(cache: Map<K, V>, key: K, value: V): void {
+  if (!cache.has(key) && cache.size === 64) {
+    cache.delete(cache.keys().next().value!);
+  }
+  cache.set(key, value);
 }
 
 class CachedGitContextObservation implements GitContextObservation {
@@ -106,7 +135,7 @@ class CachedGitContextObservation implements GitContextObservation {
     let context = this.#directories.get(directory);
     if (!context) {
       context = this.#resolveDirectory(directory, signal);
-      this.#directories.set(directory, context);
+      remember(this.#directories, directory, context);
     }
     return context;
   }
@@ -190,8 +219,8 @@ class CachedGitContextObservation implements GitContextObservation {
       gitObservedAt: this.#clock().toISOString(),
     };
     const { gitWorktreeRoot: _gitWorktreeRoot, ...rootContext } = context;
-    this.#directories.set(directory, Promise.resolve(context));
-    this.#roots.set(root, Promise.resolve(rootContext));
+    remember(this.#directories, directory, Promise.resolve(context));
+    remember(this.#roots, root, Promise.resolve(rootContext));
     return context;
   }
 
@@ -235,7 +264,7 @@ class CachedGitContextObservation implements GitContextObservation {
     let context = this.#roots.get(root);
     if (!context) {
       context = this.#resolveRoot(root, signal);
-      this.#roots.set(root, context);
+      remember(this.#roots, root, context);
     }
     return { ...await context, gitWorktreeRoot: root };
   }

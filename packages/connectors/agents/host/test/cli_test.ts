@@ -46,6 +46,7 @@ function args(configPath: string): string[] {
 function fakeRunningHost(options: {
   stop: (reason?: string) => Promise<void>;
   synchronize?: (reason?: string) => Promise<number>;
+  setNextCollectionAt?: (at?: Date) => void;
 }): RunningAgentsHost {
   return {
     initialSessionCount: 2,
@@ -62,6 +63,7 @@ function fakeRunningHost(options: {
         },
       }),
       synchronize: options.synchronize ?? (() => Promise.resolve(2)),
+      setNextCollectionAt: options.setNextCollectionAt ?? (() => {}),
     },
     stop: options.stop,
   } as unknown as RunningAgentsHost;
@@ -73,6 +75,7 @@ function dependencies(options: {
   errors?: string[];
   listeners?: Map<Deno.Signal, () => void>;
   scheduleEvery?: AgentsHostCliDependencies["scheduleEvery"];
+  now?: () => number;
 }): AgentsHostCliDependencies {
   const listeners = options.listeners ?? new Map();
   return {
@@ -85,6 +88,7 @@ function dependencies(options: {
       if (listeners.get(signal) === listener) listeners.delete(signal);
     },
     scheduleEvery: options.scheduleEvery ?? (() => () => undefined),
+    now: options.now ?? Date.now,
     log: (...values) => options.logs?.push(values.map(String).join(" ")),
     error: (...values) => options.errors?.push(values.map(String).join(" ")),
   };
@@ -363,4 +367,98 @@ Deno.test("shutdown starts while an active periodic collection drains", async ()
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
+});
+
+Deno.test("periodic collection rearms after completion and coalesces signal requests during a long scan", async () => {
+  const { directory, path } = await writeConfig(10);
+  const listeners = new Map<Deno.Signal, () => void>();
+  const ready = Promise.withResolvers<void>();
+  const entered = [
+    Promise.withResolvers<void>(),
+    Promise.withResolvers<void>(),
+  ];
+  const release = [
+    Promise.withResolvers<void>(),
+    Promise.withResolvers<void>(),
+  ];
+  const rearmed = Promise.withResolvers<void>();
+  const timers: Array<
+    { due: number; callback: () => void; canceled: boolean }
+  > = [];
+  const deadlines: Array<string | undefined> = [];
+  const reasons: Array<string | undefined> = [];
+  let now = 1_000;
+  let active = 0;
+  let maximumActive = 0;
+  const running = fakeRunningHost({
+    stop: () => Promise.resolve(),
+    setNextCollectionAt: (at) => deadlines.push(at?.toISOString()),
+    synchronize: async (reason) => {
+      const index = reasons.length;
+      reasons.push(reason);
+      active++;
+      maximumActive = Math.max(maximumActive, active);
+      entered[index]?.resolve();
+      try {
+        await release[index]?.promise;
+      } finally {
+        active--;
+      }
+      return 1;
+    },
+  });
+  const deps = dependencies({
+    listeners,
+    now: () => now,
+    scheduleEvery: (intervalMs, callback) => {
+      const timer = { due: now + intervalMs, callback, canceled: false };
+      timers.push(timer);
+      if (reasons.length === 2 && active === 0) rearmed.resolve();
+      return () => {
+        timer.canceled = true;
+      };
+    },
+    start: (() =>
+      Promise.resolve(running)) as AgentsHostCliDependencies["start"],
+  });
+  deps.log = (...values) => {
+    if (String(values[0]).startsWith("Ready;")) ready.resolve();
+  };
+  const result = runAgentsHostCli(args(path), deps);
+  try {
+    await ready.promise;
+    assertEquals(timers[0].due, 1_010);
+    now = 1_010;
+    timers[0].callback();
+    await entered[0].promise;
+    assertEquals(timers[0].canceled, true);
+    for (let tick = 0; tick < 20; tick++) {
+      now += 10;
+      if (!timers[0].canceled) timers[0].callback();
+    }
+    listeners.get("SIGHUP")?.();
+    listeners.get("SIGHUP")?.();
+    now = 5_000;
+    release[0].resolve();
+    await entered[1].promise;
+    assertEquals(reasons, ["periodic", "SIGHUP"]);
+    assertEquals(maximumActive, 1);
+    assertEquals(timers.filter((timer) => !timer.canceled), []);
+    now = 6_000;
+    release[1].resolve();
+    await rearmed.promise;
+    assertEquals(
+      timers.filter((timer) => !timer.canceled).map((timer) => timer.due),
+      [6_010],
+    );
+    assertEquals(timers.length, 2);
+    assertEquals(deadlines.at(-1), new Date(6_010).toISOString());
+  } finally {
+    listeners.get("SIGTERM")?.();
+    for (const gate of release) gate.resolve();
+    assertEquals(await result, 0);
+    await Deno.remove(directory, { recursive: true });
+  }
+  assertEquals(timers.filter((timer) => !timer.canceled), []);
+  assertEquals(deadlines.at(-1), undefined);
 });

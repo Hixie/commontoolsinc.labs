@@ -11,6 +11,11 @@ import type {
 } from "../types.ts";
 import { CodexJsonlClient } from "./codex-jsonl-client.ts";
 import { normalizeSourceId } from "../session-contract.ts";
+import type {
+  NativeCollectionOptions,
+  SessionStream,
+} from "../session-stream.ts";
+import { streamNativeSessions } from "./native-source.ts";
 
 export interface CodexAppServerLaunch {
   command: string[];
@@ -263,6 +268,13 @@ export class CodexAppServerDriver implements AgentDriver {
       sessions: threads.map((thread) => threadSummary(thread, state.archived)),
       nextCursor: next,
     };
+  }
+
+  /** Streams rollout and database records without asking the provider to load history. */
+  streamSessions(
+    options: NativeCollectionOptions,
+  ): AsyncIterable<SessionStream> {
+    return streamNativeSessions(this.#config, options);
   }
 
   async readSession(nativeSessionId: string): Promise<NativeSessionSnapshot> {

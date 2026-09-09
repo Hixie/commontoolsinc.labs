@@ -1,3 +1,9 @@
+import {
+  type ArchiveReadCommand,
+  type ArchiveResult,
+  fetchArchivePage,
+  withArchiveAcknowledgement,
+} from "@commonfabric/memory/v2/archive";
 /**
  * CellHandle - Represents a `Cell` in a runtime.
  */
@@ -695,6 +701,45 @@ export class CellHandle<T = unknown> {
       })
     );
     return response.cfcLabel;
+  }
+
+  /** Reads one catalog or native page without writing a result cell. */
+  archive(
+    command: Extract<ArchiveReadCommand, { op: "read" }>,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array>;
+  archive(
+    command: Exclude<ArchiveReadCommand, { op: "read" }>,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResult>;
+  archive(
+    command: ArchiveReadCommand,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResult | Uint8Array> {
+    return this.#enqueueOperation(async () => {
+      signal?.throwIfAborted();
+      if (command.op !== "read") {
+        const response = await this.#conn.request<RequestType.ArchiveRead>({
+          type: RequestType.ArchiveRead,
+          cell: this.ref(),
+          command,
+        });
+        return response.result;
+      }
+      const { transfer } = await this.#conn.request<
+        RequestType.ArchivePrepareRead
+      >({ type: RequestType.ArchivePrepareRead, cell: this.ref(), command });
+      return withArchiveAcknowledgement(async () => {
+        signal?.throwIfAborted();
+        return await fetchArchivePage(transfer, command.hash, signal);
+      }, (consumed) =>
+        this.#conn.request<RequestType.ArchiveAcknowledge>({
+          type: RequestType.ArchiveAcknowledge,
+          cell: this.ref(),
+          token: transfer.ticket.token,
+          consumed,
+        }));
+    });
   }
 
   /** Run a read-only query when this handle refers to a SQLite database. */

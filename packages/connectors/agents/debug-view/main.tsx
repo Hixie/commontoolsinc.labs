@@ -344,6 +344,8 @@ export interface ReceiptIndex {
 
 export interface DebugInput {
   ownerDid: string;
+  nativeCatalog?: { schema: string; sessionCount: number };
+  nativeCatalogCell?: OpaqueCell<DeferredDocument | undefined>;
   recentIndex: SessionIndexInput | undefined;
   allIndex: SessionIndexInput | undefined;
   health: HostHealth | undefined;
@@ -1407,6 +1409,8 @@ const DebugView = pattern<DebugInput, DebugOutput>(
       commandsCell,
       receiptsCell,
       ownerDid,
+      nativeCatalog,
+      nativeCatalogCell,
     },
   ) => {
     const commands = commandsCell;
@@ -1665,7 +1669,10 @@ const DebugView = pattern<DebugInput, DebugOutput>(
     const status = computed(() => stringValue(health?.status, "waiting"));
     const sourceCount = computed(() => sources.length);
     const sessionCount = computed(() =>
-      numberValue(sessionIndexJson(allIndex)?.totalSessionCount)
+      numberValue(
+        nativeCatalog?.sessionCount ??
+          sessionIndexJson(allIndex)?.totalSessionCount,
+      )
     );
     const commandCount = computed(() => numberValue(commandActionCount));
     const receiptCount = computed(() => receiptEntries.length);
@@ -2052,202 +2059,216 @@ const DebugView = pattern<DebugInput, DebugOutput>(
               </cf-tab-panel>
 
               <cf-tab-panel value="sessions">
-                <cf-vstack gap="3" padding="4">
-                  <cf-hstack justify="between" align="center" gap="3">
-                    <cf-heading level={4}>Published sessions</cf-heading>
-                    <cf-hstack align="center" gap="2">
-                      <cf-text tone="muted">
-                        {computed(() =>
-                          `Page ${
-                            currentSessionPage + 1
-                          } of ${sessionPageCount}`
-                        )}
-                      </cf-text>
-                      <cf-text tone="muted">
-                        {computed(() => sessionSortColumn.get() === null
-                          ? ""
-                          : "Sorting applies to this page"
-                        )}
-                      </cf-text>
-                      <cf-button
-                        variant="ghost"
-                        size="sm"
-                        disabled={computed(() => currentSessionPage === 0)}
-                        onClick={movePage({
-                          page: sessionPage,
-                          currentPage: currentSessionPage,
-                          delta: -1,
-                        })}
-                      >
-                        Previous
-                      </cf-button>
-                      <cf-button
-                        variant="ghost"
-                        size="sm"
-                        disabled={computed(() =>
-                          currentSessionPage >= sessionPageCount - 1
-                        )}
-                        onClick={movePage({
-                          page: sessionPage,
-                          currentPage: currentSessionPage,
-                          delta: 1,
-                        })}
-                      >
-                        Next
-                      </cf-button>
-                      <cf-input
-                        $value={sessionFilter}
-                        placeholder="Filter this page"
-                        style="min-width: 320px;"
-                      />
-                    </cf-hstack>
-                  </cf-hstack>
-                  <cf-card>
-                    <cf-table full-width hover>
-                      <thead>
-                        <tr>
-                          <th>Source</th>
-                          <th
-                            aria-sort={computed(() =>
-                              sessionSortColumn.get() === "title"
-                                ? sessionSortDirection.get()
-                                : undefined
+                {nativeCatalog?.schema ===
+                    "commonfabric.agent-connector.catalog.v2"
+                  ? (
+                    <cf-agent-archive
+                      $value={nativeCatalogCell}
+                      oncf-select-session={action((
+                        event: { detail: CommandTargetSelection },
+                      ) => selectCommandTarget.send(event.detail))}
+                    />
+                  )
+                  : (
+                    <cf-vstack gap="3" padding="4">
+                      <cf-hstack justify="between" align="center" gap="3">
+                        <cf-heading level={4}>Published sessions</cf-heading>
+                        <cf-hstack align="center" gap="2">
+                          <cf-text tone="muted">
+                            {computed(() =>
+                              `Page ${
+                                currentSessionPage + 1
+                              } of ${sessionPageCount}`
                             )}
-                          >
-                            <cf-button
-                              variant="ghost"
-                              size="sm"
-                              title="Sort this page by title"
-                              onClick={changeSessionSort({
-                                column: sessionSortColumn,
-                                direction: sessionSortDirection,
-                                currentColumn: sessionSortColumn,
-                                currentDirection: sessionSortDirection,
-                                requestedColumn: "title",
-                              })}
-                            >
-                              {titleSortLabel}
-                            </cf-button>
-                          </th>
-                          <th>Status</th>
-                          <th>Sync</th>
-                          <th
-                            aria-sort={computed(() =>
-                              sessionSortColumn.get() === "idleFor"
-                                ? sessionSortDirection.get()
-                                : undefined
+                          </cf-text>
+                          <cf-text tone="muted">
+                            {computed(() =>
+                              sessionSortColumn.get() === null
+                                ? ""
+                                : "Sorting applies to this page"
                             )}
+                          </cf-text>
+                          <cf-button
+                            variant="ghost"
+                            size="sm"
+                            disabled={computed(() => currentSessionPage === 0)}
+                            onClick={movePage({
+                              page: sessionPage,
+                              currentPage: currentSessionPage,
+                              delta: -1,
+                            })}
                           >
-                            <cf-button
-                              variant="ghost"
-                              size="sm"
-                              title="Sort this page by idle time"
-                              onClick={changeSessionSort({
-                                column: sessionSortColumn,
-                                direction: sessionSortDirection,
-                                currentColumn: sessionSortColumn,
-                                currentDirection: sessionSortDirection,
-                                requestedColumn: "idleFor",
-                              })}
-                            >
-                              {idleSortLabel}
-                            </cf-button>
-                          </th>
-                          <th
-                            aria-sort={computed(() =>
-                              sessionSortColumn.get() === "worktree"
-                                ? sessionSortDirection.get()
-                                : undefined
+                            Previous
+                          </cf-button>
+                          <cf-button
+                            variant="ghost"
+                            size="sm"
+                            disabled={computed(() =>
+                              currentSessionPage >= sessionPageCount - 1
                             )}
+                            onClick={movePage({
+                              page: sessionPage,
+                              currentPage: currentSessionPage,
+                              delta: 1,
+                            })}
                           >
-                            <cf-button
-                              variant="ghost"
-                              size="sm"
-                              title="Sort this page by worktree"
-                              onClick={changeSessionSort({
-                                column: sessionSortColumn,
-                                direction: sessionSortDirection,
-                                currentColumn: sessionSortColumn,
-                                currentDirection: sessionSortDirection,
-                                requestedColumn: "worktree",
-                              })}
-                            >
-                              {worktreeSortLabel}
-                            </cf-button>
-                          </th>
-                          <th>Data</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleSessions.map((session) => (
-                          <tr>
-                            <td>{stringValue(session.sourceId)}</td>
-                            <td>
-                              <cf-vstack gap="0">
-                                <cf-text>
-                                  {stringValue(session.title, "(untitled)")}
-                                </cf-text>
-                              </cf-vstack>
-                            </td>
-                            <td>
-                              <cf-badge
-                                color={statusColor(
-                                  session.conversationState,
+                            Next
+                          </cf-button>
+                          <cf-input
+                            $value={sessionFilter}
+                            placeholder="Filter this page"
+                            style="min-width: 320px;"
+                          />
+                        </cf-hstack>
+                      </cf-hstack>
+                      <cf-card>
+                        <cf-table full-width hover>
+                          <thead>
+                            <tr>
+                              <th>Source</th>
+                              <th
+                                aria-sort={computed(() =>
+                                  sessionSortColumn.get() === "title"
+                                    ? sessionSortDirection.get()
+                                    : undefined
                                 )}
                               >
-                                {session.conversationState}
-                              </cf-badge>
-                            </td>
-                            <td>
-                              <cf-badge
-                                color={statusColor(session.syncStatus)}
-                              >
-                                {stringValue(session.syncStatus)}
-                              </cf-badge>
-                            </td>
-                            <td title={session.updatedAt ?? undefined}>
-                              {formatIdleFor(
-                                session.updatedAt,
-                                now.result ?? null,
-                              )}
-                            </td>
-                            <td
-                              title={session.gitWorktreeRoot ?? undefined}
-                              style="font-family: monospace;"
-                            >
-                              {trailingPath(session.gitWorktreeRoot)}
-                            </td>
-                            <td>
-                              <cf-hstack gap="2" align="center">
                                 <cf-button
                                   variant="ghost"
                                   size="sm"
-                                  aria-label={`Compose command for ${
-                                    stringValue(
-                                      session.title,
-                                      "untitled session",
-                                    )
-                                  } (${stringValue(session.sourceId)})`}
-                                  onClick={chooseSessionForCommand({
-                                    sourceId: session.sourceId,
-                                    nativeSessionId: session.nativeSessionId,
-                                    selectTarget: selectCommandTarget,
+                                  title="Sort this page by title"
+                                  onClick={changeSessionSort({
+                                    column: sessionSortColumn,
+                                    direction: sessionSortDirection,
+                                    currentColumn: sessionSortColumn,
+                                    currentDirection: sessionSortDirection,
+                                    requestedColumn: "title",
                                   })}
                                 >
-                                  Command
+                                  {titleSortLabel}
                                 </cf-button>
-                                <cf-cell-link
-                                  $cell={session.rawView}
-                                  label="Raw data"
-                                />
-                              </cf-hstack>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </cf-table>
-                  </cf-card>
-                </cf-vstack>
+                              </th>
+                              <th>Status</th>
+                              <th>Sync</th>
+                              <th
+                                aria-sort={computed(() =>
+                                  sessionSortColumn.get() === "idleFor"
+                                    ? sessionSortDirection.get()
+                                    : undefined
+                                )}
+                              >
+                                <cf-button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Sort this page by idle time"
+                                  onClick={changeSessionSort({
+                                    column: sessionSortColumn,
+                                    direction: sessionSortDirection,
+                                    currentColumn: sessionSortColumn,
+                                    currentDirection: sessionSortDirection,
+                                    requestedColumn: "idleFor",
+                                  })}
+                                >
+                                  {idleSortLabel}
+                                </cf-button>
+                              </th>
+                              <th
+                                aria-sort={computed(() =>
+                                  sessionSortColumn.get() === "worktree"
+                                    ? sessionSortDirection.get()
+                                    : undefined
+                                )}
+                              >
+                                <cf-button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Sort this page by worktree"
+                                  onClick={changeSessionSort({
+                                    column: sessionSortColumn,
+                                    direction: sessionSortDirection,
+                                    currentColumn: sessionSortColumn,
+                                    currentDirection: sessionSortDirection,
+                                    requestedColumn: "worktree",
+                                  })}
+                                >
+                                  {worktreeSortLabel}
+                                </cf-button>
+                              </th>
+                              <th>Data</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visibleSessions.map((session) => (
+                              <tr>
+                                <td>{stringValue(session.sourceId)}</td>
+                                <td>
+                                  <cf-vstack gap="0">
+                                    <cf-text>
+                                      {stringValue(session.title, "(untitled)")}
+                                    </cf-text>
+                                  </cf-vstack>
+                                </td>
+                                <td>
+                                  <cf-badge
+                                    color={statusColor(
+                                      session.conversationState,
+                                    )}
+                                  >
+                                    {session.conversationState}
+                                  </cf-badge>
+                                </td>
+                                <td>
+                                  <cf-badge
+                                    color={statusColor(session.syncStatus)}
+                                  >
+                                    {stringValue(session.syncStatus)}
+                                  </cf-badge>
+                                </td>
+                                <td title={session.updatedAt ?? undefined}>
+                                  {formatIdleFor(
+                                    session.updatedAt,
+                                    now.result ?? null,
+                                  )}
+                                </td>
+                                <td
+                                  title={session.gitWorktreeRoot ?? undefined}
+                                  style="font-family: monospace;"
+                                >
+                                  {trailingPath(session.gitWorktreeRoot)}
+                                </td>
+                                <td>
+                                  <cf-hstack gap="2" align="center">
+                                    <cf-button
+                                      variant="ghost"
+                                      size="sm"
+                                      aria-label={`Compose command for ${
+                                        stringValue(
+                                          session.title,
+                                          "untitled session",
+                                        )
+                                      } (${stringValue(session.sourceId)})`}
+                                      onClick={chooseSessionForCommand({
+                                        sourceId: session.sourceId,
+                                        nativeSessionId:
+                                          session.nativeSessionId,
+                                        selectTarget: selectCommandTarget,
+                                      })}
+                                    >
+                                      Command
+                                    </cf-button>
+                                    <cf-cell-link
+                                      $cell={session.rawView}
+                                      label="Raw data"
+                                    />
+                                  </cf-hstack>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </cf-table>
+                      </cf-card>
+                    </cf-vstack>
+                  )}
               </cf-tab-panel>
 
               <cf-tab-panel value="commands">

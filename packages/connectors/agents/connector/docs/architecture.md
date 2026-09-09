@@ -1,17 +1,25 @@
 # Agent connector architecture
 
-The agent connector has two data paths. The collection path reads sessions from
-coding agents and publishes them into Common Fabric. The command path reads
-commands from Common Fabric, invokes the appropriate agent, and writes receipts
-back to Common Fabric.
+The agent connector has two data paths. Native collection reads local Claude and
+Codex history into a bounded, paged archive and publishes its catalog in Common
+Fabric. The command path reads commands from Common Fabric, invokes the
+appropriate provider SDK or protocol, and writes receipts back to Common Fabric.
+
+The command-line host uses the native v2 path described here. The eager v1
+collection and stable session graph APIs remain available to library callers;
+their contracts are in [Interfaces and protocols](interfaces.md).
 
 ```mermaid
 flowchart LR
   Host["Host process"] --> Drivers["Agent drivers"]
-  Providers["Claude, Codex, or ACP agent"] <--> Drivers
-  Drivers --> Collection["Collection and preparation"]
+  Providers["Provider command APIs"] <--> Drivers
+  Native["Claude and Codex local history"] --> Collection["Native streams"]
+  Drivers --> Collection
   Collection --> Target["Fabric target"]
+  Target <--> Archive["Authenticated paged archive"]
   Target <--> Fabric["Common Fabric space"]
+  Archive --> Debug["Paged debug component"]
+  Fabric --> Debug
   Fabric --> Worker["Command worker"]
   Worker --> Drivers
   Worker --> Ledger["Local command ledger"]
@@ -37,63 +45,77 @@ initialized runtime, destination space, and owner DID through
 
 ### Agent drivers
 
-An `AgentDriver` is the package's normalized provider boundary. It exposes
-session inventory, session reads, prompts, cancellation, renaming, mode
-selection, and provider configuration changes. Each driver advertises which of
-those operations it supports.
+An `AgentDriver` exposes eager session inventory and reads, prompts,
+cancellation, renaming, mode selection, and provider configuration changes. It
+can also implement the pull-based `streamSessions()` native collection boundary.
+Each driver advertises its supported provider operations.
 
 Provider-specific code stays behind this interface:
 
-- `ClaudeAgentSdkDriver` calls the Claude Agent SDK.
-- `CodexAppServerDriver` speaks JSON-RPC to a Codex App Server process.
-- `AcpDriver` speaks Agent Client Protocol through the ACP SDK.
+- `ClaudeAgentSdkDriver` streams local project and subagent transcripts for
+  collection and calls the Claude SDK for commands and eager library reads.
+- `CodexAppServerDriver` streams local rollouts and database values for
+  collection and uses App Server JSON-RPC for commands and eager library reads.
+- `AcpDriver` provides eager reads and commands through the ACP SDK. It does not
+  implement native streaming, so the native publisher rejects ACP collection.
 
-The drivers preserve native provider values in `SessionSummary.raw` and
-`NativeSessionSnapshot.events`. They also produce a small normalized message
-view for indexes and user interfaces.
+V1 snapshots preserve provider API objects in `SessionSummary.raw` and
+`NativeSessionSnapshot.events`. V2 captures exact native bytes with provenance
+and keeps only bounded metadata and normalized previews in JavaScript values.
+These representations have different semantics; the
+[archive contract](bounded-archive.md#stored-representation) describes that
+boundary.
 
-### Collection and preparation
+### Native collection
 
-`collectSource()` walks every inventory page from one driver. It then reads each
-listed session. A provider or session read error is returned in the collection
-result instead of discarding successfully read sessions. An optional owner
-signal stops work at provider call boundaries.
+`streamSessions()` builds a disk-backed inventory and yields one session at a
+time. Each session yields fixed-size byte fragments and bounded preview records.
+The parser handles JSON strings incrementally and stores deep nesting state on
+scratch disk. SQLite sources remain in stable read transactions and use
+incremental reads for large values. Native file identity, extent, and digests
+detect changes during capture.
 
-`prepareSession()` derives the stable session key, divides native events into
-chunks, computes content hashes, and computes a snapshot hash. The snapshot hash
-excludes chunk contents themselves and includes each chunk's structural metadata
-and content hash.
+The publisher awaits each archive write before pulling more source data. It
+stores native bytes, normalized preview pages, and provenance digests. Session
+records hold bounded summaries and counts. Neither inventory nor publication
+assembles every session or a complete transcript in memory.
 
-`GitContextResolver` optionally enriches a session from its working directory.
-It records the repository remote, current branch, and worktree root when those
-values are available. One Fabric publication shares an observation scope, so
-sessions with the same directory or repository root reuse Git command results.
-The next publication creates a fresh scope.
+`GitContextResolver` observes repository metadata from session directories and
+discovered checkouts. Each publication shares bounded caches of recent directory
+and root observations. Complete observations, including head, sanitized remotes,
+and observation time, occupy Git archive pages. Session and checkout records
+retain bounded previews and page ranges. A failed session Git lookup preserves
+the previous complete Git range while publishing current native bytes and an
+explicit failure flag.
 
 ### Fabric target
 
-`AgentFabricTarget` maps collected sources to deterministic cells in one Common
-Fabric space. It stores native event chunks before the session manifest. It then
-publishes the recent and complete indexes after all changed session graphs have
-committed.
+`AgentFabricTarget.connectArchive()` validates the backend's protocol and hard
+limits before synchronizing connector cells. The native path uses an
+owner-scoped catalog cell plus the shared health, command, and receipt cells. It
+leaves old v1 session graph and index roots frozen.
 
-The target compares snapshot hashes with the previous index. It does not rewrite
-an unchanged session graph. It still refreshes source capabilities, recent
-message previews, and synchronization status in the indexes.
+`publishStreams()` serializes the full scan or targeted refresh. It stages
+immutable session records and pages, publishes a complete archive generation,
+then updates the bounded Fabric catalog pointer. Readers pin a generation while
+requesting catalog rows, page directories, and byte pages. Pruning preserves
+data required by those pins. Restart discards abandoned staging.
 
-A complete source inventory marks previously known missing sessions as deleted.
-An incomplete inventory preserves prior sessions and marks affected sessions
-partial. A normal full publish marks untouched prior sessions stale. The host
-can set `preserveUntouchedStatus` when refreshing one session after a command.
+A failed session capture retains the previous complete record and marks it
+partial. An incomplete source inventory retains unseen prior sessions. A
+complete inventory can remove missing sessions. A targeted refresh retains
+unrelated sessions and does not claim a complete inventory.
 
-Every full collection allocates an observation sequence before it reads a
-provider. A targeted refresh allocates another sequence before its session read.
-The target records the newest successfully published sequence for each session
-and the newest complete sequence for each source. If an older collection
-finishes after a newer refresh, it retains the newer session graph, index row,
-and synchronization status. It also does not delete a newer session that was
-absent from the older inventory. An older complete collection cannot restore a
-session absent from a newer complete inventory.
+The first v2 catalog requires a complete full scan. Initial partial and targeted
+scans cannot initialize it. Migration reads native sources without hydrating or
+rewriting the v1 roots. See [Bounded native archive](bounded-archive.md) for
+failure, migration, and server configuration details.
+
+For v1 library callers, `collectSource()` and `prepareSession()` still assemble
+provider snapshots and event chunks. `AgentFabricTarget.open()` and `publish()`
+write the existing deterministic session, manifest, and index cells. Their
+observation sequences protect eager reads that finish out of order. These APIs
+do not provide the native path's memory bounds.
 
 ### Command worker and ledger
 
@@ -133,10 +155,14 @@ ledger retains the terminal receipt for a later publication attempt.
 The provider owns native sessions and native event history. The connector reads
 that state and invokes supported provider operations.
 
-Common Fabric owns the published session projection, source indexes, command
-queue, health value, and command receipts. The individual command receipt is the
-shared command claim across sequential hosts. Fabric causes determine the
-durable identity of those cells.
+The archive server owns immutable native pages, bounded record metadata, and
+generation and pin state. It binds access to the owner and connector writer
+through authenticated Memory sessions and trusted Common Fabric labels.
+
+Common Fabric owns the published catalog pointer, command queue, health value,
+and command receipts. The individual command receipt is the shared command claim
+across sequential hosts. Fabric causes determine these cells' durable
+identities.
 
 The local ledger records command execution claims across restarts of one host.
 The Fabric receipt protects sequential handoff to a host without that local
@@ -147,18 +173,20 @@ Common Fabric credentials, and deployment.
 
 ## Lifecycle
 
-A host normally performs these steps:
+A native host performs these steps:
 
 1. Build one `AgentSourceConfig` for every enabled source.
-2. Create each driver with `createAgentDriver()` and call `start()`.
-3. Open every `AgentFabricTarget` with an initialized runtime, space DID, and
-   owner DID.
-4. Open `CommandLedger`, create `CommandWorker`, and call
+2. Initialize the runtime, resolve the space and owner, and call
+   `AgentFabricTarget.connectArchive()`. Unsupported archive capabilities fail
+   before connector cells are synchronized or drivers start.
+3. Acquire process locks, claim the owner-scoped roots, configure private native
+   scratch storage, and open `CommandLedger`.
+4. Create and start drivers, create `CommandWorker`, and call
    `recoverUnpublishedReceipts()`.
-5. Run `collectSource()` for each driver and publish all results together.
-6. Subscribe to or poll each target's command cell and pass values to
-   `CommandWorker.handle()`.
-7. Publish host-defined health details when they change.
+5. Call `publishStreams()` for the initial full collection.
+6. Deploy the debug view, bind its protected command queue, and subscribe or
+   poll for commands when command admission is enabled.
+7. Publish host-defined health once startup ownership transfers to the host.
 
 Shutdown first stops command admission. The host calls `CommandWorker.drain()`
 while drivers and Fabric targets are still usable, because admitted provider
@@ -169,12 +197,13 @@ disconnected after those operations finish.
 
 ## Concurrency and failure behavior
 
-Fabric target mutations use one serial queue per target. This prevents writes
-for a session refresh, full index publication, and receipt index from
-overlapping. Observation sequences preserve the order in which full collections
-and targeted refreshes begin when their provider reads finish in a different
-order. The target retains the newest successfully published sequence for each
-session and complete source inventory.
+Native collection and targeted refresh use one serial queue per target. Their
+file reads and archive writes run outside the Fabric mutation queue. The final
+catalog switch joins that mutation queue with health and receipt publication.
+Commands can publish their receipts while a native scan is reading files. The
+catalog continues to identify the last complete generation during the scan. The
+v1 eager path uses observation sequences to preserve the order of reads
+performed before publication enters the mutation queue.
 
 The command ledger also serializes its read, update, and durable write sequence.
 Unix writes synchronize a temporary file, rename it, and synchronize the parent
@@ -183,8 +212,9 @@ interrupted write does not destroy the newest valid state. The ledger accepts
 only private state directories and files owned by the current user on systems
 with Unix permissions. A failed ledger mutation does not poison later mutations.
 
-Fabric graph writes use one Common Fabric transaction per batch. A failed
-transaction is reported to the caller. The connector does not retry it.
+Archive operations and Fabric graph writes report failures to the caller. The
+connector does not retry them. A failed native publication leaves the previous
+catalog available to readers.
 
 The Codex and ACP transports keep protocol calls pending until the provider
 answers, the host aborts startup, or the provider process exits. The Claude SDK

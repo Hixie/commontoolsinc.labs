@@ -129,6 +129,14 @@ export const EnvSchema = z.object({
     { message: "DB_PATH must be an absolute path" },
   ).optional(),
   MEMORY_URL: z.string().default("http://localhost:8000"),
+  /** Explicit private root for server-owned native archives. */
+  MEMORY_ARCHIVE_ROOT: z.string().refine((path) => Path.isAbsolute(path), {
+    message: "MEMORY_ARCHIVE_ROOT must be absolute",
+  }).optional(),
+  /** Per-archive quota for native bytes, including staged pages. */
+  MEMORY_ARCHIVE_QUOTA_BYTES: z.coerce.number().int().positive().optional(),
+  /** Comma-separated exact browser origins allowed to read native archives. */
+  MEMORY_ARCHIVE_ORIGINS: z.string().default(""),
 
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),

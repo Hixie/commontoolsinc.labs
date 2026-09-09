@@ -16,6 +16,109 @@ function fakeQuery(messages: unknown[]) {
   });
 }
 
+Deno.test("Claude reloads evicted cwd metadata from listing, reading, and prompting", async (test) => {
+  for (const populate of ["list", "read", "prompt"] as const) {
+    await test.step(populate, async () => {
+      let modified = false;
+      const lookedUp: string[] = [];
+      const observed: unknown[] = [];
+      const info = (sessionId: string) => ({
+        sessionId,
+        summary: "synthetic",
+        cwd: modified ? "/relocated" : "/original",
+        lastModified: 1,
+      });
+      const sdk = {
+        listSessions: () =>
+          Promise.resolve(
+            Array.from({ length: 65 }, (_, index) => info(`session-${index}`)),
+          ),
+        getSessionInfo: (sessionId: string) => {
+          lookedUp.push(sessionId);
+          return Promise.resolve(info(sessionId));
+        },
+        getSessionMessages: () => Promise.resolve([]),
+        query: (parameters: { options?: Record<string, unknown> }) => {
+          observed.push(parameters.options?.cwd);
+          return fakeQuery([{
+            type: "result",
+            subtype: "success",
+            is_error: false,
+          }]);
+        },
+      } as unknown as ClaudeSdkAdapter;
+      const driver = new ClaudeAgentSdkDriver({
+        id: "claude",
+        driver: "claude-agent-sdk",
+        enabled: true,
+      }, sdk);
+      if (populate === "list") await driver.listSessions();
+      else {for (let index = 0; index < 65; index++) {
+          if (populate === "read") await driver.readSession(`session-${index}`);
+          else {assertEquals(
+              (await driver.prompt(`session-${index}`, { text: "continue" }))
+                .status,
+              "succeeded",
+            );}
+        }}
+      lookedUp.length = 0;
+      observed.length = 0;
+      modified = true;
+      assertEquals(
+        (await driver.prompt("session-64", { text: "continue" })).status,
+        "succeeded",
+      );
+      assertEquals(
+        (await driver.prompt("session-0", { text: "continue" })).status,
+        "succeeded",
+      );
+      assertEquals(lookedUp, ["session-0"]);
+      assertEquals(observed, ["/original", "/relocated"]);
+      await driver.stop();
+    });
+  }
+});
+
+Deno.test("Claude uses oversized cwd metadata without retaining it in its cache", async () => {
+  let lookups = 0;
+  let queries = 0;
+  const cwd = "/" + "x".repeat(32 * 1024);
+  const sdk = {
+    getSessionInfo: (sessionId: string) => {
+      lookups++;
+      return Promise.resolve({
+        sessionId,
+        summary: "synthetic",
+        cwd,
+        lastModified: 1,
+      });
+    },
+    query: (parameters: { options?: Record<string, unknown> }) => {
+      queries++;
+      assertEquals(parameters.options?.cwd, cwd);
+      return fakeQuery([{
+        type: "result",
+        subtype: "success",
+        is_error: false,
+      }]);
+    },
+  } as unknown as ClaudeSdkAdapter;
+  const driver = new ClaudeAgentSdkDriver({
+    id: "claude",
+    driver: "claude-agent-sdk",
+    enabled: true,
+  }, sdk);
+  for (let index = 0; index < 2; index++) {
+    assertEquals(
+      (await driver.prompt("session", { text: "continue" })).status,
+      "succeeded",
+    );
+  }
+  assertEquals(queries, 2);
+  assertEquals(lookups, 2);
+  await driver.stop();
+});
+
 Deno.test("Claude driver lists all-project sessions and reads system messages", async () => {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const sdk = {

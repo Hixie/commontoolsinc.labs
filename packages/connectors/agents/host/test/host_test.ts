@@ -1,9 +1,11 @@
+import type { ArchiveCollectionOptions } from "@commonfabric/agents-connector/archive";
 import {
   AGENT_CONNECTOR_SCHEMAS,
   type AgentDriver,
   type AgentSessionCommandReceipt,
   type AgentSourceConfig,
   type CollectedSource,
+  collectSource,
   type CommandExecutionResult,
   CommandLedger,
   type NativeSessionSnapshot,
@@ -22,6 +24,7 @@ import {
   type AgentsHostTargetDescription,
 } from "../src/host.ts";
 import { join } from "@std/path";
+import { CollectionRequestQueue } from "../src/collection-request-queue.ts";
 
 const TARGET_DESCRIPTION: AgentsHostTargetDescription = {
   spaceDid: "did:key:test-space",
@@ -205,6 +208,35 @@ class FakeTarget implements AgentsHostTarget {
     const sequence = this.#nextObservationSequence++;
     this.allocatedObservationSequences.push(sequence);
     return sequence;
+  }
+
+  async publishStreams(
+    drivers: Iterable<AgentDriver>,
+    options: Omit<ArchiveCollectionOptions, "scratchDirectory"> = {},
+  ): Promise<number> {
+    const observationSequence = this.beginSessionObservation();
+    const collected: CollectedSource[] = [];
+    for (const driver of drivers) {
+      const source = await collectSource(driver, options.signal);
+      collected.push(source);
+      options.onSource?.({
+        source: source.source,
+        sessionCount: source.sessions.length,
+        complete: source.complete,
+        errors: source.errors,
+        errorCount: source.errors.length,
+      });
+    }
+    const checkoutDirectories: string[] = [];
+    for await (const directory of options.checkoutDirectories ?? []) {
+      checkoutDirectories.push(directory);
+    }
+    return this.publish(collected, {
+      observationSequence,
+      checkoutDirectories,
+      signal: options.signal,
+      onCommit: options.onCommit,
+    });
   }
 
   publish(
@@ -516,6 +548,167 @@ Deno.test("AgentsHost serializes explicit full collections", async () => {
     assertEquals(target.observationSequences, [1, 2, 3]);
     await host.stop();
   } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("AgentsHost reports completed and failed collection durations", async () => {
+  const directory = await Deno.makeTempDir();
+  const target = new FakeTarget();
+  const driver = new FakeDriver("codex");
+  let now = Date.UTC(2026, 8, 8);
+  let elapsed = 0;
+  const host = new AgentsHost({
+    sources: [sourceConfig("codex")],
+    target,
+    targetDescription: TARGET_DESCRIPTION,
+    ledger: await openLedger(directory),
+    createDriver: () => driver,
+    clock: () => new Date(now),
+    monotonicClock: () => elapsed,
+  });
+  try {
+    await host.start({ acceptCommands: false });
+    target.afterPublish = () => {
+      now -= 1_000;
+      elapsed += 37;
+    };
+    await host.synchronize("complete");
+    assertEquals(
+      host.health().sync?.durationMs,
+      37,
+    );
+    target.afterPublish = () => {
+      now += 2_000;
+      elapsed += 23;
+      throw new Error("publication failed");
+    };
+    await assertRejects(
+      () => host.synchronize("failed"),
+      Error,
+      "publication failed",
+    );
+    assertEquals(
+      host.health().sync?.durationMs,
+      23,
+    );
+  } finally {
+    await host.stop();
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("periodic requests stay coalesced while targeted commands run during a full collection", async () => {
+  const directory = await Deno.makeTempDir();
+  const target = new FakeTarget();
+  const driver = new FakeDriver("codex");
+  const host = new AgentsHost({
+    sources: [sourceConfig("codex")],
+    target,
+    targetDescription: TARGET_DESCRIPTION,
+    ledger: await openLedger(directory),
+    createDriver: () => driver,
+    clock: clock(),
+  });
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const secondStarted = Promise.withResolvers<void>();
+  const refreshRequested = Promise.withResolvers<void>();
+  const originalRefresh = target.refreshSession.bind(target);
+  target.refreshSession = () => {
+    refreshRequested.resolve();
+    return originalRefresh();
+  };
+  let nativeCommands = 0;
+  driver.renameSession = () => {
+    nativeCommands++;
+    return Promise.resolve({ status: "succeeded" });
+  };
+  const reasons: string[] = [];
+  const queue = new CollectionRequestQueue(async (reason) => {
+    reasons.push(reason);
+    if (reasons.length === 2) secondStarted.resolve();
+    await host.synchronize(reason);
+  });
+  try {
+    await host.start();
+    driver.listGate = { entered, release };
+    assertEquals(queue.request("periodic"), "started");
+    await entered.promise;
+    assertEquals(queue.request("periodic"), "queued");
+    for (let tick = 0; tick < 20; tick++) {
+      assertEquals(queue.request("periodic"), "already-queued");
+    }
+    target.sendCommands([{
+      schema: AGENT_CONNECTOR_SCHEMAS.command,
+      ownerDid: "did:key:test-owner",
+      id: "command-during-periodic-collection",
+      createdAt: "2026-09-08T00:00:00.000Z",
+      sourceId: "codex",
+      nativeSessionId: "codex-session",
+      type: "rename",
+      payload: { title: "Updated title" },
+    }]);
+    await refreshRequested.promise;
+    assertEquals(nativeCommands, 1);
+    assertEquals(target.refreshCount, 1);
+    assertEquals(reasons, ["periodic"]);
+    assertEquals(driver.maxActiveLists, 1);
+    release.resolve();
+    await secondStarted.promise;
+    await queue.close();
+    assertEquals(reasons, ["periodic", "periodic"]);
+    assertEquals(driver.maxActiveLists, 1);
+  } finally {
+    release.resolve();
+    await queue.close();
+    await host.stop();
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("AgentsHost publishes the next collection deadline and clears it while unscheduled", async () => {
+  const directory = await Deno.makeTempDir();
+  const target = new FakeTarget();
+  const driver = new FakeDriver("codex");
+  let now = Date.UTC(2026, 8, 8);
+  const host = new AgentsHost({
+    sources: [sourceConfig("codex")],
+    target,
+    targetDescription: TARGET_DESCRIPTION,
+    ledger: await openLedger(directory),
+    createDriver: () => driver,
+    clock: () => new Date(now),
+    monotonicClock: () => now,
+  });
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let collection: Promise<number> | undefined;
+  try {
+    await host.start({ acceptCommands: false });
+    const next = new Date(now + 10);
+    host.setNextCollectionAt(next);
+    assertEquals(host.health().nextCollectionAt, next.toISOString());
+    host.setNextCollectionAt();
+    driver.listGate = { entered, release };
+    collection = host.synchronize("periodic");
+    await entered.promise;
+    now += 37;
+    assertEquals(host.health().sync?.durationMs, 37);
+    assertEquals(host.health().nextCollectionAt, null);
+    release.resolve();
+    await collection;
+    assertEquals(
+      target.healthValues.some((health) =>
+        health.nextCollectionAt === next.toISOString()
+      ),
+      true,
+    );
+    assertEquals(target.healthValues.at(-1)?.nextCollectionAt, null);
+  } finally {
+    release.resolve();
+    await collection;
+    await host.stop();
     await Deno.remove(directory, { recursive: true });
   }
 });

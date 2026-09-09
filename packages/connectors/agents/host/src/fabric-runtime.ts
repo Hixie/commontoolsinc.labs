@@ -101,19 +101,16 @@ export async function openAgentFabricRuntime(options: {
       throw new Error(`could not connect to ${apiUrl.origin}`);
     }
     options.signal?.throwIfAborted();
-    const manager = new PiecesController(session, runtime);
-    await stage(manager.synced());
-    options.signal?.throwIfAborted();
     const connection = {
       runtime,
       spaceDid: session.space,
       ownerDid: options.ownerDid,
     };
-    const target = await stage(
-      options.deferStorageClaim
-        ? AgentFabricTarget.connect(connection)
-        : AgentFabricTarget.open(connection),
-    );
+    const target = await stage(AgentFabricTarget.connectArchive(connection));
+    const manager = new PiecesController(session, runtime);
+    await stage(manager.synced());
+    options.signal?.throwIfAborted();
+    if (!options.deferStorageClaim) await stage(target.claimStorage());
     options.signal?.throwIfAborted();
     return {
       runtime,

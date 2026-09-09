@@ -7,6 +7,11 @@ import {
 
 Deno.test("agent connector Fabric causes are stable", () => {
   assertEquals(agentFabricCauses("did:key:test", "did:key:owner"), {
+    catalog: {
+      spaceDid: "did:key:test",
+      ownerDid: "did:key:owner",
+      agentConnector: "native-archive-catalog-v2",
+    },
     index: {
       spaceDid: "did:key:test",
       ownerDid: "did:key:owner",

@@ -12,12 +12,15 @@
     "./drivers/claude-agent-sdk": "./src/drivers/claude-agent-sdk.ts",
     "./drivers/codex-app-server": "./src/drivers/codex-app-server.ts",
     "./fabric": "./src/fabric.ts",
+    "./archive": "./src/archive.ts",
     "./fabric-graph": "./src/fabric-graph.ts",
     "./reconcile": "./src/reconcile.ts",
     "./types": "./src/types.ts"
   },
   "imports": {
     "@agentclientprotocol/sdk": "npm:@agentclientprotocol/sdk@1.2.1",
-    "@anthropic-ai/claude-agent-sdk": "npm:@anthropic-ai/claude-agent-sdk@0.3.206"
+    "@anthropic-ai/claude-agent-sdk": "npm:@anthropic-ai/claude-agent-sdk@0.3.206",
+    "@db/sqlite": "jsr:@db/sqlite@0.13.0",
+    "@std/streams": "jsr:@std/streams@1.1.1"
   }
 }

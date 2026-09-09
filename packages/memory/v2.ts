@@ -11,6 +11,7 @@ import {
 } from "@commonfabric/data-model/codecs";
 import { internPathSelector } from "@commonfabric/data-model-schema";
 import { isObjectNotArray, unsafeObjectKeyIn } from "@commonfabric/utils/types";
+import type { ArchiveCommand, ArchiveLimits } from "./v2/archive.ts";
 
 export const MEMORY_PROTOCOL = "memory" as const;
 export const DEFAULT_BRANCH = "" as const;
@@ -1078,6 +1079,8 @@ export type SessionOpenResult = {
 };
 
 export type MemoryProtocolFlags = {
+  /** Server-owned archives with counted raw HTTP transfer limits. */
+  archive?: ArchiveLimits;
   modernCellRep: boolean;
   commitPreconditions: boolean;
 
@@ -1164,6 +1167,8 @@ export type MemoryProtocolFlags = {
  * Wire-format flags object.
  */
 export type WireMemoryProtocolFlags = {
+  /** Versioned archive capability and enforced allocation limits. */
+  archive?: ArchiveLimits;
   modernCellRep?: boolean;
   commitPreconditions?: boolean;
   applyOp?: boolean;
@@ -1755,6 +1760,44 @@ export type V2Error = {
 
 export type V2Result<Value> = { ok: Value } | { error: V2Error };
 
+/** Issues a single-purpose archive capability without carrying native bytes. */
+export type ArchiveTicketRequest = {
+  /** Memory request discriminator. */
+  type: "archive.ticket";
+  /** Request correlation identifier. */
+  requestId: string;
+  /** Authenticated space. */
+  space: string;
+  /** Attached Memory session. */
+  sessionId: string;
+  /** Fixed, bounded archive operation. */
+  command: ArchiveCommand;
+  /** Monotonic pin acquisition sequence within this authenticated session. */
+  pinSequence?: number;
+};
+
+/** Acknowledges consuming an archive HTTP response. */
+export type ArchiveAckRequest = {
+  /** Memory request discriminator. */
+  type: "archive.ack";
+  /** Request correlation identifier. */
+  requestId: string;
+  /** Authenticated space. */
+  space: string;
+  /** Attached Memory session. */
+  sessionId: string;
+  /** Capability whose response has been consumed. */
+  token?: string;
+  /** True only after response validation and installation of its local owner. */
+  consumed: boolean;
+  /** Client-owned request, known before an HTTP capability is issued. */
+  pin?: { archive: string; pin: string; sequence: number };
+  /** Explicit owner closure also releases an adopted pin. */
+  release?: boolean;
+  /** Terminal closure of this authenticated session's reader state. */
+  close?: boolean;
+};
+
 export type ClientMessage =
   | HelloMessage
   | SessionOpenRequest
@@ -1763,6 +1806,8 @@ export type ClientMessage =
   | OperationFieldQueryRequest
   | EntityIdListRequest
   | EntityIdLookupRequest
+  | ArchiveTicketRequest
+  | ArchiveAckRequest
   | SqliteQueryRequest
   | SqliteRegisterDiskSourceRequest
   | WatchSetRequest
@@ -2100,7 +2145,36 @@ export const parseMemoryProtocolFlags = (
     return null;
   }
 
+  const archive = value.archive;
+  if (
+    archive !== undefined &&
+    (!isObjectNotArray(archive) || archive.protocol !== 2 ||
+      archive.schema !== 2 ||
+      [
+        "pageBytes",
+        "chunkBytes",
+        "metadataBytes",
+        "controlBytes",
+        "rows",
+        "transfers",
+        "principalTransfers",
+        "generations",
+        "pins",
+        "principalPins",
+        "sessionProvisionalPins",
+        "pinSessions",
+        "principalPinSessions",
+      ].some((key) =>
+        !Number.isSafeInteger(archive[key]) || (archive[key] as number) < 1
+      ))
+  ) {
+    return null;
+  }
+
   return {
+    ...(archive === undefined
+      ? {}
+      : { archive: archive as unknown as ArchiveLimits }),
     modernCellRep: modernCellRep === true,
     commitPreconditions: commitPreconditions === true,
     applyOp: applyOp === true,
@@ -2135,6 +2209,7 @@ export const parseMemoryProtocolFlags = (
 export const wireMemoryProtocolFlags = (
   flags: MemoryProtocolFlags,
 ): WireMemoryProtocolFlags => ({
+  ...(flags.archive === undefined ? {} : { archive: flags.archive }),
   modernCellRep: flags.modernCellRep,
   commitPreconditions: flags.commitPreconditions,
   applyOp: flags.applyOp,

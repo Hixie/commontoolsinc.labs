@@ -20,6 +20,7 @@ export * from "./utils/index.ts";
 export * from "./styles/index.ts";
 
 // Component exports
+export * from "./components/cf-agent-archive/index.ts";
 export * from "./components/cf-accordion/index.ts";
 export * from "./components/cf-accordion-item/index.ts";
 export * from "./components/cf-heading/index.ts";

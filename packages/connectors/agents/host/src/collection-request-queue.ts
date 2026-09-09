@@ -14,6 +14,11 @@ export class CollectionRequestQueue {
     this.#run = run;
   }
 
+  /** Whether one follow-up collection is waiting behind the active request. */
+  get hasPending(): boolean {
+    return this.#pendingReason !== undefined;
+  }
+
   request(reason: string): CollectionRequestResult {
     if (this.#closed) return "closed";
     if (this.#active) {

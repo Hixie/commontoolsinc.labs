@@ -26,6 +26,12 @@ import type {
   SqliteRegisterDiskSourceResult,
 } from "@commonfabric/memory/v2";
 import type { DeliveryFailureClass } from "@commonfabric/memory/v2";
+import type {
+  ArchiveCommand,
+  ArchiveLimits,
+  ArchiveReadTransfer,
+  ArchiveResult,
+} from "@commonfabric/memory/v2/archive";
 import type { OutboxAppendRow } from "@commonfabric/memory/v2/execution-outbox";
 import type { Cancel } from "../cancel.ts";
 import type { EntityId } from "../create-ref.ts";
@@ -681,6 +687,25 @@ export interface IStorageProvider {
 
   /** Test one live space-scoped entity identifier without loading its value. */
   entityIdExists?(id: string): Promise<boolean | undefined>;
+
+  /** Run a server-side read-only SQLite query against a cell-derived db. */
+  /** Negotiates bounded archive storage without reading document values. */
+  archiveLimits?(): Promise<ArchiveLimits>;
+
+  /** Executes a bounded archive request without adding native bytes to a replica. */
+  archive?(
+    command: ArchiveCommand,
+    data?: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResult | Uint8Array>;
+
+  /** Mints a direct page read through this provider's authenticated session. */
+  prepareArchiveRead?(
+    command: Extract<ArchiveCommand, { op: "read" }>,
+  ): Promise<ArchiveReadTransfer>;
+
+  /** Releases a direct page read after consumption or cancellation. */
+  acknowledgeArchive?(token: string, consumed: boolean): Promise<void>;
 
   /** Run a server-side read-only SQLite query against a cell-derived db. */
   sqliteQuery?(

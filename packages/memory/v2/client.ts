@@ -46,6 +46,20 @@ import type { Server } from "./server.ts";
 import { containsReservedSchemaRefSubstring } from "./sync-schema-ref.ts";
 import { expandServerMessageSchemas } from "./sync-schema-table.ts";
 import { type ArmedTurn, armTurn } from "./turn.ts";
+import {
+  ARCHIVE_LIMITS,
+  type ArchiveCommand,
+  type ArchiveLimits,
+  type ArchivePinReference,
+  type ArchiveReadTransfer,
+  archiveResponseHash,
+  type ArchiveResult,
+  type ArchiveTicket,
+  readArchiveBody,
+  requireArchiveLimits,
+  validateArchiveCommand,
+  withArchiveAcknowledgement,
+} from "./archive.ts";
 
 const logger = getLogger("memory.v2.client", {
   enabled: true,
@@ -53,6 +67,14 @@ const logger = getLogger("memory.v2.client", {
 });
 
 export type Transport = {
+  /** The server endpoint used for a direct imperative read. */
+  archiveURL?(): string;
+  /** Sends a bounded archive body to this Memory server's HTTP endpoint. */
+  archiveTransfer?(
+    token: string,
+    body: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
+  ): Promise<Response>;
   /** Whether this transport can exchange negotiated compression envelopes. */
   readonly supportsMessageCompression?: boolean;
 
@@ -261,6 +283,36 @@ export class Client {
    *  optional-capability consumers fail closed by reading this. */
   get serverFlags(): MemoryProtocolFlags | null {
     return this.#serverFlags;
+  }
+
+  /** Checks this connection's negotiated archive capability and HTTP transport. */
+  archiveLimits(): ArchiveLimits {
+    if (!this.#transport.archiveTransfer) {
+      throw new Error("Memory transport cannot transfer bounded archives");
+    }
+    return requireArchiveLimits(this.#serverFlags?.archive);
+  }
+
+  /** Returns the endpoint belonging to this authenticated connection. */
+  archiveURL(): string {
+    this.archiveLimits();
+    if (!this.#transport.archiveURL) {
+      throw new Error("Memory transport has no direct archive endpoint");
+    }
+    return this.#transport.archiveURL();
+  }
+
+  /** Sends one bounded page or empty control body outside the document codec. */
+  transferArchive(
+    ticket: ArchiveTicket,
+    body: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    this.archiveLimits();
+    if (
+      body.length !== ticket.bytes || body.length > ARCHIVE_LIMITS.pageBytes
+    ) throw new Error("Archive request body does not match its capability");
+    return this.#transport.archiveTransfer!(ticket.token, body, signal);
   }
 
   async close(): Promise<void> {
@@ -791,8 +843,14 @@ export class SpaceSession {
    */
   #concurrentWatchRefresh = false;
 
+  #archivePinSequence = 0;
+  readonly #archivePins = new Map<
+    string,
+    { archive: string; sequence: number; pending: boolean }
+  >();
   #closed = false;
   #closeError: Error | null = null;
+  #closing: Promise<void> | undefined;
   #readyOnConnection = true;
   #restoring = false;
   #caughtUpLocalSeq = 0;
@@ -1019,6 +1077,199 @@ export class SpaceSession {
 
     this.#noteResult(result.serverSeq);
     return result;
+  }
+
+  /** Returns the connected server's validated bounded archive capability. */
+  archiveLimits(): ArchiveLimits {
+    this.#assertOpen();
+    return this.#client.archiveLimits();
+  }
+
+  /** Mints a page-read capability for this session's authenticated server. */
+  async prepareArchiveRead(
+    command: Extract<ArchiveCommand, { op: "read" }>,
+  ): Promise<ArchiveReadTransfer> {
+    this.#assertOpen();
+    validateArchiveCommand(command);
+    const url = this.#client.archiveURL();
+    const ticket = await this.#client.request<ArchiveTicket>({
+      type: "archive.ticket",
+      requestId: crypto.randomUUID(),
+      space: this.space,
+      sessionId: this.#sessionId,
+      command,
+    });
+    return { ticket, url };
+  }
+
+  /** Releases an issued or completed direct read. */
+  async acknowledgeArchive(
+    token: string | undefined,
+    consumed = false,
+    pin?: ArchivePinReference,
+    release = false,
+  ): Promise<void> {
+    this.#assertOpen();
+    await this.#client.request({
+      type: "archive.ack",
+      requestId: crypto.randomUUID(),
+      space: this.space,
+      sessionId: this.#sessionId,
+      token,
+      consumed,
+      pin,
+      release,
+    });
+  }
+
+  /** Performs one acknowledged archive operation without populating a replica. */
+  async archive(
+    command: ArchiveCommand,
+    data?: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResult | Uint8Array> {
+    this.#assertOpen();
+    this.#client.archiveLimits();
+    validateArchiveCommand(command);
+    signal?.throwIfAborted();
+    if ((command.op === "put" ? command.bytes : 0) !== (data?.length ?? 0)) {
+      throw new Error("Archive body does not match the command");
+    }
+    if (command.op === "release") {
+      const owned = this.#archivePins.get(command.pin);
+      const sequence = command.sequence ?? owned?.sequence;
+      if (sequence === undefined) return {};
+      await this.acknowledgeArchive(undefined, false, {
+        archive: command.archive,
+        pin: command.pin,
+        sequence,
+      }, true);
+      if (
+        owned?.archive === command.archive && owned.sequence === sequence &&
+        this.#archivePins.get(command.pin) === owned
+      ) this.#archivePins.delete(command.pin);
+      return {};
+    }
+    if (command.op === "pin-status") {
+      const sequence = command.sequence ??
+        this.#archivePins.get(command.pin)?.sequence;
+      if (sequence === undefined) return { pinState: "released" };
+      command = {
+        ...command,
+        sequence,
+      };
+    }
+    let pin: ArchivePinReference | undefined;
+    if (command.op === "pin") {
+      if (!command.pin) {
+        throw new Error("Archive pin requires an installed client owner");
+      }
+      if (this.#archivePins.has(command.pin)) {
+        throw new Error("Archive pin owner is already registered");
+      }
+      if ([...this.#archivePins.values()].some((owned) => owned.pending)) {
+        throw new Error(
+          "Archive session already owns a provisional pin request",
+        );
+      }
+      if (
+        this.#archivePins.size >= ARCHIVE_LIMITS.principalPins ||
+        this.#archivePinSequence >= Number.MAX_SAFE_INTEGER
+      ) {
+        throw new Error("Archive client pin owner limit exceeded");
+      }
+      const sequence = ++this.#archivePinSequence;
+      pin = { archive: command.archive, pin: command.pin, sequence };
+      this.#archivePins.set(command.pin, {
+        archive: command.archive,
+        sequence,
+        pending: true,
+      });
+    }
+    let ticket: ArchiveTicket | undefined;
+    return withArchiveAcknowledgement(async () => {
+      ticket = await this.#client.request<ArchiveTicket>({
+        type: "archive.ticket",
+        requestId: crypto.randomUUID(),
+        space: this.space,
+        sessionId: this.#sessionId,
+        command,
+        pinSequence: pin?.sequence,
+      });
+      const response = await this.#client.transferArchive(
+        ticket,
+        data?.slice() as Uint8Array<ArrayBuffer> ?? new Uint8Array(0),
+        signal,
+      );
+      const length = response.headers.get("content-length");
+      if (
+        length === null || !/^(0|[1-9][0-9]*)$/.test(length) ||
+        Number(length) > ARCHIVE_LIMITS.controlBytes
+      ) {
+        await response.body?.cancel();
+        throw new Error("Archive response has no bounded Content-Length");
+      }
+      const bytes = new Uint8Array(Number(length));
+      let offset = 0;
+      await readArchiveBody(response.body, bytes.length, (chunk) => {
+        signal?.throwIfAborted();
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      });
+      if (!response.ok) throw new Error(new TextDecoder().decode(bytes));
+      if (command.op === "read") {
+        if (
+          response.headers.get("content-type") !== "application/octet-stream" ||
+          bytes.length > ARCHIVE_LIMITS.pageBytes
+        ) throw new Error("Archive page response has an incompatible format");
+        if (archiveResponseHash(bytes) !== command.hash) {
+          throw new Error(
+            "Archive response hash does not match the pinned page",
+          );
+        }
+        return bytes;
+      }
+      if (
+        response.headers.get("x-archive-content-sha256") !==
+          archiveResponseHash(bytes)
+      ) {
+        throw new Error("Archive control response hash does not match");
+      }
+      const result = JSON.parse(
+        new TextDecoder().decode(bytes),
+      ) as ArchiveResult;
+      if (
+        command.op === "pin" &&
+        (result.pin !== command.pin || result.generation !== command.generation)
+      ) {
+        throw new Error("Archive pin response does not match its owner");
+      }
+      if (command.op === "pin-status") {
+        const owned = this.#archivePins.get(command.pin);
+        if (
+          owned?.archive === command.archive &&
+          owned.sequence === command.sequence
+        ) {
+          if (result.pinState === "released") {
+            this.#archivePins.delete(command.pin);
+          } else if (result.pinState === "adopted") {
+            owned.pending = false;
+          }
+        }
+      }
+      return result;
+    }, async (consumed) => {
+      if (ticket || pin) {
+        await this.acknowledgeArchive(ticket?.token, consumed, pin);
+      }
+      if (pin) {
+        const owned = this.#archivePins.get(pin.pin);
+        if (owned?.archive === pin.archive && owned.sequence === pin.sequence) {
+          if (consumed) owned.pending = false;
+          else this.#archivePins.delete(pin.pin);
+        }
+      }
+    });
   }
 
   /** Run a server-side read-only SQLite query against a cell-derived db. */
@@ -1365,24 +1616,56 @@ export class SpaceSession {
   }
 
   async close(): Promise<void> {
-    if (this.#closed) {
-      return;
+    if (this.#closing) return await this.#closing;
+    const closing = this.#finishClose();
+    this.#closing = closing;
+    try {
+      await closing;
+    } finally {
+      if (this.#closing === closing) this.#closing = undefined;
     }
-    this.#closed = true;
-    this.#closeError = new Error("memory session closed");
-    this.#readyOnConnection = false;
+  }
+
+  async #finishClose(): Promise<void> {
+    if (!this.#closed) {
+      this.#closed = true;
+      this.#closeError = new Error("memory session closed");
+      this.#readyOnConnection = false;
+      this.#rejectCaughtUpLocalSeqWaiters(this.#closeError);
+      const background = [...this.#background];
+      this.#background.clear();
+      await Promise.allSettled(background);
+      for (const pending of this.#outstandingCommits.values()) {
+        pending.pending.reject(new Error("memory session closed"));
+      }
+      this.#outstandingCommits.clear();
+      this.#watchSpecs = [];
+      this.#watchView?.close();
+      this.#watchView = null;
+    }
+    if (
+      this.#archivePinSequence > 0 &&
+      this.#client.connectionState === "connected"
+    ) {
+      try {
+        await this.#client.request({
+          type: "archive.ack",
+          requestId: crypto.randomUUID(),
+          space: this.space,
+          sessionId: this.#sessionId,
+          consumed: false,
+          close: true,
+        });
+      } catch (error) {
+        if (
+          this.#client.connectionState === "connected" &&
+          !(error instanceof Error && error.name === "SessionRevokedError")
+        ) throw error;
+      }
+    }
+    this.#archivePins.clear();
+    this.#archivePinSequence = 0;
     this.#client.forgetSession(this);
-    this.#rejectCaughtUpLocalSeqWaiters(this.#closeError);
-    const background = [...this.#background];
-    this.#background.clear();
-    await Promise.allSettled(background);
-    for (const pending of this.#outstandingCommits.values()) {
-      pending.pending.reject(new Error("memory session closed"));
-    }
-    this.#outstandingCommits.clear();
-    this.#watchSpecs = [];
-    this.#watchView?.close();
-    this.#watchView = null;
   }
 
   handleRevoked(reason: SessionRevokedMessage["reason"]): void {
@@ -2087,6 +2370,20 @@ export const loopback = (server: Server): Transport => {
     schedule();
   });
   return {
+    archiveTransfer(token, body, signal) {
+      return server.handleArchiveRequest(
+        new Request("http://memory.local/api/storage/memory/archive", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/octet-stream",
+            "content-length": String(body.length),
+          },
+          body,
+          signal,
+        }),
+      );
+    },
     async send(payload: string) {
       await connection.receive(payload);
     },

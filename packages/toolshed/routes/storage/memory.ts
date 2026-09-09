@@ -2,6 +2,8 @@ import * as FS from "@std/fs";
 
 import * as MemoryServer from "@commonfabric/memory/v2/server";
 import { verifySessionOpenAuthorization } from "@commonfabric/memory/v2/session-open-auth";
+import { ArchiveStore } from "@commonfabric/memory/v2/archive-store";
+import { archiveAuthorization } from "@commonfabric/runner/cfc/archive";
 
 import { memoryEngineStoreUrl } from "./memory-store-url.ts";
 import env from "@/env.ts";
@@ -72,6 +74,20 @@ await FS.ensureDir(memoryEngineStoreUrl);
 export const memoryServer = new MemoryServer.Server({
   store: memoryEngineStoreUrl,
   authorizeSessionOpen,
+  ...(env.MEMORY_ARCHIVE_ROOT
+    ? {
+      archive: {
+        store: await ArchiveStore.open({
+          root: env.MEMORY_ARCHIVE_ROOT,
+          quotaBytes: env.MEMORY_ARCHIVE_QUOTA_BYTES,
+        }),
+        authorization: archiveAuthorization("commonfabric.agents-connector"),
+        allowedOrigins: env.MEMORY_ARCHIVE_ORIGINS.split(",").map((origin) =>
+          origin.trim()
+        ).filter(Boolean),
+      },
+    }
+    : {}),
   sessionOpenAuth: {
     audience: memoryAudience,
   },

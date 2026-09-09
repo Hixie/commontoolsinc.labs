@@ -6,7 +6,7 @@ the connector deliberately leaves to its caller:
 
 - source configuration and driver lifecycle;
 - Common Fabric identity, runtime, and destination space;
-- full session collection and publication;
+- native session collection into a bounded archive and catalog publication;
 - command admission, execution claims, and graceful draining;
 - local process exclusion around the command ledger and Fabric target;
 - health and activity publication; and
@@ -32,6 +32,16 @@ deno task agents-host \
 
 `CF_API_URL`, `CF_IDENTITY`, and `CF_SPACE` can supply the three connection
 options. Command-line values take precedence.
+
+The destination Toolshed must enable its archive with `MEMORY_ARCHIVE_ROOT`, an
+absolute private directory owned by the server user. Set
+`MEMORY_ARCHIVE_ORIGINS` to the comma-separated exact browser origins that will
+read archive pages, including their schemes and ports.
+`MEMORY_ARCHIVE_QUOTA_BYTES` optionally sets a disk quota. These are Toolshed
+environment settings, not fields in `agents.jsonc`. The host rejects a missing
+or incompatible archive backend before synchronizing connector cells, opening
+its ledger, starting drivers, or deploying the debug view. See the
+[bounded archive contract](../connector/docs/bounded-archive.md).
 
 The program prints the destination space DID, command cell ID, receipt cell ID,
 durable command ledger path, and debug piece ID after the initial collection.
@@ -76,11 +86,14 @@ Long-running mode responds to three signals:
 | `SIGINT`  | Stop accepting work, finish active work, publish final health, and exit |
 | `SIGTERM` | Stop accepting work, finish active work, publish final health, and exit |
 
-Long-running mode requests a complete collection every `collectionIntervalMs`.
-The default is 15 minutes. Set the value to `0` to disable periodic collection.
-If a collection is already running, the command-line wrapper keeps one pending
-request. Further timer ticks and `SIGHUP` signals are covered by that pending
-collection instead of creating a growing queue.
+Long-running mode schedules a complete collection `collectionIntervalMs` after
+the previous collection request finishes, including its health publication. The
+default is 15 minutes. Set the value to `0` to disable periodic collection. The
+timer is canceled while a collection runs. A failed collection also starts a new
+interval when its request finishes. `SIGHUP` requests an earlier collection.
+While a collection is running, signals coalesce into one pending full
+collection. That follow-up runs after the active collection finishes. Periodic
+scheduling resumes after the follow-up finishes.
 
 Successful provider commands trigger a targeted refresh through the connector. A
 prompt driver can also request a refresh after its operation becomes active.
@@ -118,11 +131,13 @@ are errors so misspelled options do not silently change provider behavior.
 publishes. It must match the DID in the PKCS#8 file selected by `--identity`.
 Startup fails before opening Fabric storage when they differ.
 
-Every connector cause and stored protocol envelope includes this owner DID.
-Session graphs, indexes, health, commands, and receipts carry a Common Fabric
-confidentiality label for that owner. Connector-managed cells also require the
-owner principal and the connector writer identity for changes. The debug command
-queue requires the owner principal and its compiled, verified command submission
+Every connector cause and stored protocol envelope includes this owner DID. The
+catalog, health, commands, and receipts carry a Common Fabric confidentiality
+label for that owner. Archive access uses authenticated Memory sessions and the
+trusted labels on the catalog handle. Its durable binding records the owner and
+connector writer authority. Connector-managed cells also require the owner
+principal and the connector writer identity for changes. The debug command queue
+requires the owner principal and its compiled, verified command submission
 handler. A different principal cannot write commands into it.
 
 Source IDs must already be trimmed and lowercase. They are durable identities in
@@ -133,9 +148,10 @@ controls complete collection in long-running mode and is ignored by `--once`.
 
 `checkoutRoots` is an optional array of absolute directories. Every complete
 collection finds Git checkouts below those roots and publishes their current
-branch, commit, and remotes in the session indexes. Discovery stops descending
-when it finds a checkout. A failed or cancelled discovery leaves the previous
-session and checkout indexes unchanged.
+branch, commit, and sanitized remotes in archive records. Complete Git
+observations use byte pages; bounded record metadata contains previews and page
+ranges. Discovery stops descending when it finds a checkout. A failed or
+cancelled discovery leaves the previous catalog unchanged.
 
 The source fields are the connector's `AgentSourceConfig` contract:
 
@@ -154,6 +170,17 @@ The source fields are the connector's `AgentSourceConfig` contract:
 | `codexSocket`           | Socket passed to Codex proxy mode                                               |
 | `allowDangerFullAccess` | Allows the connector's explicitly unrestricted Claude or Codex execution policy |
 
+The native host currently supports `claude-agent-sdk` and `codex-app-server`
+collection. ACP remains a connector library driver for eager reads and commands;
+it has no native streaming implementation and cannot complete this host's
+initial collection. There is no eager fallback.
+
+The host reads local Claude project and subagent transcripts and local Codex
+rollouts and databases. Configure `configDir` or `codexHome` to select their
+native homes. Provider environment values and the process environment supply the
+corresponding fallbacks. Codex `managed` and `proxy` select command transports;
+they do not transfer native files from another machine.
+
 Provider behavior and the native protocols behind these fields are documented in
 the connector's [`docs/interfaces.md`](../connector/docs/interfaces.md).
 
@@ -163,10 +190,13 @@ the connector's [`docs/interfaces.md`](../connector/docs/interfaces.md).
 flowchart LR
   CLI["agents-host CLI"] --> Host["AgentsHost lifecycle"]
   Host --> Drivers["Connector drivers"]
-  Drivers <--> Providers["Claude, Codex, and ACP"]
+  Drivers <--> Providers["Claude and Codex command APIs"]
+  Native["Local native logs and databases"] --> Drivers
   Host --> Target["AgentFabricTarget"]
+  Target <--> Archive["Authenticated paged archive"]
   Target <--> Fabric["Common Fabric space"]
   Fabric --> Debug["Agent sessions debug pattern"]
+  Archive --> Debug
   Host --> Ledger["Local command ledger"]
   Host --> Lock["Operating-system ledger and target locks"]
 ```
@@ -176,15 +206,27 @@ flowchart LR
 1. The CLI validates its flags and parses the JSONC configuration.
 2. `openAgentFabricRuntime()` reads the identity and verifies that its DID
    matches `ownerDid`. It then creates the requested session, opens remote
-   storage, checks API health, and opens an owner-scoped `AgentFabricTarget` in
-   the resolved space DID.
+   storage, checks API health, and calls `AgentFabricTarget.connectArchive()` in
+   the resolved space DID. The archive protocol and every hard limit are checked
+   before connector cells are synchronized. Failure stops startup before ledger,
+   driver, or debug-view setup.
 3. The process derives one target identity from the API URL origin, resolved
    space DID, and owner DID. It uses that identity to locate the durable command
-   ledger and the runtime target lock.
-4. The process takes exclusive operating-system locks for the target and ledger.
-   A second command executor for that target under the same operating-system
-   user fails immediately.
-5. `deployAgentSessionsDebugView()` compiles the repository pattern and links
+   ledger and the runtime target lock. It takes the target lock before claiming
+   owner-scoped storage roots.
+4. The process configures private native scratch storage, takes the ledger lock,
+   and opens the command ledger. A second command executor for that target under
+   the same operating-system user fails immediately.
+5. `AgentsHost.start()` creates and starts every enabled driver. A failed source
+   remains visible in health while successful sources continue. A source whose
+   failed startup cannot be cleaned up makes the complete host startup fail. The
+   host then publishes recovered and previously unpublished receipts from the
+   ledger.
+6. The host performs its initial native collection through `publishStreams()`. A
+   first v2 catalog requires a full, complete scan. A partial initial scan or
+   targeted scan cannot initialize it. Existing v1 roots remain frozen; startup
+   does not read their complete session graphs or convert them in place.
+7. `deployAgentSessionsDebugView()` compiles the repository pattern and links
    its owner-confidential inputs to the target's cells. The pattern owns the
    command composer, while the host supplies the deterministic owner-scoped
    command queue before the pattern starts. The host labels the rendered result
@@ -194,15 +236,8 @@ flowchart LR
    under the owner label and does not add the piece to the space-wide default
    app registry. `--no-debug-view` skips this step and disables command
    acceptance.
-6. The host opens the command ledger.
-7. `AgentsHost.start()` creates and starts every enabled driver. A failed source
-   remains visible in health while successful sources continue. A source whose
-   failed startup cannot be cleaned up makes the complete host startup fail. The
-   host then publishes recovered and previously unpublished receipts from the
-   ledger.
-8. The host performs and publishes one complete collection. It then subscribes
-   to the owner-protected Fabric command cell unless `--once` or
-   `--no-debug-view` was used.
+8. The host subscribes to the owner-protected Fabric command cell unless
+   `--once` or `--no-debug-view` was used.
 
 The command-line host keeps startup health local until it has completed these
 steps and owns a ready or degraded host. Its first health publication includes
@@ -222,18 +257,28 @@ when the replacement host does not share the earlier host's local ledger.
 ### Collection
 
 The command-line wrapper requests collections periodically and on `SIGHUP`. It
-keeps one pending request while a collection is active. Calls that reach
-`AgentsHost.synchronize(reason)` are serialized. Each collection asks every
-running driver for its complete inventory and session snapshots. The host
-allocates a target observation sequence before those reads. It publishes all
-successful and partial source results together through
-`AgentFabricTarget.publish()`. The sequence prevents that collection from
-overwriting a newer session refresh if the refresh finishes first.
+keeps one pending signal request while a collection is active. Periodic
+deadlines start from completion. Calls that reach
+`AgentsHost.synchronize(reason)` are serialized. The native target also
+serializes the entire collection or targeted refresh. Each running driver
+streams native sessions into archive pages through
+`AgentFabricTarget.publishStreams()`. The inventory remains on scratch disk.
+File bytes and database column values retain provenance and digests; record
+metadata contains bounded summaries and previews. No complete native session
+becomes a Fabric cell value.
 
-Provider read failures do not discard sessions read successfully from the same
-source. They make that source and the overall host degraded. A Fabric
-publication failure marks the collection and host failed and is returned to the
-caller. A later explicit collection can restore ready or degraded status.
+After a v2 catalog exists, a failed session read retains its previous complete
+record, marked partial. An incomplete inventory retains unseen prior sessions.
+Successful records can still be published, with bounded errors and total error
+counts in source health. A failed targeted refresh retains the prior catalog. A
+failed first scan cannot publish an initial partial catalog.
+
+Publication commits a generation before updating the bounded catalog pointer.
+Readers pin a generation while fetching catalog rows, page directories, and byte
+pages. Restart discards abandoned staging, and pruning retains pages required by
+reader pins. A publication failure marks the collection and host failed and is
+returned to the caller. A later explicit collection can restore ready or
+degraded status.
 
 ### Commands
 
@@ -277,10 +322,13 @@ The host publishes `commonfabric.agent-connector.health` with these host-owned
 fields:
 
 - overall status and timestamps;
-- destination space, debug piece, and all five top-level cell IDs;
+- destination space, debug piece, and connector cell IDs;
 - command admission, pending receipt publications, failed command count, and the
   latest command-processing error;
-- the latest collection reason, state, timestamps, session count, or error;
+- the latest collection reason, state, timestamps, duration in
+  `sync.durationMs`, session count, or error;
+- the next periodic deadline in `nextCollectionAt`, or `null` while a collection
+  is running, periodic scheduling is disabled, or shutdown is in progress;
 - every configured source's lifecycle, current capabilities, collection
   completeness, session count, and errors; and
 - the most recent 200 lifecycle and receipt events.
@@ -296,37 +344,44 @@ Common Fabric permits those reads only for the configured owner. Membership in
 the destination space without the owner identity does not grant access to
 session, workspace, health, command, or receipt content.
 
-The connector has one owner-scoped storage layout. Protocol schema names and
-deterministic cell causes are not versioned. Future readers must keep existing
-stored values and causes readable. New fields must be optional so older writers
-can omit them without changing the meaning of existing fields or identities.
+The native layout has an explicit v2 catalog and archive record schemas. The
+eager v1 library APIs retain their original session, chunk, and index formats
+and causes. Native startup leaves those roots frozen. The archive component can
+inspect one old document within fixed byte and nesting limits, keeping linked
+documents as addresses. It does not assemble an old transcript graph.
+
+The native Sessions view retains one catalog page, one page directory, and one
+byte page. Its authenticated archive calls do not write their results or native
+bytes into Fabric result cells or document history. Complete Git observations
+are available through their recorded page ranges, including observations too
+large for inline record metadata.
 
 The debug pattern's inspection surfaces cannot change connector data. Its
 command composer can append a validated command after showing the exact value in
 a confirmation modal. The command queue requires the configured owner and the
 debug pattern's command-sending handler. Another principal cannot modify that
 queue, including by reusing the pattern handler. The pattern cannot write
-indexes, health, receipts, session manifests, or event chunks. Drafts,
-confirmation state, tab selection, and filters are session-scoped and are not
-shared between viewers.
+archive records, health, receipts, or the catalog. Drafts, confirmation state,
+tab selection, and filters are session-scoped and are not shared between
+viewers.
 
 ## Programmatic API
 
 The package root exports the following orchestration surfaces:
 
-| API                                   | Contract                                                                                        |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `parseAgentsHostConfig(value)`        | Validates the current configuration and returns the collection interval and normalized sources  |
-| `loadAgentsHostConfig(path)`          | Reads JSONC and then applies the same validation                                                |
-| `parseAgentsHostCliOptions(argv)`     | Resolves flags and supported environment fallbacks                                              |
-| `openAgentFabricRuntime(options)`     | Opens the identity session, remote runtime, piece manager, and connector target                 |
-| `deployAgentSessionsDebugView(...)`   | Creates or updates the owner-confidential debug piece and its private registration              |
-| `AgentsHost`                          | Owns driver, collection, command, health, activity, and shutdown lifecycle                      |
-| `startAgentsHost(options)`            | Takes both process locks, opens every dependency, starts the host, and returns a running handle |
-| `RunningAgentsHost.stop(reason?)`     | Performs one idempotent graceful shutdown and runtime disposal                                  |
-| `AgentsHostProcessLock.acquire(path)` | Takes one non-blocking operating-system lock                                                    |
-| `defaultTargetProcessLockPath(...)`   | Derives the local executor lock from the API URL origin, resolved space DID, and owner DID      |
-| `parseAgentFabricApiUrl(value)`       | Parses an API URL and reports a credential-free error when the value is invalid                 |
+| API                                   | Contract                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `parseAgentsHostConfig(value)`        | Validates the current configuration and returns the collection interval and normalized sources                |
+| `loadAgentsHostConfig(path)`          | Reads JSONC and then applies the same validation                                                              |
+| `parseAgentsHostCliOptions(argv)`     | Resolves flags and supported environment fallbacks                                                            |
+| `openAgentFabricRuntime(options)`     | Opens the identity session and runtime, negotiates the native archive, and opens the target and piece manager |
+| `deployAgentSessionsDebugView(...)`   | Creates or updates the owner-confidential debug piece and its private registration                            |
+| `AgentsHost`                          | Owns driver, collection, command, health, activity, and shutdown lifecycle                                    |
+| `startAgentsHost(options)`            | Takes both process locks, opens every dependency, starts the host, and returns a running handle               |
+| `RunningAgentsHost.stop(reason?)`     | Performs one idempotent graceful shutdown and runtime disposal                                                |
+| `AgentsHostProcessLock.acquire(path)` | Takes one non-blocking operating-system lock                                                                  |
+| `defaultTargetProcessLockPath(...)`   | Derives the local executor lock from the API URL origin, resolved space DID, and owner DID                    |
+| `parseAgentFabricApiUrl(value)`       | Parses an API URL and reports a credential-free error when the value is invalid                               |
 
 `startAgentsHost()` is the main embedding API. Its caller supplies connection
 values, parsed source configurations, and an optional startup abort signal. It

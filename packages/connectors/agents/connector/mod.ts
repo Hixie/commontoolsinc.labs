@@ -5,4 +5,5 @@ export * from "./src/fabric-graph.ts";
 export * from "./src/protocol.ts";
 export * from "./src/reconcile.ts";
 export * from "./src/session-contract.ts";
+export * from "./src/session-stream.ts";
 export * from "./src/types.ts";

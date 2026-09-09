@@ -15,6 +15,8 @@ import {
   isCapable,
 } from "../acl.ts";
 import {
+  type ArchiveAckRequest,
+  type ArchiveTicketRequest,
   canResolveScopeKey,
   type CellScope,
   type ClientCommit,
@@ -91,6 +93,18 @@ import {
   type WatchSpec,
   type WireMemoryProtocolFlags,
 } from "../v2.ts";
+import {
+  ARCHIVE_LIMITS,
+  archiveAccess,
+  type ArchiveAuthorization,
+  type ArchiveCommand,
+  type ArchiveIdentity,
+  type ArchivePolicy,
+  validateArchiveCommand,
+} from "./archive.ts";
+import type { ArchiveBackend } from "./archive.ts";
+import { ArchiveHttp, type LegacyDisclosure } from "./archive-http.ts";
+import { LegacyReadRefused, readBoundedDocument } from "./bounded-document.ts";
 import { classifyCommitTelemetry } from "./commit-telemetry.ts";
 import * as Engine from "./engine.ts";
 import { respondToHello } from "./handshake.ts";
@@ -841,6 +855,7 @@ class Connection {
     if (!this.#sessions.delete(key) || this.#closed) {
       return;
     }
+    this.#server.detachSession(space, sessionId, this.id);
     this.#send({
       type: "session/revoked",
       space,
@@ -1178,6 +1193,39 @@ class Connection {
           );
         }
         return;
+      case "archive.ticket":
+      case "archive.ack":
+        if (
+          !this.#requireSession(
+            parsed.requestId,
+            parsed.space,
+            parsed.sessionId,
+          )
+        ) return;
+        {
+          const response = await this.#server.archiveControl(parsed, this.id);
+          if (
+            !(parsed.type === "archive.ack" && parsed.close &&
+              "ok" in response) && (
+                !this.hasSession(parsed.space, parsed.sessionId) ||
+                !this.#server.isSessionAttached(
+                  parsed.space,
+                  parsed.sessionId,
+                  this.id,
+                )
+              )
+          ) {
+            this.#send({
+              type: "response",
+              requestId: parsed.requestId,
+              error: toError(
+                "SessionRevokedError",
+                "Archive session detached during authorization",
+              ),
+            });
+          } else this.#send(response);
+        }
+        return;
       case "sqlite.register-disk-source":
         if (
           !this.#requireSession(
@@ -1508,6 +1556,7 @@ export class Server {
   }>();
 
   #store?: URL;
+  #archiveHttp?: ArchiveHttp;
   #operationCodecs: OperationCodecRegistry;
 
   /**
@@ -1552,6 +1601,13 @@ export class Server {
     readonly options: {
       sessions?: SessionRegistry;
       store?: URL;
+
+      /** Explicit archive backend and mandatory immutable CFC policy provider. */
+      archive?: {
+        store: ArchiveBackend;
+        authorization: ArchiveAuthorization;
+        allowedOrigins: readonly string[];
+      };
 
       operationCodecs?: OperationCodecRegistry;
 
@@ -1677,6 +1733,14 @@ export class Server {
       options.documentCacheTotalBudgetBytes ??
         DOCUMENT_CACHE_TOTAL_BUDGET_BYTES,
     );
+    if (options.archive) {
+      this.#archiveHttp = new ArchiveHttp(
+        options.archive.store,
+        (command, identity) => this.#authorizeArchive(command, identity),
+        options.archive.allowedOrigins,
+        (command, identity) => this.#legacyArchiveRead(command, identity),
+      );
+    }
     // Module-level providers for the health route (push-priority counters,
     // Phase 6; document caches): the newest live server is reported, and
     // close() withdraws exactly this server's.
@@ -1691,6 +1755,7 @@ export class Server {
    * and the per-space publication lock, which a test drives directly.
    */
   get accessForTestingOnly(): {
+    readonly activeArchiveTransfers: number;
     engineOpener: EngineOpener | undefined;
     flushScheduledSessions(): Promise<void>;
     withSpacePublicationLock<T>(
@@ -1701,6 +1766,9 @@ export class Server {
     // deno-lint-ignore no-this-alias
     const outerThis = this;
     return {
+      get activeArchiveTransfers() {
+        return outerThis.#archiveHttp?.activeTransferCount ?? 0;
+      },
       get engineOpener() {
         return outerThis.#engineOpener;
       },
@@ -1738,7 +1806,193 @@ export class Server {
     return {
       ...getMemoryProtocolFlags(),
       operationCodecs: this.#operationCodecs.ids(),
+      ...(this.options.archive ? { archive: ARCHIVE_LIMITS } : {}),
     };
+  }
+
+  #archiveIdentity(
+    space: string,
+    sessionId: string,
+    connectionId: string,
+  ): ArchiveIdentity {
+    const session = this.#sessions.get(space, sessionId);
+    if (
+      !session?.principal || session.ownerConnectionId !== connectionId ||
+      !this.#connections.get(connectionId)?.hasSession(space, sessionId)
+    ) {
+      throw new Error(
+        "Archive requires an attached authenticated Memory session",
+      );
+    }
+    return {
+      space,
+      sessionId,
+      connectionId,
+      principal: session.principal,
+      actingPrincipal: session.actingPrincipal ?? session.principal,
+    };
+  }
+
+  async #authorizeArchive(
+    command: ArchiveCommand,
+    identity: ArchiveIdentity,
+  ): Promise<ArchivePolicy | undefined> {
+    const archive = this.options.archive;
+    if (!archive) throw new Error("Archive backend is unavailable");
+    const engine = await this.#openEngine(identity.space);
+    const current = this.#archiveIdentity(
+      identity.space,
+      identity.sessionId,
+      identity.connectionId,
+    );
+    if (JSON.stringify(current) !== JSON.stringify(identity)) {
+      throw new Error("Archive session identity changed");
+    }
+    const session = this.#sessions.get(identity.space, identity.sessionId)!;
+    if (
+      session.actingPrincipal !== undefined &&
+      this.#resolveSpaceOwnerBinding(engine, identity.space) !==
+        session.actingPrincipal
+    ) throw new Error("Archive acting principal was revoked");
+    const access = archiveAccess(command);
+    const principal = access === "read"
+      ? identity.actingPrincipal
+      : identity.principal;
+    const requirement = command.op === "open"
+      ? "OWNER"
+      : access === "read"
+      ? "READ"
+      : "WRITE";
+    const capability = this.#resolveCapability(
+      engine,
+      identity.space,
+      principal,
+    );
+    if (capability === null || !isCapable(capability, requirement)) {
+      throw new Error(
+        "Archive access is not authorized by the current space ACL",
+      );
+    }
+    if (command.op === "open") {
+      return archive.authorization.create(identity, command.readers ?? []);
+    }
+    const binding = archive.store.binding(
+      command.archive,
+      command.op === "delete",
+    );
+    if (
+      binding.space !== identity.space ||
+      (access === "write" && binding.writer !== principal) ||
+      !archive.authorization.authorize(binding, identity, access)
+    ) {
+      throw new Error(
+        "Archive access is not authorized by its immutable policy",
+      );
+    }
+    return undefined;
+  }
+
+  /** Issues and acknowledges archive capabilities through the authenticated session. */
+  async archiveControl(
+    message: ArchiveTicketRequest | ArchiveAckRequest,
+    connectionId: string,
+  ): Promise<ResponseMessage<FabricValue>> {
+    try {
+      if (!this.#archiveHttp) throw new Error("Archive backend is unavailable");
+      const identity = this.#archiveIdentity(
+        message.space,
+        message.sessionId,
+        connectionId,
+      );
+      if (message.type === "archive.ack") {
+        if (message.close) {
+          this.detachSession(message.space, message.sessionId, connectionId);
+        } else {
+          await this.#archiveHttp.acknowledge(
+            message.token,
+            identity,
+            message.consumed,
+            message.pin,
+            message.release,
+          );
+        }
+        return { type: "response", requestId: message.requestId, ok: {} };
+      }
+      const ticket = await this.#archiveHttp.issue(
+        message.command,
+        identity,
+        message.pinSequence,
+      );
+      this.#archiveIdentity(message.space, message.sessionId, connectionId);
+      return {
+        type: "response",
+        requestId: message.requestId,
+        ok: { ...ticket },
+      };
+    } catch (error) {
+      return respondTypedError(
+        message.requestId,
+        toError(
+          "AuthorizationError",
+          error instanceof Error
+            ? error.message
+            : "Archive authorization failed",
+        ),
+      );
+    }
+  }
+
+  async #legacyArchiveRead(
+    command: Extract<ArchiveCommand, { op: "legacy-read" }>,
+    identity: ArchiveIdentity,
+  ): Promise<LegacyDisclosure> {
+    const engine = await this.#openEngine(identity.space);
+    const policy = this.options.archive!.authorization;
+    const refused = (): LegacyDisclosure => ({
+      result: {
+        legacy: {
+          status: "refused",
+          message:
+            "Legacy document cannot be inspected. It may be unavailable, restricted by its policy, or larger than the bounded inspection format. Rebuild the catalog from native sources.",
+        },
+      },
+      authorize() {},
+    });
+    const read = () => {
+      const document = readBoundedDocument(engine, command.id);
+      if (document && !policy.authorizeLegacy?.(document.cfc, identity)) {
+        return null;
+      }
+      return document;
+    };
+    let document: EntityDocument | null;
+    try {
+      document = read();
+    } catch (error) {
+      if (!(error instanceof LegacyReadRefused)) throw error;
+      return refused();
+    }
+    if (!document) return refused();
+    return {
+      result: {
+        legacy: { status: "available", wire: encodeMemoryBoundary(document) },
+      },
+      authorize() {
+        if (!read()) {
+          throw new Error(
+            "Legacy document is no longer available for inspection",
+          );
+        }
+      },
+    };
+  }
+
+  /** Serves raw archive bodies outside the Fabric document and websocket codecs. */
+  handleArchiveRequest(request: Request): Promise<Response> {
+    return this.#archiveHttp?.handle(request) ??
+      Promise.resolve(
+        new Response("Archive backend is unavailable", { status: 404 }),
+      );
   }
 
   /** A copy of the push-priority counters (Phase 6, protocol.md §3). */
@@ -2209,6 +2463,7 @@ export class Server {
     sessionId: string,
     ownerConnectionId: string,
   ): void {
+    this.#archiveHttp?.detachSession(space, sessionId, ownerConnectionId);
     this.#sessions.detach(space, sessionId, ownerConnectionId);
   }
 
@@ -2236,6 +2491,7 @@ export class Server {
       documentCachesDiagnosticsProviders,
       this.#documentCachesDiagnosticsProvider,
     );
+    await this.#archiveHttp?.close();
     this.#cancelScheduledRefresh();
     await this.#refreshing;
     await this.#drainSpacePublicationLocks();
@@ -2246,6 +2502,7 @@ export class Server {
     this.#resolvedEngines.clear();
     this.#connections.clear();
     this.#readPool.close();
+    this.options.archive?.store[Symbol.dispose]();
   }
 
   /**
@@ -7245,6 +7502,68 @@ export const parseClientMessage = (
       sql: parsed.sql,
       params,
     } as SqliteQueryRequest;
+  }
+
+  if (
+    (parsed.type === "archive.ticket" || parsed.type === "archive.ack") &&
+    typeof parsed.requestId === "string" && parsed.requestId.length <= 128 &&
+    typeof parsed.space === "string" && parsed.space.length <= 256 &&
+    typeof parsed.sessionId === "string" && parsed.sessionId.length <= 128
+  ) {
+    if (parsed.type === "archive.ack") {
+      const identifier = (value: unknown) =>
+        typeof value === "string" && /^[a-f0-9-]{1,64}$/.test(value);
+      const pin = parsed.pin as {
+        archive?: unknown;
+        pin?: unknown;
+        sequence?: unknown;
+      } | undefined;
+      if (
+        typeof parsed.consumed !== "boolean" ||
+        (parsed.token !== undefined &&
+          (typeof parsed.token !== "string" ||
+            !/^[a-f0-9-]{72}$/.test(parsed.token))) ||
+        (pin !== undefined &&
+          (!pin || !identifier(pin.archive) || !identifier(pin.pin) ||
+            !Number.isSafeInteger(pin.sequence) ||
+            Number(pin.sequence) < 1)) ||
+        (parsed.release !== undefined && typeof parsed.release !== "boolean") ||
+        (parsed.close !== undefined && typeof parsed.close !== "boolean") ||
+        (!parsed.token && !pin && !parsed.close) ||
+        (parsed.release && (!pin || parsed.consumed)) ||
+        (parsed.close &&
+          (pin || parsed.token || parsed.consumed || parsed.release))
+      ) return null;
+      return {
+        type: parsed.type,
+        requestId: parsed.requestId,
+        space: parsed.space,
+        sessionId: parsed.sessionId,
+        token: parsed.token,
+        consumed: parsed.consumed,
+        pin,
+        release: parsed.release,
+        close: parsed.close,
+      } as ArchiveAckRequest;
+    }
+    try {
+      validateArchiveCommand(parsed.command);
+    } catch {
+      return null;
+    }
+    if (
+      parsed.command.op === "pin" &&
+      (!Number.isSafeInteger(parsed.pinSequence) ||
+        Number(parsed.pinSequence) < 1)
+    ) return null;
+    return {
+      type: parsed.type,
+      requestId: parsed.requestId,
+      space: parsed.space,
+      sessionId: parsed.sessionId,
+      command: parsed.command,
+      pinSequence: parsed.pinSequence as number | undefined,
+    };
   }
 
   if (

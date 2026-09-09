@@ -177,6 +177,39 @@ export class WebSocketTransport implements MemoryClient.Transport {
     this.#receiver = receiver;
   }
 
+  /** Returns the archive endpoint beside this Memory socket. */
+  archiveURL(): string {
+    const address = new URL(this.#address);
+    address.protocol = address.protocol === "wss:"
+      ? "https:"
+      : address.protocol === "ws:"
+      ? "http:"
+      : address.protocol;
+    address.pathname = `${address.pathname.replace(/\/$/, "")}/archive`;
+    address.search = "";
+    return address.toString();
+  }
+
+  /** Sends raw pages to the archive endpoint beside this Memory socket. */
+  archiveTransfer(
+    token: string,
+    body: Uint8Array<ArrayBuffer>,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    return fetch(this.archiveURL(), {
+      method: "POST",
+      credentials: "omit",
+      redirect: "error",
+      cache: "no-store",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/octet-stream",
+      },
+      body,
+      signal,
+    });
+  }
+
   setCloseReceiver(receiver: (error?: Error) => void): void {
     this.#closeReceiver = receiver;
   }

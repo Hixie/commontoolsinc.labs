@@ -111,6 +111,7 @@ function startHarness(options: {
 } {
   const events = options.events ?? [];
   const target = {
+    configureArchive: () => {},
     claimStorage: options.claimStorage ?? (() => {
       events.push("target.claimStorage");
       return Promise.resolve();
@@ -135,10 +136,12 @@ function startHarness(options: {
     ownerDid: "did:key:owner",
   } as unknown as AgentFabricRuntime;
   const host = {
-    start: options.hostStart ?? (() => {
-      events.push("host.start");
-      return Promise.resolve(3);
-    }),
+    start: options.hostStart ??
+      (async (startOptions: Parameters<AgentsHost["start"]>[0]) => {
+        events.push("host.start");
+        await startOptions?.prepareCommandTarget?.();
+        return 3;
+      }),
     stop: options.hostStop ?? ((reason: string) => {
       events.push(`host.stop:${reason}`);
       return Promise.resolve();
@@ -187,6 +190,22 @@ function startOptions(signal?: AbortSignal) {
   };
 }
 
+Deno.test("archive negotiation failure starts no host, ledger, debug view, or ownership setup", async () => {
+  const { dependencies, events } = startHarness();
+  dependencies.openFabric = () => {
+    events.push("fabric.open");
+    return Promise.reject(
+      new Error("Server does not support bounded archives"),
+    );
+  };
+  await assertRejects(
+    () => startAgentsHost(startOptions(), dependencies),
+    Error,
+    "does not support bounded archives",
+  );
+  assertEquals(events, ["fabric.open"]);
+});
+
 Deno.test("startAgentsHost opens the target and returns a stoppable host", async () => {
   const { dependencies, events } = startHarness();
   const running = await startAgentsHost(startOptions(), dependencies);
@@ -201,9 +220,9 @@ Deno.test("startAgentsHost opens the target and returns a stoppable host", async
     "lock.acquire:/state/target.lock",
     "target.claimStorage",
     "lock.acquire:/state/ledger.json.lock",
-    "debug.deploy",
     "ledger.open",
     "host.start",
+    "debug.deploy",
     "host.stop:finished",
     "runtime.settled",
     "runtime.dispose",

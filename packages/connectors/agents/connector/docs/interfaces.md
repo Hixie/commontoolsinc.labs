@@ -5,21 +5,28 @@ This document specifies the boundaries implemented by
 authoritative source for exact types. This document explains their lifecycle,
 formats, identity rules, and failure semantics.
 
+The command-line host uses the native v2 archive interfaces. Eager provider
+snapshots and stable session graphs remain v1 library interfaces. The sections
+below distinguish these paths; the
+[bounded archive contract](bounded-archive.md) describes native byte provenance,
+migration, and server configuration.
+
 ## Package entry points
 
-| Entry point                 | Purpose                                                                                                                                        |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Package root                | Normalized types, collection, Fabric target, command worker, command ledger, stable graph helpers, cell identity helpers, and schema constants |
-| `/create-driver`            | Provider selection without requiring the host to import each driver class                                                                      |
-| `/drivers/claude-agent-sdk` | Claude Agent SDK driver and its testable SDK adapter interface                                                                                 |
-| `/drivers/codex-app-server` | Codex App Server driver, launch selection, and execution policy                                                                                |
-| `/drivers/acp`              | Agent Client Protocol driver and its testable transport interface                                                                              |
-| `/fabric`                   | Fabric target and top-level cell creation                                                                                                      |
-| `/fabric-graph`             | Lower-level stable graph reads, writes, action reads, and subscriptions                                                                        |
-| `/commands`                 | Command and receipt values, target interface, and worker                                                                                       |
-| `/command-ledger`           | Local command claim storage                                                                                                                    |
-| `/reconcile`                | Provider collection and session preparation                                                                                                    |
-| `/types`                    | Provider-neutral source, session, driver, and result types                                                                                     |
+| Entry point                 | Purpose                                                                                                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Package root                | Normalized and streaming types, eager collection, Fabric target, command worker, command ledger, stable graph helpers, cell identity helpers, and schema constants |
+| `/create-driver`            | Provider selection without requiring the host to import each driver class                                                                                          |
+| `/drivers/claude-agent-sdk` | Claude Agent SDK driver and its testable SDK adapter interface                                                                                                     |
+| `/drivers/codex-app-server` | Codex App Server driver, launch selection, and execution policy                                                                                                    |
+| `/drivers/acp`              | Agent Client Protocol driver and its testable transport interface                                                                                                  |
+| `/fabric`                   | Fabric target and top-level cell creation                                                                                                                          |
+| `/archive`                  | Native v2 publisher, catalog, record metadata, and page metadata types                                                                                             |
+| `/fabric-graph`             | Lower-level stable graph reads, writes, action reads, and subscriptions                                                                                            |
+| `/commands`                 | Command and receipt values, target interface, and worker                                                                                                           |
+| `/command-ledger`           | Local command claim storage                                                                                                                                        |
+| `/reconcile`                | Eager v1 provider collection and session preparation                                                                                                               |
+| `/types`                    | Provider-neutral source, session, driver, and result types                                                                                                         |
 
 The package root intentionally excludes provider drivers. This keeps provider
 SDK initialization and child-process setup out of programs that only consume the
@@ -61,6 +68,9 @@ interface AgentDriver {
   readonly source: SourceDescriptor;
   start(signal?: AbortSignal): Promise<void>;
   stop(): Promise<void>;
+  streamSessions?(
+    options: NativeCollectionOptions,
+  ): AsyncIterable<SessionStream>;
   listSessions(cursor?: string): Promise<SessionPage>;
   readSession(nativeSessionId: string): Promise<NativeSessionSnapshot>;
   prompt(
@@ -93,6 +103,11 @@ connector-owned provider operations and child processes.
 initializing or loading a session. A host should treat it as the current
 provider contract rather than a constructor-time constant.
 
+Native collection requires `streamSessions()`. Claude and Codex implement it;
+ACP does not. The capability booleans for eager inventory and reads do not
+promise native streaming. A native publisher rejects a driver without that
+method and does not call its eager methods as a fallback.
+
 `CommandExecutionOptions.onCancellationReady` and `onSessionActive` report two
 separate prompt milestones to the command worker. A driver calls
 `onCancellationReady` as soon as its `cancel()` method can address the admitted
@@ -106,7 +121,33 @@ while the provider operation remains active. Drivers that can report active
 provider state through `readSession()` keep that state observable until the
 refresh finishes.
 
-### Collection
+### Native v2 collection
+
+`streamSessions(options)` receives fixed `CollectionLimits`, a private
+`scratchDirectory`, an optional abort signal, and an optional `nativeSessionId`
+for targeted collection. The iterator yields a `SessionStream` whose `parts`
+iterator yields exact bytes, native provenance, byte offsets, event counts, and
+bounded normalized message previews. The publisher consumes each part before
+pulling the next one. The stream's bounded summary is finalized as its parts are
+consumed; it omits the eager summary's `raw` field.
+
+`AgentFabricTarget.connectArchive()` negotiates the backend before synchronizing
+connector cells. `configureArchive()` supplies private scratch storage and
+optional collection limits. `publishStreams(drivers, options?)` collects and
+publishes under the target's serial mutation queue. `refreshSession()` uses the
+same native path when the target has an archive. The host does not invoke eager
+collection for these operations.
+
+`AgentArchivePublisher` accepts an imperative `AgentArchiveConnection` with
+`archiveLimits()` and `archive()` operations. It stores session records and byte
+pages outside Fabric document replication. Its publication callback writes the
+bounded catalog pointer. Stored v2 schemas and page kinds are specified in
+[Bounded native archive](bounded-archive.md#stored-representation).
+
+### Eager v1 collection
+
+The following library APIs materialize provider snapshots. Their page and event
+counts do not bound an individual provider value's size.
 
 `collectSource(driver, signal?)` consumes `listSessions()` until `nextCursor` is
 absent. It records an inventory error for a repeated cursor. It also records an
@@ -144,33 +185,43 @@ that owner. Connector-managed writes also require the owner principal and the
 connector's trusted writer identity. The debug command queue instead requires
 the owner principal and the verified command-submission handler that created it.
 
-`AgentFabricTarget.open(connection)` creates and synchronizes the connector's
-top-level cells. It atomically initializes empty index, health, and receipt
-roots with owner protection before reading from them. A populated root without
-that owner protection is rejected rather than adopted. The command queue is
-claimed later when the host can bind its verified command-submission handler.
-Opening a target also waits for the runtime storage manager to finish its
-initial synchronization.
+For v1 callers, `AgentFabricTarget.open(connection)` creates and synchronizes
+the connector's top-level cells. It atomically initializes empty index, health,
+and receipt roots with owner protection before reading from them. A populated
+root without that owner protection is rejected rather than adopted. The command
+queue is claimed later when the host can bind its verified command-submission
+handler. Opening a target also waits for the runtime storage manager to finish
+its initial synchronization.
+
+The native host instead calls `connectArchive(connection)` and then
+`claimStorage()` after taking its target lock. Archive negotiation happens
+before cell synchronization. This path synchronizes the v2 catalog and shared
+health, command, and receipt cells. It leaves old v1 session indexes and graphs
+frozen. An incompatible backend fails startup before the host opens its ledger,
+starts drivers, or deploys the debug view.
 
 The target exposes these orchestration methods:
 
-| Method                                    | Behavior                                                                                                |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `beginSessionObservation()`               | Allocates the ordering value that a caller records before it begins a full provider collection.         |
-| `publish(collected, options?)`            | Publishes changed session graphs and replaces both indexes. Returns the number of non-deleted sessions. |
-| `publishHealth(value)`                    | Publishes a host-defined health record under the connector-owned health schema.                         |
-| `subscribeCommands(callback)`             | Subscribes after the exact queue has been bound to its owner and verified writer.                       |
-| `pollCommands()`                          | Pulls commands after the exact queue has been bound to its owner and verified writer.                   |
-| `bindCommandCell(cell, writer)`           | Verifies the exact owner-scoped command queue and applies its owner and verified-writer policy.         |
-| `publishReceipt(receipt)`                 | Publishes one durable receipt cell and updates the bounded receipt index.                               |
-| `readReceipt(commandId)`                  | Reads the deterministic individual receipt cell used as the shared command claim.                       |
-| `refreshSession(driver, nativeSessionId)` | Reads and publishes one session without changing untouched session statuses.                            |
-| `commandCellId()`                         | Returns the command cell ID without the `of:` link prefix.                                              |
-| `receiptCellId()`                         | Returns the receipt-index cell ID without the `of:` link prefix.                                        |
+| Method                                    | Behavior                                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `configureArchive(options)`               | Configures private native scratch storage and optional collection limits.                             |
+| `hasArchive()`                            | Reports whether the target uses native v2 publication.                                                |
+| `publishStreams(drivers, options?)`       | Streams a native collection and publishes its archive generation and bounded catalog.                 |
+| `beginSessionObservation()`               | Allocates the ordering value for an eager v1 provider collection.                                     |
+| `publish(collected, options?)`            | Publishes v1 session graphs and replaces both v1 indexes. Returns the number of non-deleted sessions. |
+| `publishHealth(value)`                    | Publishes a host-defined health record under the connector-owned health schema.                       |
+| `subscribeCommands(callback)`             | Subscribes after the exact queue has been bound to its owner and verified writer.                     |
+| `pollCommands()`                          | Pulls commands after the exact queue has been bound to its owner and verified writer.                 |
+| `bindCommandCell(cell, writer)`           | Verifies the exact owner-scoped command queue and applies its owner and verified-writer policy.       |
+| `publishReceipt(receipt)`                 | Publishes one durable receipt cell and updates the bounded receipt index.                             |
+| `readReceipt(commandId)`                  | Reads the deterministic individual receipt cell used as the shared command claim.                     |
+| `refreshSession(driver, nativeSessionId)` | Uses the target's native v2 or eager v1 path to refresh one session and retain unrelated sessions.    |
+| `commandCellId()`                         | Returns the command cell ID without the `of:` link prefix.                                            |
+| `receiptCellId()`                         | Returns the receipt-index cell ID without the `of:` link prefix.                                      |
 
-The optional `publish()` setting `preserveUntouchedStatus` defaults to false.
-Normal full collections should use the default. A targeted refresh should set it
-to true.
+The following ordering rules apply to eager v1 publication. The optional
+`publish()` setting `preserveUntouchedStatus` defaults to false. Normal full
+collections should use the default. A targeted refresh should set it to true.
 
 A full collection calls `beginSessionObservation()` before its first provider
 read and passes the returned value to `publish()` as `observationSequence`.
@@ -247,7 +298,7 @@ renaming, modes, and configuration options. `modes` lists accepted mode IDs.
 Unsupported methods still exist on every driver. They return a
 `CommandExecutionResult` with status `unsupported` and a structured error.
 
-### Session inventory
+### Eager session inventory
 
 `listSessions(cursor?)` returns a `SessionPage`:
 
@@ -271,10 +322,11 @@ the corresponding snapshot value is null. A non-null snapshot value takes
 precedence.
 
 The connector enriches `gitRepo`, `gitBranch`, and `gitWorktreeRoot` after the
-driver returns the snapshot. Commit and remote observations live in the shallow
-checkout index rather than each session manifest.
+driver returns a v1 snapshot. V1 index rows also expose head, remotes, and
+observation time; `GitContextObservation.enrich()` does not add those fields to
+the session summary. Native v2 records store complete observations in Git pages.
 
-### Session snapshot
+### Eager session snapshot
 
 `readSession()` returns a `NativeSessionSnapshot` with four views:
 
@@ -303,11 +355,12 @@ worker copies these fields into the terminal receipt.
 `unknown` means the connector cannot prove whether the provider operation
 completed. Callers must not treat it as safe to repeat automatically.
 
-## Native provider boundaries
+## Provider and native source boundaries
 
 ### Claude Agent SDK
 
-The Claude driver calls these SDK operations through `ClaudeSdkAdapter`:
+The Claude driver's eager reads and command operations call these SDK operations
+through `ClaudeSdkAdapter`:
 
 - `listSessions({ limit, offset })`
 - `getSessionInfo(sessionId)`
@@ -315,9 +368,9 @@ The Claude driver calls these SDK operations through `ClaudeSdkAdapter`:
 - `renameSession(sessionId, title)`
 - `query({ prompt, options })`
 
-Inventory pages contain 100 sessions. The cursor is a decimal offset. Message
-objects become native events. Their UUID, type, and message content provide the
-normalized message view.
+Eager inventory pages contain 100 sessions. The cursor is a decimal offset.
+Message objects become native events. Their UUID, type, and message content
+provide the normalized message view.
 
 The driver reports `active: true` while a prompt started by that connector
 process is running. It snapshots that state when an inventory or session read
@@ -330,8 +383,11 @@ lifecycle metadata for listed sessions. The current session information contains
 titles, timestamps, branches, and working directories, but no archive or
 activity state.
 
-The SDK owns its on-disk session format. The connector does not parse Claude
-session files directly.
+Native `streamSessions()` reads Claude project JSONL files and associated
+subagent transcripts directly. Its disk-backed inventory and fragment parser
+preserve exact bytes while producing bounded metadata and previews. It does not
+call `getSessionMessages()`. Provider API events and native persisted records
+are distinct representations.
 
 Short inventory and metadata calls receive source-specific environment values
 through a process-wide serialized environment change. Prompts receive an
@@ -345,6 +401,10 @@ driver therefore passes the directory recorded by `listSessions()` or
 session metadata has no directory. An uncached prompt reads the session
 information before starting the query. A missing session or failed metadata
 lookup produces a failed command result without starting Claude.
+
+The directory cache retains at most 64 sessions and 32 KiB of string data.
+Evicted or oversized entries are looked up again for a later prompt. Native
+streaming does not populate this cache.
 
 Cancellation during that metadata lookup marks the pending prompt and prevents
 the query from starting. Stopping the driver does the same for every pending
@@ -375,14 +435,21 @@ An explicit `command` replaces the derived command. `CODEX_HOME` is set from
 `codexHome`. Child stderr is drained without copying transcript data to the host
 output.
 
-Startup sends `initialize` followed by the `initialized` notification. Inventory
-calls `thread/list` for active threads first and archived threads second. Its
-internal cursor format is `active:<provider cursor>`, `archived:`, or
-`archived:<provider cursor>`. Session reads call `thread/read` with
+Startup sends `initialize` followed by the `initialized` notification. Eager
+inventory calls `thread/list` for active threads first and archived threads
+second. Its internal cursor format is `active:<provider cursor>`, `archived:`,
+or `archived:<provider cursor>`. Session reads call `thread/read` with
 `includeTurns: true`. The inventory query supplies the normalized `archived`
 value when an individual thread object omits it. A thread status with type
 `active` maps to `active: true`. The `idle`, `notLoaded`, and `systemError`
 statuses map to `active: false`.
+
+Native `streamSessions()` uses the local Codex home instead of `thread/list` or
+`thread/read`. It captures active and archived rollout files plus per-thread
+state and history database values. Database reads use stable snapshots and
+incremental TEXT and BLOB access. Sessions found only in a database or only in
+rollout files are included. A managed or proxy command transport does not
+provide remote native-file access.
 
 Prompts call `thread/resume` and then `turn/start`. The driver waits for the
 matching `turn/completed` notification. Cancellation calls `turn/interrupt` only
@@ -398,6 +465,10 @@ the connector has no interactive permission surface. When
 `never` and sandbox policy to `dangerFullAccess`.
 
 ### Agent Client Protocol
+
+ACP has no native `streamSessions()` implementation. The native command-line
+host rejects its collection, even when ACP advertises eager inventory and read
+support. The following describes the retained v1 library and command APIs.
 
 The ACP transport starts the configured command and uses the ACP SDK's
 newline-delimited JSON stream over child stdin and stdout. It initializes with
@@ -436,7 +507,13 @@ ACP permission requests return a cancelled outcome. The connector passes an
 empty MCP server list. Child stderr is copied to the connector's error output
 with an ACP prefix.
 
-## Fabric protocol
+## V1 Fabric graphs and shared control cells
+
+This section specifies the retained v1 session graph representation and the
+health, command, and receipt cells shared with v2. The native path adds the
+catalog cause `agentConnector: "native-archive-catalog-v2"` and the schemas
+described in [Bounded native archive](bounded-archive.md). It does not publish
+v1 session manifests, event chunks, or session indexes.
 
 ### Top-level cell causes
 
@@ -469,7 +546,8 @@ Chunk causes use `agentConnector: "session-chunk"` and add `part` and
 
 ### Schema names
 
-`AGENT_CONNECTOR_SCHEMAS` exports every format discriminator:
+`AGENT_CONNECTOR_SCHEMAS` exports the v1 and shared control format
+discriminators:
 
 | Value              | Schema                                          |
 | ------------------ | ----------------------------------------------- |
@@ -482,10 +560,15 @@ Chunk causes use `agentConnector: "session-chunk"` and add `part` and
 | Receipt index      | `commonfabric.agent-connector.command-receipts` |
 | Local ledger       | `commonfabric.agent-connector.command-ledger`   |
 
-The schema names and deterministic causes are not versioned. Future readers must
-remain compatible with stored values and cell identities. New fields must be
-optional because older writers omit fields they do not know. Readers permit
-additional fields while continuing to validate the fields they use.
+These existing schema names and deterministic causes are not versioned. Future
+readers must remain compatible with stored values and cell identities. New
+fields must be optional because older writers omit fields they do not know.
+Readers permit additional fields while continuing to validate the fields they
+use.
+
+Native archive metadata uses separate explicit v2 schema names. Existing v1
+causes and payloads keep their meaning; native startup does not migrate their
+contents in place.
 
 ### Session key
 
@@ -631,16 +714,20 @@ The publisher assigns one base scope to each stored value:
 Every base scope also contains the destination `spaceDid` and `ownerDid`. These
 fields and the additional identity participate in the child cell ID.
 
-A schema-aware Fabric consumer must declare every array item as
-`Cell<T> | undefined`, not as inline `T`. The `undefined` branch represents a
-linked child that has not loaded yet. This applies to the index `sources` and
-`sessions`, health `sources` and `activity`, receipt-index `receipts`, session
-`chunks` and normalized messages, chunk `events`, and arrays nested inside
-provider JSON. The pattern runtime presents a loaded item as its live `T` value
-while retaining the cell back-pointer, so pattern code reads the item's fields
-directly and can forward the value to an input declared as `Cell<T>`. Connector
-code outside a pattern can use `readStableCellGraphValue()` when it needs a
-detached, fully hydrated value instead.
+A schema-aware consumer of these stable Fabric graphs must declare every array
+item as `Cell<T> | undefined`, not as inline `T`. The `undefined` branch
+represents a linked child that has not loaded yet. This applies to the index
+`sources` and `sessions`, health `sources` and `activity`, receipt-index
+`receipts`, session `chunks` and normalized messages, chunk `events`, and arrays
+nested inside provider JSON. The pattern runtime presents a loaded item as its
+live `T` value while retaining the cell back-pointer, so pattern code reads the
+item's fields directly and can forward the value to an input declared as
+`Cell<T>`. Connector code outside a pattern can use `readStableCellGraphValue()`
+when it needs a detached, fully hydrated value instead.
+
+This child-cell rule does not apply to imperative archive RPC results or JSON
+inside archive pages. Those are bounded inline values. Native session collection
+and the archive component do not hydrate v1 transcript graphs.
 
 Nested arrays use their containing array element's complete cause as `scope`.
 Their `path` restarts inside that element. For example, the `recentMessages`
@@ -660,6 +747,10 @@ Colliding identities add `collisionHash`. Exact duplicate values add a
 zero-based `duplicate` number after the first occurrence.
 
 ### Canonical hashes
+
+These hash rules apply to the v1 Fabric graph helpers. Native archive page and
+extent hashes are hexadecimal SHA-256 over bytes, as described in the archive
+contract.
 
 Connector hashes use SHA-256 and the `sha256:` prefix. The hash input describes
 the graph produced by the stable-array planner. It includes the converted root
@@ -903,16 +994,22 @@ ledger's in-memory values without calling `put()`.
 5. `git -C <root> rev-parse HEAD`
 6. `git -C <root> remote -v`
 
-`beginObservation()` creates a lookup scope for one publication. It deduplicates
-equal working directories and equal repository roots within that scope. A new
-publication creates a new scope and reruns the commands, so branch and remote
-changes appear in later publications. Failed lookups are also scoped to one
-observation, which allows a directory that becomes a repository later to acquire
-metadata. Direct `resolve()` and `enrich()` calls each create a fresh
+`beginObservation()` creates a lookup scope for one publication. Bounded caches
+reuse recent working-directory and repository-root lookups within that scope. A
+new publication creates a new scope and reruns the commands, so branch and
+remote changes appear in later publications. Failed lookups are also scoped to
+one observation, which allows a directory that becomes a repository later to
+acquire metadata. Direct `resolve()` and `enrich()` calls each create a fresh
 observation.
 
-A missing working directory, a non-repository directory, or a failed Git process
-produces null metadata rather than a failed session publication.
+A missing working directory or a non-repository directory can produce null Git
+metadata. A failed Git process is recorded as a failed observation. In native
+publication, a session keeps its previous complete Git observation when one is
+available, while current native bytes and the failure flag are published.
+Initial failures remain explicit. Discovered checkout failures can abort the
+collection. Full observations for both sessions and checkouts use the paged
+representation specified in
+[Bounded native archive](bounded-archive.md#git-observations).
 
 The connector removes credentials, query strings, and fragments from standard
 URL remotes before publication. It preserves SCP-style SSH remotes and otherwise
