@@ -15,10 +15,8 @@
  * would otherwise answer badly.
  */
 
-import { join } from "@std/path";
 import {
   loadAliasResolver,
-  repositoryRoot,
   type TestIdentity,
   testIdentityKey,
 } from "@commonfabric/test-support/records";
@@ -28,14 +26,22 @@ import {
   EXCLUDED_FROM_COVERAGE_GATE,
   LANE_BUDGET_SECONDS,
   LANES,
+  LOCAL_COVERAGE_MAX_SECONDS,
 } from "./test-selection/policy.ts";
+import {
+  costPhrase,
+  coverageCosts,
+  type MemberCost,
+  memberCosts,
+  packageMembers,
+} from "./test-selection/coverage.ts";
 import { fetchManifest } from "./test-selection/store.ts";
 import { capabilitiesBySuite, loadTopology } from "./test-topology.ts";
 import { type Suite, unavailableUnits } from "./test-topology/suite.ts";
 import { census } from "./test-selection/census.ts";
-import type { Manifest } from "./test-selection/manifest.ts";
+import { emptyManifest, type Manifest } from "./test-selection/manifest.ts";
 import { plan } from "./test-selection/plan.ts";
-import { readWorkspaceMembers } from "./workspace-tests.ts";
+import { workspaceMembers } from "./workspace-tests.ts";
 
 const USAGE = `usage: test-selection <mode>
 
@@ -109,35 +115,56 @@ export function dialLines(): string[] {
   return lines;
 }
 
-/** Each gated member and its baseline, as the lines `coverage` prints. */
+/**
+ * Each member, what its own tests cost, and its gate, as the lines
+ * `coverage` prints.
+ *
+ * The cost is the figure the publisher reports against, so that the two
+ * answer the same question. A member whose line on the exclusion list the
+ * store now contradicts says so beside the reason it was listed for, which
+ * is the whole of how a line comes off that list.
+ */
 export function coverageLines(
   manifest: Manifest | undefined,
   members: readonly string[],
+  suites: readonly Suite[],
 ): string[] {
   const width = Math.max(...members.map((member) => member.length));
-  const baselines = new Map(
-    (manifest?.coverageBaselines ?? []).map((base) => [base.member, base]),
-  );
-  return members.map((member) => {
+  // The units come from the tree, so a member's own set is enumerated
+  // whether or not a manifest was read. Without one nothing is measured,
+  // which is what the figure says.
+  const costs = memberCosts(manifest ?? emptyManifest(), members, suites);
+  const report = coverageCosts(costs);
+  const named = (list: readonly MemberCost[]) =>
+    new Set(list.map((cost) => cost.member));
+  const expensive = named(report.expensive);
+  const fitting = named(report.fitting);
+  const columns = members.map((member) => costPhrase(costs.get(member)));
+  const costWidth = Math.max(...columns.map((column) => column.length));
+  // What a gated member is measured against is the newest run on the
+  // default branch that is an ancestor of what the change is measured
+  // against, which is a question about a pull request and cannot be
+  // answered from here.
+  const against = "the newest ancestor run on the default branch";
+  return members.map((member, at) => {
+    const head = `${pad(member, width)}  ${pad(columns[at]!, costWidth)}  `;
     const excluded = EXCLUDED_FROM_COVERAGE_GATE.get(member);
     if (excluded !== undefined) {
-      return `${pad(member, width)}  not gated: ${excluded}`;
+      return fitting.has(member)
+        ? `${head}not gated, though the run now has room for it: ` +
+          excluded.reason
+        : `${head}not gated: ${excluded.reason}`;
     }
-    const baseline = baselines.get(member);
-    const against = baseline === undefined
-      ? "no baseline yet"
-      : `${baseline.uncoveredLines} uncovered lines at ${baseline.commit}`;
-    return `${pad(member, width)}  gated, against ${against}`;
+    return expensive.has(member)
+      ? `${head}gated, against ${against}, and past the ` +
+        `${LOCAL_COVERAGE_MAX_SECONDS}s a covered package is reported at`
+      : `${head}gated, against ${against}`;
   });
 }
 
 /** The workspace members the coverage gate has an opinion about. */
 export async function gatedMembers(): Promise<string[]> {
-  const root = repositoryRoot() ?? Deno.cwd();
-  return (await readWorkspaceMembers(join(root, "deno.jsonc")))
-    .map((member) => member.replace(/^\.\//, ""))
-    .filter((member) => member.startsWith("packages/"))
-    .sort();
+  return packageMembers(await workspaceMembers());
 }
 
 /** The identity a command-line argument names. */
@@ -492,12 +519,15 @@ export async function dispatch(
       return 0;
     case "coverage": {
       // The one mode that reads a manifest and carries on without one:
-      // which members are gated is a fact about the tree, and only the
-      // baseline each is measured against comes from a manifest.
+      // which members are gated and what units each has are facts about
+      // the tree, and what those units cost is what the manifest adds.
       const manifest = await sources.manifest();
-      for (const line of coverageLines(manifest, await sources.members())) {
-        console.log(line);
-      }
+      const lines = coverageLines(
+        manifest,
+        await sources.members(),
+        await sources.topology(),
+      );
+      for (const line of lines) console.log(line);
       return 0;
     }
     case "explain": {

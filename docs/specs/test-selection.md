@@ -210,8 +210,7 @@ whose tree was enumerated, how many runs the aggregate saw, every dial it
 was built with, the fitted calibration numbers, every identity with its
 score and the inputs behind it, the withheld set with its reason, the
 tests a configuration deliberately does not run, a reference packing into
-lanes, the unschedulable list, a count and digest of known identities, and
-the per-package coverage baselines.
+lanes, the unschedulable list, and a count and digest of known identities.
 
 A manifest is **untrusted input**. It is validated whole, and one bad
 field rejects the object rather than leaving a consumer obeying half of

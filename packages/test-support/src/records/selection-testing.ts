@@ -52,7 +52,6 @@ export function sampleManifest(fields: Partial<Manifest> = {}): Manifest {
     unschedulable: [],
     lanes: [],
     known: { count: 1, digest: "0000000000000000" },
-    coverageBaselines: [],
     ...fields,
   };
 }

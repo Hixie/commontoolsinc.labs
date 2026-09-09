@@ -134,7 +134,6 @@ export {
 } from "./selection-testing.ts";
 export type {
   Calibration,
-  CoverageBaseline,
   LanePlan,
   Manifest,
   ManifestEntry,

@@ -89,7 +89,6 @@ function manifestOf(entries: readonly Partial<ManifestEntry>[]): Manifest {
     unschedulable: [],
     lanes: [],
     known: { count: 0, digest: "" },
-    coverageBaselines: [],
   };
 }
 

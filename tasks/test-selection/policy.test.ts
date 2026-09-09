@@ -182,9 +182,9 @@ describe("policy", () => {
 
   describe("the coverage exclusion list", () => {
     it("gives every excluded member a reason", () => {
-      for (const [member, reason] of policy.EXCLUDED_FROM_COVERAGE_GATE) {
+      for (const [member, excluded] of policy.EXCLUDED_FROM_COVERAGE_GATE) {
         expect(member.startsWith("packages/")).toBe(true);
-        expect(reason.length).toBeGreaterThan(0);
+        expect(excluded.reason.length).toBeGreaterThan(0);
       }
     });
   });

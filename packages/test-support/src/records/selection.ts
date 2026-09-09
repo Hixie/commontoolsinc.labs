@@ -142,14 +142,6 @@ export interface LanePlan {
   batches: Array<{ suite: string; identities: string[] }>;
 }
 
-/** What a covered package's own tests reached at one `main` commit. */
-export interface CoverageBaseline {
-  member: string;
-  commit: string;
-  day: string;
-  uncoveredLines: number;
-}
-
 /** One publisher run's whole output. */
 export interface Manifest {
   schema: typeof MANIFEST_SCHEMA_VERSION;
@@ -178,8 +170,6 @@ export interface Manifest {
 
   /** How many item-level identities the store knows, and their digest. */
   known: { count: number; digest: string };
-
-  coverageBaselines: CoverageBaseline[];
 }
 
 /**
@@ -420,23 +410,6 @@ function parseLane(value: unknown): LanePlan | undefined {
   };
 }
 
-function parseBaseline(value: unknown): CoverageBaseline | undefined {
-  if (!isRecord(value)) return undefined;
-  if (
-    !isNonEmptyString(value.member) || !isNonEmptyString(value.commit) ||
-    !isNonEmptyString(value.day) || !isFiniteNumber(value.uncoveredLines) ||
-    value.uncoveredLines < 0
-  ) {
-    return undefined;
-  }
-  return {
-    member: value.member,
-    commit: value.commit,
-    day: value.day,
-    uncoveredLines: value.uncoveredLines,
-  };
-}
-
 /** Maps a list through a parser, failing whole if any element fails. */
 function parseAll<T>(
   value: unknown,
@@ -480,12 +453,10 @@ export function parseManifest(value: unknown): Manifest | undefined {
   const unavailable = parseAll(value.unavailable, parseUnavailable);
   const unschedulable = parseAll(value.unschedulable, parseUnschedulable);
   const lanes = parseAll(value.lanes, parseLane);
-  const coverageBaselines = parseAll(value.coverageBaselines, parseBaseline);
   if (
     calibration === undefined || entries === undefined ||
     withheld === undefined || unavailable === undefined ||
-    unschedulable === undefined || lanes === undefined ||
-    coverageBaselines === undefined
+    unschedulable === undefined || lanes === undefined
   ) {
     return undefined;
   }
@@ -518,7 +489,6 @@ export function parseManifest(value: unknown): Manifest | undefined {
     unschedulable,
     lanes,
     known: { count: value.known.count, digest: value.known.digest },
-    coverageBaselines,
   };
 }
 

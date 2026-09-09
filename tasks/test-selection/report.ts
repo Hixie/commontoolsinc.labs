@@ -472,7 +472,7 @@ export function packageRises(input: ReportInput): PackageRise[] {
         : "elsewhere",
     };
     if (rise.route === "over-the-cap") rise.touched = touched.length;
-    if (rise.route === "excluded") rise.reason = excluded;
+    if (excluded !== undefined) rise.reason = excluded.reason;
     rises.push(rise);
   }
   return rises.sort((a, b) => a.member < b.member ? -1 : 1);

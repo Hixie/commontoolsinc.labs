@@ -23,7 +23,6 @@ export {
 } from "@commonfabric/test-support/records";
 export type {
   Calibration,
-  CoverageBaseline,
   LanePlan,
   Manifest,
   ManifestEntry,
@@ -68,6 +67,5 @@ export function emptyManifest(): Manifest {
     unschedulable: [],
     lanes: [],
     known: { count: 0, digest: digestIdentities([]) },
-    coverageBaselines: [],
   };
 }

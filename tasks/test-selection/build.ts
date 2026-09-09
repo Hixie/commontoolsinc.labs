@@ -550,7 +550,6 @@ export function buildManifest(input: BuildInput): Manifest {
       count: entries.length,
       digest: digestIdentities(entries.map((e) => testIdentityKey(e.test))),
     },
-    coverageBaselines: [],
   };
 }
 

@@ -423,7 +423,9 @@ describe("report", () => {
         touched: new Set([excluded]),
       }));
       expect(rises[0]?.route).toBe("excluded");
-      expect(rises[0]?.reason).toBe(EXCLUDED_FROM_COVERAGE_GATE.get(excluded));
+      expect(rises[0]?.reason).toBe(
+        EXCLUDED_FROM_COVERAGE_GATE.get(excluded)?.reason,
+      );
     });
 
     // A package the gate would never have measured is on the exclusion
@@ -1040,7 +1042,7 @@ describe("report", () => {
         context,
       )!;
       expect(body).toContain("The list gives the reason:");
-      expect(body).toContain(EXCLUDED_FROM_COVERAGE_GATE.get(excluded));
+      expect(body).toContain(EXCLUDED_FROM_COVERAGE_GATE.get(excluded)?.reason);
       expect(body).toContain("The change touched 3 covered packages.");
     });
 

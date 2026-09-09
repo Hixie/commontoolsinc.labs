@@ -66,6 +66,21 @@ export const FULL_RUN_LABEL = "ci: full";
  */
 export const UNMEASURED_COST_SECONDS = 1;
 
+/**
+ * Measured units a suite needs before the middle one is taken as what a
+ * new unit of that suite costs.
+ *
+ * A median over one sample is that sample, and one unit is not evidence
+ * about a suite. The pattern integration suites are the case that shows
+ * it: the store held a single identity for each, a twelve-millisecond
+ * unit test that happens to sit in a file of browser-driven ones, so
+ * every other file in those suites was charged twelve milliseconds for
+ * work that takes half a minute. Below this many, a suite has no cost
+ * model of its own and its units are charged what the most expensive
+ * suite that does have one charges.
+ */
+export const STAND_IN_QUORUM = 5;
+
 /** The score of a test that has never failed anywhere. */
 export const VALUE_FLOOR = 0.05;
 
@@ -147,13 +162,18 @@ export const SUITE_FLAKE_PRIOR_RATE = 0.02;
 /** Uncovered lines a change must add before the comment mentions it. */
 export const COVERAGE_COMMENT_LINES = 25;
 
-/** Seconds past which a covered package's measured set is reported. */
+/**
+ * Seconds a covered package's own measured test set is read against. Past
+ * it the package is named as expensive, and an excluded package inside it
+ * is named as one the run now has room for. Nothing follows from either
+ * automatically.
+ */
 export const LOCAL_COVERAGE_MAX_SECONDS = 30;
 
 /** Covered packages a change may touch and still be gated. */
 export const LOCAL_COVERAGE_MAX_PACKAGES = 2;
 
-/** Days of per-package coverage baselines a manifest carries. */
+/** Days of runs on the default branch a per-package baseline may come from. */
 export const LOCAL_COVERAGE_BASELINE_DAYS = 7;
 
 /** Weeks of rising debt before the coverage tile goes amber. */
@@ -237,50 +257,121 @@ export const RENAME_SUGGESTIONS = 5;
 export const ALIAS_GATE_MIN_CATCHES: number | undefined = undefined;
 
 /**
+ * What a line on the exclusion list rests on, which is what decides
+ * whether a measurement could ever take it off.
+ */
+export type ExclusionBasis =
+  /**
+   * What the member's own tests cost. The store contradicts it when the
+   * whole of that set is measured and fits `LOCAL_COVERAGE_MAX_SECONDS`.
+   */
+  | "cost"
+  /**
+   * That the member has no Deno-only tests of its own. The store
+   * contradicts it the moment it measures one, whatever that one costs.
+   */
+  | "absence"
+  /**
+   * Something no measurement bears on, such as the member's own tests not
+   * being what covers it. Nothing reports on a line of this kind, and it
+   * comes off when somebody decides it should.
+   */
+  | "judgement";
+
+/** One member the per-package coverage gate does not cover. */
+export interface CoverageExclusion {
+  /** Why it is here, in words a person reads. */
+  reason: string;
+
+  basis: ExclusionBasis;
+}
+
+/**
  * Workspace members the per-package coverage gate does not cover, each
  * with the reason it is here. A list rather than a rule that measures
  * each package and decides, because such a rule can take a package's gate
  * away for a change nobody meant as a change to coverage, and a gate that
  * silently stops gating is worse than no gate.
+ *
+ * The list is a starting position and is expected to shrink. Each line
+ * says what it rests on, so the publisher can name the lines the store
+ * has since contradicted and a line comes off because somebody read a
+ * measurement.
  */
-export const EXCLUDED_FROM_COVERAGE_GATE: ReadonlyMap<string, string> = new Map(
+export const EXCLUDED_FROM_COVERAGE_GATE: ReadonlyMap<
+  string,
+  CoverageExclusion
+> = new Map(
   [
     [
       "packages/generated-patterns",
-      "Its test task defines no tests. Its test files run in the " +
-      "generated-patterns integration job.",
+      {
+        basis: "absence",
+        reason: "Its test task defines no tests. Its test files run in the " +
+          "generated-patterns integration job.",
+      },
     ],
-    ["packages/home-schemas", "It has no tests."],
-    ["packages/patterns/auth", "Its test task defines no tests."],
+    [
+      "packages/home-schemas",
+      {
+        basis: "absence",
+        reason: "Nothing has recorded its tests, so there is nothing of " +
+          "its own for the gate to measure.",
+      },
+    ],
+    [
+      "packages/patterns/auth",
+      { basis: "absence", reason: "Its test task defines no tests." },
+    ],
     [
       "packages/patterns",
-      "Authored pattern code is measured by transformer instrumentation " +
-      "in the pattern unit and integration jobs. The package's own " +
-      "`deno test` ignores the pattern files deliberately.",
+      {
+        basis: "judgement",
+        reason:
+          "Authored pattern code is measured by transformer instrumentation " +
+          "in the pattern unit and integration jobs. The package's own " +
+          "`deno test` ignores the pattern files deliberately.",
+      },
     ],
     [
       "packages/runner",
-      "Its whole set is past what all five lanes hold together.",
+      {
+        basis: "cost",
+        reason: "Its whole set is far past what a covered package should " +
+          "cost, and past what all five lanes hold together.",
+      },
     ],
     [
       "packages/cli",
-      "The command line's real coverage comes from the integration " +
-      "script rather than from these tests, so gating on them would " +
-      "ratchet the wrong number.",
+      {
+        basis: "judgement",
+        reason: "The command line's real coverage comes from the " +
+          "integration script rather than from these tests, so gating on " +
+          "them would ratchet the wrong number.",
+      },
     ],
     [
       "packages/identity",
-      "Every one of its tests runs in a browser through deno-web-test. " +
-      "It has no Deno-only half to measure.",
+      {
+        basis: "absence",
+        reason: "Every one of its tests runs in a browser through " +
+          "deno-web-test. It has no Deno-only half to measure.",
+      },
     ],
     [
       "packages/deno-web-test",
-      "Its tests drive the browser harness end to end.",
+      {
+        basis: "judgement",
+        reason: "Its tests drive the browser harness end to end.",
+      },
     ],
     [
       "packages/toolshed",
-      "Its tests want the service's own environment and its initialized " +
-      "database.",
+      {
+        basis: "judgement",
+        reason: "Its tests want the service's own environment and its " +
+          "initialized database.",
+      },
     ],
   ],
 );
@@ -396,9 +487,20 @@ export const DIALS: readonly Dial[] = [
     unit: "seconds",
     setBy: "chosen",
     why: "Up when a lane holding new tests runs long; down when it finishes " +
-      "early. It is reached for only by a suite with no measured test at " +
-      "all, since a suite that has any charges an unmeasured one what its " +
-      "middle test costs.",
+      "early. It is reached for only where no suite has a cost model at " +
+      "all, since a suite that has one charges an unmeasured unit what its " +
+      "middle unit costs and one that has none charges what the most " +
+      "expensive modelled suite charges.",
+  },
+  {
+    name: "STAND_IN_QUORUM",
+    value: STAND_IN_QUORUM,
+    unit: "measured units",
+    setBy: "chosen",
+    why: "Up when a suite's stand-ins are being charged from too thin a " +
+      "sample and its lanes run long; down when suites with real " +
+      "measurement are being treated as having none. A median over one " +
+      "unit is that unit, not a middle.",
   },
   {
     name: "VALUE_FLOOR",
@@ -628,7 +730,8 @@ export const DIALS: readonly Dial[] = [
     why:
       "Up when too many packages are reported as expensive for the report to " +
       "be worth reading; down when one is quietly eating a lane. Nothing is " +
-      "excluded either way; it only decides what the summary mentions.",
+      "excluded either way, and nothing comes off the exclusion list either " +
+      "way; it only decides what the summary mentions.",
   },
   {
     name: "LOCAL_COVERAGE_MAX_PACKAGES",
@@ -645,10 +748,13 @@ export const DIALS: readonly Dial[] = [
     value: EXCLUDED_FROM_COVERAGE_GATE.size,
     unit: "workspace members",
     setBy: "chosen",
-    why:
-      "Not a quantity. A line comes off when a package fits the run's budget " +
-      "or gains a Deno-only half, which turns its gate on. A line goes on " +
-      "when a package's own tests stop being what covers it.",
+    why: "Not a quantity. A line resting on what a package costs comes off " +
+      "when the publisher reports that its whole set now fits " +
+      "LOCAL_COVERAGE_MAX_SECONDS, and one resting on a package having no " +
+      "Deno-only tests when the publisher reports that the store has " +
+      "measured one. A line resting on a judgement comes off when somebody " +
+      "decides the package's own tests are what covers it after all, and " +
+      "goes on when they stop being.",
   },
   {
     name: "LOCAL_COVERAGE_BASELINE_DAYS",
@@ -657,8 +763,8 @@ export const DIALS: readonly Dial[] = [
     setBy: "chosen",
     why:
       "Up when branches based further back are being reported for want of an " +
-      "ancestor baseline; down when the manifest carries more history than " +
-      "anybody reads.",
+      "ancestor baseline; down when the walk reads more runs than anybody " +
+      "needs.",
   },
   {
     name: "COVERAGE_TREND_WEEKS",

@@ -39,7 +39,7 @@ import type { CapabilityId } from "../ci-capabilities.ts";
 const RUNNER_MEMBER = "./packages/runner";
 
 /** How a browser half is named as a unit, so it cannot be read as a file. */
-const BROWSER_SUFFIX = "#browser-test";
+export const BROWSER_SUFFIX = "#browser-test";
 
 /** What one member contributes to a unit suite. */
 interface Member {

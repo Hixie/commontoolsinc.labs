@@ -15,6 +15,7 @@ import {
   readNameMaps,
   RECORDS_DIR_VARIABLE,
   recordsDir,
+  repositoryRoot,
   spoolWriteArgument,
 } from "@commonfabric/test-support/records";
 import { parseShard, type Shard } from "./shard-utils.ts";
@@ -172,6 +173,13 @@ export async function readWorkspaceMembers(
     workspace: string[];
   };
   return manifest.workspace;
+}
+
+/** Every workspace member the root manifest declares. */
+export function workspaceMembers(): Promise<string[]> {
+  return readWorkspaceMembers(
+    path.join(repositoryRoot() ?? Deno.cwd(), "deno.jsonc"),
+  );
 }
 
 export function assertTaskTestsIncluded(members: string[]): void {

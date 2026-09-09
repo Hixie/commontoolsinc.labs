@@ -50,10 +50,13 @@ where the value comes from, and which way you would move it.
 
 ### `coverage`
 
-Every workspace member, whether it carries the per-package coverage gate,
-the reason beside it when it does not, and the baseline the newest
-manifest holds for it. This is what answers "why is my package not gated?"
-and "what am I being compared against?".
+Every workspace member, what its own tests cost by the newest manifest,
+whether it carries the per-package coverage gate, and the reason beside it
+when it does not. A gated member whose own tests cost more than
+`LOCAL_COVERAGE_MAX_SECONDS` is named as expensive, and an excluded member
+the store has since contradicted is named as one the run now has room for.
+This is what answers "why is my package not gated?" and "what am I being
+compared against?".
 
 ### `plan --dry-run [--lane N]`
 
@@ -143,7 +146,8 @@ setting to fix.
 | `FULL_LANE_BOUND_SECONDS` | 600 | seconds | chosen | Up when the run on `main` uses more jobs than it needs; down when `main` takes too long to say something broke. |
 | `FULL_LANE_BUDGET_SECONDS` | 530 | seconds | derived | Nothing edits this. It is the full run's bound less the same prologue and safety margin a pull request's lane pays, since a lane of either run is the same job doing the same setup on the same runner. |
 | `FULL_RUN_LABEL` | ci: full | a label | chosen | Not a quantity. Change it only if the label collides with one the repository already uses for something else. |
-| `UNMEASURED_COST_SECONDS` | 1 | seconds | chosen | Up when a lane holding new tests runs long; down when it finishes early. It is reached for only by a suite with no measured test at all, since a suite that has any charges an unmeasured one what its middle test costs. |
+| `UNMEASURED_COST_SECONDS` | 1 | seconds | chosen | Up when a lane holding new tests runs long; down when it finishes early. It is reached for only where no suite has a cost model at all, since a suite that has one charges an unmeasured unit what its middle unit costs and one that has none charges what the most expensive modelled suite charges. |
+| `STAND_IN_QUORUM` | 5 | measured units | chosen | Up when a suite's stand-ins are being charged from too thin a sample and its lanes run long; down when suites with real measurement are being treated as having none. A median over one unit is that unit, not a middle. |
 | `VALUE_FLOOR` | 0.05 | score | chosen | Up when the cheap tail is not being swept up; down when it crowds out tests with a record of catching things. |
 | `WEIGHT_PROVEN` | 0.55 | share of the score | chosen | Up when a record of catching things should count for more. The three weights are shares of one score, so what this gains the other two lose. |
 | `WEIGHT_BREADTH` | 0.25 | share of the score | chosen | Up when a test that several distinct sources have hit should count for more; down when breadth is mostly telling you about the environment rather than the test. |
@@ -168,10 +172,10 @@ setting to fix.
 | `MAX_REPEATS` | 3 | runs of one item | chosen | Up when intermittent regressions still get through; down when repeats are crowding a lane. |
 | `SUITE_FLAKE_PRIOR_RATE` | 0.02 | share of runs | chosen | Up when too many suites count as flake-prone and their new items are repeated needlessly; down when new tests in a noisy suite land unrepeated and then flake. |
 | `COVERAGE_COMMENT_LINES` | 25 | lines | chosen | Up when coverage comments are too noisy; down when debt is climbing unnoticed. |
-| `LOCAL_COVERAGE_MAX_SECONDS` | 30 | seconds | chosen | Up when too many packages are reported as expensive for the report to be worth reading; down when one is quietly eating a lane. Nothing is excluded either way; it only decides what the summary mentions. |
+| `LOCAL_COVERAGE_MAX_SECONDS` | 30 | seconds | chosen | Up when too many packages are reported as expensive for the report to be worth reading; down when one is quietly eating a lane. Nothing is excluded either way, and nothing comes off the exclusion list either way; it only decides what the summary mentions. |
 | `LOCAL_COVERAGE_MAX_PACKAGES` | 2 | packages | chosen | Up when broader changes should still be gated and the run can afford their packages' whole test sets; down when sweeping changes are crowding lanes. |
-| `EXCLUDED_FROM_COVERAGE_GATE` | 9 | workspace members | chosen | Not a quantity. A line comes off when a package fits the run's budget or gains a Deno-only half, which turns its gate on. A line goes on when a package's own tests stop being what covers it. |
-| `LOCAL_COVERAGE_BASELINE_DAYS` | 7 | days | chosen | Up when branches based further back are being reported for want of an ancestor baseline; down when the manifest carries more history than anybody reads. |
+| `EXCLUDED_FROM_COVERAGE_GATE` | 9 | workspace members | chosen | Not a quantity. A line resting on what a package costs comes off when the publisher reports that its whole set now fits LOCAL_COVERAGE_MAX_SECONDS, and one resting on a package having no Deno-only tests when the publisher reports that the store has measured one. A line resting on a judgement comes off when somebody decides the package's own tests are what covers it after all, and goes on when they stop being. |
+| `LOCAL_COVERAGE_BASELINE_DAYS` | 7 | days | chosen | Up when branches based further back are being reported for want of an ancestor baseline; down when the walk reads more runs than anybody needs. |
 | `COVERAGE_TREND_WEEKS` | 3 | weeks | chosen | Up when the tile goes amber too readily; down when debt climbs for a month before anybody is told. |
 | `CATCH_BREADTH_WINDOW_DAYS` | 2 | days | chosen | Up when a broken runner's failures are being counted as catches; down when genuine breadth is being written off as environmental. |
 | `SAME_COMMIT_REACH_DAYS` | 2 | days | chosen | How far back the fold remembers a commit's outcomes, so that a rerun landing in a later batch than the run it repeats is still read as the test disagreeing with itself. Up when reruns land far enough behind that their disagreement is being counted as a catch; down when the fold's memory is the thing that will not fit. It costs the number of identities that have failed times the number of commits, so it is the dial to check first when a run runs out of memory. |

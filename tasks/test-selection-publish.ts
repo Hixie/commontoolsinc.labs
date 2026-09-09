@@ -68,7 +68,18 @@ import {
 } from "./test-selection/store.ts";
 import { serializeManifest } from "./test-selection/manifest.ts";
 import { plan } from "./test-selection/plan.ts";
-import { LANE_BUDGET_SECONDS, LANES } from "./test-selection/policy.ts";
+import {
+  costPhrase,
+  type CoverageCostReport,
+  coverageCosts,
+  memberCosts,
+} from "./test-selection/coverage.ts";
+import {
+  LANE_BUDGET_SECONDS,
+  LANES,
+  LOCAL_COVERAGE_MAX_SECONDS,
+} from "./test-selection/policy.ts";
+import { workspaceMembers } from "./workspace-tests.ts";
 
 /**
  * Everything this reaches the world through. The default is the real
@@ -400,6 +411,7 @@ export async function publish(
   store: StoreAccess = liveStore(storeBucket()),
   now: Date = new Date(),
   topology: () => Promise<readonly Suite[]> = () => loadTopology(),
+  members: () => Promise<readonly string[]> = workspaceMembers,
 ): Promise<number> {
   const options = parseArgs(args);
   if (options === undefined) {
@@ -639,6 +651,7 @@ export async function publish(
     folded.observations,
     unplaced,
     aggregate.unclaimed,
+    coverageCosts(memberCosts(manifest, await members(), suites)),
   );
 
   if (options.out !== undefined) {
@@ -723,6 +736,7 @@ function summarize(
   observations: number,
   unplaced: Unplaced,
   wasUnclaimed: readonly string[] | undefined,
+  costs: CoverageCostReport,
 ): void {
   console.log(
     `test selection: folded ${observations} execution(s) into ` +
@@ -803,6 +817,43 @@ function summarize(
     console.log(
       `test selection: unschedulable, ${entry.cost.toFixed(1)}s: ` +
         JSON.stringify(entry.test),
+    );
+  }
+  reportCoverageCosts(costs);
+}
+
+/**
+ * What the run's own measurements say about which packages carry the
+ * per-package coverage gate. Nothing here fails anything or changes what
+ * runs; each line is a decision about the repository for a person to make.
+ */
+function reportCoverageCosts(costs: CoverageCostReport): void {
+  for (const cost of costs.expensive) {
+    console.log(
+      `test selection: ${cost.member} costs ${costPhrase(cost)}, past the ` +
+        `${LOCAL_COVERAGE_MAX_SECONDS}s a covered package is reported at`,
+    );
+  }
+  if (costs.expensive.length > 0) {
+    console.log(
+      "test selection: split those tests, let the run carry the cost, or " +
+        "add a line to EXCLUDED_FROM_COVERAGE_GATE",
+    );
+  }
+  // How much of the corpus the list above was chosen from. A covered
+  // package the store has never measured cannot be named as expensive
+  // however much its tests cost.
+  if (costs.unmeasured.length > 0) {
+    console.log(
+      `test selection: ${costs.unmeasured.length} covered package(s) have ` +
+        `no Deno-only measurement, so nothing above speaks for them`,
+    );
+  }
+  for (const cost of costs.fitting) {
+    console.log(
+      `test selection: ${cost.member} is excluded from the coverage gate ` +
+        `and the store now measures ${costPhrase(cost)} of its own, so its ` +
+        `line can come off`,
     );
   }
 }

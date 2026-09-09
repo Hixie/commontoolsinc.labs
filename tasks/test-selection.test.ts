@@ -227,40 +227,92 @@ describe("test-selection", () => {
 });
 
 describe("coverageLines()", () => {
-  it("names the baseline a member is gated against", () => {
-    const manifest = sampleManifest({
-      coverageBaselines: [{
-        member: "packages/memory",
-        commit: "abcdef0",
-        day: "2026-08-20",
-        uncoveredLines: 41,
-      }],
-    });
-    expect(coverageLines(manifest, ["packages/memory"])).toEqual([
-      "packages/memory  gated, against 41 uncovered lines at abcdef0",
+  /** The one unit `sampleEntry` puts a memory identity in. */
+  const MEMORY_UNIT = "packages/memory/test/memory.test.ts";
+
+  /** A manifest whose one memory identity costs these seconds. */
+  const costing = (cost: number) =>
+    sampleManifest({ entries: [sampleEntry(TEST, { cost })] });
+
+  it("names what a gated member is measured against", () => {
+    const lines = coverageLines(costing(4), ["packages/memory"], TOPOLOGY);
+    expect(lines).toEqual([
+      "packages/memory  4.0s over 1 unit(s)  gated, against the newest " +
+      "ancestor run on the default branch",
     ]);
   });
 
-  it("says so when a member has no baseline yet", () => {
-    const lines = coverageLines(sampleManifest(), ["packages/memory"]);
-    expect(lines).toEqual(["packages/memory  gated, against no baseline yet"]);
+  it("says a covered member's own tests have grown expensive", () => {
+    // The same figure the publisher reports, so the two answer the same
+    // question. Nothing follows from it here either.
+    const lines = coverageLines(costing(90), ["packages/memory"], TOPOLOGY);
+    expect(lines[0]).toContain("90.0s");
+    expect(lines[0]).toContain("past the 30s a covered package is reported at");
+  });
+
+  it("tells a member with no set apart from one nothing measured", () => {
+    // A member the topology enumerates no Deno-only unit for has nothing
+    // for the gate to measure; one it does, that the store holds nothing
+    // for, is waiting on a run.
+    expect(coverageLines(costing(4), ["packages/other"], TOPOLOGY)[0])
+      .toContain("no tests");
+    const empty = sampleManifest({ entries: [] });
+    expect(coverageLines(empty, ["packages/memory"], TOPOLOGY)[0])
+      .toContain("unmeasured");
+  });
+
+  it("says how much of a member's set the figure covers", () => {
+    const suites = [suiteHolding([MEMORY_UNIT, "packages/memory/b.test.ts"])];
+    const lines = coverageLines(costing(4), ["packages/memory"], suites);
+    expect(lines[0]).toContain("4.0s over 1 of 2 unit(s)");
   });
 
   it("gives the reason for a member the gate leaves alone", () => {
     const member = [...EXCLUDED_FROM_COVERAGE_GATE.keys()][0]!;
-    const lines = coverageLines(sampleManifest(), [member]);
+    const lines = coverageLines(sampleManifest(), [member], TOPOLOGY);
     expect(lines[0]).toContain("not gated: ");
-    expect(lines[0]).toContain(EXCLUDED_FROM_COVERAGE_GATE.get(member)!);
+    expect(lines[0]).toContain(
+      EXCLUDED_FROM_COVERAGE_GATE.get(member)!.reason,
+    );
   });
 
-  it("reads a manifest that is missing the same as one with no baselines", () => {
+  it("says an excluded member's own tests now fit beside its reason", () => {
+    // The reason claims a set the store no longer measures that way, and
+    // both are printed so that whoever takes the line off has read both.
+    const manifest = sampleManifest({
+      entries: [sampleEntry({ k: "unit", s: "runner", n: "a" }, {
+        unit: "packages/runner/test/a.test.ts",
+        cost: 4,
+      })],
+    });
+    const suites = [suiteHolding(["packages/runner/test/a.test.ts"])];
+    const lines = coverageLines(manifest, ["packages/runner"], suites);
+    expect(lines[0]).toContain("not gated, though the run now has room for it");
+    expect(lines[0]).toContain(
+      EXCLUDED_FROM_COVERAGE_GATE.get("packages/runner")!.reason,
+    );
+  });
+
+  it("reads a manifest that is missing as nothing being measured", () => {
     const members = ["packages/memory", "packages/runner"];
-    expect(coverageLines(undefined, members))
-      .toEqual(coverageLines(sampleManifest(), members));
+    // A member's units come from the tree, so the same topology stands on
+    // both sides. Without a manifest the units are still enumerated and
+    // nothing has measured them, which is a different thing from a member
+    // having no tests to measure.
+    expect(coverageLines(undefined, members, TOPOLOGY))
+      .toEqual(
+        coverageLines(sampleManifest({ entries: [] }), members, TOPOLOGY),
+      );
+    expect(coverageLines(undefined, members, TOPOLOGY)[0])
+      .toContain("unmeasured");
   });
 
-  it("pads every member to one width, so the column lines up", () => {
-    const lines = coverageLines(undefined, ["packages/a", "packages/longer"]);
+  it("pads every member to one width, so the columns line up", () => {
+    const lines = coverageLines(
+      undefined,
+      ["packages/a", "packages/longer"],
+      TOPOLOGY,
+    );
     const at = lines.map((line) => line.indexOf("gated"));
     expect(at[0]).toBe(at[1]);
   });
@@ -408,8 +460,9 @@ describe("gatedMembers()", () => {
     expect(members.every((member) => member.startsWith("packages/"))).toBe(
       true,
     );
-    // The workspace file lists members with a leading "./", and the
-    // coverage baselines a manifest carries do not.
+    // The workspace file lists members with a leading "./". The
+    // exclusion list is keyed without one, and so are the lines
+    // `coverage` prints.
     expect(members.some((member) => member.startsWith("./"))).toBe(false);
     expect(members).toContain("packages/test-support");
     expect([...members].sort()).toEqual(members);
@@ -486,7 +539,7 @@ describe("dispatch()", () => {
     });
     expect(result.code).toBe(0);
     expect(result.out).toContain("packages/memory");
-    expect(result.out).toContain("no baseline yet");
+    expect(result.out).toContain("the newest ancestor run on the default");
   });
 
   it("stops when explain is given no identity, or a bad one", async () => {

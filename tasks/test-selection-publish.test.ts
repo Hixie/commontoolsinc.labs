@@ -1119,3 +1119,78 @@ describe("publish() reporting what no lane can hold", () => {
     expect(line).toContain("400.0s");
   });
 });
+
+describe("publish() reporting what the coverage gate covers", () => {
+  const NOW = new Date("2026-08-20T12:00:00.000Z");
+
+  /** Two runs of the one test these cases record, each taking this long. */
+  function lasting(ms: number): Record<string, string> {
+    const at = (commit: string, hour: string) =>
+      object(commit, "pass", `2026-08-20T${hour}:00:00.000Z`)
+        .replace('"durationMs":40', `"durationMs":${ms}`);
+    return { [CI(DAY, "1")]: at("c1", "01"), [CI(DAY, "2")]: at("c2", "02") };
+  }
+
+  /** What a bootstrap over those runs printed. */
+  async function said(
+    members: readonly string[],
+    ms: number,
+    topology: () => Promise<readonly Suite[]> = suites,
+  ): Promise<string[]> {
+    const { store } = fakeStore(lasting(ms));
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...parts: unknown[]) => lines.push(parts.join(" "));
+    try {
+      expect(
+        await publish(
+          ["--bootstrap", "--days", "1"],
+          store,
+          NOW,
+          topology,
+          () => Promise.resolve(members),
+        ),
+      ).toBe(0);
+    } finally {
+      console.log = log;
+    }
+    return lines;
+  }
+
+  it("names a covered package whose own tests have grown expensive", async () => {
+    const lines = await said(["./packages/memory"], 45_000);
+    expect(lines.find((line) => line.includes("packages/memory costs")))
+      .toContain("past the 30s a covered package is reported at");
+    // What to do about it, said once rather than beside every package.
+    expect(lines.some((line) => line.includes("EXCLUDED_FROM_COVERAGE_GATE")))
+      .toBe(true);
+  });
+
+  it("says nothing about a covered package the run has room for", async () => {
+    const lines = await said(["./packages/memory"], 40);
+    expect(lines.some((line) => line.includes("packages/memory costs")))
+      .toBe(false);
+  });
+
+  it("names an excluded package the run now has room for", async () => {
+    // `packages/runner` is excluded for what its whole set costs, so a
+    // set that now fits is what takes the line off the list.
+    const unit = "packages/runner/test/space.test.ts";
+    const inRunner: Suite[] = [{
+      id: "workspace-unit",
+      recordSurfaces: [{ kind: "unit", scope: "memory" }],
+      needs: ["deno"],
+      units: [unit],
+      unavailable: [],
+      locate: () => ({ level: "unit", unit }),
+      command: () => Promise.resolve([]),
+    }];
+    const lines = await said(
+      ["./packages/runner"],
+      40,
+      () => Promise.resolve(inRunner),
+    );
+    expect(lines.find((line) => line.includes("packages/runner")))
+      .toContain("so its line can come off");
+  });
+});

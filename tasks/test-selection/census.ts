@@ -22,8 +22,13 @@ import {
   type Manifest,
   type ManifestEntry,
 } from "./manifest.ts";
+import { measuredUnits } from "./coverage.ts";
 import type { SelectionReason } from "./plan.ts";
-import { UNMEASURED_COST_SECONDS, VALUE_FLOOR } from "./policy.ts";
+import {
+  STAND_IN_QUORUM,
+  UNMEASURED_COST_SECONDS,
+  VALUE_FLOOR,
+} from "./policy.ts";
 
 /**
  * A stand-in identity for a unit no manifest has ever seen. Records exist
@@ -71,17 +76,26 @@ function median(values: readonly number[]): number | undefined {
  * guess there is at what a new one will take. Charging nothing, which is
  * what a stand-in used to cost, made the packer treat every new test as
  * free and put the whole of a new suite in the first lane it offered.
+ *
+ * That holds while the suite has enough measured units for a middle to
+ * mean anything. Below `STAND_IN_QUORUM` it has none, and `uncosted` is
+ * what it charges instead: what the most expensive suite that does have
+ * a cost model charges. Erring high is the safe direction, for the same
+ * reason the full run's lane count errs high — too much and a lane
+ * finishes early, too little and it runs past the bound its job is
+ * killed at.
  */
 export function standIn(
   suite: Suite,
   unit: Unit,
   suiteCosts: readonly number[],
+  uncosted: number = UNMEASURED_COST_SECONDS,
 ): ManifestEntry {
   return {
     test: unknownIdentity(suite, unit),
     suite: suite.id,
     unit,
-    cost: median(suiteCosts) ?? UNMEASURED_COST_SECONDS,
+    cost: suiteCosts.length >= STAND_IN_QUORUM ? median(suiteCosts)! : uncosted,
     score: VALUE_FLOOR,
     inputs: { catches: 0, sources: 0, churn: 0 },
     flakeRate: 0,
@@ -119,16 +133,20 @@ export interface Census {
 /**
  * Reads the working tree against a manifest.
  *
- * Two rules make a unit mandatory: the change touched what it covers, or
- * no manifest has ever seen it. The second is the rule the test-record
- * spec requires of any consumer that selects which tests run. A selector
- * that never runs the unselected starves its own data, and a renamed test
- * is an unknown identity until an alias lands.
+ * Three rules make a unit mandatory: the change touched what it covers,
+ * no manifest has ever seen it, or it is part of the measured set of a
+ * package the coverage gate covers. The second is the rule the
+ * test-record spec requires of any consumer that selects which tests run.
+ * A selector that never runs the unselected starves its own data, and a
+ * renamed test is an unknown identity until an alias lands. The third is
+ * what makes the per-package gate honest: a package is scored against the
+ * default branch only where every one of its own tests ran.
  */
 export function census(
   suites: readonly Suite[],
   manifest: Manifest | undefined,
   changed: ReadonlySet<string>,
+  measured: ReadonlySet<string> = new Set(),
 ): Census {
   // Everything below writes into the manifest this returns. What it does
   // not touch is what a manifest says about its own publication rather
@@ -153,6 +171,15 @@ export function census(
     const suite = key.slice(0, key.indexOf("\t"));
     costs.set(suite, [...costs.get(suite) ?? [], total]);
   }
+  // What a suite with too little measurement charges its stand-ins. A
+  // suite that has a cost model of its own is what this is taken from, so
+  // the figure moves as the store learns rather than being chosen.
+  const modelled = [...costs.values()]
+    .filter((units) => units.length >= STAND_IN_QUORUM)
+    .map((units) => median(units)!);
+  const uncosted = modelled.length === 0
+    ? UNMEASURED_COST_SECONDS
+    : Math.max(...modelled);
   const entries: ManifestEntry[] = [];
   const mandatory = new Map<string, SelectionReason>();
   const taken = new Set<string>(
@@ -170,14 +197,24 @@ export function census(
         ? suite.unitsForChange(changed)
         : suite.units.filter((unit) => changed.has(unit)),
     );
+    const gated = new Set<string>(
+      measuredUnits(suite.id, suite.units, measured),
+    );
     for (const unit of suite.units) {
       if (unavailable.has(unit)) continue;
       const reason: SelectionReason | undefined = touched.has(unit)
         ? "changed"
+        : gated.has(unit)
+        ? "coverage-gate"
         : undefined;
       const recorded = inUnit.get(`${suite.id}\t${unit}`);
       if (recorded === undefined) {
-        const entry = standIn(suite, unit, costs.get(suite.id) ?? []);
+        const entry = standIn(
+          suite,
+          unit,
+          costs.get(suite.id) ?? [],
+          uncosted,
+        );
         const key = testIdentityKey(entry.test);
         // A stand-in is named for the unit it stands in for, and a real
         // test could in principle be given that name. Two things would

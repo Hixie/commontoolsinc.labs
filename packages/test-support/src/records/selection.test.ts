@@ -62,6 +62,23 @@ describe("selection", () => {
       expect(parseManifest(JSON.stringify(ahead))).toBeUndefined();
     });
 
+    it("reads a manifest carrying a field this version does not name", () => {
+      // The validator reads the fields it names and drops the rest, so a
+      // stored manifest carrying a field this version does not name is
+      // still a manifest of this version.
+      const manifest = sampleManifest();
+      const stored = {
+        ...manifest,
+        coverageBaselines: [{
+          member: "packages/memory",
+          commit: "c",
+          day: "2026-08-20",
+          uncoveredLines: 3,
+        }],
+      };
+      expect(parseManifest(JSON.stringify(stored))).toEqual(manifest);
+    });
+
     it("returns undefined rather than obeying part of a manifest", () => {
       const manifest = sampleManifest();
       // Written into the JSON rather than the object: `JSON.stringify`
@@ -201,14 +218,6 @@ describe("selection", () => {
           lane: 1,
           projectedSeconds: 0,
           batches: [{ suite: "s" }],
-        }]),
-      ],
-      [
-        "a baseline with no member",
-        withField("coverageBaselines", [{
-          commit: "c",
-          day: "2026-08-20",
-          uncoveredLines: 0,
         }]),
       ],
       [
@@ -442,13 +451,6 @@ describe("selection", () => {
           batches: [{ suite: "unit", identities: [7] }],
         }]),
       ],
-
-      // The coverage baselines, which are what the gate measures against.
-      ["a baseline list that is not one", withField("coverageBaselines", 7)],
-      [
-        "a baseline that is not a record",
-        withField("coverageBaselines", ["packages/memory"]),
-      ],
     ];
 
     for (const [what, text] of rejected) {
@@ -466,12 +468,6 @@ describe("selection", () => {
           variant: "on",
           leafName: "a leaf",
           phase: "compile",
-        }],
-        coverageBaselines: [{
-          member: "packages/memory",
-          commit: "c",
-          day: "2026-08-20",
-          uncoveredLines: 3,
         }],
         withheld: [{
           test: TEST,
