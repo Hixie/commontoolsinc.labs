@@ -138,6 +138,28 @@ export const FILL_EXPLORATION_SHARE = 0.15;
 export const FLAKE_EXCLUSION_RATE = 0.005;
 
 /**
+ * The suites whose failures always fail the run, whatever their flake
+ * rate, and which are therefore never held back from a pull request
+ * either.
+ *
+ * What separates these from every other suite is what one identity of
+ * theirs stands for. A unit of `repo-gates` is one whole gate — the
+ * format check, the lint, the skill-fact check — so excusing that
+ * identity does not weaken the gate, it removes it, and every real
+ * failure that gate would have caught goes with it. A unit of
+ * `typecheck`, `cfcheck`, `pattern-compat` or `pattern-vintage` is one
+ * member of what that gate covers — one package group, one pattern — so
+ * excusing one leaves the gate saying what it says about all the others.
+ * Those suites hold hundreds of members each, and holding every change
+ * back because one member disagrees with itself is what
+ * `FLAKE_EXCLUSION_RATE` exists to prevent.
+ */
+export const ALWAYS_GATING_SUITES: ReadonlySet<string> = new Set([
+  "repo-gates",
+  "repo-history-gates",
+]);
+
+/**
  * What an item that has ever disagreed with itself runs, however rarely
  * it does. One execution cannot tell a pass from a lucky pass, so an
  * item with any flake rate at all is run at least twice.
@@ -604,6 +626,15 @@ export const DIALS: readonly Dial[] = [
     why:
       "Up when the unselected corpus is going stale; down when lanes spend " +
       "the share on tests that never find anything.",
+  },
+  {
+    name: "ALWAYS_GATING_SUITES",
+    value: ALWAYS_GATING_SUITES.size,
+    unit: "suites",
+    setBy: "chosen",
+    why: "Add a suite whose failures are never noise, so that a flake rate " +
+      "cannot excuse one; remove one whose failures a change's author " +
+      "cannot act on.",
   },
   {
     name: "FLAKE_EXCLUSION_RATE",

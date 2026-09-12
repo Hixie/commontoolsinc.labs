@@ -35,9 +35,16 @@ deno task test-selection explain '["integration","patterns","counter.test.ts","s
 It prints the suite and the invocation unit the identity belongs to, its
 score and its cost, the catches behind that score and how many distinct
 sources they came from, when the most recent one was, its churn and flake
-rate, and whether it is withheld and why. An identity the store has never
+rate, whether the manifest withholds it, how many times it would run, and
+whether the current manifest reaches it. An identity the store has never
 seen is reported as mandatory, which is what an identity with no history
 is.
+
+Each of those is printed on its own, because they are not alternatives. A
+withheld identity a change reaches runs anyway, and one in a suite
+`ALWAYS_GATING_SUITES` names is withheld in the manifest and run here
+regardless, so an answer that picked one of them would be leaving out
+something true.
 
 The identity resolves through `tasks/test-identity-aliases.jsonl` first,
 so asking about a renamed test under either name finds the joined history.
@@ -152,7 +159,20 @@ Four things are worth knowing before reading a failure.
 
 Nothing about coverage fails a run on `main`. That run measures every set,
 which is where the baselines come from, and merges every report into the
-repository-wide figure the dashboard tile shows.
+repository-wide figure the dashboard tile shows. Run it yourself the way
+that job does:
+
+```
+deno run -A tasks/coverage-report.ts --reports <directory>
+```
+
+One set can come out of that with no baseline. A lane that saw a unit of
+a measured set fail writes a marker beside that set's report, and the
+report goes on merging into the repository-wide figure while the set
+publishes nothing. What the marker stops is a number the run did not
+clear becoming the bar every later pull request is held to: the run can
+stay green through such a failure, so nothing else downstream would know
+the number is short by whatever the failing test would have reached.
 
 ## Every dial
 
@@ -221,6 +241,7 @@ setting to fix.
 | `FILL_VALUE_SHARE` | 0.6 | share of the run's budget | chosen | Up when expensive high-value tests are crowded out by cheap ones; down when a lane spends its budget on a few slow tests and runs little else. The three shares sum to one. |
 | `FILL_DENSITY_SHARE` | 0.25 | share of the run's budget | chosen | Up when more of the cheap tail should run; down when the tail is displacing tests with a record. |
 | `FILL_EXPLORATION_SHARE` | 0.15 | share of the run's budget | chosen | Up when the unselected corpus is going stale; down when lanes spend the share on tests that never find anything. |
+| `ALWAYS_GATING_SUITES` | 2 | suites | chosen | Add a suite whose failures are never noise, so that a flake rate cannot excuse one; remove one whose failures a change's author cannot act on. |
 | `FLAKE_EXCLUSION_RATE` | 0.005 | share of runs | chosen | Up when fewer tests should be held back from pull requests; down when flakes are still blocking people. |
 | `FLAKE_MIN_EXECUTIONS` | 2 | runs of one item | chosen | What an item that has ever disagreed runs. Down to one when the cheapest evidence of intermittency is not worth a second execution; nowhere useful above two, since the line through the anchor covers everything flakier. |
 | `FLAKE_ANCHOR_RATE` | 0.01 | share of runs | chosen | With `FLAKE_ANCHOR_EXECUTIONS`, the point the count's line passes through. Down to make the count climb faster with the rate; up to make it climb slower. |
@@ -543,6 +564,24 @@ newest manifest withholds it and how many runs it is given. The lanes are
 what carry this, so it describes what lands with them rather than what runs
 today, and the reasoning behind each part is in [the
 plan](../plans/pull-request-test-selection.md#an-excluded-test-still-runs-on-main).
+
+Three things go with that rule.
+
+- **A suite `ALWAYS_GATING_SUITES` names is never excused, and never
+  withheld from a change either.** One unit of `repo-gates` is one whole
+  gate, so excusing it would not weaken that gate, it would remove it.
+- **A failure the branch has not gone red for is still aged out.** It
+  waits for a later run to judge it, and a run that no longer has to
+  arrive is one nothing would bound the wait for.
+- **A measured set whose unit failed publishes no baseline**, which [the
+  coverage gate](#the-coverage-gate) covers.
+
+A lane decides all of this from the records its batches gathered rather
+than from what a command exited with. A runner that failed only on
+identities a flake rate excuses has told the run nothing it should stop
+for, and a runner that exited zero having run none of its unit has. So a
+unit that recorded nothing fails the lane, and an excusal holds only for
+an invocation that accounted for every identity it was asked to run.
 
 ## What the wall shows
 

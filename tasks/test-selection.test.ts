@@ -139,6 +139,52 @@ describe("test-selection", () => {
       );
     });
 
+    it("says a withheld gate runs anyway, because its suite always gates", () => {
+      // A gate that disagrees with itself is a bug in the gate rather
+      // than a test too noisy to judge a change by, so it is not held
+      // back and its failure is not excused.
+      const held = manifest();
+      held.withheld = [{ test: TEST, suite: "repo-gates", reason: "flaky" }];
+      const text = explainLines(held, TEST, { selected: true }).join("\n");
+      expect(text).toContain("run anyway");
+      expect(text).toContain("the current manifest selects it");
+    });
+
+    it("says how many runs a withheld identity a change reaches gets", () => {
+      // The three answers do not partition: a withheld identity the
+      // change reaches is selected, and has a repeat count like any
+      // other.
+      const held = manifest();
+      held.withheld = [{
+        test: TEST,
+        suite: "workspace-unit",
+        reason: "flaky",
+      }];
+      const text = explainLines(held, TEST, { selected: true, repeats: 3 })
+        .join("\n");
+      expect(text).toContain("withheld");
+      expect(text).toContain("run 3 times");
+      expect(text).toContain("the current manifest selects it");
+    });
+
+    it("says why a lane missed a gate the manifest also holds back", () => {
+      // A gate this flaky is still selectable, so a packing that did not
+      // reach it ran out of budget, and saying nothing would leave the
+      // reader with the flake rate as the apparent reason.
+      const held = manifest();
+      held.withheld = [{ test: TEST, suite: "repo-gates", reason: "flaky" }];
+      expect(explainLines(held, TEST, { selected: false }).join("\n"))
+        .toContain("does not reach it");
+      // A test that is genuinely held back was not missed by a budget.
+      held.withheld = [{
+        test: TEST,
+        suite: "workspace-unit",
+        reason: "flaky",
+      }];
+      expect(explainLines(held, TEST, { selected: false }).join("\n"))
+        .not.toContain("does not reach it");
+    });
+
     it("reports the repeat count the packing settled on", () => {
       const held = manifest();
       held.entries[0]!.repeats = 3;

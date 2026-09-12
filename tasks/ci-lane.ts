@@ -54,17 +54,19 @@ import {
   type Selection,
   type SelectionReason,
 } from "./test-selection/plan.ts";
-import { type Census, census } from "./test-selection/census.ts";
+import { type Census, census, isStandIn } from "./test-selection/census.ts";
 import {
   type CoverageGateSelection,
   measuredMembersOf,
   measuredSetDirectory,
   measuredSetName,
+  measuredSets,
 } from "./test-selection/coverage.ts";
 import type { Manifest, WithheldReason } from "./test-selection/manifest.ts";
 import { LANES } from "./test-selection/policy.ts";
 import { writeLcovReport } from "./write-coverage-lcov.ts";
 import {
+  batchMeasurementName,
   LANE_MEASUREMENT_PREFIX,
   LANE_MEASUREMENT_SURFACE,
 } from "./lane-measurement.ts";
@@ -124,6 +126,28 @@ export const COVERAGE_REPORT_DIR = "lcov/sets";
  * sharing a directory would share that too.
  */
 export const COVERAGE_REPORT_FILE = "coverage.lcov";
+
+/**
+ * The measured set a file inside a lane's report layout belongs to, named
+ * by the directory the lane wrote it in, or nothing where the file is not
+ * inside that layout.
+ *
+ * The layout is matched whole rather than by its last segment, so that a
+ * suite named after one of those segments cannot be read as the layout
+ * itself. Whatever the file is — the report, or a marker written beside
+ * it — this is the one answer to which set it belongs to, so a reader
+ * cannot part company with the lane that wrote it.
+ */
+export function measuredSetOfReport(at: string): string | undefined {
+  const layout = COVERAGE_REPORT_DIR.split("/");
+  const parts = at.replaceAll("\\", "/").split("/");
+  const start = parts.findIndex((_, index) =>
+    parts.slice(index, index + layout.length).join("/") === COVERAGE_REPORT_DIR
+  );
+  if (start === -1) return undefined;
+  const rest = parts.slice(start + layout.length);
+  return rest.length === 3 ? `${rest[0]}/${rest[1]}` : undefined;
+}
 
 /** Where this lane's coverage goes, absolute. */
 export function coverageRoot(options: LaneOptions): string {
@@ -475,6 +499,49 @@ export function batchCoverage(
 }
 
 /**
+ * What a lane writes beside a set's report when the units it measured
+ * through held a failure the run did not fail for.
+ *
+ * Coverage measured through a failing unit is short by whatever that
+ * unit would have reached, and a run excusing a flaky failure stays
+ * green, so nothing else downstream would know. The report still merges
+ * into the repository-wide figure, which is a trend; what this stops is
+ * the set's own number becoming the baseline every later pull request is
+ * held to.
+ */
+export const COVERAGE_FAILURE_MARKER = "measured-through-a-failure.txt";
+
+/**
+ * Marks each measured set whose units a lane saw fail, beside the report
+ * it wrote for that set.
+ */
+export async function markMeasuredFailures(
+  options: LaneOptions,
+  suites: readonly Suite[],
+  failed: ReadonlySet<string>,
+): Promise<string[]> {
+  if (failed.size === 0) return [];
+  const root = coverageRoot(options);
+  const marked: string[] = [];
+  for (const ref of measuredSets(suites)) {
+    const hit = ref.set.units.filter((unit) =>
+      failed.has(`${ref.suite}\t${unit}`)
+    );
+    if (hit.length === 0) continue;
+    const at = path.join(
+      root,
+      COVERAGE_REPORT_DIR,
+      measuredSetDirectory(ref),
+      COVERAGE_FAILURE_MARKER,
+    );
+    await Deno.mkdir(path.dirname(at), { recursive: true });
+    await Deno.writeTextFile(at, `${hit.sort().join("\n")}\n`);
+    marked.push(measuredSetName(ref));
+  }
+  return marked.sort();
+}
+
+/**
  * Converts every profile directory a lane wrote into one report beside
  * it, and says whether every conversion accounted for what it was given.
  *
@@ -601,13 +668,131 @@ export async function runBatch(
     spoolRecords(spool, [
       ...records,
       timingRecord(
-        `${LANE_MEASUREMENT_PREFIX}batch ${batch.suite.id}`,
+        batchMeasurementName(batch.suite.id, coverage !== undefined),
         seconds,
         ok,
       ),
     ]);
   }
   return { ok, records, conflicts, seconds };
+}
+
+/** What reading a batch's records against what it was asked to run found. */
+export interface Accounting {
+  /** Failing identities whose failure fails the lane. */
+  gating: string[];
+
+  /** Failing identities a flake rate excuses, where they are excused. */
+  excused: string[];
+
+  /**
+   * Units the batch was asked to run that recorded nothing at all. A
+   * unit runs its tests or it does not, so a unit with no record is a
+   * runner that ran none of it — a skip list that swallowed the whole
+   * unit, or a command that reported success having done nothing.
+   */
+  silent: string[];
+
+  /**
+   * Identities the batch was asked to run and no record accounts for.
+   * An excused failure beside one of these is not excused: an invocation
+   * that recorded a failure and then stopped has run almost nothing
+   * while satisfying any weaker test.
+   */
+  unaccounted: string[];
+
+  /**
+   * The units a failure was seen in, whether or not it was excused. A
+   * measured set holding one of these measured its member through a
+   * failing test.
+   */
+  failedUnits: string[];
+}
+
+/**
+ * Reads one batch's records against what it was asked to run.
+ *
+ * An identity is accounted for by a record naming it. A stand-in is
+ * accounted for by its unit recording anything at all: a stand-in is what
+ * the packer places for a unit no manifest has seen, and no record will
+ * ever carry its name, because a real record is named for a test rather
+ * than for a file.
+ *
+ * A unit that recorded nothing recorded nothing under any name, and that
+ * is the state no run should pass in. An identity that went unaccounted
+ * for while its unit recorded is ordinary churn — a manifest is hours old
+ * by construction, and a test renamed since records under the new name —
+ * so it costs an excusal rather than the run.
+ */
+export function accountFor(
+  batch: Batch,
+  asked: readonly Selection[],
+  records: readonly TestRecord[],
+  nonGating: ReadonlySet<string>,
+): Accounting {
+  const gating: string[] = [];
+  const excused: string[] = [];
+  const heard = new Set<string>();
+  const heardUnits = new Set<string>();
+  const failedUnits = new Set<string>();
+  for (const record of records) {
+    const location = batch.suite.locate(record);
+    if (location?.level === "unit") heardUnits.add(location.unit);
+    const key = testIdentityKey(record.test);
+    heard.add(key);
+    if (record.outcome !== "fail") continue;
+    if (location?.level === "unit") failedUnits.add(location.unit);
+    (nonGating.has(key) ? excused : gating).push(key);
+  }
+  const unaccounted = asked
+    .filter((selection) => selection.entry.suite === batch.suite.id)
+    .filter((selection) =>
+      isStandIn(selection.entry)
+        ? !heardUnits.has(selection.entry.unit)
+        : !heard.has(testIdentityKey(selection.entry.test))
+    )
+    .map((selection) => testIdentityKey(selection.entry.test));
+  const silent = batch.units
+    .map((request) => request.unit)
+    .filter((unit) => !heardUnits.has(unit));
+  return {
+    gating: [...new Set(gating)].sort(),
+    excused: [...new Set(excused)].sort(),
+    silent: silent.sort(),
+    unaccounted: [...new Set(unaccounted)].sort(),
+    failedUnits: [...failedUnits].sort(),
+  };
+}
+
+/** Says what a batch's records came to, where they came to anything. */
+export function describeAccounting(
+  suite: string,
+  accounting: Accounting,
+  excusing: boolean,
+): void {
+  const lines: string[] = [];
+  if (accounting.excused.length > 0) {
+    lines.push(
+      excusing
+        ? `${suite}: ${accounting.excused.length} failures too flaky to ` +
+          `judge a change by, which do not fail this run:`
+        : `${suite}: ${accounting.excused.length} failures a flake rate ` +
+          `would excuse, which fail this run because the batch did not ` +
+          `account for everything it was asked to run:`,
+      "",
+    );
+    for (const key of accounting.excused) lines.push(`- ${key}`);
+  }
+  if (accounting.silent.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      `${suite}: ${accounting.silent.length} units recorded nothing, so ` +
+        `nothing ran them:`,
+      "",
+    );
+    for (const unit of accounting.silent) lines.push(`- ${unit}`);
+  }
+  if (lines.length > 0) say(lines);
 }
 
 /** Says something both on the lane's output and in the job summary. */
@@ -998,6 +1183,16 @@ export async function runLane(
   }
   let ok = true;
   const conflicts: TestRecord[] = [];
+  // Units a failure was seen in, as `suite\tunit` keys. A set holding one
+  // of these measured its member through a failing test, so its number is
+  // short by whatever that test would have reached.
+  const failedUnits = new Set<string>();
+  // What a failure here is allowed not to fail the run for. A pull
+  // request holds these back rather than running them, so the set is
+  // empty there and the whole of this is the full run's.
+  const nonGating = new Set(
+    laid.nonGating.map((entry) => testIdentityKey(entry.test)),
+  );
   try {
     for (const batch of batches) {
       // A failure never stops the lane: one failing batch would otherwise
@@ -1014,8 +1209,39 @@ export async function runLane(
         opened.envFor(batch.suite.needs),
         batchCoverage(options, batch.suite.id, seen.coverage),
       );
-      if (!result.ok) ok = false;
       conflicts.push(...result.conflicts);
+      // The records decide, rather than the command's exit status: a
+      // runner that failed only on identities a flake rate excuses
+      // exits non-zero and has told this run nothing it should stop
+      // for, and a runner that exited zero having run none of its unit
+      // has.
+      const accounting = accountFor(
+        batch,
+        mine.selections,
+        result.records,
+        nonGating,
+      );
+      // An invocation is excused only when it accounted for every
+      // identity it was asked to run: one that recorded a failure and
+      // then stopped has run almost nothing while satisfying any weaker
+      // test.
+      const excusing = accounting.unaccounted.length === 0;
+      describeAccounting(batch.suite.id, accounting, excusing);
+      if (accounting.silent.length > 0) ok = false;
+      if (accounting.gating.length > 0) ok = false;
+      if (!excusing && accounting.excused.length > 0) ok = false;
+      for (const unit of accounting.failedUnits) {
+        failedUnits.add(`${batch.suite.id}\t${unit}`);
+      }
+      // A batch that failed with no failing record of its own failed
+      // somewhere the records cannot see — a runner that could not
+      // start, a command that died before reporting.
+      if (
+        !result.ok && accounting.gating.length === 0 &&
+        accounting.excused.length === 0
+      ) {
+        ok = false;
+      }
     }
   } finally {
     await opened.close();
@@ -1031,7 +1257,8 @@ export async function runLane(
   // for a report that was never complete.
   const converted = await convertCoverage(options);
   if (!converted.ok) ok = false;
-  describeCoverage(seen.coverage, converted.reports);
+  const marked = await markMeasuredFailures(options, suites, failedUnits);
+  describeCoverage(seen.coverage, converted.reports, marked);
   return ok;
 }
 
@@ -1043,8 +1270,13 @@ export async function runLane(
 export function describeCoverage(
   gate: CoverageGateSelection,
   reports: readonly string[],
+  marked: readonly string[] = [],
 ): void {
-  if (gate.reached.length === 0 && reports.length === 0) return;
+  if (
+    gate.reached.length === 0 && reports.length === 0 && marked.length === 0
+  ) {
+    return;
+  }
   const lines = ["## Coverage", ""];
   if (gate.off !== undefined) {
     lines.push(`No measured set is forced: ${gate.off}.`, "");
@@ -1068,6 +1300,14 @@ export function describeCoverage(
     for (const report of reports) {
       lines.push(`- ${named.get(report) ?? report}`);
     }
+  }
+  if (marked.length > 0) {
+    lines.push(
+      "",
+      "Measured through a failing test, so no baseline is published:",
+      "",
+    );
+    for (const set of marked) lines.push(`- ${set}`);
   }
   say(lines);
 }
