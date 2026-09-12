@@ -2,12 +2,12 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import * as path from "@std/path";
 import {
-  describe as summarize,
   type Figure,
   joinReports,
   main,
   measuredSetFigures,
   parseReportArgs,
+  summarize,
 } from "./coverage-report.ts";
 import { COVERAGE_METRIC_PREFIX } from "./coverage-metrics.ts";
 import { measuredSetCoverageMetric } from "./ci-check-lib.ts";
@@ -154,7 +154,7 @@ describe("coverage-report", () => {
     });
   });
 
-  describe("describe()", () => {
+  describe("summarize()", () => {
     it("returns a summary naming the workspace figure", () => {
       const figures: Figure[] = [
         {
