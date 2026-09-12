@@ -32,6 +32,12 @@ const MEMBER = "packages/leb128";
 /** The suite whose units measure that member. */
 const SUITE = "workspace-unit";
 
+/** When a run these tests stand for happened. */
+const WHEN = "2026-09-01T00:00:00Z";
+
+/** The run identity every command line has to carry. */
+const STAMP = ["--run-id", "1", "--sha", "abc", "--created-at", WHEN];
+
 /** A directory holding one file per entry, at a path relative to its root. */
 async function directoryOf(files: Record<string, string>): Promise<string> {
   const root = await Deno.makeTempDir({ prefix: "coverage-report-" });
@@ -50,7 +56,7 @@ function optionsFor(root: string, reports: string): ReportOptions {
     out: path.join(root, "metrics.json"),
     runId: 1,
     sha: "abc",
-    createdAt: "2026-09-01T00:00:00Z",
+    createdAt: WHEN,
     root,
   };
 }
@@ -98,18 +104,55 @@ function setFiguresFrom(reports: string): Promise<CoverageDebtMetric[]> {
 describe("coverage-report", () => {
   describe("parseReportArgs()", () => {
     it("returns the defaults for the flags a command line omits", () => {
-      const options = parseReportArgs(["--reports", "artifacts"], "/root");
-      expect(options?.reports).toBe("artifacts");
+      const options = parseReportArgs([...STAMP, "--reports", "at"], "/root");
+      expect(options?.reports).toBe("at");
       expect(options?.out).toBe("perf-metrics.json");
       expect(options?.root).toBe("/root");
     });
 
     it("returns `undefined` for a flag with no value", () => {
-      expect(parseReportArgs(["--reports"], "/root")).toBeUndefined();
+      expect(parseReportArgs([...STAMP, "--reports"], "/root")).toBeUndefined();
     });
 
     it("returns `undefined` for a flag nothing reads", () => {
-      expect(parseReportArgs(["--nonsense", "1"], "/root")).toBeUndefined();
+      expect(parseReportArgs([...STAMP, "--nonsense", "1"], "/root"))
+        .toBeUndefined();
+    });
+
+    it("returns `undefined` for a command line carrying no commit", () => {
+      // A baseline the gate can never look up is worth less than a
+      // refusal naming the flag the job lost.
+
+      expect(parseReportArgs(["--run-id", "7", "--created-at", WHEN]))
+        .toBeUndefined();
+    });
+
+    it("returns `undefined` for a commit that expanded to nothing", () => {
+      expect(
+        parseReportArgs(["--run-id", "7", "--sha", "", "--created-at", WHEN]),
+      )
+        .toBeUndefined();
+    });
+
+    it("returns `undefined` for a date nothing can read", () => {
+      expect(
+        parseReportArgs(["--run-id", "7", "--sha", "abc", "--created-at", ""]),
+      )
+        .toBeUndefined();
+    });
+
+    it("returns `undefined` for a run id that is not a positive integer", () => {
+      expect(
+        parseReportArgs([
+          "--run-id",
+          "0",
+          "--sha",
+          "abc",
+          "--created-at",
+          WHEN,
+        ]),
+      )
+        .toBeUndefined();
     });
   });
 
@@ -320,7 +363,7 @@ describe("coverage-report", () => {
       Deno.env.set("GITHUB_STEP_SUMMARY", summaryFile);
       try {
         const status = await main(
-          ["--reports", "/nonexistent-coverage-artifacts", "--out", out],
+          [...STAMP, "--reports", "/nonexistent-artifacts", "--out", out],
           REPOSITORY,
         );
         expect(status).toBe(0);
@@ -337,7 +380,7 @@ describe("coverage-report", () => {
     });
 
     it("returns two for a command line it cannot read", async () => {
-      expect(await main(["--nonsense", "1"], REPOSITORY)).toBe(2);
+      expect(await main([...STAMP, "--nonsense", "1"], REPOSITORY)).toBe(2);
     });
   });
 });

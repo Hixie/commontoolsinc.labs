@@ -60,19 +60,27 @@ export interface ReportOptions {
   root: string;
 }
 
-/** Reads the command line, or returns undefined for a malformed one. */
+/**
+ * Reads the command line, or returns undefined for one this cannot act
+ * on.
+ *
+ * The run's identity is required rather than defaulted. The gate looks a
+ * baseline up by the commit it was measured at, and the manifest keeps
+ * only the baselines inside its window, so a figure stamped with no
+ * commit matches nothing and one dated at the epoch falls out of every
+ * window. Defaulting either would publish a file that looks complete and
+ * answers nobody, where refusing the command line says which flag the
+ * job lost.
+ */
 export function parseReportArgs(
   args: readonly string[],
   root: string = Deno.cwd(),
 ): ReportOptions | undefined {
-  const options: ReportOptions = {
-    reports: "coverage-artifacts",
-    out: PERF_METRICS_FILE,
-    runId: 0,
-    sha: "",
-    createdAt: new Date(0).toISOString(),
-    root,
-  };
+  let reports = "coverage-artifacts";
+  let out = PERF_METRICS_FILE;
+  let runId: number | undefined;
+  let sha: string | undefined;
+  let createdAt: string | undefined;
   const rest = [...args];
   while (rest.length > 0) {
     const flag = rest.shift()!;
@@ -80,26 +88,32 @@ export function parseReportArgs(
     if (value === undefined) return undefined;
     switch (flag) {
       case "--reports":
-        options.reports = value;
+        reports = value;
         break;
       case "--out":
-        options.out = value;
+        out = value;
         break;
       case "--run-id":
-        options.runId = Number(value);
+        runId = Number(value);
         break;
       case "--sha":
-        options.sha = value;
+        sha = value;
         break;
       case "--created-at":
-        options.createdAt = value;
+        createdAt = value;
         break;
       default:
         return undefined;
     }
   }
-  if (!Number.isFinite(options.runId)) return undefined;
-  return options;
+  if (runId === undefined || !Number.isInteger(runId) || runId <= 0) {
+    return undefined;
+  }
+  if (sha === undefined || sha.length === 0) return undefined;
+  if (createdAt === undefined || Number.isNaN(Date.parse(createdAt))) {
+    return undefined;
+  }
+  return { reports, out, runId, sha, createdAt, root };
 }
 
 /**
@@ -292,8 +306,8 @@ export async function main(
   const options = parseReportArgs(args, root);
   if (options === undefined) {
     console.error(
-      "usage: coverage-report.ts [--reports <dir>] [--out <file>] " +
-        "[--run-id <n>] [--sha <commit>] [--created-at <iso>]",
+      "usage: coverage-report.ts --run-id <n> --sha <commit> " +
+        "--created-at <iso> [--reports <dir>] [--out <file>]",
     );
     return 2;
   }
