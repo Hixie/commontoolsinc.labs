@@ -32,19 +32,32 @@ function stub(
 }
 
 /**
- * Runs `body` with the token variable set to `token`, and puts back what
- * the environment held before. The name is written out rather than taken
- * from the source, because what the lane is handed a token in has to be
- * the name a workflow writes.
+ * Runs `body` with each named variable set as given, `undefined` meaning
+ * unset, and puts back what the environment held before. Every name a
+ * case depends on is named here rather than left to the ambient
+ * environment, since a token a developer exported is exactly what these
+ * read. The names are written out rather than taken from the source,
+ * because what a lane is handed a token in has to be what a workflow
+ * writes.
  */
-function withGithubToken(token: string, body: () => void): void {
-  const before = Deno.env.get("GITHUB_TOKEN");
-  Deno.env.set("GITHUB_TOKEN", token);
+function withEnv(
+  values: Record<string, string | undefined>,
+  body: () => void,
+): void {
+  const before = new Map(
+    Object.keys(values).map((name) => [name, Deno.env.get(name)]),
+  );
+  for (const [name, value] of Object.entries(values)) {
+    if (value === undefined) Deno.env.delete(name);
+    else Deno.env.set(name, value);
+  }
   try {
     body();
   } finally {
-    if (before === undefined) Deno.env.delete("GITHUB_TOKEN");
-    else Deno.env.set("GITHUB_TOKEN", before);
+    for (const [name, value] of before) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
   }
 }
 
@@ -104,7 +117,7 @@ describe("ci capabilities", () => {
     ]);
   });
 
-  it("hands the API token to the suites that asked and to no others", async () => {
+  it("hands the token to the suites that asked and to no others", async () => {
     const opened = await openCapabilities(["github-api", "jq"], {
       root: Deno.cwd(),
       dryRun: false,
@@ -112,8 +125,14 @@ describe("ci capabilities", () => {
       exec: () => Promise.resolve(""),
       githubToken: "a-token",
     });
-    expect(opened.envFor(["github-api"]).GITHUB_TOKEN).toBe("a-token");
-    expect(opened.envFor(["jq"]).GITHUB_TOKEN).toBeUndefined();
+    // Under both names, because the two consumers read different ones:
+    // `gh` reads `GH_TOKEN`, and `check-action-pins` reads
+    // `GITHUB_TOKEN` first.
+    expect(opened.envFor(["github-api"])).toEqual({
+      GITHUB_TOKEN: "a-token",
+      GH_TOKEN: "a-token",
+    });
+    expect(opened.envFor(["jq"])).toEqual({});
     await opened.close();
   });
 
@@ -128,22 +147,31 @@ describe("ci capabilities", () => {
     await opened.close();
   });
 
-  it("takes the token out of this process whatever any suite declared", () => {
-    // A lane that opens `github-api` is not the one where a token left
-    // behind matters: a child inherits what the lane holds, so a lane
-    // holding no gate batch at all is where it would reach the most.
-    withGithubToken("a-token", () => {
+  it("takes the token out of this process under either name", () => {
+    // A token under a name this left behind would be inherited by every
+    // child of the lane, and `check-action-pins` would pass on it, so
+    // nothing downstream would report the hole.
+    withEnv({ GITHUB_TOKEN: "a-token", GH_TOKEN: "another-token" }, () => {
       expect(takeGithubToken()).toBe("a-token");
       expect(Deno.env.get("GITHUB_TOKEN")).toBeUndefined();
+      expect(Deno.env.get("GH_TOKEN")).toBeUndefined();
       expect(takeGithubToken()).toBeUndefined();
+    });
+  });
+
+  it("takes a token handed under the second name alone", () => {
+    withEnv({ GITHUB_TOKEN: undefined, GH_TOKEN: "a-token" }, () => {
+      expect(takeGithubToken()).toBe("a-token");
+      expect(Deno.env.get("GH_TOKEN")).toBeUndefined();
     });
   });
 
   it("reads an empty token as no token", () => {
     // An unset Actions variable interpolates as an empty string.
-    withGithubToken("", () => {
+    withEnv({ GITHUB_TOKEN: "", GH_TOKEN: "" }, () => {
       expect(takeGithubToken()).toBeUndefined();
       expect(Deno.env.get("GITHUB_TOKEN")).toBeUndefined();
+      expect(Deno.env.get("GH_TOKEN")).toBeUndefined();
     });
   });
 

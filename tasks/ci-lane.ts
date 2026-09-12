@@ -923,6 +923,9 @@ export async function runLane(
   options: LaneOptions,
   deps: LaneDeps = {},
 ): Promise<boolean> {
+  // Ahead of everything this lane reads, plans, opens or spawns, so that
+  // no child of it inherits the token except through the capability.
+  const githubToken = takeGithubToken();
   const suites = await (deps.topology ?? loadTopology)(options.root);
   const { seen, fetched } = await read(options, suites, deps, console.log);
   const laid = packing(options, suites, seen);
@@ -975,11 +978,6 @@ export async function runLane(
 
   const workDir = await Deno.makeTempDir({ prefix: "ci-lane-" });
   const spool = (deps.spool ?? recordsDir)();
-  // Before any capability opens and before any batch runs. A child
-  // inherits what this process holds, so a token left here would reach
-  // every test in the lane whatever its suite declared — and a lane that
-  // opens `github-api` is not the one where that matters.
-  const githubToken = takeGithubToken();
   // The directory belongs to the lane from the moment it exists, and a
   // capability that refuses to open is one of the ways the lane ends.
   let opened;

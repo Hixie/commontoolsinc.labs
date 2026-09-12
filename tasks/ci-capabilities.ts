@@ -78,9 +78,9 @@ export interface CapabilityContext {
   exec?: Exec;
 
   /**
-   * The GitHub API token the lane took out of its own environment, for
-   * the suites that declared they need one. Absent where the lane was
-   * handed none.
+   * The GitHub token the lane took out of its own environment, for the
+   * suites that declared they need one. Absent where the lane was handed
+   * none.
    */
   githubToken?: string;
 
@@ -323,26 +323,44 @@ const gitHistory: Capability = {
   },
 };
 
-/** The environment variable a lane is handed the token in. */
-export const GITHUB_TOKEN_VARIABLE = "GITHUB_TOKEN";
+/**
+ * The names a GitHub token reaches a lane under, and the names a suite
+ * that declared one is given it under. The `gh` command line reads
+ * `GH_TOKEN`, and `check-action-pins` reads `GITHUB_TOKEN` and falls
+ * back to `GH_TOKEN`, so both names are taken out of the lane and both
+ * are exported to a suite that asked.
+ */
+const GITHUB_TOKEN_VARIABLES = ["GITHUB_TOKEN", "GH_TOKEN"] as const;
 
 /**
- * Takes the GitHub API token out of this process and answers with it.
+ * Takes the GitHub token out of this process and answers with it.
  *
  * A child process inherits what its parent holds, so a token left in the
  * lane's own environment reaches every test in the lane whether or not
  * its suite asked for one. Taking it out is what makes the declaration
- * mean something, and it has to happen whether or not any batch in the
- * lane opens `github-api` — a lane that opens nothing is the one where a
- * token left behind reaches the most.
+ * mean something.
  *
- * Answers with nothing where the lane was handed no token, which is the
- * state on a workstation and in a job whose workflow passes none.
+ * It leaves this process rather than being filtered out of each child's
+ * environment, because everything the lane spawns reads the environment
+ * from here: the batches through `runInvocation`, the capability setup
+ * commands, and the `git` calls that read the diff. One take covers
+ * them, and covers whatever spawns next.
+ *
+ * Where the lane was handed a token under more than one name, the first
+ * of the names above wins. Answers with nothing where it was handed
+ * none, which is the state on a workstation and in a job whose workflow
+ * passes none.
  */
 export function takeGithubToken(): string | undefined {
-  const token = Deno.env.get(GITHUB_TOKEN_VARIABLE);
-  Deno.env.delete(GITHUB_TOKEN_VARIABLE);
-  return token === undefined || token.length === 0 ? undefined : token;
+  let token: string | undefined;
+  for (const name of GITHUB_TOKEN_VARIABLES) {
+    const value = Deno.env.get(name);
+    Deno.env.delete(name);
+    if (token === undefined && value !== undefined && value.length > 0) {
+      token = value;
+    }
+  }
+  return token;
 }
 
 /**
@@ -362,13 +380,12 @@ const githubApi: Capability = {
   id: "github-api",
   description: "a token for the GitHub API",
   open(context) {
-    return Promise.resolve(
-      exported(
-        context.githubToken === undefined
-          ? {}
-          : { [GITHUB_TOKEN_VARIABLE]: context.githubToken },
+    const token = context.githubToken;
+    return Promise.resolve(exported(
+      token === undefined ? {} : Object.fromEntries(
+        GITHUB_TOKEN_VARIABLES.map((name) => [name, token]),
       ),
-    );
+    ));
   },
 };
 
