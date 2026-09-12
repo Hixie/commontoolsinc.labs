@@ -35,6 +35,7 @@ import { readWorkspaceMembers } from "./workspace-tests.ts";
 import { loadTopology } from "./test-topology.ts";
 import {
   measuredSetDirectory,
+  measuredSetName,
   measuredSets,
 } from "./test-selection/coverage.ts";
 
@@ -177,7 +178,7 @@ export async function measuredSetFigures(
     // hand the gate a baseline no run of the set stands behind.
     if (debt.files === 0) continue;
     figures.push({
-      name: measuredSetCoverageMetric(`${ref.suite}/${ref.set.member}`),
+      name: measuredSetCoverageMetric(measuredSetName(ref)),
       uncoveredLines: debt.uncoveredLines,
     });
   }
