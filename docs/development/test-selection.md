@@ -159,8 +159,9 @@ Four things are worth knowing before reading a failure.
 
 Nothing about coverage fails a run on `main`. That run measures every set,
 which is where the baselines come from, and merges every report into the
-repository-wide figure the dashboard tile shows. Run it yourself the way
-that job does:
+repository-wide figure the dashboard tile shows. `tasks/coverage-report.ts`
+is what measures and writes them, over a directory holding the lanes'
+uploaded coverage:
 
 ```
 deno run -A tasks/coverage-report.ts --reports <directory>
@@ -569,12 +570,13 @@ Three things go with that rule.
 
 - **A suite `ALWAYS_GATING_SUITES` names is never excused, and never
   withheld from a change either.** One unit of `repo-gates` is one whole
-  gate, so excusing it would not weaken that gate, it would remove it.
-- **A failure the branch has not gone red for is still aged out.** It
-  waits for a later run to judge it, and a run that no longer has to
-  arrive is one nothing would bound the wait for.
-- **A measured set whose unit failed publishes no baseline**, which [the
-  coverage gate](#the-coverage-gate) covers.
+  gate. Excusing it would remove that gate rather than weaken it.
+- **A failure the branch has not gone red for is still aged out.** Such a
+  failure waits for a later run to judge it, and once the branch stops
+  going red no such run has to arrive.
+- **A measured set whose unit failed publishes no baseline.** [The
+  coverage gate](#the-coverage-gate) says what that leaves for a later
+  pull request.
 
 A lane decides all of this from the records its batches gathered rather
 than from what a command exited with. A runner that failed only on

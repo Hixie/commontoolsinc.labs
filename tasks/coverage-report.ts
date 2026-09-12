@@ -207,7 +207,12 @@ export async function measuredSetFigures(
 export async function markedSets(reportsDir: string): Promise<Set<string>> {
   const marked = new Set<string>();
   try {
-    for await (const entry of walk(reportsDir, { includeDirs: false })) {
+    for await (
+      const entry of walk(reportsDir, {
+        includeDirs: false,
+        exts: [".txt"],
+      })
+    ) {
       if (path.basename(entry.path) !== COVERAGE_FAILURE_MARKER) continue;
       const set = measuredSetOfReport(entry.path);
       if (set !== undefined) marked.add(set);
@@ -219,7 +224,7 @@ export async function markedSets(reportsDir: string): Promise<Set<string>> {
 }
 
 /** Says what this run measured, in the job summary. */
-export function describe(figures: readonly Figure[]): string {
+export function summarize(figures: readonly Figure[]): string {
   const workspace = figures.find((figure) =>
     figure.name === `${COVERAGE_METRIC_PREFIX} workspace uncovered lines`
   );
@@ -249,7 +254,7 @@ export async function report(options: ReportOptions): Promise<string> {
       uncoveredLines: figure.uncoveredLines,
     }])),
   );
-  return describe(figures);
+  return summarize(figures);
 }
 
 /**

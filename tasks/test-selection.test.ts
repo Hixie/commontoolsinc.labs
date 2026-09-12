@@ -146,7 +146,7 @@ describe("test-selection", () => {
       const held = manifest();
       held.withheld = [{ test: TEST, suite: "repo-gates", reason: "flaky" }];
       const text = explainLines(held, TEST, { selected: true }).join("\n");
-      expect(text).toContain("run anyway");
+      expect(text).toContain("not held back");
       expect(text).toContain("the current manifest selects it");
     });
 
@@ -165,6 +165,9 @@ describe("test-selection", () => {
       expect(text).toContain("withheld");
       expect(text).toContain("run 3 times");
       expect(text).toContain("the current manifest selects it");
+      // And nothing that contradicts the line above it: a change that
+      // reaches a withheld test runs it here.
+      expect(text).not.toContain("not here");
     });
 
     it("says why a lane missed a gate the manifest also holds back", () => {

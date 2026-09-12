@@ -2,12 +2,12 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import * as path from "@std/path";
 import {
-  describe as summarize,
   type Figure,
   joinReports,
   markedSets,
   measuredSetFigures,
   parseReportArgs,
+  summarize,
 } from "./coverage-report.ts";
 import { COVERAGE_METRIC_PREFIX } from "./coverage-metrics.ts";
 import { COVERAGE_FAILURE_MARKER } from "./ci-lane.ts";
@@ -46,7 +46,7 @@ describe("what the full run publishes about coverage", () => {
 
   it("joins every report under the directory it is given", async () => {
     const root = await reportsIn({
-      "lane-1/lcov/sets/workspace-unit/packages_memory/coverage.lcov":
+      "lane-1/lcov/sets/workspace-unit/packages__memory/coverage.lcov":
         "SF:/a.ts\nend_of_record\n",
       "lane-2/lcov/sets/runner-unit/packages_runner/coverage.lcov":
         "SF:/b.ts\nend_of_record\n",
@@ -74,9 +74,9 @@ describe("what the full run publishes about coverage", () => {
     // not become the baseline, so the marker is looked for by the set's
     // directory rather than beside a report that may not be there.
     const root = await reportsIn({
-      "lane-1/lcov/sets/workspace-unit/packages_memory/coverage.lcov":
+      "lane-1/lcov/sets/workspace-unit/packages__memory/coverage.lcov":
         "SF:/a.ts\nend_of_record\n",
-      [`lane-2/lcov/sets/workspace-unit/packages_memory/${COVERAGE_FAILURE_MARKER}`]:
+      [`lane-2/lcov/sets/workspace-unit/packages__memory/${COVERAGE_FAILURE_MARKER}`]:
         "packages/memory/test/one.test.ts\n",
       [`lane-2/lcov/sets/runner-unit/packages_runner/${COVERAGE_FAILURE_MARKER}`]:
         "packages/runner/test/two.test.ts\n",
@@ -85,7 +85,7 @@ describe("what the full run publishes about coverage", () => {
     try {
       expect([...await markedSets(root)].sort()).toEqual([
         "runner-unit/packages_runner",
-        "workspace-unit/packages_memory",
+        "workspace-unit/packages__memory",
       ]);
     } finally {
       await Deno.remove(root, { recursive: true });
@@ -103,27 +103,41 @@ describe("what the full run publishes about coverage", () => {
     // is short by whatever that failing test would have reached.
     // Publishing it would hold every later pull request to a bar this
     // run did not clear either.
-    const root = await reportsIn({
-      "lane-1/lcov/sets/workspace-unit/packages_memory/coverage.lcov":
-        "SF:/a.ts\nend_of_record\n",
-      [`lane-1/lcov/sets/workspace-unit/packages_memory/${COVERAGE_FAILURE_MARKER}`]:
-        "packages/memory/test/one.test.ts\n",
-    });
-    try {
-      const figures = await measuredSetFigures({
-        reports: root,
-        out: "/dev/null",
-        runId: 1,
-        sha: "abc",
-        createdAt: "2026-09-01T00:00:00Z",
-        root: REPOSITORY,
-      });
-      expect(
-        figures.some((figure) => figure.name.includes("packages/memory")),
-      ).toBe(false);
-    } finally {
-      await Deno.remove(root, { recursive: true });
-    }
+    //
+    // The same report is scored both ways round in one case, because the
+    // absence on its own passes for a set whose directory is misspelt, a
+    // report naming no line of the member, or a topology that has
+    // dropped the set, and none of those is what this is about.
+    const report = `SF:${REPOSITORY}/packages/memory/util.ts\n` +
+      "DA:1,1\nDA:2,0\nend_of_record\n";
+    const at = "lane-1/lcov/sets/workspace-unit/packages__memory";
+    const named = async (files: Record<string, string>) => {
+      const root = await reportsIn(files);
+      try {
+        const figures = await measuredSetFigures({
+          reports: root,
+          out: "/dev/null",
+          runId: 1,
+          sha: "abc",
+          createdAt: "2026-09-01T00:00:00Z",
+          root: REPOSITORY,
+        });
+        return figures.map((figure) => figure.name);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    };
+    expect(
+      (await named({ [`${at}/coverage.lcov`]: report })).some((name) =>
+        name.includes("workspace-unit/packages/memory")
+      ),
+    ).toBe(true);
+    expect(
+      (await named({
+        [`${at}/coverage.lcov`]: report,
+        [`${at}/${COVERAGE_FAILURE_MARKER}`]: "packages/memory/one.test.ts\n",
+      })).some((name) => name.includes("workspace-unit/packages/memory")),
+    ).toBe(false);
   });
 
   it("names the workspace figure in the summary", () => {

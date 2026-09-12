@@ -3901,7 +3901,11 @@ exercised on the branch on its own.
       into the unmarked lane spool. It also includes `--full`, `--dry-run`,
       and repeats.
 - [ ] `deno.yml`: `plan-full` and `full-tests` on push, with the build,
-      attestation, coverage and deploy jobs repointed at them.
+      attestation, coverage and deploy jobs repointed at them. The lane's
+      coverage upload carries the whole of the lane's coverage directory
+      rather than its `.lcov` files: a measured set the lane saw fail is
+      marked by a file beside the report, and a glob over one extension
+      would drop it and publish the baseline anyway.
 - [x] The full run's treatment of a test too flaky for pull requests.
       The count is placed already: `tasks/test-selection/plan.ts` gives
       every mandatory identity the count `executionsFor` returns for its
@@ -3912,20 +3916,24 @@ exercised on the branch on its own.
       is in neither list.
       `tasks/ci-lane.ts` reads each batch's gathered records, exits
       non-zero only where a failing identity is outside `nonGating`, and
-      names every non-gating failure in the job summary. Two rules about
-      what a batch accounted for, rather than the one this said. An
-      excusal takes the specification's rule: an invocation is excused
-      only when it accounted for every identity it was asked to run. The
-      run itself takes the weaker one: a unit that recorded nothing
-      recorded nothing under any name, and that fails the lane whether or
-      not anything was there to excuse. Failing the run on an unaccounted
-      identity outright would fail it for every rename, since a manifest
-      is hours old by construction and a test renamed since records under
-      its new name.
+      names every non-gating failure in the job summary. Three rules
+      decide a lane. An excusal takes the specification's: an invocation
+      is excused only when it accounted for every identity it was asked
+      to run, and an execution that ended badly having recorded no
+      failure accounted for nothing, whatever the batch's other
+      executions recorded. A unit that recorded nothing recorded nothing
+      under any name, and that fails the lane whether or not anything was
+      there to excuse. And an identity no record accounts for costs the
+      batch its excusal rather than costing the run, since failing
+      outright would fail the run for every rename: a manifest is hours
+      old by construction and a test renamed since records under its new
+      name.
       The manifest gains no field and `executionsFor` needs no change: its
       line already runs past the exclusion rate. `fullLaneCount`'s work
-      sum counts the extra runs, which it does not today, so the floor its
-      search starts from is not an underestimate.
+      sum counts the extra runs, so the count its search starts from is
+      close to the answer rather than far below it, and the search walks
+      down as well as up so that where it starts cannot decide how many
+      lanes the run gets.
 - [x] `pendingMain` joins the windows `trimWindows` ages. A `main` failure
       waits there until a later run judges it, and an excluded test that
       stays broken no longer turns `main` red, so nothing bounds what

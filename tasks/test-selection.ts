@@ -243,23 +243,30 @@ export function explainLines(
     `  churn ${entry.inputs.churn.toFixed(4)}, flake rate ` +
     `${entry.flakeRate.toFixed(4)}`,
   ];
-  // Each of these is a fact of its own rather than one arm of a choice.
-  // They do not partition: a withheld identity a change reaches runs,
-  // one in a suite whose failures always gate is not withheld at all,
-  // and every one of them has a number of runs it is given.
+  // Each of the lines below is a fact of its own rather than one arm of a
+  // choice, because the facts do not partition. A withheld identity a
+  // change reaches runs; an identity the manifest withholds whose suite
+  // always gates runs here too; and every identity that runs has a number
+  // of runs it is given.
   const held = manifest.withheld.find(
     (candidate) => testIdentityKey(candidate.test) === key,
   );
-  // Withheld in the manifest and run here anyway are different things,
-  // and only the second answers why a lane did not reach it.
+  // The manifest withholding an identity and a lane being allowed to skip
+  // it are different things: a suite whose failures always gate is run
+  // whatever the manifest says of it. Only the second is a reason a
+  // packing did not reach the identity.
   const heldBack = held !== undefined && !ALWAYS_GATING_SUITES.has(held.suite);
   if (held !== undefined) {
+    // What is said about a held-back identity stops at what holds it
+    // back, because a change that reaches one runs it: saying it runs on
+    // the default branch and not here would contradict the selection
+    // line below on every identity a change edits.
     lines.push(
       heldBack
-        ? "  withheld: it is too flaky to judge a change by, so it runs on " +
-          "the default branch and not here"
-        : "  too flaky to judge a change by, and run anyway: its suite's " +
-          "failures always fail the run",
+        ? "  withheld: it is too flaky to judge a change by, so a pull " +
+          "request runs it only where the change reaches it"
+        : "  too flaky to judge a change by, and not held back: its " +
+          "suite's failures always fail the run",
     );
   }
   if (verdict.unschedulable) {

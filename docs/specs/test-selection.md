@@ -353,7 +353,15 @@ unit the store has never seen is accounted for by that unit recording
 anything at all, because no record can carry a stand-in's name: a record
 is named for a test and a stand-in for a file. And a unit that recorded
 nothing recorded nothing under any name, which fails the run whether or
-not anything was there to excuse. That is the rule
+not anything was there to excuse.
+
+The rule is per invocation and not per set of them. A consumer that runs
+an identity several times, or that reaches one unit through several
+commands, has several invocations whose records arrive in one place, and
+one that ended badly having recorded no failure accounted for nothing
+whatever the others recorded. Reading them together would excuse a run
+that died part way through on the strength of the part that finished,
+which is the case the rule is for. That is the rule
 under [what a run owes the change behind
 it](#what-a-run-on-the-default-branch-owes-the-change-behind-it) applied
 here, that a conclusion rests on a record that is there and never on one

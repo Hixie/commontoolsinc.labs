@@ -425,8 +425,13 @@ export function manifestView(
       selected.add(testIdentityKey(selection.entry.test));
     }
   }
+  // What the packing held back, rather than what the manifest listed. A
+  // suite whose failures always fail the run is listed in the manifest
+  // and run on a pull request all the same, so reading the manifest here
+  // would be a second answer to what a lane withheld, and the two would
+  // part company the first time either moved.
   const withheld = new Map<string, WithheldReason>();
-  for (const entry of seen.manifest.withheld) {
+  for (const entry of packed.withheld) {
     withheld.set(testIdentityKey(entry.test), entry.reason);
   }
   const flakes = new Map<string, FlakeEvidence | undefined>();

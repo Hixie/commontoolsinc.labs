@@ -611,11 +611,23 @@ export async function runBatch(
   records: TestRecord[];
   conflicts: TestRecord[];
   seconds: number;
+  unexplained: number;
 }> {
   const records: TestRecord[] = [];
   const conflicts: TestRecord[] = [];
   let ok = true;
   let seconds = 0;
+  // Executions that ended badly having recorded no failure of their own,
+  // which is a failure somewhere the records cannot see: a runner that
+  // could not start, a command that died before reporting.
+  //
+  // Counted per execution rather than over the batch, because an excusal
+  // is a statement about one invocation. A repeat that died having
+  // recorded nothing sits in the same list of records as a repeat that
+  // recorded a failure a flake rate excuses, and a reader taking the
+  // batch's records as one list cannot tell that from a batch where
+  // every execution ran.
+  let unexplained = 0;
   for (let run = 1; run <= batchRepeats(batch); run++) {
     const outputDir = path.join(workDir, `${batch.suite.id}-${run}`);
     const batchSpool = path.join(outputDir, "spool");
@@ -658,6 +670,12 @@ export async function runBatch(
           ? {}
           : { variant: batch.suite.variant }),
       });
+      if (
+        !outcome.ok &&
+        !collected.records.some((record) => record.outcome === "fail")
+      ) {
+        unexplained += 1;
+      }
       records.push(...collected.records);
       conflicts.push(...collected.conflicts);
       await Deno.remove(batchSpool, { recursive: true }).catch(() => {});
@@ -674,7 +692,7 @@ export async function runBatch(
       ),
     ]);
   }
-  return { ok, records, conflicts, seconds };
+  return { ok, records, conflicts, seconds, unexplained };
 }
 
 /** What reading a batch's records against what it was asked to run found. */
@@ -771,27 +789,40 @@ export function describeAccounting(
   excusing: boolean,
 ): void {
   const lines: string[] = [];
-  if (accounting.excused.length > 0) {
-    lines.push(
-      excusing
-        ? `${suite}: ${accounting.excused.length} failures too flaky to ` +
-          `judge a change by, which do not fail this run:`
-        : `${suite}: ${accounting.excused.length} failures a flake rate ` +
-          `would excuse, which fail this run because the batch did not ` +
-          `account for everything it was asked to run:`,
-      "",
-    );
-    for (const key of accounting.excused) lines.push(`- ${key}`);
-  }
-  if (accounting.silent.length > 0) {
+  /** One paragraph of the batch's summary, headed and then listed. */
+  const section = (head: string, items: readonly string[]): void => {
+    if (items.length === 0) return;
     if (lines.length > 0) lines.push("");
-    lines.push(
-      `${suite}: ${accounting.silent.length} units recorded nothing, so ` +
-        `nothing ran them:`,
-      "",
-    );
-    for (const unit of accounting.silent) lines.push(`- ${unit}`);
-  }
+    lines.push(head, "");
+    for (const item of items) lines.push(`- ${item}`);
+  };
+  section(
+    `${suite}: ${accounting.gating.length} failures this run fails for:`,
+    accounting.gating,
+  );
+  section(
+    excusing
+      ? `${suite}: ${accounting.excused.length} failures too flaky to ` +
+        `judge a change by, which do not fail this run:`
+      : `${suite}: ${accounting.excused.length} failures a flake rate ` +
+        `would excuse, which fail this run because the batch did not ` +
+        `account for everything it was asked to run:`,
+    accounting.excused,
+  );
+  // Named whenever there are any, because this is the one list that
+  // decides whether an excusal holds, and a rename is what it usually
+  // is. A summary saying the batch left something unaccounted for and
+  // not saying what is a message nobody can act on.
+  section(
+    `${suite}: ${accounting.unaccounted.length} identities no record ` +
+      `accounts for, which a rename since the manifest would explain:`,
+    accounting.unaccounted,
+  );
+  section(
+    `${suite}: ${accounting.silent.length} units recorded nothing, so ` +
+      `nothing ran them:`,
+    accounting.silent,
+  );
   if (lines.length > 0) say(lines);
 }
 
@@ -1214,7 +1245,9 @@ export async function runLane(
       // runner that failed only on identities a flake rate excuses
       // exits non-zero and has told this run nothing it should stop
       // for, and a runner that exited zero having run none of its unit
-      // has.
+      // has. What the exit status is still read for is an execution
+      // that ended badly having recorded no failure at all, which the
+      // records by themselves cannot describe.
       const accounting = accountFor(
         batch,
         mine.selections,
@@ -1227,20 +1260,15 @@ export async function runLane(
       // test.
       const excusing = accounting.unaccounted.length === 0;
       describeAccounting(batch.suite.id, accounting, excusing);
-      if (accounting.silent.length > 0) ok = false;
-      if (accounting.gating.length > 0) ok = false;
-      if (!excusing && accounting.excused.length > 0) ok = false;
-      for (const unit of accounting.failedUnits) {
-        failedUnits.add(`${batch.suite.id}\t${unit}`);
-      }
-      // A batch that failed with no failing record of its own failed
-      // somewhere the records cannot see — a runner that could not
-      // start, a command that died before reporting.
       if (
-        !result.ok && accounting.gating.length === 0 &&
-        accounting.excused.length === 0
+        accounting.gating.length > 0 || accounting.silent.length > 0 ||
+        result.unexplained > 0 ||
+        (accounting.excused.length > 0 && !excusing)
       ) {
         ok = false;
+      }
+      for (const unit of accounting.failedUnits) {
+        failedUnits.add(`${batch.suite.id}\t${unit}`);
       }
     }
   } finally {

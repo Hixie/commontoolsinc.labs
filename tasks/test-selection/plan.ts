@@ -621,7 +621,16 @@ export function plan(input: PlanInput): Plan {
     // Reporting the manifest's list here would have a run that ran a
     // test say in its own summary that no lane chose it. What it ran
     // anyway and will not fail for is the other list.
-    withheld: everything ? [] : excused(manifest),
+    //
+    // Everything the exclusion loop above held back, which is every
+    // reason the manifest gives rather than the one reason a flake rate
+    // excuses. A reason added later is held back and reported here; only
+    // `nonGating` is the narrower list.
+    withheld: everything
+      ? []
+      : manifest.withheld.filter((held) =>
+        !ALWAYS_GATING_SUITES.has(held.suite)
+      ),
     nonGating: everything ? excused(manifest) : [],
     overBudgetSeconds: overBudget,
     unschedulable,
@@ -634,7 +643,9 @@ export function plan(input: PlanInput): Plan {
  * holds these back; the default branch runs them and does not fail for
  * them.
  *
- * The reason is read rather than the membership, so a reason added later
+ * Narrower than what a pull request holds back, which is every withheld
+ * entry whatever its reason. The reason is read here rather than the
+ * membership, so a reason added later is held back like any other and
  * does not become non-gating without anybody deciding that it should.
  */
 function excused(manifest: Manifest): Manifest["withheld"] {
@@ -672,15 +683,13 @@ export function fullLaneCount(
 ): number {
   const manifest = input.manifest;
   const budget = input.budgetSeconds ?? FULL_LANE_BUDGET_SECONDS;
-  // The tests' own corrected time, with no lane overhead in it. Every
-  // overhead a lane pays only raises the answer, so this is a floor and
-  // starting below it would measure packings that cannot fit.
-  // Every execution, not one each: an identity the packer repeats costs
-  // the lane that holds it once per repeat, and a floor that counted one
-  // would start the search below a packing that can fit.
+  // The tests' own corrected time, with no lane overhead in it, charged
+  // once per execution: an identity the packer repeats costs the lane
+  // that holds it once per repeat, and counting one would put the search
+  // below a packing that cannot fit.
   const work = manifest.entries.reduce(
     (total, entry) =>
-      total + entry.cost * Math.max(1, entry.repeats) *
+      total + entry.cost * entry.repeats *
         (manifest.calibration.suites[entry.suite]?.correction ?? 1),
     0,
   );
@@ -703,6 +712,15 @@ export function fullLaneCount(
       0,
     );
   let best = overrun(packed(count));
+  // Fewer lanes first, while every lane still holds what it was given.
+  // The figure above charges every execution the packer was asked for
+  // and the packer gives up runs to fit, so it can land past the fewest
+  // lanes that carry the run, and the climb below never comes back down.
+  // Leaving it there costs the default branch a job per commit for each
+  // lane the estimate overshot by.
+  while (best === 0 && count > 1 && overrun(packed(count - 1)) === 0) {
+    count -= 1;
+  }
   while (best > 0 && count < most) {
     const next = overrun(packed(count + 1));
     // A lane has to buy at least a second to be worth adding. Stopping

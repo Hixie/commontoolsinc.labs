@@ -1993,6 +1993,21 @@ describe("reading a batch's records against what it was asked to run", () => {
     expect(found.silent).toEqual([]);
   });
 
+  it("reads only the selections its own suite was given", () => {
+    // A lane hands every batch the whole lane's selections. Another
+    // suite's identity is not this batch's to account for, and counting
+    // it would withdraw the excusal of every batch in a mixed lane.
+    const elsewhere = asked("pantry > stocks");
+    elsewhere[0]!.entry.suite = "runner-unit";
+    const found = accountFor(
+      batch(),
+      [...asked("glaze > sets"), ...elsewhere],
+      [record("glaze > sets", "pass")],
+      new Set(),
+    );
+    expect(found.unaccounted).toEqual([]);
+  });
+
   it("says what an excusal turned on, either way round", () => {
     // A reader of a green run needs to know a failure went by, and a
     // reader of a red one needs to know which rule turned it red.
@@ -2019,13 +2034,48 @@ describe("reading a batch's records against what it was asked to run", () => {
     expect(said(true)).toContain("recorded nothing");
   });
 
-  it("says nothing about a batch that did everything asked of it", () => {
+  it("names every list its verdict turns on", () => {
+    // The excusal turns on the unaccounted list, and a summary saying a
+    // batch left something unaccounted for without saying what is a
+    // message nobody can act on. The same goes for what the lane failed
+    // for: the runner's own output is buried in a log, and the summary
+    // is where a reader looks.
     const lines: string[] = [];
     const log = console.log;
     console.log = (line: string) => lines.push(line);
     try {
       describeAccounting("workspace-unit", {
-        gating: ["unit\tbakery\tglaze > sets"],
+        gating: ["unit\tbakery\tglaze > burns"],
+        excused: ["unit\tbakery\tflaky"],
+        silent: [UNIT],
+        unaccounted: ["unit\tbakery\tglaze > sets"],
+        failedUnits: [UNIT],
+      }, false);
+    } finally {
+      console.log = log;
+    }
+    const text = lines.join("\n");
+    for (
+      const named of [
+        "unit\tbakery\tglaze > burns",
+        "unit\tbakery\tflaky",
+        "unit\tbakery\tglaze > sets",
+        UNIT,
+      ]
+    ) {
+      expect([named, text.includes(`- ${named}`)]).toEqual([named, true]);
+    }
+  });
+
+  it("says nothing about a batch that did everything asked of it", () => {
+    // A lane that found nothing to say adds nothing to the summary. The
+    // batch's own measurement is what says it ran.
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => lines.push(line);
+    try {
+      describeAccounting("workspace-unit", {
+        gating: [],
         excused: [],
         silent: [],
         unaccounted: [],
@@ -2034,7 +2084,6 @@ describe("reading a batch's records against what it was asked to run", () => {
     } finally {
       console.log = log;
     }
-    // An ordinary failure is the runner's to report, not this.
     expect(lines).toEqual([]);
   });
 
@@ -2284,6 +2333,46 @@ describe("what a lane does with the batches it was given", () => {
       { manifest: manifestOf([{ unit: UNIT }]) },
     );
     expect(ok).toBe(false);
+  });
+
+  it("fails when one execution of a repeated unit died having run nothing", async () => {
+    // An excusal is a statement about one invocation. A repeat that
+    // recorded the flaky failure sits in the same list of records as a
+    // repeat that died before recording anything, and a reader taking
+    // the batch's records as one list cannot tell that from a batch
+    // where every execution ran. Repeats are what a flaky identity is
+    // given, so this is the shape rather than an exotic one.
+    const counter = await Deno.makeTempFile({ prefix: "lane-execution-" });
+    const manifest = withholding();
+    manifest.entries[0]!.repeats = 2;
+    try {
+      const { ok } = await run([
+        Deno.execPath(),
+        "eval",
+        `const dir = Deno.env.get("CF_TEST_RECORDS_DIR");
+         const at = ${JSON.stringify(counter)};
+         const before = Number(Deno.readTextFileSync(at) || "0");
+         Deno.writeTextFileSync(at, String(before + 1));
+         if (before === 0) {
+           Deno.mkdirSync(dir, { recursive: true });
+           Deno.writeTextFileSync(
+             \`\${dir}/fragment-\${crypto.randomUUID()}.ndjson\`,
+             JSON.stringify({
+               line: "record",
+               test: { k: "unit", s: "bakery", n: "glaze > sets" },
+               outcome: "fail",
+               durationMs: 1,
+             }) + "\\n",
+           );
+         }
+         Deno.exit(1);`,
+      ], { full: true, manifest });
+      expect(ok).toBe(false);
+      // Both executions ran, so this is not the batch being cut short.
+      expect(Deno.readTextFileSync(counter)).toBe("2");
+    } finally {
+      await Deno.remove(counter);
+    }
   });
 
   it("fails for an excused failure beside an identity nothing accounts for", async () => {
