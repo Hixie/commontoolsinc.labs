@@ -10,6 +10,7 @@ import {
   openCapabilities,
   pidOfBackgroundLaunch,
   resolveCapabilities,
+  takeGithubToken,
 } from "./ci-capabilities.ts";
 import {
   serverExecutionCiLane,
@@ -28,6 +29,23 @@ function stub(
     ...(needs === undefined ? {} : { needs }),
     open: () => Promise.resolve({ env, close: () => Promise.resolve() }),
   };
+}
+
+/**
+ * Runs `body` with the token variable set to `token`, and puts back what
+ * the environment held before. The name is written out rather than taken
+ * from the source, because what the lane is handed a token in has to be
+ * the name a workflow writes.
+ */
+function withGithubToken(token: string, body: () => void): void {
+  const before = Deno.env.get("GITHUB_TOKEN");
+  Deno.env.set("GITHUB_TOKEN", token);
+  try {
+    body();
+  } finally {
+    if (before === undefined) Deno.env.delete("GITHUB_TOKEN");
+    else Deno.env.set("GITHUB_TOKEN", before);
+  }
 }
 
 describe("ci capabilities", () => {
@@ -77,12 +95,56 @@ describe("ci capabilities", () => {
       "deno",
       "fuse",
       "git-history",
+      "github-api",
       "jq",
       "local-dev-servers",
       "toolshed",
       "toolshed-baked",
       "toolshed-baked-opposite",
     ]);
+  });
+
+  it("hands the API token to the suites that asked and to no others", async () => {
+    const opened = await openCapabilities(["github-api", "jq"], {
+      root: Deno.cwd(),
+      dryRun: false,
+      workDir: "/nonexistent",
+      exec: () => Promise.resolve(""),
+      githubToken: "a-token",
+    });
+    expect(opened.envFor(["github-api"]).GITHUB_TOKEN).toBe("a-token");
+    expect(opened.envFor(["jq"]).GITHUB_TOKEN).toBeUndefined();
+    await opened.close();
+  });
+
+  it("exports nothing where the lane was handed no token", async () => {
+    const opened = await openCapabilities(["github-api"], {
+      root: Deno.cwd(),
+      dryRun: false,
+      workDir: "/nonexistent",
+      exec: () => Promise.resolve(""),
+    });
+    expect(opened.envFor(["github-api"])).toEqual({});
+    await opened.close();
+  });
+
+  it("takes the token out of this process whatever any suite declared", () => {
+    // A lane that opens `github-api` is not the one where a token left
+    // behind matters: a child inherits what the lane holds, so a lane
+    // holding no gate batch at all is where it would reach the most.
+    withGithubToken("a-token", () => {
+      expect(takeGithubToken()).toBe("a-token");
+      expect(Deno.env.get("GITHUB_TOKEN")).toBeUndefined();
+      expect(takeGithubToken()).toBeUndefined();
+    });
+  });
+
+  it("reads an empty token as no token", () => {
+    // An unset Actions variable interpolates as an empty string.
+    withGithubToken("", () => {
+      expect(takeGithubToken()).toBeUndefined();
+      expect(Deno.env.get("GITHUB_TOKEN")).toBeUndefined();
+    });
   });
 
   it("exports the environment a dry run's batches would see", async () => {
