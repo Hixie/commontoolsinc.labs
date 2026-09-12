@@ -21,6 +21,7 @@
 import * as path from "@std/path";
 import { walk } from "@std/fs/walk";
 import {
+  coverageMetricForGroup,
   measuredSetCoverageMetric,
   PERF_METRICS_FILE,
   writeCoverageBaselineFile,
@@ -28,9 +29,13 @@ import {
 import {
   collectCoverageDebtMetricsFromLcov,
   collectMeasuredSetDebt,
-  COVERAGE_METRIC_PREFIX,
+  type CoverageDebtMetric,
 } from "./coverage-metrics.ts";
 import { collectSetReports } from "./coverage-gate.ts";
+import {
+  parseUnlaunchedMembers,
+  UNLAUNCHED_MEMBERS_FILE,
+} from "./unlaunched-members.ts";
 import { readWorkspaceMembers } from "./workspace-tests.ts";
 import { loadTopology } from "./test-topology.ts";
 import {
@@ -97,28 +102,57 @@ export function parseReportArgs(
   return options;
 }
 
-/** Every LCOV report under a directory, joined into one. */
-export async function joinReports(at: string): Promise<string> {
-  const parts: string[] = [];
-  try {
-    for await (
-      const entry of walk(at, { includeDirs: false, exts: [".lcov"] })
-    ) {
-      parts.push(await Deno.readTextFile(entry.path));
-    }
-  } catch (error) {
-    // Nothing was downloaded. What follows scores an empty report, which
-    // charges every tracked line as uncovered and is the honest reading
-    // of a run whose lanes reported nothing.
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
-  return parts.join("\n");
+/**
+ * Where the lanes' reports were downloaded to, resolved against the tree
+ * being scored rather than against the working directory, which is what
+ * the coverage gate does with the same argument.
+ */
+function reportsDirectory(options: ReportOptions): string {
+  return path.resolve(options.root, options.reports);
 }
 
-/** One metric this run publishes. */
-export interface Figure {
-  name: string;
-  uncoveredLines: number;
+/** What the lanes' artifacts hold. */
+export interface LaneReports {
+  /** The content of every LCOV report found, one entry per file. */
+  lcov: string[];
+
+  /** Workspace members some lane selected and never launched. */
+  unlaunchedMembers: string[];
+}
+
+/**
+ * Every LCOV report under a directory, and the record each lane left of
+ * what it selected and never launched.
+ *
+ * The record travels with the report it qualifies, and
+ * `tasks/unlaunched-members.ts` puts the obligation to read it back on
+ * whatever scores that report. A member that never started has unknown
+ * coverage rather than none, so scoring its source without the record
+ * would charge every line of it as uncovered.
+ */
+export async function collectReports(at: string): Promise<LaneReports> {
+  const lcov: string[] = [];
+  const unlaunchedMembers = new Set<string>();
+  try {
+    for await (const entry of walk(at, { includeDirs: false })) {
+      if (path.extname(entry.path) === ".lcov") {
+        lcov.push(await Deno.readTextFile(entry.path));
+      } else if (path.basename(entry.path) === UNLAUNCHED_MEMBERS_FILE) {
+        for (
+          const member of parseUnlaunchedMembers(
+            await Deno.readTextFile(entry.path),
+          )
+        ) {
+          unlaunchedMembers.add(member);
+        }
+      }
+    }
+  } catch (error) {
+    // Nothing was downloaded, which the caller reads as a run that
+    // reported nothing rather than as a run that covered nothing.
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  return { lcov, unlaunchedMembers: [...unlaunchedMembers].sort() };
 }
 
 /**
@@ -128,19 +162,24 @@ export interface Figure {
  * Every report merges rather than only the ones a measured set names,
  * because this is the figure for the whole repository and every lane's
  * work contributes to it.
+ *
+ * A run that reported nothing publishes nothing. Scoring an empty report
+ * charges every tracked line as uncovered, which states a measurement the
+ * run did not make; the dashboard charts this series, so one run's spike
+ * and the next run's recovery would both be invented. What a run reported
+ * part of is scored against the members no lane launched, which is what
+ * withholds those members' groups and the workspace total with them.
  */
 export async function repositoryFigures(
   options: ReportOptions,
-): Promise<Figure[]> {
-  const lcov = await joinReports(options.reports);
-  const metrics = await collectCoverageDebtMetricsFromLcov({
+  reports: LaneReports,
+): Promise<CoverageDebtMetric[]> {
+  if (reports.lcov.length === 0) return [];
+  return await collectCoverageDebtMetricsFromLcov({
     rootDir: options.root,
-    lcov,
+    lcov: reports.lcov.join("\n"),
+    unlaunchedMembers: reports.unlaunchedMembers,
   });
-  return metrics.map((metric) => ({
-    name: metric.name,
-    uncoveredLines: metric.uncoveredLines,
-  }));
 }
 
 /**
@@ -155,16 +194,18 @@ export async function repositoryFigures(
  */
 export async function measuredSetFigures(
   options: ReportOptions,
-): Promise<Figure[]> {
+): Promise<CoverageDebtMetric[]> {
   const suites = await loadTopology(options.root);
   const members = (await readWorkspaceMembers(
     path.join(options.root, "deno.jsonc"),
   )).map((member) => member.replace(/^\.\//, ""));
-  const reports = await collectSetReports(options.reports);
-  const figures: Figure[] = [];
+  const reports = await collectSetReports(reportsDirectory(options));
+  const figures: CoverageDebtMetric[] = [];
   for (const ref of measuredSets(suites)) {
     const found = reports.get(measuredSetDirectory(ref));
     if (found === undefined || found.length === 0) continue;
+    // A set's units are spread over as many lanes as the packer liked, so
+    // its figure is the union of what each of them reached.
     const lcov = (await Promise.all(found.map((at) => Deno.readTextFile(at))))
       .join("\n");
     const debt = await collectMeasuredSetDebt({
@@ -185,26 +226,42 @@ export async function measuredSetFigures(
   return figures;
 }
 
-/** Says what this run measured, in the job summary. */
-export function summarize(figures: readonly Figure[]): string {
+/**
+ * Says what this run measured, in the job summary.
+ *
+ * A missing workspace total has two causes that call for different words.
+ * Nothing reported at all, and a member no lane launched, which withholds
+ * the total and names itself as the reason.
+ */
+export function summarize(
+  figures: readonly CoverageDebtMetric[],
+  unlaunchedMembers: readonly string[] = [],
+): string {
   const workspace = figures.find((figure) =>
-    figure.name === `${COVERAGE_METRIC_PREFIX} workspace uncovered lines`
+    figure.name === coverageMetricForGroup("workspace")
   );
   const lines = ["## Coverage", ""];
-  lines.push(
-    workspace === undefined
-      ? "No report covered the workspace."
-      : `The workspace holds ${workspace.uncoveredLines} uncovered lines.`,
-    "",
-    `${figures.length} figures published.`,
-  );
+  if (workspace !== undefined) {
+    lines.push(
+      `The workspace holds ${workspace.uncoveredLines} uncovered lines.`,
+    );
+  } else if (unlaunchedMembers.length > 0) {
+    lines.push(
+      `Nothing launched ${unlaunchedMembers.join(", ")}, so this run ` +
+        `carries no measurement of the workspace.`,
+    );
+  } else {
+    lines.push("No lane reported coverage.");
+  }
+  lines.push("", `${figures.length} figures published.`);
   return `${lines.join("\n")}\n`;
 }
 
 /** Writes what this run measured, and says what it published. */
 export async function report(options: ReportOptions): Promise<string> {
+  const reports = await collectReports(reportsDirectory(options));
   const figures = [
-    ...await repositoryFigures(options),
+    ...await repositoryFigures(options, reports),
     ...await measuredSetFigures(options),
   ];
   await writeCoverageBaselineFile(
@@ -216,7 +273,7 @@ export async function report(options: ReportOptions): Promise<string> {
       uncoveredLines: figure.uncoveredLines,
     }])),
   );
-  return summarize(figures);
+  return summarize(figures, reports.unlaunchedMembers);
 }
 
 /**
@@ -243,7 +300,9 @@ export async function main(
   const summary = await report(options);
   console.log(summary);
   const at = Deno.env.get("GITHUB_STEP_SUMMARY");
-  if (at !== undefined) await Deno.writeTextFile(at, summary, { append: true });
+  if (at !== undefined && at.length > 0) {
+    await Deno.writeTextFile(at, summary, { append: true });
+  }
   return 0;
 }
 
