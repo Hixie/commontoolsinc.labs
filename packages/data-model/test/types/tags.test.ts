@@ -27,6 +27,7 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 
 import type { JsTypeTagIncludingNull } from "@commonfabric/utils/types";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
   BaseFabricPrimitive,
@@ -770,7 +771,7 @@ describe("tags", () => {
     ];
 
     const objects = LAYER_CORPUS
-      .filter(([, value]) => (value !== null) && (typeof value === "object"));
+      .filter(([, value]) => isObjectOrArray(value));
 
     for (const cls of fabricClasses) {
       it(`tags a \`${cls.name}\` by its instance`, () => {

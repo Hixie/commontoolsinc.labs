@@ -22,6 +22,7 @@ import {
   clickButtonWithTitle,
 } from "../note-button-helpers.ts";
 import { resolveSpaceDid } from "@commonfabric/lib-shell";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 const { FRONTEND_URL } = env;
 describe("default-app notebook reload integration test", () => {
@@ -314,7 +315,7 @@ const notebookSourceStateMatches = async (
     const resolved: Record<string, unknown> = {};
     if (!Array.isArray(manifest)) return resolved;
     for (const entry of manifest) {
-      if (entry === null || typeof entry !== "object") continue;
+      if (!isObjectOrArray(entry)) continue;
       const { partialCause, link } = entry as {
         partialCause?: unknown;
         link?: { sync?: () => Promise<unknown> };
@@ -353,7 +354,7 @@ const notebookSourceStateMatches = async (
     ?.notes;
   const resolvedArgumentNotes = Array.isArray(argumentNotes)
     ? argumentNotes
-    : argumentNotes !== null && typeof argumentNotes === "object" &&
+    : isObjectOrArray(argumentNotes) &&
         typeof (argumentNotes as { sync?: unknown }).sync === "function"
     ? await (argumentNotes as { sync: () => Promise<unknown> }).sync()
     : undefined;

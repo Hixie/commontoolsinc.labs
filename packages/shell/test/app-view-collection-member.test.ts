@@ -23,6 +23,7 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import type { DID } from "@commonfabric/identity";
 import type { AppView } from "@commonfabric/navigation";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 function installBrowserGlobals(): () => void {
   const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -140,7 +141,7 @@ function templateText(value: unknown): string {
  * name nothing binds: the first is `[undefined]` and the second is `[]`.
  */
 function templateBindings(value: unknown, name: string): unknown[] {
-  if (value == null || typeof value !== "object") return [];
+  if (!isObjectOrArray(value)) return [];
   if (Array.isArray(value)) {
     return value.flatMap((entry) => templateBindings(entry, name));
   }

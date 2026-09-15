@@ -12,6 +12,8 @@
  * calls against; the engine installs a collector under this name when
  * coverage is enabled.
  */
+import { isObjectNotArray } from "@commonfabric/utils/types";
+
 export const PATTERN_COVERAGE_GLOBAL = "__cfPatternCoverage";
 
 /** Portable compiler output; trusted ingestion performs the semantic checks. */
@@ -76,7 +78,7 @@ export function isBuilderSourceSitesV1(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isObjectNotArray(value);
 }
 
 function isIntegerAtLeast(value: unknown, minimum: number): value is number {

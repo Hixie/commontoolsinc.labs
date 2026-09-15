@@ -34,6 +34,7 @@
 import { isDID } from "@commonfabric/identity/did";
 import { parseArgs } from "@std/cli/parse-args";
 import { join } from "@std/path";
+import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import type { HarnessConnectorGrantSpec } from "../src/contracts/well-known-grants.ts";
 import {
@@ -218,7 +219,7 @@ const parseJsonRecord = (
       }`,
     );
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (!isObjectNotArray(parsed)) {
     throw new Error(`\`${path}\` does not hold a JSON object`);
   }
   return parsed as Record<string, unknown>;
@@ -250,9 +251,7 @@ const objectField = (
   key: string,
 ): Record<string, unknown> => {
   const value = record[key];
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  return isObjectNotArray(value) ? value as Record<string, unknown> : {};
 };
 
 /**

@@ -1,6 +1,8 @@
 /** Bounded reads of untrusted JSON fields returned by a research model. */
 
 /** Returns a bounded string, or empty text for another JSON value. */
+import { isObjectNotArray } from "@commonfabric/utils/types";
+
 export const stringValue = (value: unknown, max = 2_000): string =>
   typeof value === "string" ? value.slice(0, max) : "";
 
@@ -17,9 +19,7 @@ export const stringList = (
 
 /** Returns record fields at a model-input or model-result boundary. */
 export const objectValue = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  isObjectNotArray(value) ? value as Record<string, unknown> : {};
 
 /** Keeps the first occurrence of each model-provided value in input order. */
 export const unique = <T>(values: readonly T[]): T[] => [...new Set(values)];

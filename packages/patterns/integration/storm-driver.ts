@@ -12,6 +12,7 @@
  */
 
 import { join } from "@std/path";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import {
   MultiRuntimeHarness,
   type MultiRuntimeSession,
@@ -82,7 +83,7 @@ console.log(`[driver] result-path views:`, JSON.stringify(views));
 // Raw replica reads at the messages address — bypass schema/link resolution.
 // Stored doc trees root at ["value", …]; link() reports the logical path.
 const findLinkIds = (v: unknown, out: Set<string>): void => {
-  if (v === null || typeof v !== "object") return;
+  if (!isObjectOrArray(v)) return;
   const rec = v as Record<string, unknown>;
   const id = (rec["id"] ?? (rec["/"] as Record<string, unknown> | undefined)
     ?.["id"]) as string | undefined;
@@ -187,7 +188,7 @@ for (
   };
   const interesting: string[] = [];
   for (const [logger, keys] of Object.entries(counts)) {
-    if (typeof keys !== "object" || keys === null) continue;
+    if (!isObjectOrArray(keys)) continue;
     for (
       const [key, v] of Object.entries(
         keys as Record<string, { total?: number }>,

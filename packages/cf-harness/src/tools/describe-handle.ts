@@ -19,6 +19,7 @@ import {
 } from "@commonfabric/runner/cfc";
 import { mergeLabel } from "@commonfabric/runner/cfc/label-view-core";
 import { parseLLMFriendlyLink } from "@commonfabric/runner/shared";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 import type { HarnessToolDescriptor } from "../contracts/tool-descriptor.ts";
 import type { HarnessFabricSession } from "../fabric-session.ts";
 import { resolveHandleToken } from "../handle-table.ts";
@@ -473,7 +474,7 @@ const describedDatabase = (
     return undefined;
   }
   const tables = value.tables;
-  if (tables === null || typeof tables !== "object") {
+  if (!isObjectOrArray(tables)) {
     return undefined;
   }
   // Wrapping the tables as one schema's properties is what puts the table
@@ -633,7 +634,7 @@ const readDatabaseFill = async (
         countTableSql(table, columns),
       );
       const first = result.rows[0];
-      row = first === undefined || typeof first !== "object" || first === null
+      row = !isObjectOrArray(first)
         ? undefined
         : first as Record<string, unknown>;
     } catch (error) {

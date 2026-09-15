@@ -8,6 +8,7 @@ import {
 } from "@commonfabric/integration";
 import { toIndentedDebugString } from "@commonfabric/data-model";
 import type { RequestOutcome } from "@commonfabric/runtime-client";
+import { isObjectOrArray } from "@commonfabric/utils/types";
 
 /**
  * Attribute a mark predicate stamps on the element it resolved, so the test can
@@ -3051,7 +3052,7 @@ async function readCfInputProbe(
     const hostValue = (host as Element & { value?: unknown }).value;
     let hostValueBinding: unknown;
     if (
-      hostValue !== null && typeof hostValue === "object" &&
+      isObjectOrArray(hostValue) &&
       typeof (hostValue as { ref?: unknown }).ref === "function"
     ) {
       try {
