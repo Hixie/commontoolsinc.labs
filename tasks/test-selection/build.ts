@@ -18,6 +18,7 @@ import {
   testIdentityKey,
   testIdentityOfKey,
 } from "@commonfabric/test-support/records";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import {
   costSeconds,
   type DaySamples,
@@ -166,7 +167,7 @@ export function parseAggregate(text: string): AggregateState | undefined {
   } catch {
     return undefined;
   }
-  if (typeof value !== "object" || value === null) return undefined;
+  if (!isObjectOrArray(value)) return undefined;
   const state = value as Record<string, unknown>;
   if (state.schema !== MANIFEST_SCHEMA_VERSION) return undefined;
   if (typeof state.day !== "string" || !Array.isArray(state.folded)) {
@@ -176,8 +177,7 @@ export function parseAggregate(text: string): AggregateState | undefined {
   // keyed by index. Every such key fails to name an identity, so the
   // aggregate would be read as holding nothing rather than refused.
   if (
-    typeof state.states !== "object" || state.states === null ||
-    Array.isArray(state.states)
+    !isObjectNotArray(state.states)
   ) {
     return undefined;
   }

@@ -38,6 +38,7 @@
  * own window fails the run, so an exemption cannot outlive the removal it was
  * granted for.
  */
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 export interface AcceptedStateDrop {
   /** Pattern key: the path relative to `packages/patterns`. */
   pattern: string;
@@ -314,7 +315,7 @@ function spineOf(paths: ReadonlySet<string>): ReadonlySet<string> {
 
 /** A value this walk may rebuild: a bare object literal, nothing else. */
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isObjectNotArray(value)) {
     return false;
   }
   const proto = Object.getPrototypeOf(value);
@@ -352,7 +353,7 @@ export function withoutAcceptedDrops(
 
   const strip = (value: unknown, prefix: string): unknown => {
     if (!spine.has(prefix)) return value;
-    if (typeof value !== "object" || value === null) return value;
+    if (!isObjectOrArray(value)) return value;
     if (isReduction(value)) return value;
     if (Array.isArray(value)) {
       const elements = `${prefix}[]`;
