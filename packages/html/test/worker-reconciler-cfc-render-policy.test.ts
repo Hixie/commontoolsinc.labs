@@ -2831,6 +2831,87 @@ Deno.test("worker reconciler CFC render policy", async (t) => {
       },
     );
 
+    //
+    // A link at a document's root
+    //
+    // `alias.set(otherCell)` stores a reference and nothing else, and the
+    // link entry the write mints at the root is the only label the document
+    // carries. Following the reference to ask the target is not open to the
+    // gate — a link view rebased at the root has the entry in it, so there is
+    // no absent view to fall back from — which is what makes the entry the
+    // whole of the protection here.
+    //
+
+    const aliasTx = runtime.edit();
+    const aliased = runtime.getCell<string>(
+      signer.did(),
+      "cfc-render-policy-aliased",
+      undefined,
+      aliasTx,
+    );
+    const aliasedLink = aliased.getAsNormalizedFullLink();
+    writeSeedEnvelopeDoc(aliasTx, signer.did());
+    aliasTx.writeOrThrow({
+      space: signer.did(),
+      id: aliasedLink.id!,
+      type: "application/json",
+      path: [],
+    }, {
+      value: "Secret note body",
+      cfc: {
+        version: 1,
+        schemaHash: SEED_ENVELOPE_SCHEMA_HASH,
+        labelMap: {
+          version: 1,
+          entries: [{
+            path: [],
+            label: { confidentiality: [healthRecordAtom] },
+            origin: "link",
+          }],
+        },
+      },
+    });
+    assertEquals((await aliasTx.commit()).ok !== undefined, true);
+
+    await t.step(
+      "default ceiling blocks a value whose root carries a link entry",
+      async () => {
+        const blocked = createOpsCollector();
+        const blockedReconciler = new WorkerReconciler({
+          onOps: blocked.onOps,
+          renderConfidentialityCeiling: { atoms: [], caveatKinds: [] },
+        });
+        const cancelBlocked = blockedReconciler.mount(plainRoot(aliased));
+        try {
+          await t.settle();
+          const renderedText = blocked.getOpsOfType("create-text")
+            .map((op) => op.text);
+          assertEquals(renderedText.includes("Secret note body"), false);
+          assertEquals(renderedText.includes("Content hidden by policy"), true);
+        } finally {
+          cancelBlocked();
+        }
+
+        const admitted = createOpsCollector();
+        const admittingReconciler = new WorkerReconciler({
+          onOps: admitted.onOps,
+          renderConfidentialityCeiling: {
+            atoms: [healthRecordAtom],
+            caveatKinds: [],
+          },
+        });
+        const cancelAdmitted = admittingReconciler.mount(plainRoot(aliased));
+        try {
+          await t.settle();
+          const renderedText = admitted.getOpsOfType("create-text")
+            .map((op) => op.text);
+          assertEquals(renderedText.includes("Secret note body"), true);
+        } finally {
+          cancelAdmitted();
+        }
+      },
+    );
+
     await t.step(
       "authored boundaries still narrow under the default ceiling",
       async () => {

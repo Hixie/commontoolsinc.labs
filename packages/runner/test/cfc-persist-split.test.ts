@@ -12,6 +12,7 @@ import {
 import { StorageManager } from "../src/storage/cache.deno.ts";
 import { Runtime } from "../src/runtime.ts";
 import { linkResolutionProbe } from "../src/storage/reactivity-log.ts";
+import { readConsumesEntry } from "../src/cfc/observation-classes.ts";
 import type { LabelMapEntry } from "../src/cfc/types.ts";
 
 const signer = await Identity.fromPassphrase("runner-cfc-persist-split");
@@ -21,8 +22,8 @@ const seedEnvelope = internSchema(SEED_ENVELOPE_SCHEMA, true);
 type StoredEntry = {
   path: string[];
   label: { confidentiality?: string[]; integrity?: unknown[] };
-  origin?: string;
-  observes?: string;
+  origin?: LabelMapEntry["origin"];
+  observes?: LabelMapEntry["observes"];
 };
 
 describe("CFC observation classes (C2 persist split)", () => {
@@ -418,6 +419,59 @@ describe("CFC observation classes (C2 persist split)", () => {
     const legacyIntegrity = derived.flatMap((e) => e.label.integrity ?? []);
     expect(legacyConfidentiality).toEqual(["secret"]);
     expect(legacyIntegrity).toContainEqual(certified);
+  });
+
+  it("stamps a probe-borne clause where a value read of the output takes it", async () => {
+    // The downstream half of SC-8, and the direction the class table does
+    // NOT govern. What a probe consumed at the source is a pointer label
+    // there; what the transaction then writes is content, and reading that
+    // content is how the pointer identity gets out. So the clause the probe
+    // carried belongs in the output's own value class, and demoting it to
+    // the output's `followRef` class — where no value read, no display sink
+    // and no write ceiling consumes it — releases it.
+
+    const rt = makeRuntime();
+    const sourceId = await seedDoc(
+      rt,
+      "ps-pointer-source",
+      { slot: { "/": { "link@1": {} } } },
+      [{
+        path: ["slot"],
+        label: { confidentiality: ["secret"] },
+        origin: "link",
+      }],
+    );
+
+    const carries = (entry: StoredEntry) =>
+      (entry.label.confidentiality ?? []).includes("secret");
+    const valueConsumable = (id: string) =>
+      entriesOf(id).filter((entry) =>
+        readConsumesEntry("value", entry) && carries(entry)
+      );
+
+    const probed = rt.edit();
+    probed.read(readAddress(sourceId, ["slot"]), { meta: linkResolutionProbe });
+    const out = rt.getCell(space, "ps-pointer-out", undefined, probed);
+    out.set({ derived: "computed from which reference sits there" });
+    probed.prepareCfc();
+    expect((await probed.commit()).ok).toBeDefined();
+    expect(valueConsumable(out.getAsNormalizedFullLink().id).length)
+      .toBeGreaterThan(0);
+
+    // The probe is what carried it: the same write with no probe stamps
+    // nothing, so the assertion above measures the probe rather than some
+    // other read of the transaction.
+    const unprobed = rt.edit();
+    const control = rt.getCell(
+      space,
+      "ps-pointer-control",
+      undefined,
+      unprobed,
+    );
+    control.set({ derived: "computed from which reference sits there" });
+    unprobed.prepareCfc();
+    expect((await unprobed.commit()).ok).toBeDefined();
+    expect(valueConsumable(control.getAsNormalizedFullLink().id)).toEqual([]);
   });
 
   it("standalone probes do not consume the split value/shape entries", async () => {
