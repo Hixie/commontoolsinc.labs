@@ -81,6 +81,15 @@ export function stateObjectName(
 }
 
 /**
+ * The day in an aggregate state object's name. Undefined for a name that
+ * is not one, which is what an unrelated object under the prefix looks
+ * like.
+ */
+export function stateDayOf(objectName: string): string | undefined {
+  return objectName.match(/\/(\d{4}-\d{2}-\d{2})-[^/]*\.json\.gz$/)?.[1];
+}
+
+/**
  * The generation time in a manifest's object name. Undefined for a name
  * that is not one, which is what an unrelated object under the prefix
  * looks like.
