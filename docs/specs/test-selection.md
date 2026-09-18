@@ -183,6 +183,33 @@ and is charged nothing. Such a test has either barely run or is failing
 everywhere, and one failing everywhere holds up the default branch, which
 is a louder alarm than any lane's budget and is answered first.
 
+A unit nothing has measured at all is charged from what its own suite's
+measured units cost, as the larger of two readings of them: their mean,
+and their ninetieth percentile. The suites are orders of magnitude apart,
+so one figure across all of them describes none of them, and a suite's own
+units are the whole of the evidence about what another of them will take.
+
+Both readings, because a lane holding one such unit and a lane holding
+twenty are short of time for different reasons.
+
+A suite's units are bimodal: many fast ones, a few slow ones, and little
+in between. The middle of them therefore falls where no unit sits, and
+describes neither the fast units nor the slow. The ninetieth percentile is
+where a test's own cost is read, and against one unit it is short one time
+in ten.
+
+What a lane holding twenty is packed against is their total, which sits
+near twenty times the mean whatever shape they came from. So a figure
+under the mean falls short of that total with a probability that climbs
+towards one as the count grows, however safe the same figure is against
+one unit. Which of the two readings is the larger is decided by how heavy
+the suite's tail is.
+
+No one figure covers a unit from the far end of a tail, and one that did
+would charge a lane many times what it holds. What answers that is the
+rule below, that a consumer reporting a projected time says how much of it
+rests on stand-ins.
+
 ## Flakes
 
 A flake is a test that disagrees with itself. `flakeRate` is how often it
