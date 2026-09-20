@@ -25,10 +25,7 @@ import {
   type MentionableRow,
   mentionableRowsOf,
 } from "../collection-naming/mentionable.ts";
-import {
-  type NamesMap,
-  type NamesTableRow,
-} from "../collection-naming/naming.ts";
+import { type NamesMap } from "../collection-naming/naming.ts";
 import Topics, {
   activityOrderOf,
   distinctByIdentity,
@@ -234,11 +231,9 @@ export default pattern(() => {
   const profileBoardCrossrefs = new Writable<TopicCrossrefRow[] | Default<[]>>(
     [],
   );
-  // The namespace and the table the composer is handed, standalone for the
-  // same reason: the composer allocates into the one and wires the other onto
-  // the topic it files, so a browser create is named exactly as a headless one
-  // is.
-  const profileBoardNames = new Writable<NamesTableRow[] | Default<[]>>([]);
+  // The namespace the composer is handed, standalone for the same reason: the
+  // composer allocates out of it and passes what it allocated into the topic
+  // it files, so a browser create is numbered exactly as a headless one is.
   const profileNames = new Writable<NamesMap>({});
   const profileTitleDraft = new Writable("Profile topic");
   const profileComments = new Writable<TopicComment[] | Default<[]>>([]);
@@ -287,7 +282,6 @@ export default pattern(() => {
     topics: profileTopics,
     mentionable: profileTopics,
     boardCrossrefs: profileBoardCrossrefs,
-    boardNames: profileBoardNames,
     names: profileNames,
     newTitle: profileTitleDraft,
     profileName: " Ada ",
@@ -534,6 +528,14 @@ export default pattern(() => {
   // The browser composer allocates out of the same namespace the headless
   // create does, in the same transaction as its append: drop the allocation
   // and the map stays empty while the topic still lands.
+  //
+  // That the composer also passes the number INTO the topic is covered in
+  // naming.test.tsx, which binds this same handler and witnesses the
+  // pass-through through the composed topic's refusal of a second number. It
+  // cannot be covered here, and the reason is worth knowing: the composer
+  // builds the topic inside the handler, so no cell of this file's is its
+  // number input, and `SHOW_TOPIC_NUMBERS` gates the published `shortName`, so
+  // reading that would assert an absence every topic has.
   const assert_profile_topic_named = assert(() =>
     Object.keys(profileNames.get()).join(",") === "1" &&
     equals(
