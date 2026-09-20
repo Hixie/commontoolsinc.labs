@@ -45,14 +45,6 @@ export interface DiscoveredSpace {
   mtimeMs: number;
 }
 
-function basename(p: string): string {
-  return p.split("/").pop() ?? p;
-}
-function dirname(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i <= 0 ? "" : p.slice(0, i);
-}
-
 function* walkSqlite(dir: string, depth: number): Generator<string> {
   let entries: Deno.DirEntry[];
   try {
@@ -82,10 +74,8 @@ export function candidateRoots(cwd: string = Deno.cwd()): string[] {
   const dbPath = Deno.env.get("DB_PATH");
   if (dbPath) {
     const dbStore = configuredStorePath(dbPath);
-    // A bare relative filename (`space.sqlite`) has an empty dirname — fall back
-    // to `.` so it still resolves to the current directory rather than dropping.
     roots.push(
-      dbStore.endsWith(".sqlite") ? (dirname(dbStore) || ".") : dbStore,
+      dbStore.endsWith(".sqlite") ? Path.dirname(dbStore) : dbStore,
     );
   }
   // Spaces pulled from a remote (`cf inspect --remote` / `pull`) land here.
@@ -93,10 +83,11 @@ export function candidateRoots(cwd: string = Deno.cwd()): string[] {
   // Walk up from cwd; check both cache layouts at each level.
   let dir = cwd;
   for (let i = 0; i < 8; i++) {
-    roots.push(`${dir}/packages/toolshed/cache/memory`);
-    roots.push(`${dir}/cache/memory`);
-    const parent = dirname(dir);
-    if (!parent || parent === dir) break;
+    roots.push(Path.join(dir, "packages", "toolshed", "cache", "memory"));
+    roots.push(Path.join(dir, "cache", "memory"));
+    const parent = Path.dirname(dir);
+    // A root is its own parent, which is where the walk stops.
+    if (parent === dir) break;
     dir = parent;
   }
   return roots;
@@ -134,7 +125,7 @@ export function discoverSpaceDbs(
         continue;
       }
       out.push({
-        did: basename(path).replace(/\.sqlite$/, ""),
+        did: Path.basename(path, ".sqlite"),
         path,
         sizeBytes: stat.size,
         mtimeMs: stat.mtime?.getTime() ?? 0,

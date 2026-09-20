@@ -166,6 +166,13 @@ Deno.test("candidateRoots orders env overrides before caches and cwd walk", () =
     // A bare relative DB_PATH filename resolves to ".", not an empty root.
     Deno.env.set("DB_PATH", "space.sqlite");
     assert(candidateRoots("/a/b").includes("."));
+
+    // The upward walk stops at the filesystem root rather than looping on it,
+    // which is a root being its own parent.
+    Deno.env.delete("DB_PATH");
+    Deno.env.delete("MEMORY_DIR");
+    const fromRoot = candidateRoots("/");
+    assertEquals(fromRoot.filter((r) => r === "/cache/memory").length, 1);
   } finally {
     restore("MEMORY_DIR");
     restore("DB_PATH");
