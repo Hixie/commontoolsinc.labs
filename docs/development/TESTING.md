@@ -61,10 +61,10 @@ ignored, and the file's `beforeAll` and `afterAll` hooks all still run —
 including those of a `describe()` whose every test was ignored, which pays for
 that suite's setup and runs none of its tests. Only `beforeEach` and
 `afterEach` narrow, to the surviving test. So what a test needs comes from a
-hook or from the test itself, and never from a test above it. A page another test navigated to a view, a cell another test set
-to a value, and a piece another test created are all things a test has to
-arrange for itself. [Test selection](test-selection.md) describes the machinery
-that picks them.
+hook or from the test itself, and never from a test above it. A page another
+test navigated to a view, a cell another test set to a value, and a piece
+another test created are all things a test has to arrange for itself.
+[Test selection](test-selection.md) describes the machinery that picks them.
 
 Such a test fails by waiting. The waits an integration test uses resolve on an
 event, and the event never comes, so the wait runs to its stuck-condition
@@ -85,17 +85,19 @@ same five minutes against the initial value. So give each test the value it
 asserts as well as the page it drives, or, where one test's expectation is
 another test's effect, make the two one test.
 
-Writing that value is what creates the next trap, so pick one no other test in
-the file writes. A wait evaluates its condition once when it is installed and
-returns if it already holds, so a test writing the value its neighbor wrote
-before it waits out nothing in a whole-file run: the state it was handed
-settles the wait, and what the test appears to check its neighbor checked. A
-value of its own gives the wait a change to observe in either order.
+Writing that value is what leaves the test waiting on a condition its own
+starting state satisfies, where the value is the one a neighbor wrote first.
+["A wait the initial state already satisfies establishes
+nothing"](waiting-in-tests.md#a-wait-the-initial-state-already-satisfies-establishes-nothing)
+covers that, including how to tell it from a test whose subject is the initial
+state. The part of it to carry away here: give such a test a value no other
+test in the file writes.
 
-It creates a third, in a browser test. What the page shows is now the effect of
-a write the page did not make, and an integration test holds no subscription
-that drives the page between a wait's checks, so a passive wait can sit on an
-unchanged DOM while the effect is ready to apply. Reach for a wait that settles
+Making a test stand alone has a third consequence in a browser test. What the
+page shows is now the effect of a write the page did not make, and an
+integration test holds no subscription that drives the page between a wait's
+checks, so a passive wait can sit on an unchanged DOM while the effect is
+ready to apply. Reach for a wait that settles
 the view on each check — `waitForSettledText` rather than `waitForText`, and a
 `waitForCondition` predicate that settles before it reads.
 [Waiting in tests](waiting-in-tests.md) covers the primitives.
@@ -115,9 +117,9 @@ what selection charges should not leave out.
 Reproducing one of these locally takes the skip list rather than `--filter`.
 `--filter` matches the name of a `Deno.test`, which for a file using
 `describe()` and `it()` is a top-level `describe()`, so the least it can select
-is a whole suite. `CF_TEST_SKIP_LIST` names a JSON file mapping a repository-relative
-test file to the test names inside it to ignore, each written as its full
-describe chain:
+is a whole suite. `CF_TEST_SKIP_LIST` names a JSON file mapping a
+repository-relative test file to the test names inside it to ignore, each
+written as its full describe chain:
 
 ```json
 {
