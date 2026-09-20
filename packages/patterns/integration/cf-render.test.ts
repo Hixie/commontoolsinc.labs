@@ -21,7 +21,7 @@ import {
   waitForText,
 } from "./cfc-browser-helpers.ts";
 import { defer, type Deferred } from "@commonfabric/utils/defer";
-import { toIndentedDebugString } from "@commonfabric/data-model";
+import { debugStr } from "@commonfabric/data-model";
 
 const { API_URL, FRONTEND_URL, SPACE_NAME } = env;
 
@@ -196,9 +196,7 @@ describe("cf-render integration test", () => {
       const seen = await readTextProbe(page, "#counter-result")
         .catch(() => undefined);
       throw new Error(
-        `Expected three #counter-result elements reading ${
-          JSON.stringify(expected)
-        }; saw ${toIndentedDebugString(seen)}`,
+        debugStr`Expected three #counter-result elements reading $quote${expected}; saw $quote,indent,long${seen}`,
         { cause },
       );
     }
