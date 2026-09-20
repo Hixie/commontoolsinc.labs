@@ -38,6 +38,7 @@ import {
 } from "./pieces-controller.ts";
 import { waitForRuntimeSynced } from "./cfc-browser-helpers.ts";
 import { defer, type Deferred } from "@commonfabric/utils/defer";
+import { debugStr } from "@commonfabric/data-model";
 
 const { API_URL, FRONTEND_URL, SPACE_NAME } = env;
 
@@ -138,8 +139,8 @@ async function waitForEditorContent(
     const actual = await getEditorContent(page).catch(() => undefined);
     if (actual === undefined) throw cause;
     throw new Error(
-      `Editor content did not become ${JSON.stringify(expected)}; ` +
-        `last content: ${JSON.stringify(actual)}`,
+      debugStr`Editor content did not become $quote,long${expected}; ` +
+        debugStr`last content: $quote,long${actual}`,
       { cause },
     );
   }
