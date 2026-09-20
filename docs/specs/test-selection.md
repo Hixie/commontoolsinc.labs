@@ -183,11 +183,19 @@ and is charged nothing. Such a test has either barely run or is failing
 everywhere, and one failing everywhere holds up the default branch, which
 is a louder alarm than any lane's budget and is answered first.
 
-A unit nothing has measured at all is charged from what its own suite's
-measured units cost, as the larger of two readings of them: their mean,
-and their ninetieth percentile. The suites are orders of magnitude apart,
-so one figure across all of them describes none of them, and a suite's own
-units are the whole of the evidence about what another of them will take.
+That rule is about an identity the store holds, whose executions inside
+the window all failed. A unit the store holds no identity for at all — a
+file that is new, or one whose every test was renamed — is a different
+case and is not charged nothing.
+
+Such a unit is charged from what its own suite's measured units cost, as
+the larger of two readings of them: their mean, and their ninetieth
+percentile. The suites are orders of magnitude apart, so one figure across
+all of them describes none of them, and a suite's own units are the whole
+of the evidence about what another of them will take. A suite holding no
+measured unit has none of that evidence, and each of its units takes
+`UNMEASURED_COST_SECONDS`, which is above zero so that a packer treats a
+suite it knows nothing about as taking time.
 
 Both readings, because a lane holding one such unit and a lane holding
 twenty are short of time for different reasons.

@@ -1034,9 +1034,13 @@ function standingOnStandIns(
  * expected to take and why each of its identities was chosen. "Why did
  * my test not run" is the question a selected run provokes, and a
  * summary that only names the suites cannot begin to answer it. The
- * seconds are the tests' own measured time and not what the lane will
- * take: the overheads the packer charged on top are per lane rather than
- * per identity, and `projectedSeconds` is where the whole figure is.
+ * seconds in the table are the tests' own time and not what the lane
+ * will take: the overheads the packer charged on top are per lane rather
+ * than per identity, and `projectedSeconds` is where the whole figure is.
+ *
+ * Not all of that time is measured. A unit nothing has recorded is
+ * carried on a stand-in whose cost comes from the suite around it, and
+ * the projection line says how many of its seconds those account for.
  */
 export function describePlan(
   options: LaneOptions,
