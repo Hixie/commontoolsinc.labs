@@ -32,6 +32,35 @@ const isSingleFileStore = (store: URL): boolean => {
 };
 
 /**
+ * A configured store location as a filesystem path.
+ *
+ * `MEMORY_DIR` reaches a server as a URL — `packages/toolshed/env.ts` defaults
+ * it to one, and the server hands it to `new URL()` — while a person setting it
+ * writes a plain path, and `DB_PATH` is a path by its own rule. All three name
+ * the same kind of place. A tool that walks the filesystem for the store a
+ * server is serving needs the path, and composes this rather than testing for a
+ * scheme itself: a `file:` URL left as it stands names no directory that exists,
+ * so the tool finds nothing and reports the store as absent.
+ *
+ * A trailing separator goes, so that what comes back is a directory path in the
+ * ordinary spelling and paths built onto it carry no empty segment. A location
+ * with no local path to give — another scheme, or a `file:` URL that does not
+ * parse — comes back as it stands, for the caller to report as a location
+ * holding nothing rather than to throw over.
+ */
+export const configuredStorePath = (location: string): string => {
+  let path = location;
+  if (location.startsWith("file:")) {
+    try {
+      path = Path.fromFileUrl(location);
+    } catch {
+      return location;
+    }
+  }
+  return path.length > 1 ? path.replace(/[/\\]+$/, "") : path;
+};
+
+/**
  * The engine store root a server derives from its configured store location
  * (`MEMORY_DIR`, or `DB_PATH` in single-file mode).
  *

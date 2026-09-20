@@ -170,3 +170,29 @@ Deno.test("candidateRoots orders env overrides before caches and cwd walk", () =
     restore("DB_PATH");
   }
 });
+
+Deno.test("candidateRoots reads a MEMORY_DIR written as a file URL", () => {
+  // The form a server's own configuration uses: `packages/toolshed/env.ts`
+  // defaults MEMORY_DIR to a `file:` URL. Left as it stands it names no
+  // directory, so the walk below it finds nothing and every space in that store
+  // reads as absent.
+  const saved = Deno.env.get("MEMORY_DIR");
+  const restore = () =>
+    saved === undefined
+      ? Deno.env.delete("MEMORY_DIR")
+      : Deno.env.set("MEMORY_DIR", saved);
+  try {
+    Deno.env.set("MEMORY_DIR", "file:///srv/store/cache/memory/");
+    assertEquals(candidateRoots("/a/b")[0], "/srv/store/cache/memory");
+
+    // A percent-escape in the URL is one character of the path it names.
+    Deno.env.set("MEMORY_DIR", "file:///srv/a%20b/cache/memory");
+    assertEquals(candidateRoots("/a/b")[0], "/srv/a b/cache/memory");
+
+    // A path written by hand is already a path, and keeps its own spelling.
+    Deno.env.set("MEMORY_DIR", "/srv/store/cache/memory");
+    assertEquals(candidateRoots("/a/b")[0], "/srv/store/cache/memory");
+  } finally {
+    restore();
+  }
+});

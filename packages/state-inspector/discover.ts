@@ -8,6 +8,7 @@
 
 import { Identity } from "@commonfabric/identity";
 import { assertNotDID, isDID } from "@commonfabric/identity/did";
+import { configuredStorePath } from "@commonfabric/memory/v2/storage-path";
 
 import { openSpace } from "./db.ts";
 import { rootCacheDir } from "./remote.ts";
@@ -67,14 +68,18 @@ function* walkSqlite(dir: string, depth: number): Generator<string> {
 /** Candidate cache directories to search, in priority order. */
 export function candidateRoots(cwd: string = Deno.cwd()): string[] {
   const roots: string[] = [];
+  // Both variables name their store the way the server was configured, which
+  // for MEMORY_DIR is a URL wherever the server itself reads it. What follows
+  // walks the filesystem, so each becomes a path first.
   const env = Deno.env.get("MEMORY_DIR");
-  if (env) roots.push(env);
+  if (env) roots.push(configuredStorePath(env));
   const dbPath = Deno.env.get("DB_PATH");
   if (dbPath) {
+    const dbStore = configuredStorePath(dbPath);
     // A bare relative filename (`space.sqlite`) has an empty dirname — fall back
     // to `.` so it still resolves to the current directory rather than dropping.
     roots.push(
-      dbPath.endsWith(".sqlite") ? (dirname(dbPath) || ".") : dbPath,
+      dbStore.endsWith(".sqlite") ? (dirname(dbStore) || ".") : dbStore,
     );
   }
   // Spaces pulled from a remote (`cf inspect --remote` / `pull`) land here.

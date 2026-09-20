@@ -64,6 +64,15 @@ command -v python3 > /dev/null || {
   echo "python3 is required to mint the drill's space name" >&2
   exit 1
 }
+# CF_DRILL_STORE_DIR named the store before `cf inspect` found it, and MEMORY_DIR
+# is the name it answers to now. A caller who still sets the old one means to
+# point the drill at a particular store, so say that it is not read rather than
+# ignore it and hand back a result about whichever store was found instead.
+[ -z "${CF_DRILL_STORE_DIR:-}" ] || {
+  echo "CF_DRILL_STORE_DIR is no longer read; set MEMORY_DIR to the store" \
+    "directory of the toolshed serving $API_URL" >&2
+  exit 1
+}
 
 WORK="$(mktemp -d)"
 SPACE="topics-drill-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:12])')"
