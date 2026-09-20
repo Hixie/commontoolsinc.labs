@@ -176,8 +176,12 @@ export function sourceDateKey(source: string, date: string): string {
 
 /**
  * Reads a stored aggregate. Returns undefined for anything that is not
- * one; a publisher that cannot read its own state starts from nothing
- * rather than from a half-understood one.
+ * one, rather than half of a half-understood one.
+ *
+ * That is a statement about the one body, not about what the publisher
+ * has: it folds onto the newest stored state this reads, over a walk
+ * back bounded by the days its run covers, and starts from an empty
+ * aggregate only where the store holds no state object at all.
  *
  * Takes the body's text or the value it parses to, as `parseManifest`
  * does, so that a reader asking this and `writtenAhead` about one body

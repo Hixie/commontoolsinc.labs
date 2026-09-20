@@ -1537,6 +1537,31 @@ describe("publish() over a state written further ahead than it reads", () => {
     expect(created.size).toBe(0);
   });
 
+  it("passes over a body that arrived and is not JSON at all", async () => {
+    // A truncated or half-written body is the other way a stored state
+    // is one no publisher will ever read, beside a shape from further
+    // ahead, and nothing can replace it under create-only credentials.
+    const garbage = stateObjectName("2026-08-20", "1");
+    const { store, created } = fakeStore({
+      ...seed(),
+      [stateObjectName("2026-08-20", "0")]: carrying(
+        MANIFEST_SCHEMA_VERSION,
+        "2026-08-20",
+      ),
+      [garbage]: "{not json at all",
+    });
+    const said = await saying(() =>
+      publish(["--days", "1"], store, NOW, suites, noBaselines)
+    );
+    expect(said).toContain(
+      `passing over ${garbage}: it is not an aggregate this publisher`,
+    );
+    const entry = (await publishedManifest(created)).entries.find((one) =>
+      testIdentityKey(one.test) === KEPT
+    );
+    expect(entry?.inputs.catches).toBe(CATCH_WEIGHT_MAIN * 3);
+  });
+
   it("refuses a state the store names and will not give", async () => {
     // A read that does not arrive says nothing about the object, so the
     // state behind it is not taken in its place: the run that did so

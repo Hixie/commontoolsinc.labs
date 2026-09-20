@@ -536,11 +536,16 @@ replaces score history with only the selected window.
   or an aggregate holds is not a cold start: the area is named rather than
   numbered, so it does not move, and both are read forward.
 - If the run's log names a state it passed over and a state it folded onto,
-  it recovered on its own and the manifest it created is the newest one.
-  What a passed-over state folded from days outside that run's window is not
-  in it. A second dispatch changes none of that. What the log is reporting is
-  that the newest states stopped being readable, and that is the thing to go
-  and find the cause of.
+  that pair says which aggregate the run took and nothing more: it is printed
+  before the run reads a record or creates anything, so a later listing,
+  read, or creation that failed leaves the pair in the log of a run that
+  published nothing. What says a run published is its `created ...` line
+  naming the manifest object, together with the run's own conclusion. Where
+  both are there the recovery happened, and what a passed-over state folded
+  from days outside that run's window is not in the manifest; a second
+  dispatch changes none of that. Either way the log is reporting that the
+  newest states stopped being readable, which is the thing to go and find
+  the cause of.
 - If the log says every state it looked at was one it could not read, read
   the fault it names against each. A state written in a shape from further
   ahead means a publisher below that shape is deployed; land a `main` that
@@ -551,6 +556,16 @@ replaces score history with only the selected window.
   the append-only manifests and state objects intact — they and the raw
   record history are the recovery sources — and do not reach for bootstrap or
   for object deletion or renaming.
+- If a widened window reaches no readable state either, work back through
+  the listing, dispatching with a window that reaches the day each older
+  state was created on, until one is folded onto or the listing runs out. A
+  state written in a shape from further ahead is history out of reach rather
+  than history lost, and reads as soon as a publisher at that shape is
+  deployed, so a store holding one is never a cold start. A store whose
+  every state is a body that arrived and is not an aggregate holds no
+  history any publisher can reach, and that alone is the condition under
+  which this is a cold start: dispatch once with bootstrap on, and then
+  require the three acceptance checks above.
 - If listing a state, or reading one, fails outright, that is neither absence
   nor an unreadable state: the run learned nothing about the object, and
   refuses on that rather than taking the one behind it. Dispatch again once

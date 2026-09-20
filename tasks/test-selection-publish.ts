@@ -512,9 +512,10 @@ function refusal(
     );
   }
   lines.push(
-    `do not bootstrap: it starts from an empty aggregate, and the catches ` +
-      `the stored states hold accumulate over unbounded history and are ` +
-      `not in the records any window reads`,
+    `do not bootstrap before establishing that no stored state reads at ` +
+      `all: it starts from an empty aggregate, and the catches the stored ` +
+      `states hold accumulate over unbounded history and are not in the ` +
+      `records any window reads`,
   );
   return lines;
 }
