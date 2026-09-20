@@ -42,22 +42,20 @@ const isSingleFileStore = (store: URL): boolean => {
  * scheme itself: a `file:` URL left as it stands names no directory that exists,
  * so the tool finds nothing and reports the store as absent.
  *
- * A trailing separator goes, so that what comes back is a directory path in the
- * ordinary spelling and paths built onto it carry no empty segment. A location
- * with no local path to give — another scheme, or a `file:` URL that does not
- * parse — comes back as it stands, for the caller to report as a location
- * holding nothing rather than to throw over.
+ * The path comes back as the URL spells it, trailing separator and all, because
+ * a directory path is what a caller asked for and tidying its shape is the job
+ * of whatever joins onto it. A location this cannot read as a local path — a
+ * `file:` URL that does not parse, or any other scheme — comes back as it
+ * stands, for the caller to report as a location holding nothing rather than to
+ * throw over.
  */
 export const configuredStorePath = (location: string): string => {
-  let path = location;
-  if (location.startsWith("file:")) {
-    try {
-      path = Path.fromFileUrl(location);
-    } catch {
-      return location;
-    }
+  if (!location.startsWith("file:")) return location;
+  try {
+    return Path.fromFileUrl(location);
+  } catch {
+    return location;
   }
-  return path.length > 1 ? path.replace(/[/\\]+$/, "") : path;
 };
 
 /**

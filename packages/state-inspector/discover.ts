@@ -6,6 +6,8 @@
 // engine-v3/<did>.sqlite`. The engine-v3 segment is sometimes doubled, so we
 // walk a bounded depth under each cache base rather than assume a fixed path.
 
+import * as Path from "@std/path";
+
 import { Identity } from "@commonfabric/identity";
 import { assertNotDID, isDID } from "@commonfabric/identity/did";
 import { configuredStorePath } from "@commonfabric/memory/v2/storage-path";
@@ -59,7 +61,11 @@ function* walkSqlite(dir: string, depth: number): Generator<string> {
     return; // missing/unreadable dir
   }
   for (const e of entries) {
-    const full = `${dir}/${e.name}`;
+    // `Path.join` rather than a separator between the two: `dir` may be a store
+    // location as its configuration spelled it, trailing separator and all, and
+    // an empty segment in the middle of every path this yields would reach every
+    // caller that reports one.
+    const full = Path.join(dir, e.name);
     if (e.isFile && e.name.endsWith(".sqlite")) yield full;
     else if (e.isDirectory && depth > 0) yield* walkSqlite(full, depth - 1);
   }

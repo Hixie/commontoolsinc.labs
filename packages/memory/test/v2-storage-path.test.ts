@@ -59,11 +59,11 @@ Deno.test("resolveSpaceStoreUrl rejects malformed unicode subjects with validati
 });
 
 Deno.test("configuredStorePath reads a store location in either form", () => {
-  // The form a server's own configuration uses, with and without the trailing
-  // separator the default carries.
+  // The form a server's own configuration uses. The path comes back as the URL
+  // spells it, so the trailing separator the default carries survives.
   assertEquals(
     configuredStorePath("file:///srv/cache/memory/"),
-    "/srv/cache/memory",
+    "/srv/cache/memory/",
   );
   assertEquals(
     configuredStorePath("file:///srv/cache/memory"),
@@ -76,20 +76,18 @@ Deno.test("configuredStorePath reads a store location in either form", () => {
     "/srv/a b/memory",
   );
 
-  // A path written by hand is already a path, trailing separator aside.
+  // A path written by hand is already a path, and is handed back untouched.
   assertEquals(configuredStorePath("/srv/cache/memory"), "/srv/cache/memory");
-  assertEquals(configuredStorePath("/srv/cache/memory/"), "/srv/cache/memory");
-  assertEquals(configuredStorePath("relative/memory/"), "relative/memory");
+  assertEquals(configuredStorePath("/srv/cache/memory/"), "/srv/cache/memory/");
+  assertEquals(configuredStorePath("relative/memory/"), "relative/memory/");
 
-  // The filesystem root is a path of its own, and keeps its separator.
-  assertEquals(configuredStorePath("/"), "/");
-
-  // A location with no local path comes back as it stands, for the caller to
-  // report as holding nothing rather than to throw over. Two shapes reach that:
-  // another scheme, and a `file:` URL that does not parse.
+  // A location this cannot read as a local path comes back as it stands, for the
+  // caller to report as holding nothing rather than to throw over. Two shapes
+  // reach that: another scheme, and a `file:` URL that does not parse.
   assertEquals(
     configuredStorePath("https://example.com/store"),
     "https://example.com/store",
   );
   assertEquals(configuredStorePath("file://[/store"), "file://[/store");
+  assertEquals(configuredStorePath(""), "");
 });
