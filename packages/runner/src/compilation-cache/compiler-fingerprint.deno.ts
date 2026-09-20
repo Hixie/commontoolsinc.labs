@@ -30,10 +30,10 @@ import { SOURCE_COMPILE_CACHE_RUNTIME_VERSION } from "./compile-cache-version.ts
  * over-invalidates rather than under-invalidates: a redundant recompile, never
  * a stale read.
  *
- * This is the single definition of the input set. The CI compile-cache key
- * fingerprints the same inputs; {@link ciHashFilesArgs} renders this list into
- * that key's `hashFiles(...)` arguments, and `compiler-fingerprint.test.ts`
- * fails if the workflow drifts from it.
+ * This is the single definition of the input set. CI keys its pattern compile
+ * byte caches on the fingerprint itself, which `tasks/compile-cache-key.ts`
+ * prints and a workflow step hands to the cache action, so the CI key and the
+ * runtime version are one value rather than two descriptions of one list.
  *
  *  - `packages/ts-transformers` — the CF transformer pipeline, including the
  *    `SchemaGeneratorTransformer` that bakes schemas into the emitted bytes;
@@ -67,23 +67,19 @@ export const COMPILE_FINGERPRINT_INPUTS: readonly string[] = [
 ];
 
 /**
- * Render {@link COMPILE_FINGERPRINT_INPUTS} into the argument list of the CI
- * compile-cache key's `hashFiles(...)` expression (see
- * `.github/workflows/deno.yml`). GitHub Actions cannot import the list, so the
- * workflow carries a literal copy that a test checks against this rendering.
- * Directory inputs become `<dir>/**` globs; a file input (a `.` in its last path
- * segment) is passed through verbatim. Quoting and `, ` separators match the
- * `hashFiles(...)` call exactly so the comparison is a plain string match.
+ * Render {@link COMPILE_FINGERPRINT_INPUTS} as path globs. A directory input
+ * becomes a `<dir>/**` tree; a file input, which is one with a `.` in its last
+ * path segment, is passed through. `tasks/compile-cache-state.ts` matches a
+ * run's changed files against these to decide whether its compile cache went
+ * cold, which is the same question the fingerprint answers by hashing them.
  */
-export function ciHashFilesArgs(
+export function compileFingerprintGlobs(
   inputs: readonly string[] = COMPILE_FINGERPRINT_INPUTS,
-): string {
-  return inputs
-    .map((input) => {
-      const base = input.slice(input.lastIndexOf("/") + 1);
-      return base.includes(".") ? `'${input}'` : `'${input}/**'`;
-    })
-    .join(", ");
+): string[] {
+  return inputs.map((input) => {
+    const base = input.slice(input.lastIndexOf("/") + 1);
+    return base.includes(".") ? input : `${input}/**`;
+  });
 }
 
 /** Cache-key namespace prefix kept ahead of the fingerprint, for legibility. */

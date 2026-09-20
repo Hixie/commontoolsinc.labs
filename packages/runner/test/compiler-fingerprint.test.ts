@@ -3,7 +3,6 @@ import { expect } from "@std/expect";
 import { fromFileUrl } from "@std/path";
 
 import {
-  ciHashFilesArgs,
   COMPILE_FINGERPRINT_INPUTS,
   computeCompilerFingerprint,
   computeCompilerVersion,
@@ -21,10 +20,6 @@ import {
 
 const versionModulePath = fromFileUrl(
   new URL("../src/compilation-cache/compile-cache-version.ts", import.meta.url),
-);
-
-const denoWorkflowPath = fromFileUrl(
-  new URL("../../../.github/workflows/deno.yml", import.meta.url),
 );
 
 const repoRoot = fromFileUrl(new URL("../../../", import.meta.url));
@@ -251,26 +246,5 @@ describe("compile-cache version axis", () => {
     ) {
       expect(COMPILE_FINGERPRINT_INPUTS).toContain(input);
     }
-  });
-
-  it("CI compile-cache key mirrors the fingerprint input set", async () => {
-    // The workflow carries a literal copy of the input globs (GitHub Actions
-    // cannot import the TS list). The pattern and generated-pattern cache keys
-    // hash exactly the args `ciHashFilesArgs()` renders — including the
-    // server-execution ON arm's read-only restore (key + restore-keys), which
-    // reuses the OFF arm's entries and must therefore stay key-compatible.
-    const workflow = await Deno.readTextFile(denoWorkflowPath);
-    const expected = `hashFiles(${ciHashFilesArgs()})`;
-    const occurrences = workflow.split(expected).length - 1;
-    expect(occurrences).toBe(8);
-    expect(workflow).toContain(
-      "hashFiles('packages/generated-patterns/**/*.ts', 'tasks/select-generated-pattern-files.ts')",
-    );
-  });
-
-  it("renders directory inputs as globs and file inputs verbatim", () => {
-    expect(ciHashFilesArgs(["packages/api", "deno.lock"])).toBe(
-      "'packages/api/**', 'deno.lock'",
-    );
   });
 });

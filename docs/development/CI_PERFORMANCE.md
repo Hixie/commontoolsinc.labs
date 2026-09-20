@@ -231,6 +231,40 @@ post-job save can reevaluate the output reference safely because its value was
 fixed before the job populated the workspace. The `deno-setup` composite action
 uses this shape for the shared Deno dependency cache.
 
+### The Pattern Compile Cache Key
+
+Four `actions/cache` steps in `.github/workflows/deno.yml` restore a pattern
+compile byte cache: one in the generated-pattern integration job, one in each of
+the two pattern integration arms, and one in the pattern unit coverage job.
+Their keys carry the compiler-input fingerprint, which is the value the runtime
+puts in the `<version>` segment of its own `compileCache:<version>/<identity>`
+keys. A cache entry named by it therefore holds bytes the compiler now running
+emitted, and an entry from any other compiler is one those jobs never ask for.
+
+The fingerprint is not written into the key. Each of those jobs resolves it in a
+setup step, through the `./.github/actions/compile-cache-key` composite action,
+which runs `tasks/compile-cache-key.ts` and offers the value as its
+`fingerprint` output. The cache steps then reference that step's output. This is
+the shape the section above prescribes, and it buys two things here. The
+post-job save re-evaluates the key without walking the fingerprinted trees a
+second time. And the CI key and the runtime version become one value computed
+once, rather than two descriptions of one list of inputs that can drift apart.
+
+`COMPILE_FINGERPRINT_INPUTS` in
+`packages/runner/src/compilation-cache/compiler-fingerprint.deno.ts` is the list
+being hashed, and it is the only place that list is written down. Changing what
+shapes the emitted bytes means editing it there; nothing in the workflow
+enumerates those inputs, so nothing in the workflow has to be changed to match.
+
+What the workflow is held to is where the value comes from. "every compile byte
+cache is keyed on the compiler fingerprint" in `tasks/ci-workflow.test.ts` reads
+every job that sets `CF_COMPILE_CACHE_FILE`, finds the cache entry covering that
+file, and fails when its key or a restore prefix does not carry the action's
+output, when the job never resolves it, or when it resolves it after the cache
+step — which would leave the key holding an empty segment and collapse entries
+from different compilers onto one another. The action fails the job outright if
+the script prints nothing, so an empty segment cannot reach a key.
+
 ## Step And Job Timeouts
 
 Every work step in `.github/workflows/deno.yml` carries its own

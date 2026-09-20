@@ -47,6 +47,22 @@ other job to the shape: it fails the `Check` job when a bound is missing, when
 it is written as a number rather than an alias, or when a step's anchor is
 fewer than ten minutes below its job's.
 
+## A compile cache is keyed on a resolved fingerprint, never on `hashFiles`
+
+A job that points the compiler at a cache file with `CF_COMPILE_CACHE_FILE`
+resolves the compiler-input fingerprint first, in a setup step that uses the
+`./.github/actions/compile-cache-key` composite action under the step id
+`compile-cache-key`, and keys that file's `actions/cache` entry on that step's
+`fingerprint` output. Enumerating the compiler's inputs in a `hashFiles(...)`
+call instead puts a second description of `COMPILE_FINGERPRINT_INPUTS` in this
+file, and the two drift.
+
+"every compile byte cache is keyed on the compiler fingerprint" in
+`tasks/ci-workflow.test.ts` holds all of that, including the step order: a cache
+step ahead of the step that resolves the value gets an empty segment in its key,
+which collapses entries from different compilers onto one another. "The Pattern
+Compile Cache Key" in `docs/development/CI_PERFORMANCE.md` has the rest.
+
 ## A test job ships test records
 
 Every job that runs tests sets `CF_TEST_RECORDS_DIR` to a workspace spool
