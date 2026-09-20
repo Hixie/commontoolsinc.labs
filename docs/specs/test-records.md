@@ -202,11 +202,12 @@ execution of one test, and every history built from records — flake rate,
 duration, and what a pull request selects — answers whether to run that
 test again. A check reading what the run around it produced exists only
 as part of that run, so there is nothing to select and no suite in the
-test topology to claim its identity. Two checks are of this shape: the
+test topology to claim its identity. Three checks are of this shape: the
 pull request coverage gate, which reads the coverage artifacts of every
-job in its own run, and the nightly audit over the CFC property corpus,
-which reads what the step before it wrote. A gate resolving a merge base
-against a base ref is not, and records normally.
+job in its own run; the store half of the test topology's drift guard,
+which reads those jobs' records; and the nightly audit over the CFC
+property corpus, which reads what the step before it wrote. A gate
+resolving a merge base against a base ref is not, and records normally.
 
 One thing that is not a test is recorded anyway: a lane measuring
 itself. A lane measures its own setup and each of its batches through
