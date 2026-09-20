@@ -427,6 +427,12 @@ makes the computed form name the right binary, so
 task with a decoy `deno` as the only entry on the child's `PATH` and fails if the
 decoy is the one that runs.
 
+The child also inherits the environment of the run that started it, which in CI
+carries the recording variables, `CF_TEST_SKIP_LIST` among them. A test that
+starts a child naming its own tests names those variables too, and
+[test-records.md](test-records.md#covering-a-new-test-surface) says which and
+what to set them to.
+
 ### Test Structure
 
 - **Unit tests**: Use `@std/testing/bdd` (`describe`/`it`) with `@std/expect` for assertions
