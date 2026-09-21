@@ -489,9 +489,15 @@ export function checkStore(
   return findings;
 }
 
-/** One file of records, and the commit whatever produced it recorded. */
+/** One file of records, and what is known about where it came from. */
 interface RecordFile {
   path: string;
+
+  /**
+   * What to call it in a finding: the artifact directory a walk found it
+   * in, or the path itself where the caller named the file.
+   */
+  from: string;
 
   /**
    * The commit the job that wrote this file was checked out at, where a
@@ -524,14 +530,19 @@ async function recordFiles(at: string): Promise<RecordFile[]> {
     if (error instanceof Deno.errors.NotFound) return [];
     throw error;
   }
-  if (!info.isDirectory) return [{ path: at }];
+  if (!info.isDirectory) return [{ path: at, from: at }];
   const found: RecordFile[] = [];
   const commit = await gatheredCommit(at);
+  const from = path.basename(at);
   for await (const entry of Deno.readDir(at)) {
     const child = path.join(at, entry.name);
     if (entry.isDirectory) found.push(...await recordFiles(child));
     else if (entry.isFile && entry.name.endsWith(".ndjson")) {
-      found.push({ path: child, ...(commit === undefined ? {} : { commit }) });
+      found.push({
+        path: child,
+        from,
+        ...(commit === undefined ? {} : { commit }),
+      });
     }
   }
   return found.sort((left, right) => left.path.localeCompare(right.path));
@@ -567,9 +578,6 @@ export async function readRecords(
   const files: RecordFile[] = [];
   for (const at of paths) files.push(...await recordFiles(at));
   for (const file of files) {
-    const from = path.basename(path.dirname(file.path)) === "."
-      ? file.path
-      : path.basename(path.dirname(file.path));
     const text = await Deno.readTextFile(file.path);
     for (const group of parseReportGroups(text)) {
       // An alias applies only to records from days before the rename, so
@@ -597,7 +605,7 @@ export async function readRecords(
             : file.commit === undefined
             ? {}
             : { commit: file.commit }),
-          from,
+          from: file.from,
         });
       }
     }
@@ -687,18 +695,26 @@ export async function check(
     ...checkWorkflows(suites, await workflowRecords(options.root)),
   );
   if (options.store !== undefined) {
-    const records = await readRecords(options.store.records);
-    // A run whose records are not where they were said to be is a run
-    // the store half read nothing of. Saying the topology accounts for
-    // everything there is the guard passing while checking nothing,
-    // which is the failure it exists to prevent, so it says this alone:
-    // every unit the topology holds would otherwise report as never
-    // recorded, and bury the one line that matters under thousands.
-    if (records.length === 0) {
+    // Each named path is read on its own, because a path holding nothing
+    // is a part of the run the store half did not see, and summing them
+    // first would let one path's records answer for another's. Judging
+    // the part that did arrive is the guard reporting on a corpus it
+    // only partly read.
+    const resolver = await loadAliasResolver();
+    const records: StoredIdentity[] = [];
+    const empty: string[] = [];
+    for (const at of options.store.records) {
+      const read = await readRecords([at], resolver);
+      if (read.length === 0) empty.push(at);
+      records.push(...read);
+    }
+    if (empty.length > 0) {
+      // This is said alone: every unit the topology holds would
+      // otherwise report as never recorded, and bury it under thousands.
       findings.push({
         fails: true,
-        message: `${options.store.records.join(", ")} hold no records, so ` +
-          "the store half read nothing",
+        message: `${empty.join(", ")} hold no records, so the store half ` +
+          "read nothing of what they were to carry",
       });
       return { findings, suites: suites.length };
     }

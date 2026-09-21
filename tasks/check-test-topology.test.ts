@@ -891,6 +891,15 @@ describe("reading a run's gathered artifacts", () => {
       // The artifact each came from travels with it, because a failing
       // identity is one somebody has to go and find.
       expect(records.map((record) => record.from).sort()).toEqual(["a", "b"]);
+      // A file named directly is named as itself: there is no artifact
+      // around it to point at, and its directory is not one.
+      const named = await readRecords(
+        [`${root}/a/records.ndjson`],
+        new AliasResolver([]),
+      );
+      expect(named.map((record) => record.from)).toEqual([
+        `${root}/a/records.ndjson`,
+      ]);
     } finally {
       await Deno.remove(root, { recursive: true });
     }
@@ -934,6 +943,41 @@ describe("reading a run's gathered artifacts", () => {
     }
   });
 
+  it("fails a path holding nothing beside one that holds records", async () => {
+    // Each named path is a part of the run. One that arrived cannot
+    // answer for one that did not, so summing them and asking whether
+    // anything came back would validate a corpus only partly read.
+    const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+    const dir = await Deno.makeTempDir({ prefix: "partial-" });
+    try {
+      await Deno.mkdir(`${dir}/present`);
+      await Deno.writeTextFile(
+        `${dir}/present/records.ndjson`,
+        JSON.stringify({
+          line: "record",
+          test: { k: "unit", s: "oven", n: "bakes" },
+          outcome: "pass",
+          durationMs: 1,
+        }) + "\n",
+      );
+      const missing = `${dir}/never-downloaded`;
+      const { findings } = await check({
+        root,
+        store: { records: [`${dir}/present`, missing], commit: "c0ffee" },
+      });
+      expect(
+        findings.filter((finding) => finding.fails).map((finding) =>
+          finding.message
+        ),
+      ).toEqual([
+        `${missing} hold no records, so the store half read nothing of ` +
+        "what they were to carry",
+      ]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
   it("fails when the store half is asked for and finds no records", async () => {
     // A download that matched nothing, or a path misspelled, leaves the
     // guard with nothing to judge. It says so once: reporting every unit
@@ -953,7 +997,8 @@ describe("reading a run's gathered artifacts", () => {
             finding.message
           ),
         ).toEqual([
-          `${at} hold no records, so the store half read nothing`,
+          `${at} hold no records, so the store half read nothing of what ` +
+          "they were to carry",
         ]);
         expect(
           findings.filter((finding) =>

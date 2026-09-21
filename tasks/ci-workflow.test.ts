@@ -746,10 +746,10 @@ Deno.test("the store half of the drift guard reads every record artifact", async
   assertStringIncludes(job, "pattern: test-records-*");
 
   // The records are held to the commit the run checked out, and the
-  // directory is named rather than the files under it: a shell that
-  // expanded to nothing would hand the guard no records, and it would then
-  // pass while checking none. The whole command is compared, because a glob
-  // appended to the directory contains the directory.
+  // directory is named rather than the files under it, so the guard is
+  // handed the download itself and fails when it holds nothing. The whole
+  // command is compared, because a glob appended to the directory
+  // contains the directory.
   const command = job.match(/deno task check-test-topology[^\n]*\n[^\n]*/);
   assert(command, "the job does not run the topology check");
   assertEquals(
