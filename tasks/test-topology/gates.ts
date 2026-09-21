@@ -422,6 +422,9 @@ function gateSuite(
     needs,
     units: gates.map((gate) => gate.name),
     unavailable: [],
+    // A gate is one identity, so running one is the whole of what a lane
+    // does with it and there is nothing inside it to leave out.
+    whole: gates.map((gate) => gate.name),
     // A gate's unit is the name of a gate rather than a path, so what a
     // change reaches is what each gate declares it reads. A gate that
     // declares nothing reads the whole tree, and reaches a lane on what
@@ -482,6 +485,8 @@ async function typecheckSuite(root: string): Promise<Suite> {
     needs: ["deno"],
     units: scopes,
     unavailable: [],
+    // One `deno check` over a group records one identity.
+    whole: scopes,
     // A group's unit is the scope it checks rather than a path, so the
     // diff is mapped onto scopes the same way the check itself groups
     // the paths it walks.
@@ -573,6 +578,10 @@ async function cfcheckSuite(root: string): Promise<Suite> {
     needs: ["deno"],
     units,
     unavailable: [],
+    // A unit here is a pattern file, and checking one records one
+    // identity. The task's `--only` is what a lane restricts it with,
+    // and it restricts it no finer than a pattern.
+    whole: units,
     locate(record): Location | undefined {
       if (!claimsIdentity({ recordSurfaces }, record.test)) return undefined;
       if (record.test.n === name) return { level: "suite" };
@@ -626,6 +635,9 @@ async function patternCompatSuite(root: string): Promise<Suite> {
     needs: ["deno"],
     units,
     unavailable: [],
+    // One pattern's verdict is one identity, and `--only` restricts the
+    // task no finer than a pattern.
+    whole: units,
     locate(record): Location | undefined {
       if (!claimsIdentity({ recordSurfaces }, record.test)) return undefined;
       if (record.test.n === name) return { level: "suite" };
@@ -686,6 +698,9 @@ async function patternVintageSuite(root: string): Promise<Suite> {
     needs: ["deno", "git-history"],
     units: [unit],
     unavailable: [],
+    // The replay takes no way of running part of itself, so one lane
+    // asking for one vintage runs every vintage the tree holds.
+    whole: [unit],
     locate(record): Location | undefined {
       if (!claimsIdentity({ recordSurfaces }, record.test)) return undefined;
       // The wrapper's own record carries the suite's bare name and what

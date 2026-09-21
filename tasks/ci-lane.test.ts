@@ -77,6 +77,7 @@ function suite(partial: Partial<Suite> & { id: string }): Suite {
     needs: ["deno"],
     units: [],
     unavailable: [],
+    whole: [],
     locate: () => undefined,
     command: () => Promise.resolve([]),
     ...partial,
@@ -235,6 +236,32 @@ describe("turning a lane's selections into batches", () => {
       unit: "packages/bakery/glaze.test.ts",
       skip: ["glaze > browns"],
     }]);
+  });
+
+  it("skips nothing inside a unit its suite declares whole", () => {
+    // Its runner runs every identity in it however it is asked, so a
+    // list of the ones the lane did not choose is a list nothing reads.
+    // Writing one would leave what the lane ran different from what it
+    // said it ran.
+
+    const member = suite({
+      id: "workspace-unit",
+      units: ["packages/bakery"],
+      whole: ["packages/bakery"],
+    });
+    const manifest = manifestOf([
+      { unit: "packages/bakery" },
+      {
+        test: { k: "unit", s: "bakery", n: "glaze > browns" },
+        unit: "packages/bakery",
+      },
+    ]);
+    const batches = batchesOf([member], manifest, [{
+      entry: manifest.entries[0]!,
+      reason: "value",
+      repeats: 1,
+    }]);
+    expect(batches[0]!.units).toEqual([{ unit: "packages/bakery", skip: [] }]);
   });
 
   it("skips nothing when every identity of a unit was chosen", () => {
@@ -841,6 +868,7 @@ describe("running a lane's work", () => {
       needs: [],
       units: ["packages/bakery/glaze.test.ts"],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: (_units, context) => {
         given = context;
@@ -873,6 +901,7 @@ describe("running a lane's work", () => {
       needs: [],
       units: ["packages/bakery/glaze.test.ts"],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: (_units, context) => {
         given = context;
@@ -1660,6 +1689,7 @@ describe("the lane's own housekeeping", () => {
       needs: [],
       units: [],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: () => Promise.resolve([]),
     };
@@ -1702,6 +1732,7 @@ describe("the lane's own housekeeping", () => {
       needs: ["nothing-opens-this" as CapabilityId],
       units: ["packages/bakery/glaze.test.ts"],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: () => Promise.resolve([]),
     };

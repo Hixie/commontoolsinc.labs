@@ -4,7 +4,6 @@ import { describe, it } from "@std/testing/bdd";
 
 import {
   collectTestFiles,
-  isTestFile,
   selectShardedTestFiles,
 } from "./run-sharded-test-files.ts";
 import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
@@ -12,15 +11,6 @@ import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
 const AGENTS_HOST_SHARDS = 5;
 
 describe("run-sharded-test-files", () => {
-  it("recognizes Deno test module names", () => {
-    expect([
-      "test.ts",
-      "donut.test.ts",
-      "donut_test.tsx",
-    ].every(isTestFile)).toBe(true);
-    expect(isTestFile("test-helper.ts")).toBe(false);
-  });
-
   it("collects test modules recursively in stable order", async () => {
     const dir = await Deno.makeTempDir({ prefix: "sharded-tests-" });
     try {
@@ -32,6 +22,27 @@ describe("run-sharded-test-files", () => {
       expect(await collectTestFiles(dir)).toEqual([
         `${dir}/nested/a_test.ts`,
         `${dir}/z.test.ts`,
+      ]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  it("collects the files the topology enumerates for the same tree", async () => {
+    // What this runner hands `deno test` is what a lane is offered as
+    // units. A file one of them takes and the other passes over is a
+    // test that runs in the full run and can never be asked for.
+
+    const dir = await Deno.makeTempDir({ prefix: "sharded-rule-" });
+    try {
+      await Deno.mkdir(`${dir}/node_modules`);
+      await Deno.writeTextFile(`${dir}/taken.test.ts`, "");
+      await Deno.writeTextFile(`${dir}/passed-test.ts`, "");
+      await Deno.writeTextFile(`${dir}/passed.test.cts`, "");
+      await Deno.writeTextFile(`${dir}/node_modules/vendored.test.ts`, "");
+
+      expect(await collectTestFiles(dir)).toEqual([
+        `${dir}/taken.test.ts`,
       ]);
     } finally {
       await Deno.remove(dir, { recursive: true });

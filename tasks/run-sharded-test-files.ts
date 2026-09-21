@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-env --allow-read --allow-run
 
-import * as path from "@std/path";
 import { parseShard, type Shard } from "./shard-utils.ts";
+import { testFilesUnder } from "./test-topology/deno-task.ts";
 import {
   AGENTS_HOST_TEST_WEIGHTS,
   PIECE_TEST_WEIGHTS,
@@ -17,26 +17,18 @@ const PROFILES = {
 
 type ProfileName = keyof typeof PROFILES;
 
-/** Returns whether a file follows Deno's test-module naming convention. */
-export function isTestFile(name: string): boolean {
-  return /(?:^|[._-])test\.[cm]?[jt]sx?$/.test(name);
-}
-
-/** Lists test modules below `root` using stable slash-separated paths. */
+/**
+ * Lists test modules below `root` using stable slash-separated paths.
+ *
+ * The walk is the topology's, so that the files this runner hands to
+ * `deno test` and the units the topology enumerates for the same member
+ * are one set. A rule of its own here would run tests no lane could be
+ * asked for, and would do it silently.
+ */
 export async function collectTestFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  async function visit(dir: string): Promise<void> {
-    for await (const entry of Deno.readDir(dir)) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory) {
-        await visit(entryPath);
-      } else if (entry.isFile && isTestFile(entry.name)) {
-        files.push(entryPath.replaceAll("\\", "/").replace(/^\.\//, ""));
-      }
-    }
-  }
-  await visit(root);
-  return files.sort();
+  return (await testFilesUnder(root))
+    .map((file) => file.replaceAll("\\", "/").replace(/^\.\//, ""))
+    .sort();
 }
 
 /** Selects the files assigned to one weighted shard. */
