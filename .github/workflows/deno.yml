@@ -1999,6 +1999,73 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+  # The store half of the test-topology drift guard. The tree half fails a
+  # surface in the working tree that no suite claims; this fails one that is
+  # registered and whose records do not map back to the topology, which
+  # would leave those tests running in the full run and never selectable on
+  # a pull request. It judges a tree by the records that tree produced, so
+  # it waits for every job that ships them and holds them to this run's
+  # commit. A gate inside a lane could not do it: a lane's records have not
+  # shipped when its gates run.
+  #
+  # It runs on a pull request as well as on the default branch, because the
+  # change that introduces this drift is the change to a suite, a runner,
+  # or a test's name, and that change has a run of its own. What reaches
+  # the default branch is then the pair of changes that were each claimed
+  # separately and are not together, which no single pull request can see.
+  test-topology-store-check:
+    name: "Test Topology Store Check"
+    if: (github.event_name == 'pull_request') || (github.ref_name == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: *job-timeout
+    needs:
+      - check
+      - cfcheck
+      - pattern-compat
+      - pattern-vintage
+      - test
+      - runner-test
+      - generated-patterns-integration-test
+      - package-integration-test
+      - package-integration-test-server-execution-opposite
+      - cli-integration-test
+      - pattern-integration-test
+      - pattern-integration-test-server-execution-opposite
+      - pattern-reload-integration-test
+      - pattern-unit-test
+      - deployed-topology-gate
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: 🦕 Setup Deno
+        uses: ./.github/actions/deno-setup
+
+      - name: 🔍 Verify lock file & install dependencies
+        uses: ./.github/actions/deno-install
+
+      - name: 📥 Download test records
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: test-records-*
+          path: test-records-artifacts
+          merge-multiple: false
+          digest-mismatch: error
+
+      # The guard reads the record artifacts of every job in this run, so no
+      # lane can be asked to run it and this job writes no test records.
+      # `docs/specs/test-records.md` under "Recording" holds the criterion.
+      # It is handed the directory rather than a list of files, so a run
+      # whose artifacts it cannot find fails rather than checking nothing.
+      - name: 🔎 Check the topology against this run's records
+        timeout-minutes: *work-timeout
+        run: >-
+          deno task check-test-topology --commit "$GITHUB_SHA"
+          --records test-records-artifacts
+
   status:
     name: "Status"
     if: ${{ always() && github.event_name == 'pull_request' }}
@@ -2023,6 +2090,7 @@ jobs:
       - pattern-unit-test
       - deployed-topology-gate
       - coverage-check
+      - test-topology-store-check
     permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout

@@ -721,6 +721,54 @@ Deno.test("the CFC Property Suite workflow records no tests", async () => {
   assertStringIncludes(job, "deno task cfc-audit ");
 });
 
+Deno.test("the store half of the drift guard reads every record artifact", async () => {
+  const contents = withoutComments(await workflow("deno.yml"));
+  const job = jobBlock(contents, "test-topology-store-check");
+
+  // An identity is claimed by the suite that would run it, so a record
+  // artifact this job does not see is a surface it cannot hold the topology
+  // to. It therefore waits for every job that ships records, and downloads
+  // them by the prefix the ship step names them under.
+  const shippers = jobIds(contents).filter((jobId) =>
+    jobId !== "test-topology-store-check" &&
+    jobBlock(contents, jobId).includes(
+      "uses: ./.github/actions/test-records-ship",
+    )
+  );
+  // The floor pins the extraction: zero found jobs would mean the search
+  // broke rather than that the workflow stopped shipping records.
+  assert(shippers.length >= 14, `only ${shippers.length} shipping jobs found`);
+  assertEquals(
+    shippers.filter((jobId) => !neededJobIds(job).includes(jobId)),
+    [],
+    "record-shipping jobs the store half does not wait for",
+  );
+  assertStringIncludes(job, "pattern: test-records-*");
+
+  // The records are held to the commit the run checked out, and the
+  // directory is named rather than the files under it, so the guard is
+  // handed the download itself and fails when it holds nothing. The whole
+  // command is compared, because a glob appended to the directory
+  // contains the directory.
+  const command = job.match(/deno task check-test-topology[^\n]*\n[^\n]*/);
+  assert(command, "the job does not run the topology check");
+  assertEquals(
+    command[0].replace(/\s+/g, " ").trim(),
+    'deno task check-test-topology --commit "$GITHUB_SHA" ' +
+      "--records test-records-artifacts",
+  );
+
+  // The guard reads the artifacts of every job in this run, so no lane can be
+  // asked to run it, and `docs/specs/test-records.md` under "Recording" puts
+  // it outside test records: no spool directory, no wrapper, no ship step.
+  assert(!job.includes("CF_TEST_RECORDS_DIR"), "the job spools test records");
+  assert(
+    !job.includes("run-recorded"),
+    "the job wraps its command in run-recorded",
+  );
+  assert(!job.includes("test-records-ship"), "the job ships test records");
+});
+
 Deno.test("One commit publishes one set of release artifacts", async () => {
   // A release artifact is named after the commit it was built from, and the
   // deploy hands the bastion a commit rather than a build. So a commit has one
