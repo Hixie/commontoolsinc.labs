@@ -547,6 +547,67 @@ Deno.test("sharded pattern caches follow their shard topology", async () => {
   }
 });
 
+Deno.test("every compile byte cache is keyed on the compiler fingerprint", async () => {
+  // A compile byte cache holds bytes one compiler emitted, and the runtime
+  // stores each of them under `compileCache:<fingerprint>/<identity>`. Keying
+  // the CI entry on that same fingerprint is what makes a restored entry usable
+  // rather than dead weight, and the compile-cache-key action is where the
+  // value comes from. A job that points the compiler at a cache file is the
+  // one that needs it, so that is what this reads rather than a step name.
+  const contents = await workflow("deno.yml");
+  const fingerprint = "${{ steps.compile-cache-key.outputs.fingerprint }}";
+  const resolver = "uses: ./.github/actions/compile-cache-key";
+
+  let entries = 0;
+  for (const jobId of jobIds(contents)) {
+    const job = jobBlock(contents, jobId);
+    const steps = stepBlocks(job);
+    const resolves = steps.some((step) => step.body.includes(resolver));
+    const files = new Set(
+      [...job.matchAll(/CF_COMPILE_CACHE_FILE[:=] ?(.+)$/gm)].map((match) =>
+        match[1].trim().replace(/\s*\\$/, "").replace(/^"|"$/g, "")
+      ),
+    );
+
+    if (files.size === 0) {
+      assert(!resolves, `${jobId} resolves a fingerprint it keys nothing on`);
+      continue;
+    }
+    assert(
+      resolves,
+      `${jobId} uses a compile cache without resolving the fingerprint`,
+    );
+
+    for (const file of files) {
+      let resolved = false;
+      let cached = false;
+      for (const step of steps) {
+        if (step.body.includes(resolver)) resolved = true;
+        if (!step.body.includes(`path: ${file}\n`)) continue;
+        cached = true;
+        assert(
+          resolved,
+          `${jobId} keys ${file} before resolving the fingerprint`,
+        );
+
+        const key = step.body.match(/^ {10}key: (.+)$/m);
+        assert(key, `${jobId} has no key for ${file}`);
+        assertStringIncludes(key[1], fingerprint);
+
+        const restoreKeys = step.body.match(
+          /restore-keys: \|\n((?: {12}.+\n)+)/,
+        );
+        for (const prefix of restoreKeys?.[1].trim().split("\n") ?? []) {
+          assertStringIncludes(prefix, fingerprint);
+        }
+        entries += 1;
+      }
+      assert(cached, `${jobId} caches nothing at ${file}`);
+    }
+  }
+  assert(entries > 0, "no compile byte cache found in deno.yml");
+});
+
 Deno.test("pattern shard selection fails loudly instead of running an empty shard", async () => {
   // `mapfile -t X < <(deno run … select-pattern-integration-files.ts …)`
   // discards the selector's exit status: a selector failure leaves the
