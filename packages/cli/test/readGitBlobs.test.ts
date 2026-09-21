@@ -48,6 +48,21 @@ describe("readGitBlobs()", () => {
     );
   });
 
+  it("stops after a failed bounded request", () => {
+    let invocation = 0;
+    const blobs = _internal.readGitBlobs(
+      "/repo",
+      objects,
+      () => {
+        invocation++;
+        return { status: 1, stdout: new Uint8Array() };
+      },
+    );
+
+    expect(invocation).toBe(1);
+    expect(blobs.size).toBe(0);
+  });
+
   it("returns no partial blobs or encoding state after a later failure", () => {
     const bomStates = new Map<string, boolean>();
     let invocation = 0;
