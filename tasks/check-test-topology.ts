@@ -40,8 +40,15 @@
  * about without blocking anybody.
  *
  *   deno task check-test-topology            # tree and workflows
- *   deno task check-test-topology --commit <sha> --records <file>...
+ *   deno task check-test-topology --commit <sha> --records <path>...
  *                                            # those and the store
+ *
+ * Each path is a file of records or a directory holding them, walked for
+ * every `.ndjson` under it, so a run's downloaded record artifacts are
+ * named as the one directory they arrive in. A directory a job gathered
+ * carries the commit its records are from in the facts beside them, and
+ * a path holding no records fails rather than being read as a part of
+ * the run that had none.
  */
 
 import * as path from "@std/path";
@@ -64,9 +71,12 @@ import { claimsFor, loadTopology } from "./test-topology.ts";
 import { type Suite, unavailableUnits } from "./test-topology/suite.ts";
 
 /** What the command line takes, for a command line it cannot act on. */
-const USAGE = `usage:
+export const USAGE = `usage:
   check-test-topology                                   tree and workflows
-  check-test-topology --commit <sha> --records <file>...   and the store`;
+  check-test-topology --commit <sha> --records <path>...   and the store
+
+each <path> is a file of records or a directory of them, an artifact a run
+gathered among them`;
 
 /**
  * What the tree half looks at. The same rule the topology enumerates a
@@ -670,7 +680,9 @@ export function parseCheckArgs(
   if (!asked) {
     throw new UsageError("--commit names the commit --records were made at");
   }
-  if (records.length === 0) throw new UsageError("--records takes a file");
+  if (records.length === 0) {
+    throw new UsageError("--records takes a file or a directory of them");
+  }
   if (commit === undefined) {
     throw new UsageError("--records needs --commit, the commit they name");
   }

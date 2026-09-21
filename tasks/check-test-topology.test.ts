@@ -10,6 +10,7 @@ import {
   parseCheckArgs,
   readRecords,
   report,
+  USAGE,
   UsageError,
   workflowRecords,
 } from "./check-test-topology.ts";
@@ -1094,6 +1095,24 @@ describe("running the check and saying what it found", () => {
     expect(() => parseCheckArgs(["--commit"], "/repo")).toThrow(UsageError);
     expect(() => parseCheckArgs(["--commit", "--records", "a"], "/repo"))
       .toThrow(UsageError);
+  });
+
+  it("says a record path may be a directory, wherever it says it", () => {
+    // What `--records` takes is the contract a caller reads, and the
+    // only place it is written down is this task's own text. Pinning the
+    // wording is what stops it describing the argument it used to take.
+    // The refusal and the usage text are read one after the other and
+    // pinned one at a time, so neither can answer for the other.
+    let refusal = "";
+    try {
+      parseCheckArgs(["--commit", "abc", "--records"], "/repo");
+    } catch (error) {
+      refusal = (error as UsageError).message;
+    }
+    expect(refusal).toBe("--records takes a file or a directory of them");
+    expect(USAGE).toContain("--records <path>...");
+    expect(USAGE).not.toContain("--records <file>...");
+    expect(USAGE).toContain("a file of records or a directory of them");
   });
 
   it("refuses a flag given twice or with nothing after it", () => {
