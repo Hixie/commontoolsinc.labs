@@ -23,9 +23,13 @@ import { hashOf } from "@commonfabric/data-model";
 import { isObjectOrArray } from "@commonfabric/utils/types";
 import { utf8Compare } from "@commonfabric/utils/utf8";
 import type { SpaceDb } from "./db.ts";
-import { type EntityModel, listEntityModels } from "./model.ts";
+import {
+  type EntityModel,
+  listEntityModels,
+  visibleEntityRowsByScope,
+} from "./model.ts";
 import { type EntityAddress, reconstructDocument } from "./reconstruct.ts";
-import { listScopes } from "./scopes.ts";
+import { scopesOfRows } from "./scopes.ts";
 
 /**
  * `listEntityModels` caps at 5,000 by default — a real Estuary space already
@@ -60,7 +64,7 @@ export function hashEntityValue(
  *
  * `listEntityModels()` defaults to the shared space scope. Per-user and
  * per-session state is durable content too, so this walk uses every scope
- * reported by `listScopes()`.
+ * the rows are grouped under.
  */
 function allEntities(
   space: SpaceDb,
@@ -68,11 +72,16 @@ function allEntities(
   cap: number = ENUMERATION_CAP,
 ): EntityModel[] {
   const out: EntityModel[] = [];
-  for (const scope of listScopes(space, { branch })) {
+  // Scopes and their rows come from one pass, so every scope walked is one the
+  // rows were grouped under.
+  const rowsByScope = visibleEntityRowsByScope(space, { branch });
+  for (const scope of scopesOfRows(rowsByScope)) {
+    const rows = rowsByScope.get(scope.raw) ?? [];
     const listing = listEntityModels(space, {
       branch,
       scope: scope.raw,
       limit: cap,
+      rows,
     });
     if (listing.extent.truncated) {
       throw new Error(
