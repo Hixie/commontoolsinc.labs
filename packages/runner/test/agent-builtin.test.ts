@@ -20,6 +20,7 @@ import { waitForCellValue } from "@commonfabric/integration/wait-for-cell-value"
 
 import { createBuilder } from "../src/builder/factory.ts";
 import { agentQueueIndexCell } from "../src/builtins/agent.ts";
+import { renderCellReference } from "../src/cell-reference.ts";
 import type { Cell } from "../src/cell.ts";
 import { isCellLink } from "../src/link-utils.ts";
 import { Runtime, type RuntimeOptions } from "../src/runtime.ts";
@@ -238,7 +239,9 @@ describe("agent builtin", () => {
 
     const record = await waitForRecord(result);
     const index = agentQueueIndexCell(runtime, space);
-    const entries = await waitForCellValue<{ run: unknown; host: string }[]>(
+    const entries = await waitForCellValue<
+      { run: unknown; host: string; address?: string }[]
+    >(
       runtime,
       index.key("entries"),
       (value) => (value?.length ?? 0) > 0,
@@ -246,6 +249,9 @@ describe("agent builtin", () => {
 
     expect(entries.length).toBe(1);
     expect(entries[0].host).toBe("https://fabric.example");
+    expect(entries[0].address).toBe(
+      renderCellReference(record.getAsNormalizedFullLink()),
+    );
     expect(
       index.key("entries").key(0).key("run").resolveAsCell()
         .getAsNormalizedFullLink().id,
