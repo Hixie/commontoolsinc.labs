@@ -1540,6 +1540,18 @@ Deno.test("parseCfHarnessCliArgs rejects malformed structured result validation 
   );
 });
 
+Deno.test("parseCfHarnessCliArgs rejects submit_result without a structured result target", async () => {
+  await assertRejects(
+    () =>
+      parseCfHarnessCliArgs(
+        ["--prompt", "hi", "--allow-tool", "submit_result"],
+        { cwd: "/tmp/project", env: {} },
+      ),
+    Error,
+    "--allow-tool submit_result requires --structured-result-path and a schema",
+  );
+});
+
 Deno.test("parseCfHarnessCliArgs supports explicit subagent profile authorization", async () => {
   const parsed = await parseCfHarnessCliArgs(
     [
@@ -3910,8 +3922,12 @@ Deno.test("runCfHarnessCli validates a top-level structured result sidecar", asy
   assertEquals(stderr, []);
   assertEquals(
     runPromptOptions?.systemPrompt?.includes(
-      "write a JSON file at /workspace/capture.results.json",
+      "Writing a JSON file at /workspace/capture.results.json",
     ),
+    true,
+  );
+  assertEquals(
+    runPromptOptions?.systemPrompt?.includes("call submit_result"),
     true,
   );
   assertEquals(writes.length, 1);
@@ -4330,6 +4346,24 @@ Deno.test("resolveCfHarnessCliSystemPrompt bypasses operator guidance in batch m
     buildCfHarnessBatchSystemPrompt({
       systemPrompt: "You are a Loom batch worker.",
     }),
+  );
+});
+
+Deno.test("buildCfHarnessBatchSystemPrompt omits submit_result guidance when the tool is not allowed", () => {
+  const config = {
+    structuredResult: {
+      path: "/tmp/project/result.json",
+      sandboxPath: "/workspace/result.json",
+      schema: { type: "object" } as const,
+    },
+    allowedToolIds: ["write_file"] as const,
+  };
+  const prompt = buildCfHarnessBatchSystemPrompt(config);
+
+  assertEquals(prompt.includes("call submit_result"), false);
+  assertStringIncludes(
+    prompt,
+    "Writing a JSON file at /workspace/result.json",
   );
 });
 

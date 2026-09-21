@@ -53,6 +53,7 @@ export type {
   CfcDecomposedEnvelopes,
   CfcDereferenceTrace,
   CfcEnforcementMode,
+  CfcExternalContentObservation,
   CfcFlowLabelsMode,
   CfcLabelMetadataObservation,
   CfcLabelMetadataProtectionMode,

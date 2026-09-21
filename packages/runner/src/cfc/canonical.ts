@@ -6,6 +6,7 @@ import type {
   AttemptedWrite,
   CfcAddress,
   CfcDereferenceTrace,
+  CfcExternalContentObservation,
   CfcLabelMetadataObservation,
   CfcMetadata,
   ConsultedGrant,
@@ -191,6 +192,17 @@ const compareLabelMetadataObservation = (
   // Same metadata address: total-order distinct records by canonical hash
   // (the compareWritePolicyInput tiebreaker idiom) so recording order cannot
   // perturb the digest.
+  const leftHash = hashStringOf(left);
+  const rightHash = hashStringOf(right);
+  return leftHash < rightHash ? -1 : leftHash > rightHash ? 1 : 0;
+};
+
+const compareExternalContentObservation = (
+  left: CfcExternalContentObservation,
+  right: CfcExternalContentObservation,
+): number => {
+  const bySource = compareCanonicalAddress(left.source, right.source);
+  if (bySource !== 0) return bySource;
   const leftHash = hashStringOf(left);
   const rightHash = hashStringOf(right);
   return leftHash < rightHash ? -1 : leftHash > rightHash ? 1 : 0;
@@ -537,6 +549,17 @@ export const canonicalizePreparedDigestInput = (
     ? {
       labelMetadataObservations: [...input.labelMetadataObservations].sort(
         compareLabelMetadataObservation,
+      ),
+    }
+    : {}),
+  // External-content observations are an order-insensitive set of opaque
+  // runtime receipts. Empty collapses to absent so adding support for the
+  // channel does not change digests of transactions that observed none.
+  ...(input.externalContentObservations !== undefined &&
+      input.externalContentObservations.length > 0
+    ? {
+      externalContentObservations: [...input.externalContentObservations].sort(
+        compareExternalContentObservation,
       ),
     }
     : {}),

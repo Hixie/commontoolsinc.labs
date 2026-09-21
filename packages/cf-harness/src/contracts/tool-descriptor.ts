@@ -33,7 +33,8 @@ export type BuiltinToolId =
   | "loom_people"
   | "loom_calendar_list"
   | "loom_context"
-  | "loom_profile";
+  | "loom_profile"
+  | "submit_result";
 
 export const DEFAULT_PARENT_TOOL_IDS = [
   "bash",
@@ -161,6 +162,15 @@ export const LOOM_RETRIEVAL_TOOL_IDS: ReadonlySet<BuiltinToolId> = new Set([
   "loom_profile",
 ]);
 
+/**
+ * The tool a run returns its structured result through. It exists only in a
+ * run configured with a structured-result schema; elsewhere there is nothing
+ * for a submission to be validated against or recorded as.
+ */
+export const STRUCTURED_RESULT_TOOL_IDS: ReadonlySet<BuiltinToolId> = new Set(
+  ["submit_result"] as const,
+);
+
 /** What a run can back the gated tools with. */
 export interface HarnessToolBackingAvailability {
   fabricSessionAvailable: boolean;
@@ -183,6 +193,9 @@ export interface HarnessToolBackingAvailability {
 
   /** Whether the operator configured host Loom retrieval for this run. */
   loomRetrievalAvailable?: boolean;
+
+  /** Whether the run was configured with a structured-result schema. */
+  structuredResultAvailable?: boolean;
 }
 
 /** The gated tools this run cannot back, and so does not offer. */
@@ -207,6 +220,9 @@ export const withheldToolIds = (
       : RESEARCH_TOOL_IDS),
     ...(availability.loomAuthoringAvailable ? [] : LOOM_AUTHORING_TOOL_IDS),
     ...(availability.loomRetrievalAvailable ? [] : LOOM_RETRIEVAL_TOOL_IDS),
+    ...(availability.structuredResultAvailable
+      ? []
+      : STRUCTURED_RESULT_TOOL_IDS),
   ]);
 
 /**
@@ -236,6 +252,9 @@ export const parentToolIdsForBacking = (
       : []),
     ...(availability.loomAuthoringAvailable ? LOOM_AUTHORING_TOOL_IDS : []),
     ...(availability.loomRetrievalAvailable ? LOOM_RETRIEVAL_TOOL_IDS : []),
+    ...(availability.structuredResultAvailable
+      ? STRUCTURED_RESULT_TOOL_IDS
+      : []),
   ].filter((toolId, index, ids) =>
     !withheld.has(toolId) && ids.indexOf(toolId) === index
   );

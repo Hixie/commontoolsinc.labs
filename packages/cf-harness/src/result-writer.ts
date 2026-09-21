@@ -49,7 +49,7 @@ import {
 import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
-  HANDLE_TOKEN_PATTERN,
+  ANY_HANDLE_TOKEN_PATTERN,
   type HarnessHandleEntry,
   type HarnessHandleTable,
 } from "./contracts/handle-table.ts";
@@ -73,11 +73,12 @@ export interface AgentObservedCellHandle {
 /**
  * A referent the run observed that is not a cell: a Loom row, a SQLite row.
  * The host step that observed it recorded the content and the label the tool
- * reported, and the token it stood for in model context. The writer mints a
- * document for it under that label whether or not the result names it, so
- * that what entered model context through it joins the inline text's label
- * through a read of that document rather than through a label the runtime
- * would have to take on trust.
+ * reported, and the token it stood for in model context. When the result names
+ * the token, the writer mints a document under that label and links it from the
+ * result. When the result does not name the token, the writer admits the
+ * content through an isolated, aborted external-content observation and joins
+ * its opaque receipt into the result instead. In either case, the runtime does
+ * not have to take the host-reported label on trust.
  */
 export interface AgentObservedDocumentReferent {
   kind: "document";
@@ -96,6 +97,26 @@ export interface AgentObservedDocumentReferent {
 export type AgentObservedHandle =
   | AgentObservedCellHandle
   | AgentObservedDocumentReferent;
+
+/**
+ * Everything a run's handle table says the run observed: each general
+ * address handle as a cell, and each held referent as a document carrying
+ * the content and label it was admitted under. A handle held for one purpose
+ * only — a `skill-context` one — is not an observation.
+ */
+export const agentObservedHandlesOfTable = (
+  table: HarnessHandleTable,
+): AgentObservedHandle[] => [
+  ...table.entries.filter((entry) => entry.capability === undefined).map((
+    entry,
+  ): AgentObservedHandle => ({ kind: "cell", token: entry.token })),
+  ...(table.referents ?? []).map((referent): AgentObservedHandle => ({
+    kind: "document",
+    token: referent.token,
+    value: referent.value,
+    label: referent.label,
+  })),
+];
 
 export interface WriteAgentResultOptions {
   session: HarnessFabricSession;
@@ -144,6 +165,7 @@ export interface WrittenAgentResult {
    */
   joinLabel: IFCLabel;
 
+  /** Durable documents minted for non-cell referents the result cites. */
   mintedDocuments: readonly AgentResultMintedDocument[];
 
   /** The positions sealed for exceeding the ceiling their position declares. */
@@ -220,18 +242,22 @@ type Placement =
   | Reference
   | { kind: "sealed"; path: Path };
 
-const tokenPattern = (): RegExp => new RegExp(HANDLE_TOKEN_PATTERN.source, "g");
+// Tokens of either kind: an address handle, or a held non-cell referent.
+const tokenPattern = (): RegExp =>
+  new RegExp(ANY_HANDLE_TOKEN_PATTERN.source, "g");
 
-const wholeTokenPattern = new RegExp(`^${HANDLE_TOKEN_PATTERN.source}$`);
+const wholeTokenPattern = new RegExp(`^${ANY_HANDLE_TOKEN_PATTERN.source}$`);
 
 /**
  * `schema` with every `asCell` position replaced by the schema that accepts
  * anything. A position marked `asCell` accepts an opaque reference, and the
  * model writes a reference as a handle token; what the referent holds is not
  * the result schema's to validate, so validation is asked about everything
- * but those positions.
+ * but those positions. A caller that validates a result before handing it to
+ * the writer — the run's own structured-result validation — validates
+ * against this, so the two agree on what a result may hold.
  */
-const relaxAsCellPositions = (schema: JSONSchema): JSONSchema => {
+export const relaxAsCellPositions = (schema: JSONSchema): JSONSchema => {
   if (!isObjectOrArray(schema)) return schema;
   if (schema.asCell !== undefined) return true;
   return mapSubschemas(
@@ -298,6 +324,21 @@ const withDeclaredConfidentiality = (
     );
   };
   return declare(isObjectOrArray(schema) ? schema : {});
+};
+
+/** The schema used to admit one external referent through the CFC boundary. */
+const referentWriteSchema = (
+  referent: AgentObservedDocumentReferent,
+): JSONSchema => {
+  const declared = withDeclaredConfidentiality(
+    isObjectOrArray(referent.schema) ? referent.schema : {},
+    referent.label.confidentiality ?? [],
+  ) as JSONSchemaObj;
+  const integrity = referent.label.integrity ?? [];
+  return integrity.length === 0 ? declared : {
+    ...declared,
+    ifc: { ...declared.ifc, addIntegrity: integrity },
+  } as JSONSchema;
 };
 
 /**
@@ -713,15 +754,19 @@ const labelOf = (cell: Cell<unknown>): IFCLabel => {
  * Writes `structuredResult` into the session's space and returns a link to
  * the document, the label it carries, and the documents minted on the way.
  *
- * Two transactions are committed. The first mints a document for every
- * non-cell referent the run observed, under the label the tool reported and
+ * One or two transactions are committed. The optional first transaction
+ * mints a document for every
+ * non-cell referent the result cites, under the label the tool reported and
  * with no read beside it, so the declaration is the whole of what the
- * document carries. The second reads every observed cell and every minted
- * document, is attributed to the `agent` builtin, and writes the result
+ * document carries. Each uncited referent passes the same write admission in
+ * an isolated transaction that is then aborted; an opaque runtime receipt
+ * carries the canonical content observation into the second transaction.
+ * That transaction reads every observed cell and minted document, consumes
+ * the receipts, is attributed to the `agent` builtin, and writes the result
  * through the result schema with the `LlmDerived` stamp on every node and
- * `maxConfidentiality` declared as the store's policy at its root. Minting
- * in the same transaction as the reads would put the join on the minted
- * documents too, and a row's document should carry the row's label alone.
+ * `maxConfidentiality` declared as the store's policy at its root. Minting in
+ * the same transaction as the reads would put the join on the cited documents
+ * too, and a row's document should carry the row's label alone.
  *
  * Every reference is resolved, and every position ceiling measured, before
  * the first transaction opens, so a result naming a handle the run does not
@@ -825,7 +870,11 @@ export const writeAgentResult = async (
   const sealedPaths = placements.flatMap((placement) =>
     placement.kind === "sealed" ? [placement.path] : []
   );
-
+  const referencedDocumentTokens = new Set(
+    placements.flatMap((placement) =>
+      placement.kind === "document" ? [placement.referent.token] : []
+    ),
+  );
   // Cells the run observed, read through the writing transaction below so
   // the runtime's flow derivation consumes their labels.
   const observedCells: NormalizedFullLink[] = [];
@@ -843,93 +892,149 @@ export const writeAgentResult = async (
     seenCells.add(reference.entry.addressKey);
     observedCells.push(reference.link);
   }
-
-  // The minted documents, one per observed non-cell referent, in a
-  // transaction that reads nothing so each carries its declared label alone.
-  const minted = new Map<string, Cell<unknown>>();
-  const mintedDocuments: AgentResultMintedDocument[] = [];
-  if (documentReferents.size > 0) {
-    const mintTx = runtime.edit();
-    for (const referent of documentReferents.values()) {
-      const declared = withDeclaredConfidentiality(
-        isObjectOrArray(referent.schema) ? referent.schema : {},
-        referent.label.confidentiality ?? [],
-      ) as JSONSchemaObj;
-      const integrity = referent.label.integrity ?? [];
-      const schema = integrity.length === 0 ? declared : {
-        ...declared,
-        ifc: { ...declared.ifc, addIntegrity: integrity },
-      } as JSONSchema;
-      const cell = runtime.getCell<unknown>(
-        space,
-        agentResultReferentCause(resultCause, referent.token),
-        schema,
-        mintTx,
-      );
-      cell.set(referent.value);
-      minted.set(referent.token, cell);
-      mintedDocuments.push({
-        token: referent.token,
-        link: cell.getAsNormalizedFullLink(),
-      });
-    }
-    await commitOrThrow(mintTx, "the documents minted for the result");
-  }
-
+  const hasUnreferencedDocument = documentReferents.size >
+    referencedDocumentTokens.size;
   const tx = runtime.edit();
-  for (const link of observedCells) {
-    const cell = runtime.getCellFromLink<unknown>(link);
-    await cell.sync();
-    cell.withTx(tx).get();
-  }
-  for (const cell of minted.values()) {
-    await cell.sync();
-    cell.withTx(tx).get();
-  }
   const enforcing = runtime.cfcEnforcementMode !== "disabled";
-  if (enforcing) {
+  if (enforcing || hasUnreferencedDocument) {
     tx.setCfcImplementationIdentity({
       kind: "builtin",
       builtinId: AGENT_RESULT_BUILTIN_ID,
     });
   }
-  const value = placeReferences(
-    options.structuredResult,
-    placements,
-    (placement) =>
-      placement.kind === "sealed"
-        ? cfcOpaqueLinkForPath(opaqueHandleId, placement.path)
-        : placement.kind === "document"
-        ? minted.get(placement.referent.token)
-        : runtime.getCellFromLink(placement.link, undefined, tx),
-  );
-  const linkPaths = placements.flatMap((placement) =>
-    placement.kind === "sealed" ? [] : [placement.path]
-  );
-  const storeSchema = withDeclaredConfidentiality(
-    relaxedAt(
-      withoutPositionCeilings(resultSchema),
-      linkPaths,
-      withoutPositionCeilings(resultSchema),
-    ),
-    options.maxConfidentiality,
-  );
-  const resultCell = runtime.getCell<unknown>(
-    space,
-    resultCause,
-    enforcing ? withLlmDerivedStamp(storeSchema) : storeSchema,
-    tx,
-  );
-  resultCell.set(value);
-  await commitOrThrow(tx, "the agent result");
 
-  const link = resultCell.getAsNormalizedFullLink();
-  const written = runtime.getCellFromLink<unknown>(link);
-  await written.sync();
-  return {
-    link,
-    joinLabel: labelOf(written),
-    mintedDocuments,
-    sealedPaths,
-  };
+  try {
+    // An unreferenced external value contributes through an opaque observation
+    // receipt. Each probe is isolated and aborted after ordinary CFC
+    // preparation and a full content read, so no durable referent exists
+    // merely because the model observed a row.
+    const externalObservationReceipts: object[] = [];
+    for (const referent of documentReferents.values()) {
+      if (referencedDocumentTokens.has(referent.token)) continue;
+      try {
+        externalObservationReceipts.push(
+          await runtime.prepareExternalContentObservation({
+            targetTx: tx,
+            space,
+            cause: agentResultReferentCause(resultCause, referent.token),
+            schema: referentWriteSchema(referent),
+            value: referent.value,
+            producer: AGENT_RESULT_BUILTIN_ID,
+          }),
+        );
+      } catch (error) {
+        throw agentResultCommitFailure(
+          error as { name?: string; message?: string; refusals?: unknown },
+          "an external observation for the result",
+        );
+      }
+    }
+
+    // Validate and attach every opaque observation before a cited document is
+    // made durable. A refused receipt must not leave a document behind for a
+    // result that never committed.
+    for (const receipt of externalObservationReceipts) {
+      try {
+        runtime.recordExternalContentObservation(tx, receipt, {
+          space,
+          producer: AGENT_RESULT_BUILTIN_ID,
+        });
+      } catch (error) {
+        throw agentResultCommitFailure(
+          error as { name?: string; message?: string; refusals?: unknown },
+          "an external observation for the result",
+        );
+      }
+    }
+
+    // A document is minted only for a referent the result names. The transaction
+    // reads nothing, so each durable citation carries its own admitted label.
+    const minted = new Map<string, Cell<unknown>>();
+    const mintedDocuments: AgentResultMintedDocument[] = [];
+    if (referencedDocumentTokens.size > 0) {
+      const mintTx = runtime.edit();
+      try {
+        for (const referent of documentReferents.values()) {
+          if (!referencedDocumentTokens.has(referent.token)) continue;
+          const cell = runtime.getCell<unknown>(
+            space,
+            agentResultReferentCause(resultCause, referent.token),
+            referentWriteSchema(referent),
+            mintTx,
+          );
+          cell.set(referent.value);
+          minted.set(referent.token, cell);
+          mintedDocuments.push({
+            token: referent.token,
+            link: cell.getAsNormalizedFullLink(),
+          });
+        }
+        await commitOrThrow(mintTx, "the documents minted for the result");
+      } catch (error) {
+        if (mintTx.status().status === "ready") mintTx.abort(error);
+        throw error;
+      }
+    }
+
+    // An observed cell's value can reach through links into documents this
+    // session has not loaded, and a read of an unloaded document records an
+    // absence the commit then finds untrue. Pulling each cell first loads what
+    // its value reaches, so the transaction below reads what is stored.
+    for (const link of observedCells) {
+      const cell = runtime.getCellFromLink<unknown>(link);
+      await cell.sync();
+      await cell.pull();
+    }
+    for (const link of observedCells) {
+      runtime.getCellFromLink<unknown>(link).withTx(tx).get();
+    }
+    for (const cell of minted.values()) {
+      await cell.sync();
+      cell.withTx(tx).get();
+    }
+    const value = placeReferences(
+      options.structuredResult,
+      placements,
+      (placement) =>
+        placement.kind === "sealed"
+          ? cfcOpaqueLinkForPath(opaqueHandleId, placement.path)
+          : placement.kind === "document"
+          ? minted.get(placement.referent.token)
+          : runtime.getCellFromLink(placement.link, undefined, tx),
+    );
+    const linkPaths = placements.flatMap((placement) =>
+      placement.kind === "sealed" ? [] : [placement.path]
+    );
+    const storeSchema = withDeclaredConfidentiality(
+      relaxedAt(
+        withoutPositionCeilings(resultSchema),
+        linkPaths,
+        withoutPositionCeilings(resultSchema),
+      ),
+      options.maxConfidentiality,
+    );
+    const resultCell = runtime.getCell<unknown>(
+      space,
+      resultCause,
+      enforcing ? withLlmDerivedStamp(storeSchema) : storeSchema,
+      tx,
+    );
+    resultCell.set(value);
+    await commitOrThrow(tx, "the agent result");
+
+    const link = resultCell.getAsNormalizedFullLink();
+    const written = runtime.getCellFromLink<unknown>(link);
+    await written.sync();
+    return {
+      link,
+      joinLabel: labelOf(written),
+      mintedDocuments,
+      sealedPaths,
+    };
+  } catch (error) {
+    if (tx.status().status === "ready") {
+      tx.abort(error);
+    }
+    throw error;
+  }
 };

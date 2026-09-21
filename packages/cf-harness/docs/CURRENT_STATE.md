@@ -2,7 +2,7 @@
 
 Status: current implementation reference\
 Last verified: 2026-09-21\
-Revision: `666518baaa+publication-artifacts`
+Revision: `c5790da103+agent-review-fixes`
 
 The [system map](system-map/README.md) moves in lockstep with this current-state
 reference.
@@ -17,7 +17,11 @@ The runtime has four main boundaries:
 
 1. The caller supplies prompt-slot roles, model and gateway configuration,
    tools, child profiles, mounts, resource bounds, skills, policy mode, and
-   optional structured-result schemas.
+   optional structured-result schemas. A run configured with one offers
+   `submit_result`, a host-side tool that validates the value and writes the
+   structured-result file, so a run whose prompt-slot role admits no sandbox
+   write can still return one. The schema and host path persist with root run
+   state and are restored on resume.
 2. The prompt loop performs bounded turns through the selected model provider
    and invokes only the configured tool/profile surface.
 3. Most tool execution uses Docker with a configurable runtime, normally
@@ -221,13 +225,14 @@ The current package provides:
   and resolves tokens in model-authored tool arguments before policy evaluation
   and dispatch, `delegate_task` arguments excepted;
 - cross-agent handles: a delegation seeds the child's own table with a verbatim
-  copy of every parent entry whose token the `goal` or `context` names, and
-  nothing else, so a child resolves exactly the references the delegation handed
-  it while the tokens stay identical across the hierarchy; a reference the child
-  produces is resolved through the child's table and minted through the parent's
-  boundary, reaching the parent as a parent-resolvable token, and any
-  token-shaped text still standing after that resolution is scrubbed to fixed
-  inert text so it cannot resolve later in the parent's own table;
+  copy of every parent address entry or non-cell referent whose token the `goal`
+  or `context` names or a selected current research kit declares as an input,
+  and nothing else, so a child resolves exactly the references the delegation
+  handed it while the tokens stay identical across the hierarchy; a reference
+  the child produces is resolved through the child's table and minted through
+  the parent's boundary, reaching the parent as a parent-resolvable token, and
+  any token-shaped text still standing after that resolution is scrubbed to
+  fixed inert text so it cannot resolve later in the parent's own table;
 - skill by handle: `delegate_task` takes an optional `skillHandle` naming a cell
   whose string value is skill text for the child, materialized trusted-side at
   child spawn under `resolveHandleValue`'s contract (table membership,
@@ -313,13 +318,19 @@ The current package provides:
   to a document minted under the label the tool reported — and a handle the run
   does not hold fails the write before any document is written. Inline
   model-authored text carries the join the writing transaction derives from
-  reading every observed cell; the write is attributed to the `agent` builtin,
-  so the result carries `LlmDerived`; the run's observation ceiling is declared
-  as the result's store policy, so a join that does not fit is refused by the
+  reading every observed cell and cited referent document. An uncited referent
+  passes the same runtime admission in an isolated aborted transaction, then
+  contributes to the result through an opaque CONTENT-observation receipt
+  without becoming durable. The write is attributed to the `agent` builtin, so
+  the result carries `LlmDerived`; the run's observation ceiling is declared as
+  the result's store policy, so a join that does not fit is refused by the
   runner's commit boundary and surfaces as a typed `cfc_commit_refused` failure
   whose message names no label. A handle at a position whose schema declares a
   `maxConfidentiality` the referent's label exceeds is sealed rather than
-  linked;
+  linked. The Loom retrieval tools register each admitted row in the run's
+  handle table as a held referent under a `cfh:v:` token, and
+  `agentObservedHandlesOfTable` hands the writer the table's cells and referents
+  together ([Read-only Loom retrieval](LOOM_RETRIEVAL.md));
 - opt-in fabric-session tools — `run_pattern` and `assign_slug`
   (`--fabric-api-url`, `--fabric-identity`, and `--fabric-space` configured
   together, or their `CF_HARNESS_FABRIC_*` environment fallbacks).
@@ -605,9 +616,10 @@ mode.
   model-authored tool arguments through the address handle table; denial-path
   tool messages are not swapped, and interactive restore does not persist the
   handle table.
-- The session-local handle table covers cell addresses only. Value handles
-  (`cfh:v:`) are reserved in the token grammar but not implemented, and there is
-  no explicit dereference/release mechanism.
+- The session-local handle table covers cell addresses and the held referents
+  that Loom retrieval admits under `cfh:v:` tokens. Those referent handles are
+  consumed when the agent result writer links or observes a retrieved row; there
+  is no general-purpose value-handle dereference or release mechanism.
 - `estimatedCostUsd` is available only for known GPT-5.6 gateway models when the
   response includes cache reads and writes. It uses public OpenAI pricing;
   gateway markup, subscription quota accounting, and provider invoices remain

@@ -153,14 +153,17 @@ readiness.
   session. Its bounded authority is the session's (AH-TOOL-7): every handle the
   result names must be one the run's table holds, a cell handle becomes a link
   and never a copy, a non-cell referent becomes a document under the label its
-  tool reported, the cells the run observed are read through the writing
-  transaction so the runner derives the inline text's label, the write is
-  attributed to the `agent` builtin so the result carries the runtime-minted
-  `LlmDerived` family, and the run's observation ceiling is declared as the
-  result document's store policy so the runner's commit boundary — not the
-  writer — decides whether the derived join fits. A refusal reaches the caller
-  as a typed failure carrying the refusal code and the boundary's structured
-  detail, with no label atom in its message.
+  tool reported when the result cites it, and an uncited referent passes the
+  same write admission in an isolated aborted transaction and contributes
+  through an opaque runtime CONTENT-observation receipt. The cells the run
+  observed and the cited referents are read through the writing transaction so
+  the runner derives the inline text's label without making uncited content
+  durable. The write is attributed to the `agent` builtin so the result carries
+  the runtime-minted `LlmDerived` family, and the run's observation ceiling is
+  declared as the result document's store policy so the runner's commit boundary
+  — not the writer — decides whether the derived join fits. A refusal reaches
+  the caller as a typed failure carrying the refusal code and the boundary's
+  structured detail, with no label atom in its message.
 - Network: explicit in configuration but still provisional. Sandboxed `bash`
   applies a direct-`curl` destination guard; `web_fetch` and web child profiles
   have their own bounded request policies.
@@ -187,21 +190,37 @@ Current selectable parent tools are `bash`, `read_file`, `view_image`,
 `research`, `loom_compose`, `loom_inspect`, `loom_authoring_context`, and the
 eight read-only Loom tools `loom_search`, `loom_page_discover`,
 `loom_page_inspect`, `loom_page_read`, `loom_people`, `loom_calendar_list`,
-`loom_context`, and `loom_profile`. Individual runs receive only their
-configured subset; `web_fetch` and `run_skill_script` are not in the ordinary
-default surface. Optional tools are gated on the backing a run can supply — a
-fabric session for `run_pattern`, `assign_slug`, and `acquire_skill`, the
-pattern index for `search_patterns` and `record_feedback`, configured skills.sh
-discovery for `search_skills`, and a resolved documentation corpus or pattern
-index for `research`, explicit host Loom authoring configuration for the three
-authoring tools, and explicit host Loom retrieval configuration for the eight
-retrieval tools — and a tool the run cannot back is absent from the surface
-rather than present and failing, so an explicit allowlist naming it does not
-conjure it. `run_pattern` additionally requires the three `--fabric-*` session
-flags. `browser` exists only as a built-in used by the authorized browser child
-profile and cannot be selected as a parent CLI tool; it drives the host
-`agent-browser` CLI through a typed action vocabulary, with the Browser Access
-CDP endpoint attached by the harness rather than written by the model.
+`loom_context`, and `loom_profile`, plus `submit_result`. Individual runs
+receive only their configured subset; `web_fetch` and `run_skill_script` are not
+in the ordinary default surface. Optional tools are gated on the backing a run
+can supply — a fabric session for `run_pattern`, `assign_slug`, and
+`acquire_skill`, the pattern index for `search_patterns` and `record_feedback`,
+configured skills.sh discovery for `search_skills`, and a resolved documentation
+corpus or pattern index for `research`, explicit host Loom authoring
+configuration for the three authoring tools, explicit host Loom retrieval
+configuration for the eight retrieval tools, and a configured structured-result
+schema for `submit_result` — and a tool the run cannot back is absent from the
+surface rather than present and failing, so an explicit allowlist naming it does
+not conjure it. `run_pattern` additionally requires the three `--fabric-*`
+session flags. `browser` exists only as a built-in used by the authorized
+browser child profile and cannot be selected as a parent CLI tool; it drives the
+host `agent-browser` CLI through a typed action vocabulary, with the Browser
+Access CDP endpoint attached by the harness rather than written by the model.
+
+`submit_result` is how a run returns its structured result without a sandbox
+write. It takes the value as its input, validates it with the structured-result
+validation the file-based path uses, and the host writes it to the configured
+structured-result file, so the post-run validation, the batch metadata, and the
+agent result writer read one place. A refused value returns a typed
+`invalid_result` error and the model submits again; a later valid submission
+replaces an earlier one. A handle token in the value stays a token, because the
+token is what the result writer resolves. The tool is admitted at every
+enforcement mode and under every prompt-slot role, with the policy reason
+`structured_result_return`: its authority is the host's configuration of a
+schema (AH-TOOL-4's explicit grant), it is absent from a run configured with
+none, and it reaches nothing but that run's own result file. A subagent run is
+not offered it. The model writing the file itself remains available to a run
+that holds a tool able to.
 
 `describe_handle` reports the referent's structural schema and path segments,
 never its data. It prefers the session Fabric's declared shape when available
@@ -321,15 +340,17 @@ in-flight external side effect.
    bound, enumerate, retain, and delete tool-created resources, and cancellation
    fully settles both registry membership and assigned names.
 6. **Side effects gated on authority rather than on flow.** Every side-effecting
-   tool except `run_pattern` is admitted by a check on the descriptor's static
-   effect class and on whether the run carries a direct-command binding. The
-   decision is recorded before the tool runs, so it is not a commit point, and
-   it consults no sink and no label. `run_pattern` is the exception and shows
-   the shape the rest want: a named sink, an explicit ceiling, and the runner's
-   commit boundary deciding. Owner: `cf-harness` and the CFC runtime.
-   Retirement: each side-effecting tool's effect is declared as a named sink
-   whose ceiling the runner's boundary commit evaluates, so that a refusal comes
-   back as structured evidence rather than as an allow recorded in advance.
+   tool except `run_pattern` — and `submit_result`, which has no effect outside
+   the run's own record and is admitted by its configuration — is admitted by a
+   check on the descriptor's static effect class and on whether the run carries
+   a direct-command binding. The decision is recorded before the tool runs, so
+   it is not a commit point, and it consults no sink and no label. `run_pattern`
+   is the exception and shows the shape the rest want: a named sink, an explicit
+   ceiling, and the runner's commit boundary deciding. Owner: `cf-harness` and
+   the CFC runtime. Retirement: each side-effecting tool's effect is declared as
+   a named sink whose ceiling the runner's boundary commit evaluates, so that a
+   refusal comes back as structured evidence rather than as an allow recorded in
+   advance.
 7. **Direct-command bindings not bound to a subject or a submitted value.** Both
    minting surfaces produce a binding from constants: the console's is a
    module-level value reused for every turn of every session, and the CLI's
@@ -371,12 +392,12 @@ in-flight external side effect.
     tool call's input label, the prompt slot's influence joined with the run's
     accumulated model-context label — and that assumed label is what is measured
     against the run's ceiling, recorded as the observation, and available to
-    stamp on a minted document. The pinned loom emits no `ifc` on any retrieval
-    payload, so this is the path every real row takes. The assumption can
-    under-label a row: what it holds is decided by its store, not by who asked.
-    A row whose `ifc` is present and unreadable is still refused, and loom's own
-    facet filtering still runs first on the host. The rule is
-    `labelForUnlabeledLoomRow()` in `src/tools/loom-retrieval.ts`; see
+    stamp on a document when the result cites the row. The pinned loom emits no
+    `ifc` on any retrieval payload, so this is the path every real row takes.
+    The assumption can under-label a row: what it holds is decided by its store,
+    not by who asked. A row whose `ifc` is present and unreadable is still
+    refused, and loom's own facet filtering still runs first on the host. The
+    rule is `labelForUnlabeledLoomRow()` in `src/tools/loom-retrieval.ts`; see
     [Read-only Loom retrieval](LOOM_RETRIEVAL.md). Owner: `cf-harness` and loom.
     Retirement: loom returns a label per row and the function reads it.
 

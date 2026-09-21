@@ -93,6 +93,9 @@ const contextWith = (
     configured?: boolean;
     aborted?: boolean;
     queryLabel?: unknown[];
+
+    /** Collects what the tool registers as held referents. */
+    referents?: Record<string, unknown>[];
   },
 ): { context: HarnessToolContext; calls: ProcessRunRequest[] } => {
   const calls: ProcessRunRequest[] = [];
@@ -125,6 +128,14 @@ const contextWith = (
         toolInputCfcLabel: {
           confidentiality: options.queryLabel,
         } as HarnessToolContext["toolInputCfcLabel"],
+      }
+      : {}),
+    ...(options.referents !== undefined
+      ? {
+        mintReferentHandle: (referent: Record<string, unknown>) => {
+          options.referents!.push(referent);
+          return Promise.resolve(`cfh:v:2222${options.referents!.length}`);
+        },
       }
       : {}),
     signal: controller.signal,
@@ -563,6 +574,17 @@ describe("loom-retrieval tools", () => {
             confidentiality: [{ anyOf: [OWNER, { type: WORK, name: "w" }] }],
           }),
           hit("m-6", { confidentiality: [OWNER], integrity: "not-a-list" }),
+          hit("m-7", {
+            confidentiality: [OWNER],
+            integrity: [{ name: "no type" }],
+          }),
+          hit("m-8", { confidentiality: [OWNER], integrity: [17] }),
+          hit("m-9", {
+            confidentiality: [{ anyOf: [OWNER], unexpected: true }],
+          }),
+          hit("m-10", {
+            confidentiality: [{ type: OWNER, anyOf: [] }],
+          }),
         ]),
       });
       const output = ok(
@@ -575,12 +597,16 @@ describe("loom-retrieval tools", () => {
         "withheld",
         "admitted",
         "withheld",
+        "withheld",
+        "withheld",
+        "withheld",
+        "withheld",
       ]);
       expect(
         output.entries.filter((entry) => entry.status === "withheld").map((
           entry,
         ) => entry.status === "withheld" && entry.reasonCode),
-      ).toEqual(Array(5).fill("cfc_label_read_failed"));
+      ).toEqual(Array(9).fill("cfc_label_read_failed"));
     });
 
     it("marks the observation truncated when the result bounded anything", async () => {
@@ -990,5 +1016,58 @@ describe("loom-retrieval tools", () => {
       ]);
       expect(output.envelope).toBeUndefined();
     });
+  });
+  it("registers each admitted row as a held referent and names its handle on the entry", async () => {
+    const referents: Record<string, unknown>[] = [];
+    const { context } = contextWith({
+      stdout: searchPayload([
+        hit("m1", { confidentiality: [WORK] }),
+        hit("m2", { confidentiality: [HEALTH] }),
+        hit("m3", undefined),
+      ]),
+      ceiling,
+      queryLabel: [OWNER],
+      referents,
+    });
+
+    const output = ok(
+      await loomSearchTool.invoke(context, { query: "donuts" }),
+    );
+
+    expect(
+      output.entries.map((entry) =>
+        entry.status === "admitted" ? entry.handle : entry.status
+      ),
+    ).toEqual(["cfh:v:22221", "withheld", "cfh:v:22222"]);
+    // The referent is the row as the model saw it, under the label it was
+    // measured with, and says where that label came from.
+    expect(referents).toEqual([
+      {
+        source: "loom_search",
+        value: {
+          sourceSystem: "google.gmail",
+          sourceRef: "m1",
+          collectionId: "google.gmail.message_summary",
+          title: "Mail m1",
+          snippet: "snippet for m1",
+          observedAt: "2026-09-18T10:00:00Z",
+        },
+        label: { confidentiality: [WORK], integrity: [] },
+        labelSource: "row",
+      },
+      {
+        source: "loom_search",
+        value: {
+          sourceSystem: "google.gmail",
+          sourceRef: "m3",
+          collectionId: "google.gmail.message_summary",
+          title: "Mail m3",
+          snippet: "snippet for m3",
+          observedAt: "2026-09-18T10:00:00Z",
+        },
+        label: { confidentiality: [OWNER], integrity: [] },
+        labelSource: "query",
+      },
+    ]);
   });
 });

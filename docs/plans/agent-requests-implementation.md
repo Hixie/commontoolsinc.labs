@@ -8,8 +8,8 @@ on its own, and is testable without a model provider. Checkboxes are ticked
 as work lands; when the last stage of the first take (stage 6) lands, both
 documents are archived to `docs/history/plans/`.
 
-**Status:** stage 3 built; the checkboxes track the rest. Written 2026-09-18
-against `37b1acd3dd`.
+**Status:** stages 1 through 4 built; the checkboxes track the rest. Written
+2026-09-18 against `37b1acd3dd`.
 
 ## Ground rules for every stage
 
@@ -103,8 +103,9 @@ tool calls, and a run without the config offers none of the tools.
 
 ## Stage 2 — The result writer in the harness
 
-**Package:** `packages/cf-harness` (host side), one small `packages/runner`
-export. **Depends on:** nothing (stage 1 only supplies more referent kinds).
+**Packages:** `packages/cf-harness` (host side) and the `packages/runner`
+observation-receipt seam. **Depends on:** nothing (stage 1 only supplies more
+referent kinds).
 
 The writer is the harness routine of design §1.3. It runs on the trusted host
 over the fabric session's runtime and is called by the runner of stage 4 after
@@ -128,10 +129,16 @@ a run reaches its structured result. It is not a model tool.
          refused. A cell referent becomes its link. Where the position
          declares `ifc.maxConfidentiality` (met across `allOf`), a referent
          above it is sealed.
-      3. First transaction: a document per non-cell referent, written through
-         a schema declaring the referent's label on every node; no reads.
-      4. Second transaction: read every observed cell and every minted
-         document so `collectConsumedLabel` sees them;
+      3. First committed transaction: a document per non-cell referent the
+         result names, written through a schema declaring the referent's label
+         on every node; no reads. For every unnamed referent, stage the same
+         write in an isolated transaction, require successful CFC preparation,
+         traverse its complete value closure, retain the runtime's opaque
+         content-observation receipt, and abort the transaction.
+      4. Second committed transaction: read every observed cell and every
+         minted document, and consume each runtime-issued observation receipt,
+         so `collectConsumedLabel` sees every model input without making an
+         unnamed referent durable;
          `tx.setCfcImplementationIdentity({ kind: "builtin", builtinId: "agent" })`;
          write the result through the result schema with position ceilings
          stripped, link positions relaxed, `maxConfidentiality` declared as
@@ -146,11 +153,12 @@ a run reaches its structured result. It is not a model tool.
 - [x] Tests, `test/result-writer.test.ts`, on an in-memory runtime with
       fixture cells of two labels and one observed Loom row: one result
       document, three links, targets keep their labels, inline text carries
-      the join of both cell labels, the minted row document carries the row's
-      label, the result carries `LlmDerived`; an unheld handle fails before
-      any write; a handle at a non-`asCell` position still becomes a link; a
-      value above a declared ceiling at an `asCell` position is sealed rather
-      than written.
+      the join of both cell labels, a cited row document carries the row's
+      label, an uncited row leaves no durable document while its label still
+      joins the inline result, and the result carries `LlmDerived`; an unheld
+      handle fails before any write; a handle at a non-`asCell` position still
+      becomes a link; a value above a declared ceiling at an `asCell` position
+      is sealed rather than written.
 - [x] Documents: `packages/cf-harness/docs/IMPLEMENTATION_PROFILE.md` (the
       writer as a trusted host path, AH-TOOL-7),
       `packages/cf-harness/docs/CURRENT_STATE.md`.
@@ -164,11 +172,14 @@ schema it writes through as the result document's store policy; under the
 strict rung a tainted write to a store declaring no policy is refused, and the
 ceiling is the policy design §1.4 says the result fits by construction. The
 runtime measures the derived join against it, so the join stays derived and
-nothing asserts a label. Two transactions are committed rather than one: the
-documents minted for non-cell referents go first, in a transaction that reads
-nothing, so each carries its declared label alone, and the result transaction
-then reads them beside the observed cells so their labels join the inline
-text. Validation uses the sanitizer's validation half only: its string-sealing
+nothing asserts a label. When the result cites non-cell referents, their
+documents are committed first in a transaction that reads nothing, so each
+carries its declared label alone. Each uncited referent
+passes the same runtime admission through an isolated prepared transaction that
+is aborted; the result transaction reads the cited documents beside the
+observed cells and consumes the runtime's opaque CONTENT-observation receipts,
+so every observed label joins the inline text without an uncited document.
+Validation uses the sanitizer's validation half only: its string-sealing
 pass withholds every free string a schema does not enumerate, which is right
 for a value leaving the fabric toward a model and wrong for text a model
 authored on its way into the fabric. A position's declared `maxConfidentiality`
@@ -261,85 +272,133 @@ and a result link, and observes `pending: false` and `result` on the node.
 
 ## Stage 4 — Records, index, runner
 
-**Packages:** `packages/patterns/system` (record and index schemas),
-`packages/runner` (the `#agent_queue` wish target), `packages/cli` (the
-runner). **Depends on:** stages 2 and 3.
+**Packages:** `packages/patterns/system` (record and index patterns),
+`packages/runner` (the canonical schemas, the error taxonomy, the
+`#agent_queue` wish target), `packages/cli` (the runner), and
+`packages/cf-harness` (two subpath exports). **Depends on:** stages 2 and 3.
 
-- [ ] Record schema — `packages/patterns/system/agent-run.tsx` exporting the
-      `AgentRun` type of design §2.3 as a pattern-facing schema with `PerUser`
-      scope, the `cancel` stream, and the writer split documented in the
-      type's comments: request fields server-written at creation, everything
-      from `claim` on runner-written. `packages/runner/src/builtins/agent.ts`
-      imports the schema rather than duplicating it.
-- [ ] Split-writer check (assumption 9): a runner test that writes progress
-      fields as an authored client into a record the server derived, under
-      server execution enabled. If the single-deriver rule refuses the write,
-      move the runner-written fields to `AgentRunProgress`, a sibling document
-      the runner creates on claim and the record links to, and update design
-      §2.3 in the same change.
-- [ ] Home index — `packages/patterns/system/agent-queue.tsx`: a piece holding
+- [x] Record schema — `packages/patterns/system/agent-run.tsx` exporting the
+      `AgentRun` type of design §2.3 as a pattern-facing type, `PerUser` as
+      `AgentRunRecord`, with the writer split documented in the type's
+      comments and a view pattern whose `cancel` stream sets
+      `cancelRequestedAt`. The canonical JSON schema stays in
+      `packages/runner/src/builtins/agent-schemas.ts`, because the runner sits
+      below the patterns package and cannot import from it;
+      `packages/runner/test/agent-schemas-parity.test.ts` holds the two
+      statements together.
+- [x] Split-writer check (assumption 9):
+      `packages/runner/test/agent-split-writer.test.ts` writes the runner's
+      fields from a second client session into a record the effect created.
+      The writes are admitted and the sibling-document fallback is not needed.
+      The check runs with client runtimes; the same check under a serving
+      runtime is not built.
+- [x] Home index — `packages/patterns/system/agent-queue.tsx`: a piece holding
       `entries: { run: link, host: string }[]` and the `agentRunner` entry
-      `{ host, tools, registeredAt, lastClaimAt }` owner-protected the way
-      `ProfileInboxPointer` is on `profile-home.tsx`; held by `home.tsx` in an
-      `agentQueue` field of the home default pattern, beside `favorites` and
-      `journal`, and discovered with
-      `wish({ query: "#agent_queue", headless: true })`.
-- [ ] `packages/runner/src/builtins/wish.ts` — `#agent_queue` as a well-known
+      `{ host, tools, registrationId, registeredAt, lastClaimAt }`
+      owner-protected the way
+      `ProfileInboxPointer` is on `profile-home.tsx`, written through the
+      piece's `setAgentRunner` stream; held by `home.tsx` in an `agentQueue`
+      field of the home default pattern, beside `favorites` and `journal`, and
+      discovered with `wish({ query: "#agent_queue", headless: true })`. The
+      builtin's index write and tool check read this field; a home space
+      holding no queue ends the record `refused`.
+- [x] `packages/runner/src/builtins/wish.ts` — `#agent_queue` as a well-known
       home-space target resolving to `defaultPattern.agentQueue` of the home
       space, beside `#journal` and `#learned`. A hashtag search under
       `scope: ["~"]` reads favorites only, so it would not find the piece.
       Tests beside the existing well-known-target tests; the target added to
       the well-known list in `docs/common/conventions/wish.md`.
-- [ ] Runner — `packages/cli/commands/agent.ts` with subcommand `runner`,
-      registered in `commands/main.ts`. Configuration: identity, cloud and
-      local API URLs, `--loom-retrieval-config`, `--max-concurrent` (default
-      1), `--tools` (defaults to what the Loom config makes available),
-      harness provider settings from `CF_HARNESS_HOME`. Behavior:
-      1. open client sessions to both toolsheds as the identity;
+- [x] Runner — `packages/cli/commands/agent.ts` with subcommand `runner`,
+      registered in `commands/main.ts`; the queue mechanics in
+      `packages/cli/lib/agent-runner.ts` and the harness executor in
+      `packages/cli/lib/agent-run-harness.ts`. Configuration: identity, cloud
+      and local API URLs, `--loom-retrieval-config`, `--max-concurrent`
+      (default 1), `--tools` (defaults to what the Loom config makes
+      available), `--lease-seconds`, `--work-root`, `--model`, harness
+      provider settings from `CF_HARNESS_HOME`. Behavior:
+      1. open client sessions to both toolsheds as the identity — a full
+         connection to the home toolshed, where the home pattern runs, and a
+         storage-only runtime per other host an entry names;
       2. write or refresh the `agentRunner` entry;
-      3. subscribe to the index; on change, claim the oldest `queued` record
-         under the concurrency cap by committing `state: claimed`, `claim`,
-         and `attempts` incremented;
-      4. build a `HarnessSessionConfig` — input handles from the record's
-         request links, `cfc.maxConfidentiality` from the request, tools
-         from `tools`, `loomRetrieval` from the config, prompt-slot role
-         `context` for the task — and run `CfHarnessPromptLoop.runPrompt`
-         through `harnessSessionEngineOptions`;
-      5. renew `claim.leaseUntil` on every durable write the run makes (the
-         transcript and event writes the harness already persists), never on
-         a timer;
+      3. subscribe to the index and to each record it names; on change, claim
+         the oldest `queued` record under the concurrency cap by committing
+         `state: claimed`, `claim`, and `attempts` incremented;
+      4. run the request through `runCfHarnessCli`, the harness's batch entry
+         point, whose arguments resolve to a `HarnessSessionConfig` — input
+         cells from the record's request links, `--max-confidentiality` from
+         the request, `--allow-tool` from `tools`, `--loom-retrieval-config`
+         from the config, prompt-slot role `context` for the task — and whose
+         loop runs through `harnessSessionEngineOptions`. The runner wraps the
+         `createPromptLoop` seam to pass its abort signal, renew the lease, and
+         take the loop's result;
+      5. renew `claim.leaseUntil` on every transcript event the harness
+         persists, never on a timer;
       6. on the structured result, call stage 2's writer; write terminal
          fields (`result`, `outcome`, `usage` from the run report's
          `totalUsage`, `usageCoverage`, `modelTurns`, `toolCalls`, `runRef`);
       7. on a typed harness failure write `failed` with the taxonomy code; on
-         a writer refusal write `refused`; on `cancel` abort through the
-         harness's `signal` and write `cancelled`;
+         a writer refusal write `refused`; on `cancelRequestedAt` abort through
+         the harness's `signal` and write `cancelled`;
       8. on start, and on each index change, take any `claimed` or `running`
          record whose `leaseUntil` has passed: re-queue it when its `attempts`
          is one, and fail it as `RUNNER_LOST` when its `attempts` is two.
-- [ ] Error taxonomy — one module in `packages/runner` (or `packages/api`)
-      exporting the codes `INVALID_INPUT`, `LIMIT_REACHED`, `PROVIDER_FAILURE`,
+         A durable cancellation request instead ends the expired record as
+         `cancelled`; another runner's live lease remains untouched.
+- [x] Error taxonomy — `packages/runner/src/agent-error-codes.ts` exporting
+      the codes `INVALID_INPUT`, `LIMIT_REACHED`, `PROVIDER_FAILURE`,
       `RUNNER_LOST`, `CANCELLED`, `REFUSED`, shared with the verb-refusal
       taxonomy the retention plan owes; the design document's §2.3 names it.
-- [ ] Tests: `packages/cli/test/agent-runner.test.ts` with a fake executor
-      (an injected `createPromptLoop` returning a scripted loop, the seam
-      `packages/cf-harness/src/cli.ts` already exposes as
-      `deps.createPromptLoop`) over two
-      in-process test toolsheds (the multi-runtime harness, one memory server
-      per toolshed): every state transition; the memo hit creates no record;
-      two runners racing claim once; a killed runner's record, left `claimed`
-      or left `running`, re-queues once then fails; `cancel` mid-run ends `cancelled`; the `agentRunner` entry
-      appears and refreshes on claim; a cloud-hosted record is found from a
-      local runner through a `{link, host}` entry. Pattern tests for
-      `agent-queue.tsx` and `agent-run.tsx` under `packages/patterns/system`.
-- [ ] Documents: `packages/cli/README.md` — `cf agent runner`;
+- [x] Tests: `packages/cli/test/agent-runner.test.ts` with a scripted
+      executor, and with the harness executor over an injected
+      `createPromptLoop` returning a scripted loop (the seam
+      `packages/cf-harness/src/cli.ts` exposes as `deps.createPromptLoop`),
+      over two in-process test toolsheds, one memory server per toolshed:
+      every state transition; the memo hit creates no record; two runners
+      racing claim once; a killed runner's record, left `claimed` or left
+      `running`, re-queues once then fails; `cancel` mid-run ends `cancelled`;
+      the `agentRunner` entry appears and refreshes on claim; a record on the
+      other toolshed is found through a `{link, host}` entry. Pattern tests
+      for `agent-queue.tsx` and `agent-run.tsx` under
+      `packages/patterns/system`.
+- [x] Documents: `packages/cli/README.md` — `cf agent runner`;
       `docs/common/conventions/HOME_SPACE.md` — the `#agent_queue` piece and
       `agentRunner` entry beside favorites; `docs/development/LOCAL_DEV_SERVERS.md`
       — how to start a runner against `dev-local`.
+- [x] A structured result under an enforcing harness tool policy:
+      `submit_result` (`packages/cf-harness/src/tools/submit-result.ts`), a
+      host-side tool offered only when a structured-result schema is
+      configured. It validates the value with the structured-result
+      validation and the host writes the file the file-based path leaves; an
+      invalid value returns `invalid_result` and the model submits again; a
+      later valid submission replaces an earlier one; handle tokens stay
+      tokens. Admitted at every mode and role as the run's return
+      (`structured_result_return`). The runner's executor allows it beside a
+      request's tools and validates with `asCell` positions relaxed. The
+      manual `dev-local` run completes at the default `enforce-strict`.
+- [x] Index entries keyed by record id. `entries.elementById(recordId)`
+      added with `addUnique` gives concurrent index writes distinct entries
+      without deriving their identities from the shared list length.
+- [x] The runner keeps the harness default, `enforce-strict`. A
+      `context`-role run is refused every tool but `submit_result`, reads
+      included. A run that searches Loom or describes a handle requires an
+      explicit `CF_HARNESS_CFC_ENFORCEMENT_MODE=enforce-explicit` override;
+      the demonstration must document that limitation when deciding whether
+      to enable `agentBuiltin` by default.
+- [x] Observed Loom rows reach the result writer. Each admitted row is
+      registered in the run's handle table as a held referent
+      (`HarnessHandleTable.referents`, token `cfh:v:<suffix>`, with its
+      content, label, and `labelSource`), its entry names the token as
+      `handle`, `describe_handle` discloses kind, source, label source, and
+      atom types, and `agentObservedHandlesOfTable` hands cells and referents
+      to the writer. The writer mints only an observed row the result names.
+      An unnamed row passes the same runtime admission in an isolated aborted
+      transaction and contributes to the inline result through an opaque,
+      transaction-bound CONTENT-observation receipt.
 
 *Exit:* the stage-4 runner test suite passes across two test toolsheds, and a
 manual run against `dev-local` with a real harness and a scripted model moves
-a record from `queued` to `completed` with a result link that resolves.
+a record from `queued` to `completed` with a result link that resolves. Both
+hold, the second at the harness's default `enforce-strict` mode.
 
 ## Stage 5 — Inspection
 
@@ -440,9 +499,8 @@ work: the first take ships the static empty row under max enforcement with
 the builtin-side check, under which a request passing a labeled cell by
 reference is refused (design D5). Ranking (`priority` stays reserved). A
 durable per-user ledger and quota enforcement. Loom tools returning real
-per-row labels, which retires the
-query-label assumption the stage-1 tools make for a row without `ifc`. Page
-and calendar mutation tools. A shared runner with delegated
-identity. Folding hosted pattern authoring into an agent request. Each is
-named in the design document under "Later, not sequenced" and gets its own
-plan when it is picked up.
+per-row labels, which retires the query-label assumption the stage-1 tools
+make for a row without `ifc`. Page and calendar mutation tools. A shared
+runner with delegated identity. Folding hosted pattern authoring into an agent
+request. Each is named in the design document under "Later, not sequenced" and
+gets its own plan when it is picked up.

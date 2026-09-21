@@ -12,7 +12,12 @@ import type {
   LoomProfileInput,
   LoomSearchInput,
 } from "./loom-retrieval.ts";
+import type { JSONSchema } from "@commonfabric/api";
 import type { LoomRetrievalToolOutput } from "./tools/loom-retrieval.ts";
+import type {
+  SubmitResultInput,
+  SubmitResultOutput,
+} from "./tools/submit-result.ts";
 import {
   dirname,
   join as joinHostPath,
@@ -30,6 +35,7 @@ import {
   mergeCfcLabelViews,
 } from "@commonfabric/runner/cfc";
 import { mergeLabel } from "@commonfabric/runner/cfc/label-view-core";
+import { deepEqual } from "@commonfabric/utils/deep-equal";
 import { isObjectOrArray } from "@commonfabric/utils/types";
 
 import {
@@ -68,7 +74,10 @@ import {
   type HarnessCfcModelContextObservationInput,
 } from "./contracts/cfc-model-context.ts";
 import type { HarnessCfcPolicySnapshot } from "./contracts/cfc-policy-snapshot.ts";
-import type { HarnessHandleTable } from "./contracts/handle-table.ts";
+import type {
+  HarnessHandleReferent,
+  HarnessHandleTable,
+} from "./contracts/handle-table.ts";
 import {
   createHarnessPolicyDecisionRecord,
   type HarnessPolicyDecisionRecord,
@@ -127,6 +136,7 @@ import {
   assertValidHarnessHandleTable,
   createHarnessHandleTable,
   mintAddressHandle,
+  mintReferentHandle,
 } from "./handle-table.ts";
 import {
   cacheHarnessPatternIndexClientFactory,
@@ -317,6 +327,7 @@ export interface BuiltinToolInputMap {
   loom_calendar_list: LoomCalendarListInput;
   loom_context: LoomContextInput;
   loom_profile: LoomProfileInput;
+  submit_result: SubmitResultInput;
 }
 
 export interface BuiltinToolOutputMap {
@@ -353,10 +364,17 @@ export interface BuiltinToolOutputMap {
   loom_calendar_list: LoomRetrievalToolOutput;
   loom_context: LoomRetrievalToolOutput;
   loom_profile: LoomRetrievalToolOutput;
+  submit_result: SubmitResultOutput;
 }
 
 interface ToolOutputWithId {
   outputId: string;
+}
+
+/** A structured-result schema and the host path its JSON file is kept at. */
+export interface HarnessStructuredResultTarget {
+  schema: JSONSchema;
+  path: string;
 }
 
 export interface CreateHarnessEngineOptions
@@ -455,6 +473,15 @@ export interface CreateHarnessEngineOptions
    * no single such text, and nothing invents one.
    */
   taskText?: string;
+
+  /**
+   * The structured result this run ends on: the schema it is validated
+   * against and the host path of the JSON file that holds it. Configured, the
+   * run offers `submit_result`, which writes that file host-side; the model
+   * writing the file itself stays a second way to the same place. A subagent
+   * run takes none: the result is the root run's to return.
+   */
+  structuredResult?: HarnessStructuredResultTarget;
 
   /**
    * Host-supplied attachments or session-retained targets to mint handles for
@@ -615,6 +642,8 @@ export class CfHarnessEngine {
   #researchRunner?: HarnessResearchRunner;
   #patternIndexLedger?: PatternIndexLedger;
   readonly #taskText?: string;
+  readonly #structuredResult?: HarnessStructuredResultTarget;
+  #structuredResultRecorded = false;
   readonly #inputCells: readonly HarnessInputCellSpec[];
   readonly #connectorGrants: readonly HarnessConnectorGrantSpec[];
   readonly #patternRefs: readonly HarnessPatternRefSpec[];
@@ -822,6 +851,20 @@ export class CfHarnessEngine {
           skillsShAcquisitionClientFactory,
         );
     this.#taskText = options.taskText;
+    const recordedStructuredResult = options.runState?.structuredResult;
+    if (
+      recordedStructuredResult !== undefined &&
+      options.structuredResult !== undefined &&
+      !deepEqual(recordedStructuredResult, options.structuredResult)
+    ) {
+      throw harnessResumeRefusal(
+        "resumed run structured-result configuration does not match the recorded configuration",
+      );
+    }
+    this.#structuredResult = options.lineage === undefined &&
+        options.runState?.lineage === undefined
+      ? structuredClone(recordedStructuredResult ?? options.structuredResult)
+      : undefined;
     this.#inputCells = options.inputCells ?? [];
     this.#connectorGrants = options.connectorGrants ?? [];
     this.#patternRefs = options.patternRefs ?? [];
@@ -1068,6 +1111,9 @@ export class CfHarnessEngine {
         credentialOwner: this.config.credentialOwner,
         harnessHomeIdentity: this.config.harnessHomeIdentity,
         artifactRoot: this.artifactStore?.runRoot,
+        ...(this.#structuredResult !== undefined
+          ? { structuredResult: this.#structuredResult }
+          : {}),
         runManifest: this.config.runManifest,
         runManifestPath: this.config.runManifestPath,
         docsCorpus: this.config.docsCorpus,
@@ -1564,6 +1610,49 @@ export class CfHarnessEngine {
       this.handleTable ?? createHarnessHandleTable(this.#runState.runId),
       ref,
       { capability: "skill-context", acquisition },
+    );
+    await this.recordHandleTable(minted.table);
+    return minted.token;
+  }
+
+  /** Whether this run was configured with a structured-result schema. */
+  get structuredResultAvailable(): boolean {
+    return this.#structuredResult !== undefined;
+  }
+
+  /**
+   * Helper for `submit_result`, which writes a validated result to the
+   * configured file, replacing whatever an earlier submission left.
+   */
+  async #recordStructuredResult(
+    value: unknown,
+  ): Promise<{ replaced: boolean }> {
+    const { path } = this.#structuredResult!;
+    let replaced = this.#structuredResultRecorded;
+    if (!replaced) {
+      try {
+        await Deno.stat(path);
+        replaced = true;
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+    }
+    await Deno.mkdir(dirname(path), { recursive: true });
+    await Deno.writeTextFile(path, `${JSON.stringify(value, null, 2)}\n`);
+    this.#structuredResultRecorded = true;
+    return { replaced };
+  }
+
+  /**
+   * Mints and records a handle for content a tool observed that is not a
+   * cell, so a result naming the token can link a document minted from it.
+   */
+  async mintReferentHandle(
+    referent: Omit<HarnessHandleReferent, "token" | "kind">,
+  ): Promise<string> {
+    const minted = await mintReferentHandle(
+      this.handleTable ?? createHarnessHandleTable(this.#runState.runId),
+      referent,
     );
     await this.recordHandleTable(minted.table);
     return minted.token;
@@ -2683,6 +2772,17 @@ export class CfHarnessEngine {
       hostProcessRunner: this.hostProcessRunner,
       loomAuthoring: this.config.loomAuthoring,
       loomRetrieval: this.config.loomRetrieval,
+      mintReferentHandle: (
+        referent: Omit<HarnessHandleReferent, "token" | "kind">,
+      ) => this.mintReferentHandle(referent),
+      ...(this.#structuredResult !== undefined
+        ? {
+          structuredResult: {
+            schema: this.#structuredResult.schema,
+            record: (value: unknown) => this.#recordStructuredResult(value),
+          },
+        }
+        : {}),
       ...(this.config.fabricSession?.cfcReadMaxConfidentiality !== undefined
         ? {
           cfcReadMaxConfidentiality:

@@ -107,7 +107,9 @@ observation over the result's output channel, through the same accumulation
 `research` and the sandbox tools feed. Withheld rows contribute nothing, since
 nothing of them reached the model. The join is kept on the result artifact under
 `cfc` and is not shown to the model. An admitted row's label is also what a
-result writer stamps on a document it mints for that row.
+result writer stamps on a document when the result cites that row. An uncited
+row contributes through a runtime-issued content-observation receipt and is not
+made durable.
 
 ## Tools
 
@@ -185,3 +187,32 @@ fixed fields, the envelope, the entries so far, and this one — stays within
 `truncated` flag is set. The envelope's strings are bounded the same way. The
 model-context observation the result contributes carries `truncated` whenever
 the result does.
+
+## Rows as held referents
+
+Each admitted row is registered in the run's handle table as a held referent
+that is not a cell, and its entry carries the token as `handle`
+(`cfh:v:<suffix>`). The table records the row as the model saw it, the label it
+was measured with, and `labelSource` — `row` for a label read off the row's
+`ifc`, `query` for one assigned from the query. A withheld row is registered
+nowhere. Retrieving the same row twice yields one token.
+
+A referent token stays text everywhere a tool input passes: the swap that turns
+address tokens into addresses does not match it. `describe_handle` reports a
+referent's kind, the tool that observed it, its `labelSource`, and its label's
+atom types, and never its content.
+
+The agent result writer takes these through
+`agentObservedHandlesOfTable(handleTable)`, which returns each general address
+handle as a cell and each referent as a document. A structured-result value that
+is exactly a row's token gets a document minted from the row under its label and
+a link to it. Token-shaped property names are checked against the run's held
+referents, but remain property-name text rather than becoming links. A row the
+result does not name passes the same runtime write-admission gate in an isolated
+transaction that is aborted, so it leaves no durable document. The runtime
+returns an opaque, transaction-bound observation receipt whose canonical
+confidentiality join and hereditary integrity meet participate as a CONTENT
+input to the result write. The result's inline text therefore carries every
+observed row's label without minting an unreferenced document. A referent token
+the run does not hold fails the write as `unheld_handle`, including in a
+property name.

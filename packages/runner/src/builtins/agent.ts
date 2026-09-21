@@ -20,6 +20,7 @@ import { hashOf } from "@commonfabric/data-model";
 import type { MemorySpace } from "@commonfabric/memory/interface";
 import type { ScopeKeyIdentity } from "@commonfabric/memory/v2";
 
+import { INVALID_INPUT, REFUSED } from "../agent-error-codes.ts";
 import type { JSONSchema } from "../builder/types.ts";
 import { type Cell, isCell } from "../cell.ts";
 import type { CfcConfClause } from "../cfc/clause.ts";
@@ -38,6 +39,7 @@ import { type Runtime, spaceCellSchema } from "../runtime.ts";
 import type { Action } from "../scheduler.ts";
 import type { IExtendedStorageTransaction } from "../storage/interface.ts";
 import {
+  AGENT_INPUT_NAME_PATTERN,
   AGENT_RUN_TERMINAL_STATES,
   AgentParamsSchema,
   AgentQueueIndexSchema,
@@ -48,12 +50,6 @@ import { ownedCell, recordRuntimeOwnedStore } from "./runtime-owned-store.ts";
 
 /** The sink every agent request is staged under. */
 export const AGENT_SINK = "agent";
-
-/**
- * The cause of the per-user home-space index document. One document per
- * home space, so the cause is a constant rather than a node's.
- */
-const AGENT_QUEUE_INDEX_CAUSE = { agentQueue: "index" } as const;
 
 /** The `AgentRun` record as the runtime reads it. */
 export type AgentRunRecord = Schema<typeof AgentRunRecordSchema>;
@@ -94,29 +90,38 @@ type InputLinkSnapshot = {
   scope?: NormalizedFullLink["scope"];
 };
 
+/** The home-space agent queue as the runtime reads it. */
+export type AgentQueueIndex = {
+  entries?: { run: Cell<unknown>; host: string }[];
+  agentRunner?: {
+    host: string;
+    tools: string[];
+    registrationId?: string;
+    registeredAt: string;
+    lastClaimAt?: string;
+  };
+};
+
 /**
- * The home-space index for `homeSpace`'s owner: the `{run, host}` entries
- * of every record they submitted, and their `agentRunner` entry.
+ * The agent queue of `homeSpace`'s owner: the `{run, host}` entries of every
+ * record they submitted, and their `agentRunner` entry. It is the
+ * `agentQueue` field of the home default pattern
+ * (`packages/patterns/system/home.tsx`), the same cell
+ * `wish({ query: "#agent_queue" })` resolves to. It reads as absent in a
+ * home space whose default pattern does not exist or predates the field.
  */
 export function agentQueueIndexCell(
   runtime: Runtime,
   homeSpace: MemorySpace,
   tx?: IExtendedStorageTransaction,
-): Cell<{
-  entries?: { run: Cell<unknown>; host: string }[];
-  agentRunner?: {
-    host: string;
-    tools: string[];
-    registeredAt: string;
-    lastClaimAt?: string;
-  };
-}> {
-  return runtime.getCell(
-    homeSpace,
-    AGENT_QUEUE_INDEX_CAUSE,
-    AgentQueueIndexSchema,
-    tx,
-  );
+): Cell<AgentQueueIndex> {
+  return runtime.getCell(homeSpace, homeSpace, spaceCellSchema, tx)
+    .key("defaultPattern")
+    .resolveAsCell()
+    // The space cell's schema does not name the default pattern's fields.
+    // deno-lint-ignore no-explicit-any
+    .key("agentQueue" as any)
+    .asSchema(AgentQueueIndexSchema) as unknown as Cell<AgentQueueIndex>;
 }
 
 /**
@@ -324,6 +329,19 @@ export function agent(
       return;
     }
 
+    const invalidInputName = Object.keys(rawInputs ?? {}).find((name) =>
+      !AGENT_INPUT_NAME_PATTERN.test(name)
+    );
+    if (invalidInputName !== undefined) {
+      state.previousCallHash = undefined;
+      state.currentHash = undefined;
+      settleWithoutRun(
+        fields,
+        `${INVALID_INPUT}: agent input name must match ${AGENT_INPUT_NAME_PATTERN}, got \`${invalidInputName}\``,
+        undefined,
+      );
+      return;
+    }
     const inputHandles = resolveInputHandles(rawInputs);
 
     const requestSnapshot = createFrozenRequestSnapshot({
@@ -370,29 +388,11 @@ export function agent(
       state.previousCallHash = undefined;
       settleWithoutRun(
         fields,
-        "INVALID_INPUT: the agent request has no requesting identity whose " +
+        `${INVALID_INPUT}: the agent request has no requesting identity whose ` +
           "home space could index its run",
         hash,
       );
       return;
-    }
-
-    if (tools !== undefined && tools.length > 0) {
-      const runner = agentQueueIndexCell(runtime, homeSpace, tx)
-        .key("agentRunner").withTx(tx).get();
-      if (runner !== undefined) {
-        const missing = tools.filter((tool) => !runner.tools.includes(tool));
-        if (missing.length > 0) {
-          state.previousCallHash = undefined;
-          settleWithoutRun(
-            fields,
-            `INVALID_INPUT: the registered agent runner does not offer ` +
-              `${missing.map((tool) => `\`${tool}\``).join(", ")}`,
-            hash,
-          );
-          return;
-        }
-      }
     }
 
     // The request is measured against the pattern's own ceiling here, before
@@ -441,6 +441,35 @@ export function agent(
      * to create one for a request the node has since replaced.
      */
     const createRecord = async (): Promise<void> => {
+      const queue = agentQueueIndexCell(runtime, homeSpace);
+      try {
+        await queue.sync();
+      } catch (error) {
+        const cause = error instanceof Error ? error : new Error(String(error));
+        reportRejection("Loading the home agent queue failed.", hash, cause);
+        await settleAbandoned(
+          new Error(`${AGENT_SINK} request was refused before it started`, {
+            cause,
+          }),
+        );
+        return;
+      }
+      if (tools !== undefined && tools.length > 0) {
+        const runner = queue.key("agentRunner").get();
+        if (runner !== undefined) {
+          const missing = tools.filter((tool) => !runner.tools.includes(tool));
+          if (missing.length > 0) {
+            state.previousCallHash = undefined;
+            await settleAbandoned(
+              new Error(
+                `${INVALID_INPUT}: the registered agent runner does not offer ` +
+                  `${missing.map((tool) => `\`${tool}\``).join(", ")}`,
+              ),
+            );
+            return;
+          }
+        }
+      }
       const { error } = await runtime.editWithRetry((tx) => {
         markEffectCompletion(tx, effectKey);
         tx.tx.scopeKeyIdentity = identity;
@@ -520,13 +549,27 @@ export function agent(
           hash,
         );
         const recordId = record.getAsNormalizedFullLink().id;
-        const entries = agentQueueIndexCell(runtime, homeSpace, tx)
-          .key("entries").withTx(tx);
+        const queue = agentQueueIndexCell(runtime, homeSpace, tx);
+        // A home space with no queue has nowhere to list the record, and
+        // writing the path anyway would leave a `defaultPattern` value where
+        // the home pattern's own creation expects none.
+        if (queue.withTx(tx).get() === undefined) {
+          throw new Error("the home space holds no agent queue");
+        }
+        const entries = queue.key("entries").withTx(tx);
         const listed = (entries.get() ?? []).some((entry) =>
           entry.run.getAsNormalizedFullLink().id === recordId
         );
         if (listed) return;
-        entries.push({ run: record, host });
+        // The record's id determines the entry's address, so concurrent
+        // index writes cannot reuse an element from the same list position.
+        // The stored array can carry a different item schema. The writer's
+        // canonical contract declares that each run resolves per user.
+        const entry = entries.elementById(recordId).asSchema(
+          AgentQueueIndexSchema.properties.entries.items,
+        ) as Cell<{ run: Cell<unknown>; host: string }>;
+        entry.set({ run: record, host });
+        entries.addUnique(entry);
       });
       if (indexed.error) {
         // A record no index names is a request nothing will ever claim, so
@@ -552,7 +595,7 @@ export function agent(
           recordTx.key("state").set("refused");
           recordTx.key("stateSince").set(new Date().toISOString());
           recordTx.key("outcome").set("refused");
-          recordTx.key("errorCode").set("REFUSED");
+          recordTx.key("errorCode").set(REFUSED);
         });
         if (refused.error) {
           reportRejection(

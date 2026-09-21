@@ -1,3 +1,4 @@
+import type { JSONSchema } from "@commonfabric/api";
 import type {
   CfcConfClause,
   CfcEnforcementMode,
@@ -26,7 +27,10 @@ import type { HarnessResearchRunSummary } from "../contracts/research.ts";
 import type { HarnessPatternRef } from "../contracts/pattern-refs.ts";
 import type { HarnessInputCell } from "../contracts/input-cells.ts";
 import type { HarnessResearchRunner } from "../research/runner.ts";
-import type { HarnessHandleTable } from "../contracts/handle-table.ts";
+import type {
+  HarnessHandleReferent,
+  HarnessHandleTable,
+} from "../contracts/handle-table.ts";
 import type { HarnessFabricSession } from "../fabric-session.ts";
 import type { openProbeRuntime } from "../pattern-index/probe-runtime.ts";
 import type { PatternIndexClient } from "../pattern-index/client.ts";
@@ -213,6 +217,25 @@ export interface HarnessToolContext {
 
   /** Host-owned Loom retrieval routing, absent when the run has no grant. */
   loomRetrieval?: HarnessLoomRetrievalConfig;
+
+  /**
+   * Registers content a tool observed as a referent the run holds, and
+   * returns its token. Absent outside a run that keeps a handle table.
+   */
+  mintReferentHandle?(
+    referent: Omit<HarnessHandleReferent, "token" | "kind">,
+  ): Promise<string>;
+
+  /**
+   * Where the run's structured result goes, absent when the run was
+   * configured with no schema. `record` writes a validated value where the
+   * file-based path leaves one, and reports whether it replaced an earlier
+   * one.
+   */
+  structuredResult?: {
+    schema: JSONSchema;
+    record(value: unknown): Promise<{ replaced: boolean }>;
+  };
 
   /**
    * The run's observation ceiling: the fabric session's read ceiling, met

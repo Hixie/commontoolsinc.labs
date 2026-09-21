@@ -2,8 +2,8 @@
 
 **Status:** design, ruled on 2026-09-18;
 [the implementation plan](agent-requests-implementation.md) tracks what is
-built. Written against `c89aef10a3`. Section 8 records the decisions and
-section 9 the assumptions the first take rests on.
+built. Written against `c89aef10a3`. The Decisions table records the rulings
+and the Assumptions section the assumptions the first take rests on.
 
 ## What this is
 
@@ -62,7 +62,10 @@ comment above `RUN_PATTERN_ANSWER_CEILING`). A run carries a read ceiling
 (`--max-confidentiality`, met into the fabric session's `cfcReadMaxConfidentiality`),
 accumulates the labels of everything the model observed as influence
 (`HarnessCfcModelContext`), validates and sanitizes a structured result against a
-caller schema (`--structured-result-schema`, `src/structured-result.ts`), and
+caller schema (`--structured-result-schema`, `src/structured-result.ts`) — which
+the model returns through the host-side `submit_result` tool
+(`src/tools/submit-result.ts`), offered only when a schema is configured, or by
+writing the result file itself where it holds a tool that can — and
 records per-attempt model usage with reported and estimated cost kept apart
 (`HarnessModelUsage`, `src/model/client.ts`; AH-USAGE-1..6). Any new caller is
 expected to produce a `HarnessSessionConfig` and hand it to
@@ -250,6 +253,26 @@ every free string a schema does not enumerate, which is the rule for a value
 leaving the fabric toward a model and not for text a model authored on its way
 in.
 
+A Loom row reaches the writer as a held referent: each admitted row is
+registered in the run's handle table under a `cfh:v:` token, with its content,
+the label it was admitted under, and whether that label was the row's or the
+query's, and `agentObservedHandlesOfTable` hands the writer the table's cells
+and referents together.
+
+The result reaches the writer through the harness's `submit_result` tool. An
+agent request's task is bound to the prompt-slot role `context`, and under the
+harness's enforcing modes a `context` run is refused every sandbox write, so it
+cannot write a result file; `submit_result` takes the value as its input,
+validates it, and the host records it where the file-based path would. The run
+validates against the schema with its `asCell` positions relaxed
+(`relaxAsCellPositions`), the same relaxation the writer applies, and a handle
+token in the submitted value stays a token for the writer to resolve. Under
+`enforce-strict` a `context` run is refused its read tools as well, so a run
+that is to search or describe a handle requires the explicit
+`CF_HARNESS_CFC_ENFORCEMENT_MODE=enforce-explicit` override. The runner keeps
+the harness's `enforce-strict` default; the demonstration's flag-default
+assessment must account for this read-tool limitation.
+
 **Every handle the result references becomes a link.** Wherever the result
 names a handle the run holds — as a token, as the canonical link string the
 inbound swap produces, or as a `{"@link": …}` object, at an `asCell` position
@@ -275,18 +298,23 @@ goes through, because the runtime applies a position's `maxConfidentiality` to
 the whole transaction's join, which for this transaction is everything the run
 observed.
 
-**Two transactions.** The documents minted for non-cell referents are written
-first, in a transaction that reads nothing, so each carries its declared label
-alone. The result transaction then reads every one of them beside every cell
-the run observed, and writes the result.
+**One or two committed transactions.** When the result cites non-cell
+referents, their documents are written first in a transaction that reads
+nothing, so each carries its declared label alone. Every uncited referent passes the same write
+admission in its own transaction; after successful CFC preparation the runtime
+traverses the complete value closure, issues an opaque observation receipt, and
+aborts that transaction. The result transaction reads every cited document
+beside every cell the run observed, consumes the receipts as CONTENT inputs,
+and writes the result.
 
 **What stays inline is labeled with the join.** Model-authored scalars — the
 rationales, a summary — stay in the result document. Their confidentiality is
 the join of what the model observed, and the writing transaction *derives*
 that join rather than asserting it: before the write, the host reads every
 cell the run observed (it holds their handles) and every document it minted,
-so the transaction's consumed set is the real one and `deriveFlowJoin` stamps
-it. The run's observation ceiling is declared on every node of the schema the
+and consumes a runtime-issued receipt for every uncited external referent, so
+the transaction's consumed set is the real one and `deriveFlowJoin` stamps it.
+The run's observation ceiling is declared on every node of the schema the
 result is written through, as the result document's store policy — and on
 every document a nested object splits into — so the commit boundary measures
 the derived join against the ceiling and refuses a join it does not admit.
@@ -301,9 +329,11 @@ The host is trusted code; this is the same line the llm builtins stand on.
 
 **Cost of this route.** The harness gains one host-side routine — a result
 writer over its fabric session (`packages/cf-harness/src/result-writer.ts`,
-`writeAgentResult`) that resolves handles to links, mints documents for
-non-cell referents, reads observed cells, and writes under the builtin
-identity — and no new model-facing tool. Against the alternative of
+`writeAgentResult`) that resolves handles to links, mints documents for cited
+non-cell referents, admits uncited referents through runtime observation
+receipts, reads observed cells, and writes under the builtin identity — plus
+the model-facing `submit_result` tool that carries a schema-validated value to
+that host routine without granting a sandbox write. Against the alternative of
 the builtin stamping a label the runner reported, this removes the one trusted
 label input the earlier draft needed and gives per-referent labels for free.
 It is the cheaper design once the harness is writing anyway, and the harness
@@ -368,7 +398,11 @@ label.
 *the requester's own view*: `[User(requester)]` met with `PersonalSpace`
 clauses that name them, which is what "respect `PerUser<>`" means once the run
 acts as the requester (section 1.5) — the user-scoped instances it resolves are
-theirs, and another user's labeled data does not fit. Declared, it can only
+theirs, and another user's labeled data does not fit. The runner passes the
+result writer `[User(requester)]` for a request naming no ceiling, and gives
+the run's fabric session no read ceiling beyond what acting as the requester
+already bounds; the `PersonalSpace` clauses are later work with the rest of
+the ceiling (phase 7). Declared, it can only
 tighten: the runtime meets the pattern's clauses with the deployment's, the way
 `observationMaxConfidentiality` is met for `generateObject`
 (`effectiveObservationCeiling`), so a pattern cannot widen a run from inside.
@@ -512,6 +546,7 @@ the runner when it starts and refreshed on every claim:
 agentRunner (in the home space, owner-protected like the profile's inbox pointer)
   host          the runner's toolshed origin (http(s) origin, like ProfileInboxPointer.host)
   tools         the tool names this runner offers
+  registrationId  the runner process whose cleanup may clear this entry
   registeredAt, lastClaimAt
 ```
 
@@ -588,6 +623,11 @@ problem. Set aside: a dedicated per-user queue space
 pointed at from the profile, which costs a minted space per user and puts the
 record and the builtin cell in different spaces.
 
+A home space that holds no queue — no home pattern, or one from before the
+field — has nowhere to list the record, so the index write fails and the
+record ends `refused` like any other record the effect cannot index.
+`cf agent runner` creates the home pattern on start when there is none.
+
 ### 2.3 The record
 
 ```text
@@ -603,7 +643,8 @@ AgentRun (PerUser, in the requesting space)
   stateSince
   claim?         { runner, leaseUntil }        while claimed or running
   attempts       claims made so far; runner-written, incremented by each claim
-  cancel         stream                         the one write a client makes
+  cancelRequestedAt?  set by a client asking the run to stop; the one write
+                 a client other than the runner makes
   result?        link to the result document the harness wrote
   outcome?       completed | failed | refused | cancelled
   errorCode?     one taxonomy shared with verb refusals (INVALID_INPUT, LIMIT_REACHED, …)
@@ -616,6 +657,21 @@ AgentRun (PerUser, in the requesting space)
   runRef?        operator-only reference to the run artifact root; never a value
   priority?      absent in the first take; reserved for ranking
 ```
+
+The canonical schema is `AgentRunRecordSchema` in
+`packages/runner/src/builtins/agent-schemas.ts`: `packages/runner` sits below
+`packages/patterns` in the layer stack and cannot import from it, so the
+pattern-facing `AgentRun` type in `packages/patterns/system/agent-run.tsx`
+restates the shape and `packages/runner/test/agent-schemas-parity.test.ts`
+holds the two together. The error codes are one module,
+`packages/runner/src/agent-error-codes.ts`.
+
+A cancel is a durable field and not a stream on the record: a stream event
+reaches only the runtime that runs its handler, and the runner is another
+process. `agent-run.tsx` gives a view over a record whose `cancel` stream sets
+`cancelRequestedAt`; a runner that sees the field on a record it is running
+aborts the run through the harness's `signal` and ends the record `cancelled`,
+and one that sees it on a `queued` record ends it without running it.
 
 The request fields are written by the server when the request commits; the
 runner writes everything from `claim` on. The two writer sets never overlap,
@@ -695,13 +751,14 @@ after its claim commits leaves a `claimed` or `running` record with a
 the next runner to see either re-queues it once. The bound is the record's
 `attempts` count, which every claim increments in the same commit: an expired
 record with `attempts` of one goes back to `queued`, and one with `attempts`
-of two is failed (AH-LIFE-5: bounded, visible, and only where replay is safe —
+of two is failed. A durable cancellation request ends an expired record as
+`cancelled` instead of re-queuing or failing it; a live lease stays with its
+runner (AH-LIFE-5: bounded, visible, and only where replay is safe —
 a run that had not yet started a side effect). The lease is
 renewed on every durable write the run makes, so it measures silence rather
 than time since start — the trap
 [`docs/features/fetch-request-deadlines.md`](../features/fetch-request-deadlines.md)
-records for a
-claim that stamps `lastActivity` once.
+records for a claim that stamps `lastActivity` once.
 
 **Ranking, later.** `priority` is reserved and absent; claim order is
 `submittedAt`. Round-robin across users is the runner's business when one
@@ -748,11 +805,12 @@ without one — is assumption 11.
 
 **Phase 2 — The result writer in the harness.** The host-side routine of
 section 1.3: validate, resolve handles to links, mint labeled documents for
-non-cell referents, touch observed cells, write under the builtin identity,
+cited non-cell referents, admit uncited referents through opaque runtime
+observation receipts, touch observed cells, write under the builtin identity,
 return a link. *Acceptance:* with a scripted model over fixture cells of two
 labels and one Loom hit, the written result is one document carrying the join
-inline and three links whose targets carry their own labels; a handle the run
-does not hold fails the write.
+inline, each cited target carries its own label, an uncited hit leaves no
+durable document, and a handle the run does not hold fails the write.
 
 **Phase 3 — The `agent` builtin.** Sink row and class, governance row, the
 builtin cell deriving `pending`, `result`, `error` from the record, request
@@ -811,8 +869,8 @@ Ruled 2026-09-18 unless marked.
 | # | Decision | Ruling |
 | --- | --- | --- |
 | D1 | Pattern surface | a class-2 builtin `agent` (§1.1 A) |
-| D2 | Result labeling | the harness writes the result: every referenced handle becomes a link, non-cell referents become labeled documents, inline text carries the derived join (§1.3) |
-| D3 | How the join is established | derived by the writing transaction reading the observed cells and the minted referent documents, not asserted by the runner; the run's ceiling is declared as the result's store policy and the runtime measures the derived join against it; no trusted label input |
+| D2 | Result labeling | the harness writes the result: every referenced handle becomes a link, cited non-cell referents become labeled documents, uncited referents leave no durable document, and inline text carries the derived join (§1.3) |
+| D3 | How the join is established | derived by the writing transaction reading the observed cells and cited referent documents and consuming runtime-issued CONTENT-observation receipts for uncited referents, not asserted by the harness; each receipt comes from an isolated row-write transaction that passed runtime preparation and was then aborted; the run's ceiling is declared as the result's store policy and the runtime measures the derived join against it; no caller-supplied trusted label input |
 | D4 | Default observation ceiling | the requester's own view |
 | D5 | `agent` sink ceiling under max enforcement | the first take ships a static empty ceiling with the builtin-side check; the request's observation ceiling as a per-request sink ceiling is later work (ruled 2026-09-18). Built as a static empty ceiling (`agent: { ceiling: [] }`), because the governance registry admits one clause list per sink and the gate reads nothing off the request. The builtin measures its request against the pattern's `maxConfidentiality` before staging. Under the static row a reference to a labeled cell is refused with the task text, since a link position carries its target's label as the pointer's own; the ruled ceiling needs the sink-request policy input to carry the request's ceiling, a registry arm declaring the row per request, and every reader of `SinkMaxConfidentiality` taking that arm (§1.4, gate 1) |
 | D6 | Run identity | the requester's, held by their runner |
@@ -864,7 +922,12 @@ Listed so they can be overturned before phase 1.
    `serving-loop.md` §3d) — and what it leaves open is a blind-writing
    derivation later clobbering the authored fields, which cannot happen to
    a record the effect writes once and the builtin thereafter only reads.
-   The sibling-document fallback is not needed.
+   The sibling-document fallback is not needed. The executable check is
+   `packages/runner/test/agent-split-writer.test.ts`: a second client session
+   writes the runner's fields into a record the effect created, the commits
+   land, both writers' fields stand, and the builtin derives from them. It
+   runs with client runtimes on one memory server; under a serving runtime
+   the split rests on the spec reading above.
 10. **Minting a document for a Loom hit is an authored write the runtime
     admits with a declared label.** The label is the one the row was admitted
     under: loom's `ifc` on the row where it carries one, and otherwise the

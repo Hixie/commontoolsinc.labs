@@ -370,6 +370,7 @@ describe("writeAgentResult()", () => {
     });
 
     expect(written.sealedPaths).toEqual([["source"], ["row"]]);
+    expect(written.mintedDocuments).toEqual([]);
     expect(isSealedOpaqueLinkObject(
       await (async () => {
         const cell = runtime.getCellFromLink(written.link);
@@ -428,6 +429,190 @@ describe("writeAgentResult()", () => {
     expect(failure).toBeInstanceOf(AgentResultWriteError);
     expect((failure as AgentResultWriteError).code).toBe("invalid_result");
     expect(documentExists("result-invalid")).toBe(false);
+  });
+
+  it("maps an external-observation admission refusal without writing a result", async () => {
+    const refusal = Object.assign(new Error("synthetic observation refusal"), {
+      name: "CfcCommitRefusalError",
+      refusals: [{ gate: "writer-fit" }],
+    });
+    const prepare = runtime.prepareExternalContentObservation.bind(runtime);
+    runtime.prepareExternalContentObservation = () => Promise.reject(refusal);
+    try {
+      const failure = await writeAgentResult({
+        session,
+        handleTable,
+        resultSchema: {
+          type: "object",
+          properties: { summary: { type: "string" } },
+          required: ["summary"],
+          additionalProperties: false,
+        },
+        structuredResult: { summary: "Observed a row." },
+        observedHandles: [rowReferent()],
+        maxConfidentiality: [LOOM_ROW],
+        cause: "result-observation-prepare-refused",
+      }).then(() => undefined, (error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AgentResultWriteError);
+      const writeError = failure as AgentResultWriteError;
+      expect(writeError.code).toBe("cfc_commit_refused");
+      expect(writeError.refusals).toEqual([{ gate: "writer-fit" }]);
+      expect(writeError.rawCauseMessage).toBe(refusal.message);
+      expect(documentExists("result-observation-prepare-refused")).toBe(false);
+    } finally {
+      runtime.prepareExternalContentObservation = prepare;
+    }
+  });
+
+  it("maps an external-observation recording refusal without writing a result", async () => {
+    const refusal = Object.assign(new Error("synthetic recording refusal"), {
+      name: "CfcCommitRefusalError",
+      refusals: [{ gate: "observation-receipt" }],
+    });
+    const record = runtime.recordExternalContentObservation.bind(runtime);
+    runtime.recordExternalContentObservation = () => {
+      throw refusal;
+    };
+    try {
+      const failure = await writeAgentResult({
+        session,
+        handleTable,
+        resultSchema: {
+          type: "object",
+          properties: { summary: { type: "string" } },
+          required: ["summary"],
+          additionalProperties: false,
+        },
+        structuredResult: { summary: "Observed a row." },
+        observedHandles: [rowReferent()],
+        maxConfidentiality: [LOOM_ROW],
+        cause: "result-observation-record-refused",
+      }).then(() => undefined, (error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AgentResultWriteError);
+      const writeError = failure as AgentResultWriteError;
+      expect(writeError.code).toBe("cfc_commit_refused");
+      expect(writeError.refusals).toEqual([{ gate: "observation-receipt" }]);
+      expect(writeError.rawCauseMessage).toBe(refusal.message);
+      expect(documentExists("result-observation-record-refused")).toBe(false);
+    } finally {
+      runtime.recordExternalContentObservation = record;
+    }
+  });
+
+  it("leaves no cited document when an uncited observation receipt is refused", async () => {
+    const resultCause = "result-mixed-observation-record-refused";
+    const uncitedToken = "cfh:v:hit2";
+    const refusal = Object.assign(new Error("synthetic recording refusal"), {
+      name: "CfcCommitRefusalError",
+      refusals: [{ gate: "observation-receipt" }],
+    });
+    const record = runtime.recordExternalContentObservation.bind(runtime);
+    runtime.recordExternalContentObservation = () => {
+      throw refusal;
+    };
+    try {
+      const failure = await writeAgentResult({
+        session,
+        handleTable,
+        resultSchema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            source: { type: "object", asCell: ["cell"] },
+          },
+          required: ["summary", "source"],
+          additionalProperties: false,
+        },
+        structuredResult: {
+          summary: "Observed another row.",
+          source: ROW_TOKEN,
+        },
+        observedHandles: [rowReferent(), rowReferent(uncitedToken)],
+        maxConfidentiality: [LOOM_ROW],
+        cause: resultCause,
+      }).then(() => undefined, (error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AgentResultWriteError);
+      expect((failure as AgentResultWriteError).code).toBe(
+        "cfc_commit_refused",
+      );
+      expect(documentExists(resultCause)).toBe(false);
+      expect(
+        documentExists(agentResultReferentCause(resultCause, ROW_TOKEN)),
+      ).toBe(false);
+    } finally {
+      runtime.recordExternalContentObservation = record;
+    }
+  });
+
+  it("aborts a referenced document mint when its commit fails", async () => {
+    const resultCause = "result-mint-commit-failed";
+    const mintCause = agentResultReferentCause(
+      resultCause,
+      ROW_TOKEN,
+    );
+    const getCell = runtime.getCell.bind(runtime);
+    let mintTargeted = false;
+    let mintAborted = false;
+    runtime.getCell = ((...args: Parameters<Runtime["getCell"]>) => {
+      const cell = getCell(...args);
+      const cause = args[1] as {
+        type?: unknown;
+        result?: unknown;
+        token?: unknown;
+      } | null;
+      const tx = args[3];
+      if (
+        cause !== null && typeof cause === "object" &&
+        cause.type === "cf-harness.agent-result-referent" &&
+        cause.result === resultCause && cause.token === ROW_TOKEN &&
+        tx !== undefined
+      ) {
+        mintTargeted = true;
+        const abort = tx.abort.bind(tx);
+        tx.abort = ((reason?: unknown) => {
+          mintAborted = true;
+          return abort(reason);
+        }) as typeof tx.abort;
+        tx.commit = (() =>
+          Promise.resolve({
+            error: {
+              name: "StorageTransactionAborted",
+              message: "synthetic mint failure",
+            },
+          })) as typeof tx.commit;
+      }
+      return cell;
+    }) as Runtime["getCell"];
+    try {
+      const failure = await writeAgentResult({
+        session,
+        handleTable,
+        resultSchema: {
+          type: "object",
+          properties: { source: { type: "object", asCell: ["cell"] } },
+          required: ["source"],
+          additionalProperties: false,
+        },
+        structuredResult: { source: ROW_TOKEN },
+        observedHandles: [rowReferent()],
+        maxConfidentiality: [LOOM_ROW],
+        cause: resultCause,
+      }).then(() => undefined, (error: unknown) => error);
+
+      expect(mintTargeted).toBe(true);
+      expect(mintAborted).toBe(true);
+      expect(failure).toBeInstanceOf(AgentResultWriteError);
+      const writeError = failure as AgentResultWriteError;
+      expect(writeError.code).toBe("commit_failed");
+      expect(writeError.rawCauseMessage).toBe("synthetic mint failure");
+      expect(documentExists(resultCause)).toBe(false);
+      expect(documentExists(mintCause)).toBe(false);
+    } finally {
+      runtime.getCell = getCell as Runtime["getCell"];
+    }
   });
 
   describe("handles the run cannot link", () => {

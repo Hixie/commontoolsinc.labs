@@ -11,8 +11,10 @@
 
 import { expect } from "@std/expect";
 import { afterEach, describe, it } from "@std/testing/bdd";
+import { stub } from "@std/testing/mock";
 
 import { Identity } from "@commonfabric/identity";
+import { getLogger } from "@commonfabric/utils/logger";
 import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
 import { waitForCellValue } from "@commonfabric/integration/wait-for-cell-value";
 
@@ -22,6 +24,7 @@ import type { Cell } from "../src/cell.ts";
 import { isCellLink } from "../src/link-utils.ts";
 import { Runtime, type RuntimeOptions } from "../src/runtime.ts";
 import type { IExtendedStorageTransaction } from "../src/storage/interface.ts";
+import { seedHomeAgentQueue } from "./support/agent-queue.ts";
 import { createTrustedBuilder } from "./support/trusted-builder.ts";
 
 const signer = await Identity.fromPassphrase("agent builtin");
@@ -62,8 +65,14 @@ describe("agent builtin", () => {
   let tx: IExtendedStorageTransaction;
   let commonfabric: ReturnType<typeof createBuilder>["commonfabric"];
 
-  /** Builds the runtime under test; `agentBuiltin` is on unless overridden. */
-  const setUp = (options: Partial<RuntimeOptions> = {}) => {
+  /**
+   * Builds the runtime under test; `agentBuiltin` is on unless overridden.
+   * The home space holds an empty agent queue unless `seedQueue` is false.
+   */
+  const setUp = (
+    options: Partial<RuntimeOptions> = {},
+    { seedQueue = true }: { seedQueue?: boolean } = {},
+  ) => {
     storageManager = StorageManager.emulate({ as: signer });
     runtime = new Runtime({
       apiUrl: new URL("https://fabric.example/"),
@@ -72,6 +81,7 @@ describe("agent builtin", () => {
       ...options,
     });
     tx = runtime.edit();
+    if (seedQueue) seedHomeAgentQueue(runtime, space, tx);
     ({ commonfabric } = createTrustedBuilder(runtime));
   };
 
@@ -166,6 +176,61 @@ describe("agent builtin", () => {
     expect(raw.outcome).toBeUndefined();
   });
 
+  for (const name of ["", "bad name", ".hidden"]) {
+    it(`rejects the invalid input name ${JSON.stringify(name)} before staging`, async () => {
+      setUp();
+      const result = runAgentPattern(`agent-invalid-input-${name}`, {
+        inputs: { [name]: ["Dune"] },
+      });
+      await tx.commit();
+
+      const settled = await waitForCellValue<AgentResult>(
+        runtime,
+        result,
+        (value) => typeof value?.error === "string",
+      );
+      expect(settled.error).toContain("INVALID_INPUT");
+      expect(settled.pending).toBe(false);
+      expect(result.withTx().key("run").get()).toBeUndefined();
+      expect(agentQueueIndexCell(runtime, space).key("entries").get()).toEqual(
+        [],
+      );
+    });
+  }
+
+  it("uses the canonical run scope when the stored queue has an unscoped item schema", async () => {
+    setUp();
+    const entries = runtime.getCell(space, "stored-agent-entries", {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          run: { type: "object" },
+          host: { type: "string" },
+        },
+        required: ["run", "host"],
+      },
+    }, tx);
+    entries.set([]);
+    agentQueueIndexCell(runtime, space, tx).key("entries").set(entries);
+    const logger = getLogger("normalizeAndDiff");
+    const warningsBefore = logger.countsByKey.diff?.warn ?? 0;
+    const result = runAgentPattern("agent-stored-queue-scope");
+    await tx.commit();
+
+    const record = await waitForRecord(result);
+    const index = agentQueueIndexCell(runtime, space);
+    await waitForCellValue<{ run: unknown; host: string }[]>(
+      runtime,
+      index.key("entries"),
+      (value) => value?.length === 1,
+    );
+    const indexed = index.key("entries").key(0).key("run").resolveAsCell();
+    expect(indexed.getAsNormalizedFullLink().scope).toBe("user");
+    expect(indexed.equals(record)).toBe(true);
+    expect(logger.countsByKey.diff?.warn ?? 0).toBe(warningsBefore);
+  });
+
   it("appends one `{run, host}` entry to the requester's home index", async () => {
     setUp();
     const result = runAgentPattern("agent-home-index");
@@ -185,6 +250,97 @@ describe("agent builtin", () => {
       index.key("entries").key(0).key("run").resolveAsCell()
         .getAsNormalizedFullLink().id,
     ).toBe(record.getAsNormalizedFullLink().id);
+  });
+
+  it("writes the entry into the queue the home default pattern holds", async () => {
+    setUp();
+    const result = runAgentPattern("agent-index-home-piece");
+    await tx.commit();
+
+    await waitForRecord(result);
+    const queue = runtime.getHomeSpaceCell().key("defaultPattern")
+      .resolveAsCell()
+      // deno-lint-ignore no-explicit-any
+      .key("agentQueue" as any) as Cell<{ entries?: { host: string }[] }>;
+    const entries = await waitForCellValue<{ host: string }[]>(
+      runtime,
+      queue.key("entries"),
+      (value) => (value?.length ?? 0) > 0,
+    );
+
+    expect(entries.map((entry) => entry.host)).toEqual([
+      "https://fabric.example",
+    ]);
+  });
+
+  it("ends the record as `refused` when the home space holds no queue", async () => {
+    setUp({}, { seedQueue: false });
+    const result = runAgentPattern("agent-no-queue");
+    await tx.commit();
+
+    const settled = await waitForCellValue<AgentResult>(
+      runtime,
+      result,
+      (value) => value?.pending === false,
+    );
+    await runtime.settled();
+
+    expect(settled.error).toBe("REFUSED");
+    expect(agentQueueIndexCell(runtime, space).get()).toBeUndefined();
+    expect(runtime.getHomeSpaceCell().getRaw()).toBeUndefined();
+  });
+
+  it("settles with a refusal when loading the home queue fails", async () => {
+    setUp();
+    const result = runAgentPattern("agent-queue-load-failure");
+    const syncCell = storageManager.syncCell.bind(storageManager);
+    let rejected = false;
+    using _sync = stub(storageManager, "syncCell", (cell, options) => {
+      const link = cell.getAsNormalizedFullLink();
+      if (!rejected && link.path?.at(-1) === "agentQueue") {
+        rejected = true;
+        return Promise.reject(new Error("queue unavailable"));
+      }
+      return syncCell(cell, options);
+    });
+    await tx.commit();
+
+    const settled = await waitForCellValue<AgentResult>(
+      runtime,
+      result,
+      (value) => value?.pending === false,
+    );
+    await runtime.settled();
+
+    expect(settled.error).toBe("agent request was refused before it started");
+    expect(settled.run).toBeUndefined();
+    expect(rejected).toBe(true);
+  });
+
+  it("lists two requests staged together as two entries to two records", async () => {
+    setUp();
+    // Two requests whose index writes run side by side: each entry has to
+    // land as an element of its own, not as one element written twice.
+    const first = runAgentPattern("agent-index-pair-a", { task: "first" });
+    const second = runAgentPattern("agent-index-pair-b", { task: "second" });
+    await tx.commit();
+
+    await waitForRecord(first);
+    await waitForRecord(second);
+    const index = agentQueueIndexCell(runtime, space);
+    await waitForCellValue<unknown[]>(
+      runtime,
+      index.key("entries"),
+      (value) => (value?.length ?? 0) > 1,
+    );
+    await runtime.settled();
+
+    const tasks = [0, 1].map((at) =>
+      (index.key("entries").key(at).key("run").resolveAsCell().get() as {
+        task?: string;
+      })?.task
+    );
+    expect(tasks.toSorted()).toEqual(["first", "second"]);
   });
 
   it("creates no second record on a memo hit", async () => {
@@ -529,6 +685,38 @@ describe("agent builtin", () => {
     });
   });
 
+  it("refuses an unindexed record when the home queue disappears after record creation", async () => {
+    setUp();
+    const result = runAgentPattern("agent-queue-disappears");
+    const editWithRetry = runtime.editWithRetry.bind(runtime);
+    let effectWrites = 0;
+    runtime.editWithRetry = (async (fn, ...rest) => {
+      if (++effectWrites === 2) {
+        await editWithRetry((removal) => {
+          runtime.getCell(
+            space,
+            "test-home-default-pattern",
+            undefined,
+            removal,
+          ).set({});
+        });
+      }
+      return await editWithRetry(fn, ...rest);
+    }) as typeof runtime.editWithRetry;
+    await tx.commit();
+
+    const settled = await waitForCellValue<AgentResult>(
+      runtime,
+      result,
+      (value) => value?.pending === false,
+    );
+    await runtime.settled();
+
+    expect(settled.error).toBe("REFUSED");
+    expect(result.withTx().key("run").get()?.state).toBe("refused");
+    expect(agentQueueIndexCell(runtime, space).get()).toBeUndefined();
+  });
+
   it("settles a request whose release check refuses it after commit", async () => {
     setUp();
     // The release check compares the staged request with the policy input
@@ -626,12 +814,11 @@ describe("agent builtin", () => {
   describe("the tool check against the registered runner", () => {
     it("fails before staging when `tools` names a tool the runner does not offer", async () => {
       setUp();
-      await runtime.editWithRetry((tx) => {
-        agentQueueIndexCell(runtime, space, tx).key("agentRunner").set({
-          host: "https://fabric.example",
-          tools: ["loom_search"],
-          registeredAt: "2026-09-18T00:00:00.000Z",
-        });
+      agentQueueIndexCell(runtime, space, tx).key("agentRunner").set({
+        host: "https://fabric.example",
+        tools: ["loom_search"],
+        registrationId: "runner-1",
+        registeredAt: "2026-09-18T00:00:00.000Z",
       });
       const result = runAgentPattern("agent-tool-refused", {
         tools: ["loom_profile"],

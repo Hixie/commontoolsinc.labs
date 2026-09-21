@@ -497,7 +497,7 @@ Options:
   --workspace <path>            Workspace host path (defaults to current directory)
   --cwd <path>                  Initial working directory inside the workspace
   --focus-root <path>           Narrow exploration to a workspace subpath when possible
-  --allow-tool <tool>           Restrict available tools (repeatable: bash | read_file | view_image | web_fetch | read_skill_resource | run_skill_script | edit_file | write_file | delegate_task | describe_handle | finish_task | run_pattern | assign_slug | resolve_piece | search_patterns | record_feedback | search_skills | acquire_skill | research | loom_compose | loom_inspect | loom_authoring_context | loom_search | loom_page_discover | loom_page_inspect | loom_page_read | loom_people | loom_calendar_list | loom_context | loom_profile);
+  --allow-tool <tool>           Restrict available tools (repeatable: bash | read_file | view_image | web_fetch | read_skill_resource | run_skill_script | edit_file | write_file | delegate_task | describe_handle | finish_task | submit_result | run_pattern | assign_slug | resolve_piece | search_patterns | record_feedback | search_skills | acquire_skill | research | loom_compose | loom_inspect | loom_authoring_context | loom_search | loom_page_discover | loom_page_inspect | loom_page_read | loom_people | loom_calendar_list | loom_context | loom_profile);
                                 run_pattern, assign_slug, resolve_piece, and acquire_skill additionally require the three --fabric-* session flags,
                                 search_patterns and record_feedback require --pattern-index-url,
                                 search_skills and acquire_skill require --skills-registry-url,
@@ -675,6 +675,7 @@ const CLI_PARENT_TOOL_IDS = [
   "delegate_task",
   "describe_handle",
   "finish_task",
+  "submit_result",
   "loom_compose",
   "loom_inspect",
   "loom_authoring_context",
@@ -1653,6 +1654,14 @@ export const parseCfHarnessCliArgs = async (
     allowedHostRoots,
     readTextFile,
   });
+  if (
+    allowedToolIds?.includes("submit_result") === true &&
+    structuredResult === undefined
+  ) {
+    throw new Error(
+      "--allow-tool submit_result requires --structured-result-path and a schema",
+    );
+  }
   const prompt = await resolvePrompt(args, cwd, readTextFile);
   const imageAttachments = await Promise.all(
     imagePaths.map((path) => {
@@ -2148,6 +2157,7 @@ const appendAdditionalInstructions = (
 const appendStructuredResultInstructions = (
   lines: string[],
   structuredResult: CfHarnessStructuredResultConfig | undefined,
+  allowedToolIds: readonly BuiltinToolId[] | undefined,
 ): void => {
   if (structuredResult === undefined) {
     return;
@@ -2155,7 +2165,12 @@ const appendStructuredResultInstructions = (
   lines.push(
     "",
     "Structured result contract:",
-    `- Before finishing, write a JSON file at ${structuredResult.sandboxPath}.`,
+    ...(allowedToolIds === undefined || allowedToolIds.includes("submit_result")
+      ? [
+        "- Before finishing, call submit_result with the whole result as `result`. It validates the value against the configured schema and tells you what to correct.",
+      ]
+      : []),
+    `- Writing a JSON file at ${structuredResult.sandboxPath} yourself is the other way to the same place when an available tool can write it.`,
     "- The harness validates that file against the configured structured-result schema after the run.",
     "- If the file is missing, invalid JSON, or schema-invalid, the CLI exits nonzero and records the validation failure in the batch result sidecar when configured.",
   );
@@ -2191,6 +2206,7 @@ export const buildCfHarnessOperatorSystemPrompt = (
       | "focusRoot"
       | "systemPrompt"
       | "structuredResult"
+      | "allowedToolIds"
     >
     & {
       fabricMountPath?: string;
@@ -2209,14 +2225,21 @@ export const buildCfHarnessOperatorSystemPrompt = (
     "- Stop once you have enough evidence to answer.",
   ];
   appendHostMountInstructions(lines, config);
-  appendStructuredResultInstructions(lines, config.structuredResult);
+  appendStructuredResultInstructions(
+    lines,
+    config.structuredResult,
+    config.allowedToolIds,
+  );
   appendAdditionalInstructions(lines, config.systemPrompt);
   return lines.join("\n");
 };
 
 export const buildCfHarnessBatchSystemPrompt = (
   config:
-    & Pick<CfHarnessCliConfig, "systemPrompt" | "structuredResult">
+    & Pick<
+      CfHarnessCliConfig,
+      "systemPrompt" | "structuredResult" | "allowedToolIds"
+    >
     & {
       fabricMountPath?: string;
       hostMounts?: readonly CfHarnessHostMountConfig[];
@@ -2230,7 +2253,11 @@ export const buildCfHarnessBatchSystemPrompt = (
     lines.push("");
     appendHostMountInstructions(lines, config);
   }
-  appendStructuredResultInstructions(lines, config.structuredResult);
+  appendStructuredResultInstructions(
+    lines,
+    config.structuredResult,
+    config.allowedToolIds,
+  );
   appendAdditionalInstructions(lines, config.systemPrompt);
   return lines.join("\n");
 };
@@ -2244,6 +2271,7 @@ export const resolveCfHarnessCliSystemPrompt = (
       | "systemPrompt"
       | "outputMode"
       | "structuredResult"
+      | "allowedToolIds"
     >
     & {
       fabricMountPath?: string;
@@ -3186,6 +3214,7 @@ export const runCfHarnessCli = async (
         new CfHarnessPromptLoop(options));
     const writeTextFile = deps.writeTextFile ?? Deno.writeTextFile;
     const readTextFile = deps.readTextFile ?? Deno.readTextFile;
+    let effectiveStructuredResult = parsed.structuredResult;
 
     const startedAt = Date.now();
     let result: HarnessPromptLoopResult;
@@ -3255,6 +3284,23 @@ export const runCfHarnessCli = async (
         throw harnessResumeRefusal(
           `Cannot resume subagent run ${artifacts.runState.runId} as a top-level run; resume root run ${artifacts.runState.lineage.rootRunId} instead.`,
         );
+      }
+      if (
+        effectiveStructuredResult === undefined &&
+        artifacts.runState.structuredResult !== undefined
+      ) {
+        const resolved = resolvePathWithinAllowedHostRoots(
+          createAllowedHostRoots(parsed.workspace, parsed.hostMounts),
+          parsed.workspace,
+          artifacts.runState.structuredResult.path,
+          "recorded structured-result path",
+          { requireWritable: true },
+        );
+        effectiveStructuredResult = {
+          ...artifacts.runState.structuredResult,
+          path: resolved.hostPath,
+          sandboxPath: resolved.sandboxPath,
+        };
       }
       const recordedProvider = artifacts.runState.modelProvider ??
         "openai-compatible-gateway";
@@ -3377,6 +3423,14 @@ export const runCfHarnessCli = async (
         // What the run was asked to do, in the operator's words. A pattern
         // the run publishes carries it as the request it answers.
         ...(parsed.prompt !== undefined ? { taskText: parsed.prompt } : {}),
+        ...(parsed.structuredResult !== undefined
+          ? {
+            structuredResult: {
+              schema: parsed.structuredResult.schema,
+              path: parsed.structuredResult.path,
+            },
+          }
+          : {}),
         ...(deps.fabricSessionFactory !== undefined
           ? { fabricSessionFactory: deps.fabricSessionFactory }
           : {}),
@@ -3495,6 +3549,14 @@ export const runCfHarnessCli = async (
         // What the run was asked to do, in the operator's words. A pattern
         // the run publishes carries it as the request it answers.
         ...(parsed.prompt !== undefined ? { taskText: parsed.prompt } : {}),
+        ...(parsed.structuredResult !== undefined
+          ? {
+            structuredResult: {
+              schema: parsed.structuredResult.schema,
+              path: parsed.structuredResult.path,
+            },
+          }
+          : {}),
         ...(deps.fabricSessionFactory !== undefined
           ? { fabricSessionFactory: deps.fabricSessionFactory }
           : {}),
@@ -3552,10 +3614,10 @@ export const runCfHarnessCli = async (
       });
     }
     const durationMs = Date.now() - startedAt;
-    const structuredResultValidation = parsed.structuredResult === undefined
+    const structuredResultValidation = effectiveStructuredResult === undefined
       ? undefined
       : await validateCfHarnessStructuredResult({
-        config: parsed.structuredResult,
+        config: effectiveStructuredResult,
         readTextFile,
       });
     if (parsed.resultJsonPath !== undefined) {

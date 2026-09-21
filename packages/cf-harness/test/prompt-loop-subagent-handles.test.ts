@@ -15,12 +15,18 @@ import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
 import { join, normalize } from "@std/path/posix";
 import { CfHarnessEngine } from "../src/engine.ts";
 import { createFileSystemHarnessArtifactStore } from "../src/artifacts.ts";
-import { CfHarnessPromptLoop } from "../src/prompt-loop.ts";
+import {
+  CfHarnessPromptLoop,
+  seedSubagentHandleTable,
+  transferChildHandleTokens,
+} from "../src/prompt-loop.ts";
 import { REVISION_VERIFICATION_GUIDANCE } from "../src/revision-verification.ts";
 import { CAPABILITY_PROBE_SENTINEL } from "../src/diagnostics.ts";
 import {
   createHarnessHandleTable,
   mintAddressHandle,
+  mintReferentHandle,
+  resolveReferentToken,
 } from "../src/handle-table.ts";
 import { HANDLE_TOKEN_PATTERN } from "../src/contracts/handle-table.ts";
 import type { HarnessResearchRunSummary } from "../src/contracts/research.ts";
@@ -261,6 +267,68 @@ const grantResolvingSession = () =>
   }) as any;
 
 describe("prompt-loop cross-agent address handles", () => {
+  it("delegates explicitly named referents and withholds unnamed ones", async () => {
+    const runId = "run-subagent-referent-handles";
+    const first = await mintReferentHandle(createHarnessHandleTable(runId), {
+      source: "loom_search",
+      value: { title: "Shared" },
+      label: {},
+      labelSource: "query",
+    });
+    const second = await mintReferentHandle(first.table, {
+      source: "loom_search",
+      value: { title: "Withheld" },
+      label: {},
+      labelSource: "query",
+    });
+
+    const child = seedSubagentHandleTable(
+      second.table,
+      `${runId}.subagent.1`,
+      { goal: `Describe ${first.token}.`, profile: "pattern-author" },
+    );
+
+    expect(child?.referents?.map((entry) => entry.token)).toEqual([
+      first.token,
+    ]);
+  });
+
+  it("adopts referents discovered by a child and preserves seeded identities", async () => {
+    const parentRunId = "run-parent-referent-return";
+    const parent = await mintReferentHandle(
+      createHarnessHandleTable(parentRunId),
+      {
+        source: "loom_search",
+        value: { title: "Seeded" },
+        label: {},
+        labelSource: "query",
+      },
+    );
+    const childSeeded = seedSubagentHandleTable(
+      parent.table,
+      `${parentRunId}.subagent.1`,
+      { goal: `Inspect ${parent.token}.`, profile: "pattern-author" },
+    )!;
+    const childOnly = await mintReferentHandle(childSeeded, {
+      source: "loom_search",
+      value: { title: "Discovered by child" },
+      label: { confidentiality: ["private"] },
+      labelSource: "row",
+    });
+
+    const transferred = await transferChildHandleTokens(
+      parent.table,
+      childOnly.table,
+      `${parent.token} ${childOnly.token}`,
+    );
+    const [seededToken, discoveredToken] = transferred.text.split(" ");
+
+    expect(seededToken).toBe(parent.token);
+    expect(discoveredToken).toMatch(/^cfh:v:[2-9a-z]{5}$/);
+    expect(resolveReferentToken(transferred.table, discoveredToken!))
+      .toMatchObject({ value: { title: "Discovered by child" } });
+  });
+
   it("resolves a token named in the delegate_task goal against the child's own table", async () => {
     const runId = "run-subagent-handles-seeded";
     const table = await parentTableOf(runId, [URI_A]);
@@ -638,6 +706,76 @@ describe("prompt-loop cross-agent address handles", () => {
     expect(childMessages).toContain(bound);
     expect(childMessages).not.toContain(withheld);
     expect(engine.getRunState().researchRuns).toEqual([researchRun]);
+  });
+
+  it("projects a delegated referent into the child's research bindings", async () => {
+    const runId = "run-subagent-referent-research-kit";
+    const minted = await mintReferentHandle(
+      createHarnessHandleTable(runId),
+      {
+        source: "loom_search",
+        value: { title: "Shared row" },
+        label: {},
+        labelSource: "query",
+      },
+    );
+    const researchRun: HarnessResearchRunSummary = {
+      type: "cf-harness.research-run",
+      researchRunId: `${runId}:research:1`,
+      outputId: `${runId}:research:1`,
+      completedAt: "2026-09-16T00:00:00.000Z",
+      kit: {
+        purpose: "orient",
+        status: "complete",
+        task: "Identify available rows.",
+        summary: "A Loom row is available.",
+        availableHandleTokens: [minted.token],
+        inputs: [{
+          name: "row",
+          token: minted.token,
+          purpose: "Read the admitted row",
+        }],
+        patterns: [],
+        leads: [],
+        questions: [],
+        rules: [],
+        sources: [],
+        missing: [],
+      },
+      confirmedPatterns: [],
+      describedHandles: [],
+    };
+    const engine = new CfHarnessEngine({
+      sandboxRuntime: new FakeSandboxRuntime(),
+      runId,
+      model: "gpt-5.4",
+      inheritedResearchRuns: [researchRun],
+    });
+    await engine.recordHandleTable(minted.table);
+    const requestBodies: unknown[] = [];
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine,
+      fetchFn: scriptedFetch([
+        delegateCallTurn("call-delegate", {
+          goal: "Use the available row.",
+        }),
+        finalTurn("Child done."),
+        finalTurn("Parent done."),
+      ], requestBodies),
+    });
+
+    await loop.runPrompt({
+      prompt: "Delegate the implementation.",
+      promptSlotBinding: directPromptSlotBinding,
+    });
+
+    const childMessages = chatViewOfRequest(requestBodies[1]).messages
+      .map((message) => message.content ?? "")
+      .join("\n");
+    expect(childMessages).toContain(
+      `"availableHandleTokens": [\n        "${minted.token}"`,
+    );
   });
 
   for (const hasResearch of [true, false]) {

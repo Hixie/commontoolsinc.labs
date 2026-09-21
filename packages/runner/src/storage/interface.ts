@@ -63,6 +63,7 @@ import type {
   CfcDecomposedEnvelopes,
   CfcDereferenceTrace,
   CfcEnforcementMode,
+  CfcExternalContentObservation,
   CfcFlowLabelsMode,
   CfcGrantWriteInput,
   CfcLabelMetadataObservation,
@@ -2283,6 +2284,12 @@ export interface IExtendedStorageTransaction extends IStorageTransaction {
     observation: CfcLabelMetadataObservation,
   ): void;
 
+  /** Records one runtime-authorized external CONTENT observation. */
+  recordCfcExternalContentObservation(
+    observation: CfcExternalContentObservation,
+    authorization?: RuntimeWritePolicyAuthorization,
+  ): void;
+
   /**
    * Records a structured description of a refusal one of this transaction's
    * CFC gates just decided (`cfc/refusal-detail.ts`): the boundary, the atoms
@@ -2535,6 +2542,13 @@ export interface IExtendedStorageTransaction extends IStorageTransaction {
     variant: string,
     value: unknown,
   ): void;
+
+  /**
+   * Drops memoized reads of the transaction's current instant. A caller uses
+   * this after an asynchronous load fills a document that an earlier read
+   * could not traverse; reads at an issued epoch retain their fixed snapshot.
+   */
+  resetCurrentReadMemoization(): void;
 
   /**
    * Optional diagnostics for the transaction-local `Cell.get()` cache.
