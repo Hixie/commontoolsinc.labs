@@ -5,8 +5,8 @@ extensions). Consumed at compile time by `packages/ts-transformers`
 (SchemaGeneratorTransformer constructs a `SchemaGenerator`); also the repo's
 wrapper-type vocabulary oracle — ts-transformers imports `cell-brand`,
 `default-brand`, `wrapper-names`, `property-name`, `property-optionality`,
-`numeric-expression` via subpath exports. Entry point is `src/index.ts` (not
-`mod.ts`).
+`numeric-expression`, `type-node` via subpath exports. Entry point is
+`src/index.ts` (not `mod.ts`).
 
 ## Where answers live
 

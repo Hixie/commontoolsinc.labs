@@ -1,12 +1,18 @@
 import ts from "typescript";
 import { getDefaultMarkerPayload } from "@commonfabric/schema-generator/default-brand";
 import { getPropertyNameText } from "@commonfabric/schema-generator/property-name";
+import {
+  readAuthoredTypeNode,
+  unwrapTypeParentheses,
+} from "@commonfabric/schema-generator/type-node";
 import { spellingsWhere } from "@commonfabric/schema-generator/wrapper-names";
 import {
   createRegisteredTypeLiteral,
   DEFAULT_TYPE_NODE_FLAGS,
   typeToTypeNodeWithRegistry,
 } from "../ast/type-building.ts";
+import { CF_HELPERS_IDENTIFIER } from "../core/cf-helpers.ts";
+import { isCommonFabricSymbol } from "../core/common-fabric-symbols.ts";
 import { createPropertyName } from "../utils/identifiers.ts";
 import { uniquePaths } from "../utils/path-serialization.ts";
 import {
@@ -109,7 +115,7 @@ function getTopLevelRepresentedHeads(
   node: ts.TypeNode,
   checker?: ts.TypeChecker,
 ): Set<string> {
-  const current = ts.isParenthesizedTypeNode(node) ? node.type : node;
+  const current = unwrapTypeParentheses(node);
   if (!ts.isTypeLiteralNode(current)) {
     return new Set<string>();
   }
@@ -487,7 +493,7 @@ function typeNodeIsArrayShape(
   node: ts.TypeNode,
   checker?: ts.TypeChecker,
 ): boolean {
-  const current = ts.isParenthesizedTypeNode(node) ? node.type : node;
+  const current = unwrapTypeParentheses(node);
   if (ts.isArrayTypeNode(current)) {
     return true;
   }
@@ -738,6 +744,37 @@ export function isCellLikeTypeNode(node: ts.TypeNode): boolean {
   const name = getTypeReferenceNodeName(node);
   if (!name) return false;
   return CELL_LIKE_TYPE_NODE_NAMES.has(name);
+}
+
+/**
+ * Returns `true` for a reference to one of `commonfabric`'s cell wrappers
+ * (`CELL_LIKE_TYPE_NODE_NAMES`): one whose name resolves, through its import
+ * binding, to the wrapper `commonfabric` declares, under whatever name it was
+ * imported as. A type of the author's own that shares a wrapper's name is
+ * something else, and so is an alias of a wrapper: its type arguments are its
+ * own, not the wrapper's, and `readAuthoredTypeNode()` reads through the ones
+ * that can be read through. A reference the transformer builds — one qualified
+ * by its helper namespace, or one the checker cannot resolve — is judged by
+ * its spelling alone (`isCellLikeTypeNode()`).
+ */
+function namesCellWrapper(
+  node: ts.TypeNode,
+  checker: ts.TypeChecker,
+): node is ts.TypeReferenceNode {
+  if (!ts.isTypeReferenceNode(node)) return false;
+  const helper = ts.isQualifiedName(node.typeName) &&
+    ts.isIdentifier(node.typeName.left) &&
+    node.typeName.left.text === CF_HELPERS_IDENTIFIER;
+  const name = ts.isIdentifier(node.typeName)
+    ? node.typeName
+    : node.typeName.right;
+  const symbol = helper ? undefined : checker.getSymbolAtLocation(name);
+  if (!symbol) return isCellLikeTypeNode(node);
+  const declared = symbol.flags & ts.SymbolFlags.Alias
+    ? checker.getAliasedSymbol(symbol)
+    : symbol;
+  return CELL_LIKE_TYPE_NODE_NAMES.has(declared.getName()) &&
+    isCommonFabricSymbol(declared);
 }
 
 function getTypeReferenceNodeName(
@@ -1831,7 +1868,7 @@ function getArrayElementTypeNode(
 ): ts.TypeNode | undefined {
   if (!node) return undefined;
 
-  const current = ts.isParenthesizedTypeNode(node) ? node.type : node;
+  const current = unwrapTypeParentheses(node);
 
   if (ts.isUnionTypeNode(current)) {
     for (const member of current.types) {
@@ -2276,6 +2313,13 @@ function contractCapabilityAt(
  * declared-but-unread reference confers no exercised authority while the
  * contract still names it.
  *
+ * A reference to a type alias is walked as the node the alias names
+ * (`readAuthoredTypeNode()`), so a cell declared through an alias is rewritten
+ * as the wrapper the alias names. The reference stays as written where nothing
+ * in that node changes, and where the alias recurs through its own type.
+ * A cell-like position is one whose node names a `commonfabric` cell wrapper
+ * (`namesCellWrapper()`), not merely one spelled like it.
+ *
  * A named reference whose subtree holds no cell-like position passes through
  * untouched, keeping its `$defs` identity and its prose. One expands only
  * when a capability inside it must change, and a self-referential type ends
@@ -2293,6 +2337,7 @@ export function overlayContractCapabilities(
 ): ts.TypeNode {
   const observation = contractObservationFrom(summary);
   const visiting = new Set<ts.Type>();
+  const expanding = new Set<ts.TypeNode>();
 
   const walk = (
     current: ts.TypeNode,
@@ -2306,8 +2351,20 @@ export function overlayContractCapabilities(
         : factory.createParenthesizedType(inner);
     }
 
+    const authored = readAuthoredTypeNode(current, checker);
+    if (authored !== current) {
+      if (expanding.has(authored)) return current;
+      expanding.add(authored);
+      try {
+        const walked = walk(authored, currentType, path);
+        return walked === authored ? current : walked;
+      } finally {
+        expanding.delete(authored);
+      }
+    }
+
     if (
-      !isCellLikeTypeNode(current) &&
+      !namesCellWrapper(current, checker) &&
       observation.exactComparableCell.has(contractPathKey(path))
     ) {
       // Identity-only use of a plain-declared position: the authored
@@ -2316,7 +2373,7 @@ export function overlayContractCapabilities(
       return wrapTypeNodeWithCapability(current, "comparable", factory);
     }
 
-    if (isCellLikeTypeNode(current) && ts.isTypeReferenceNode(current)) {
+    if (namesCellWrapper(current, checker)) {
       if (preservedWrapperFor(current, currentType, checker)) return current;
       const innerNode = current.typeArguments?.[0];
       if (!innerNode) return current;
@@ -2522,11 +2579,41 @@ function createHelperWrapperTypeNode(
   );
 }
 
+/**
+ * Returns the value type node of the cell wrapper that `node` names, as its
+ * author wrote it, or `undefined` when `node` names none. The wrapper is read
+ * through parentheses and type aliases (`readAuthoredTypeNode()`), and counts
+ * only where it is `commonfabric`'s (`namesCellWrapper()`), so
+ * `c: TheCell`, with `type TheCell = Writable<T | Default<V>>`, yields the
+ * same `T | Default<V>` as `c: Writable<T | Default<V>>`.
+ *
+ * The node returned belongs to the declaration it is written in, which for a
+ * cell declared through an alias may be in another module. Schema generation
+ * reads it there through the checker; a caller that prints it into another
+ * module clones it first (`cloneTypeNodeDeepForEmission()`).
+ */
+export function getAuthoredCellValueTypeNode(
+  node: ts.TypeNode,
+  checker: ts.TypeChecker,
+): ts.TypeNode | undefined {
+  const authored = readAuthoredTypeNode(node, checker);
+  return namesCellWrapper(authored, checker)
+    ? authored.typeArguments?.[0]
+    : undefined;
+}
+
 interface CellCapabilityPath {
   readonly path: readonly string[];
   readonly capability: ReactiveCapability;
 }
 
+/**
+ * Helper for `applyCellCapabilityPathsToTypeNode()`, which returns the value
+ * type node of the cell a property's type node holds, or of each cell in a
+ * nullable union of cells: as its author wrote it where the wrapper is written
+ * out (`getAuthoredCellValueTypeNode()`), and printed from the cell's type
+ * otherwise. Returns `undefined` for a node that holds no cell.
+ */
 function extractCellLikeInnerTypeNode(
   node: ts.TypeNode,
   checker: ts.TypeChecker,
@@ -2572,12 +2659,8 @@ function extractCellLikeInnerTypeNode(
   const semanticInner = semanticType && isCellLikeType(semanticType, checker)
     ? unwrapCellLikeType(semanticType, checker)
     : undefined;
-  if (
-    ts.isTypeReferenceNode(node) &&
-    isCellLikeTypeNode(node) &&
-    node.typeArguments?.[0]
-  ) {
-    const inner = node.typeArguments[0];
+  const inner = getAuthoredCellValueTypeNode(node, checker);
+  if (inner) {
     const innerType = getTypeFromTypeNodeWithFallback(
       inner,
       checker,
