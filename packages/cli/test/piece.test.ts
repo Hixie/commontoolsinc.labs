@@ -2274,8 +2274,8 @@ describe("cli piece parsing", () => {
         return Promise.resolve();
       },
       runtime: {
-        idle: () => {
-          order.push("runtime.idle");
+        settled: () => {
+          order.push("runtime.settled");
           return Promise.resolve();
         },
       },
@@ -2314,7 +2314,7 @@ describe("cli piece parsing", () => {
       "result.key:value",
       "result.pull",
       "pieces.synced",
-      "runtime.idle",
+      "runtime.settled",
       "pieces.synced",
       "result.get",
       // The read-path guard classifies the read path after the value read
@@ -2366,8 +2366,8 @@ describe("cli piece parsing", () => {
         return Promise.resolve();
       },
       runtime: {
-        idle: () => {
-          order.push("runtime.idle");
+        settled: () => {
+          order.push("runtime.settled");
           return Promise.resolve();
         },
       },
@@ -2400,7 +2400,7 @@ describe("cli piece parsing", () => {
       "input.key:values",
       "input.pull",
       "pieces.synced",
-      "runtime.idle",
+      "runtime.settled",
       "pieces.synced",
       "input.get",
       "input.key:values",
@@ -2452,8 +2452,8 @@ describe("cli piece parsing", () => {
         return Promise.resolve();
       },
       runtime: {
-        idle: () => {
-          order.push("runtime.idle");
+        settled: () => {
+          order.push("runtime.settled");
           return Promise.resolve();
         },
       },
@@ -2489,7 +2489,7 @@ describe("cli piece parsing", () => {
       "result.key:<root>",
       "result.pull",
       "pieces.synced",
-      "runtime.idle",
+      "runtime.settled",
       "pieces.synced",
       "result.get",
       `stop:${PIECE}`,
