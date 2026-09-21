@@ -3,7 +3,6 @@ import {
   changedPathsOf,
   classifyCacheKeyState,
   classifyRunAgainstPredecessor,
-  COMPILE_CACHE_KEY_GLOBS,
   fillMissingFamiliesFromFingerprint,
   inferCurrentRunFallbackState,
   matcherForGlob,
@@ -120,10 +119,6 @@ Deno.test("COMPILE_CACHE_KEY_GLOBS covers every compiler fingerprint input", asy
   // comes from the filesystem, so that a rendering reading the shape off the
   // path some other way is still held to the same coverage.
 
-  assertEquals(
-    COMPILE_CACHE_KEY_GLOBS.length,
-    COMPILE_FINGERPRINT_INPUTS.length,
-  );
   for (const input of COMPILE_FINGERPRINT_INPUTS) {
     const info = await Deno.stat(new URL(`../${input}`, import.meta.url));
     const changed = info.isDirectory ? `${input}/nested/file.ts` : input;

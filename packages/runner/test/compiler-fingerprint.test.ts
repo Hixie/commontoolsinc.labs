@@ -229,7 +229,9 @@ describe("compile-cache version axis", () => {
 
   it("fingerprints the inputs that shape emitted bytes and coverage spans", () => {
     // `api` carries the pattern-facing types the schema-generator lowers into
-    // baked schemas, so it is fingerprinted alongside the pipeline.
+    // baked schemas, so it is fingerprinted alongside the pipeline. The
+    // fingerprint's own source is in the set too, so that changing how the
+    // value is computed moves it.
     for (
       const input of [
         "packages/ts-transformers",
@@ -237,6 +239,7 @@ describe("compile-cache version axis", () => {
         "packages/runner/src/harness",
         "packages/runner/src/pattern-coverage.ts",
         "packages/runner/src/sandbox",
+        "packages/runner/src/compilation-cache/compiler-fingerprint.deno.ts",
         "packages/schema-generator",
         "packages/api",
         "packages/static/assets/types",

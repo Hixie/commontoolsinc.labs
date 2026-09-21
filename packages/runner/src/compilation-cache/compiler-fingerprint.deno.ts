@@ -32,8 +32,9 @@ import { SOURCE_COMPILE_CACHE_RUNTIME_VERSION } from "./compile-cache-version.ts
  *
  * This is the single definition of the input set. CI keys its pattern compile
  * byte caches on the fingerprint itself, which `tasks/compile-cache-key.ts`
- * prints and a workflow step hands to the cache action, so the CI key and the
- * runtime version are one value rather than two descriptions of one list.
+ * prints and a workflow step hands to the cache action. The runtime's version
+ * axis is `cf/esm-compile/` followed by that same fingerprint, so the two move
+ * together rather than describing one list of inputs twice.
  *
  *  - `packages/ts-transformers` — the CF transformer pipeline, including the
  *    `SchemaGeneratorTransformer` that bakes schemas into the emitted bytes;
@@ -44,6 +45,9 @@ import { SOURCE_COMPILE_CACHE_RUNTIME_VERSION } from "./compile-cache-version.ts
  *    beside coverage-transformed bytes;
  *  - `packages/runner/src/sandbox` — module-record assembly and verification
  *    used before cached compiled bodies execute;
+ *  - this module — the fingerprint's own source, so that changing how the
+ *    fingerprint is computed moves it, and so that a reader of the input set
+ *    can see everything the value depends on;
  *  - `packages/schema-generator` — schema emission consumed by the pipeline;
  *  - `packages/api` — the pattern-facing types (`Default`, `Cell`, ...) the
  *    schema-generator lowers into the baked schemas, so a type change there
@@ -59,6 +63,7 @@ export const COMPILE_FINGERPRINT_INPUTS: readonly string[] = [
   "packages/runner/src/harness",
   "packages/runner/src/pattern-coverage.ts",
   "packages/runner/src/sandbox",
+  "packages/runner/src/compilation-cache/compiler-fingerprint.deno.ts",
   "packages/schema-generator",
   "packages/api",
   "packages/static/assets/types",

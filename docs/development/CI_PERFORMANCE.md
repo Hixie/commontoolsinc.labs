@@ -236,13 +236,15 @@ uses this shape for the shared Deno dependency cache.
 Four `actions/cache` steps in `.github/workflows/deno.yml` restore a pattern
 compile byte cache: one in the generated-pattern integration job, one in each of
 the two pattern integration arms, and one in the pattern unit coverage job.
-Their keys carry the compiler-input fingerprint, which is the value the runtime
-puts in the `<version>` segment of its own `compileCache:<version>/<identity>`
-keys. A cache entry named by it therefore holds bytes the compiler now running
+Their keys carry the compiler-input fingerprint. The runtime's version axis is
+`cf/esm-compile/` followed by that same fingerprint, so a compiled document is
+stored under `compileCache:cf/esm-compile/<fingerprint>/<identity>`. A cache
+entry CI names by the fingerprint therefore holds bytes the compiler now running
 emitted, and an entry from any other compiler is one those jobs never ask for.
 
-The fingerprint is not written into the key. Each of those jobs resolves it in a
-setup step, through the `./.github/actions/compile-cache-key` composite action,
+The fingerprint is not written into the workflow as a literal. Each of those
+jobs resolves it in a setup step, through the
+`./.github/actions/compile-cache-key` composite action,
 which runs `tasks/compile-cache-key.ts` and offers the value as its
 `fingerprint` output. The cache steps then reference that step's output. This is
 the shape the section above prescribes, and it buys two things here. The
@@ -255,6 +257,10 @@ once, rather than two descriptions of one list of inputs that can drift apart.
 being hashed, and it is the only place that list is written down. Changing what
 shapes the emitted bytes means editing it there; nothing in the workflow
 enumerates those inputs, so nothing in the workflow has to be changed to match.
+That module's own source is in the list, so changing how the fingerprint is
+computed moves it too. `classifyCacheKeyState()` in
+`tasks/compile-cache-state.ts` decides from a changed-file list whether a run's
+compile cache went cold, and that is what lets it see such a change.
 
 What the workflow is held to is where the value comes from. "every compile byte
 cache is keyed on the compiler fingerprint" in `tasks/ci-workflow.test.ts` reads
