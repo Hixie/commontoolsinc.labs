@@ -390,7 +390,9 @@ names the day's shards and is written after all of them, so a day counts
 as compacted when its manifest exists. This means that every named shard
 exists, not that the shards are one atomic snapshot or that no more objects
 can arrive for that source and date. A reader that finds no manifest reads
-the raw area for that source and date.
+the raw area for that source and date, and so does a reader that cannot
+read a shard the manifest names: a rollup holds nothing its day's raw area
+does not, so giving up on one costs the reader the time and nothing else.
 
 The rollup manifest records neither the source object names it contains
 nor a point through which it is complete. A reader cannot combine one with
