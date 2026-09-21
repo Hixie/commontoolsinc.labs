@@ -338,6 +338,7 @@ export type {
 export {
   buildCfcReadCeiling,
   type CfcReadCeiling,
+  CfcReadCeilingError,
   type CfcReadCeilingLabels,
   type CfcReadCeilingOptions,
   type CfcReadOnExceed,

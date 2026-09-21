@@ -553,7 +553,7 @@ export interface RemoteClientPresetParams extends CoreParams {
   cfcWriteFloor?: CfcWriteFloorMode;
 
   /**
-   * The runtime-wide read ceiling for this one session's `db.query` reads
+   * The runtime-wide read ceiling for this session's cell and `db.query` reads
    * (`RuntimeOptions.cfcReadMaxConfidentiality`): a harness running one
    * pattern under one clearance sets it here. Under server execution the
    * client's sessions declare it and the space server's runtime reads under
@@ -598,7 +598,7 @@ export interface BrowserWorkerPresetParams extends CoreParams {
   cfcFlowLabels?: CfcFlowLabelsMode;
 
   /**
-   * The runtime-wide read ceiling for this worker's `db.query` reads
+   * The runtime-wide read ceiling for this worker's cell and `db.query` reads
    * (`RuntimeOptions.cfcReadMaxConfidentiality`), from `InitializationData`:
    * a worker is one device's runtime, so a ceiling set here is per device
    * by construction and never touches the space. Under server execution

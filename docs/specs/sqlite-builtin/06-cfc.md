@@ -451,60 +451,65 @@ contract, required to be policy-permitted and auditable — and it never applies
 to aggregates (a withheld row already contributed server-side; a count cannot
 be un-counted), where the mode is rejected outright.
 
-**Runtime read ceiling.** A ceiling can also come from the runtime rather
-than the query: `RuntimeOptions.cfcReadMaxConfidentiality` (with
-`cfcReadOnExceed` beside it) is a ceiling every `db.query` the runtime issues
-reads under, aggregates included. A query declaring no ceiling reads under
-the runtime's; a query declaring one — the `maxConfidentiality` option or the
-Row schema's `MaxConfidentiality` — reads under the **meet** of the two
-(`meetCfcObservationCeilings`: a row fits the meet iff it fits each), so a
-query tightens the runtime's ceiling and never widens it. Placeholder atoms
-resolve per query, against the same acting principal and db owner as the
-query's own. The query's `onExceed` stands; the runtime's supplies the default
-beneath it, and `fail` beneath that. `skip` is refused on an aggregate
-projection exactly as the query option is. Absent, the runtime applies no
-ceiling (the owner view); an empty list, which admits nothing, is refused at
-construction.
+**Runtime read ceiling.** `RuntimeOptions.cfcReadMaxConfidentiality` bounds
+cell payload reads as well as SQLite results. An ordinary cell read measures
+its stored label, including descendants of an object, and withholds a value
+outside the ceiling. Absent is the owner view; an empty list is refused at
+construction. Concrete clauses are required for ordinary cells: database-owner
+and current-principal placeholders have a binding only at the SQLite query
+boundary and do not admit a concrete label on an unrelated persisted cell.
 
-The option exists because the only carrier a pattern can read is a cell in
-the space, which every runtime on the space shares: a ceiling that has to
-differ per runtime — a device's lens, a run's clearance — cannot ride a
-pattern's inputs. For the same reason it applies only to a query whose result
-is **session-scoped** by the pattern's own declaration (`PerSession<>` on the
-result, `.asScope("session")` on the query, the `scope: "session"` query
-option, or a session-scoped db): a space- or user-shared result is one cell
-every runtime on the space resolves, its link — scope included — is shared
-too, and a runtime cannot narrow it for itself. A query under a runtime
-ceiling whose result is broader is refused before anything shared is written,
-through the runtime's error handlers rather than the result cell, which
-another runtime may be serving. Under served execution the serving runtime
-performs the query, so its option governs every run it serves; a client
-runtime's option governs the queries it executes itself. The runtime's
-ceiling joins the request hash, so a settled result is a hit only for a
-runtime reading under the same ceiling.
+A **session-scoped** query result (`PerSession<>`, `.asScope("session")`,
+`scope: "session"`, or a session-scoped db) meets the runtime ceiling with the
+query's declared ceiling before materialization. Placeholder atoms resolve
+against the acting principal and database owner. The query's `onExceed` stands;
+`cfcReadOnExceed` supplies its default, with `fail` beneath that. The runtime
+ceiling joins the request hash because the filtered result belongs to one
+session. A runtime `skip` falls back to `fail` for aggregates; a query's own
+`skip` on an aggregate is refused.
+
+A **shared** query result materializes under its query-declared ceiling and
+mode, independently of runtime ceilings. The runtime ceiling does not join its
+request hash or filter its stored rows. The hash includes the shared result's
+shape-label contract version, so a memo without that protection is reissued.
+Each reader instead observes the
+materialized result through the ordinary cell read guard. The result array
+carries the canonical join of all source-row labels, including rows that the
+query contract skips, as an `enumerate` label. Its membership and length are
+therefore withheld when any contributor exceeds the reader's ceiling. An
+addressed row payload carries that row's own labels without inheriting the
+array's membership label. A `withheld` count carries the same join as a value
+label. These store declarations retain their confidentiality across refreshes:
+removing or relabeling a row does not release the array's historical membership
+label. A reader admitted by every current row may therefore still be refused
+the array and its length. An aggregate is withheld as a whole. Shared row-label
+failures omit row ordinals and data-derived details. These rules let multiple
+runtime ceilings share one materialization without revealing private row counts or
+replacing one reader's filtered rows with another's.
 
 **Under server execution the ceiling travels with the session.** A client
 runtime under server execution (`experimental.serverExecution` on, without
 the serving posture) executes no query of its own — the space server's
-runtime serves them — so its option cannot bound them where it sits. It
-declares the ceiling instead, once, in every session it opens: the signed
+runtime serves them — so its option cannot bound session-scoped queries where
+it sits. It declares the ceiling instead, once, in every session it opens: the signed
 `session.open` descriptor carries `readCeiling` (memory-v2 `04-protocol.md`
 §4.1.2), the memory server records it on the session, and the SpaceServer
 stamps it onto every run it serves AS that session (`WaveRunContext.readCeiling`,
-serving-loop.md §3c). The served `db.query` then reads under the serving
-runtime's own option met with the carried ceiling, through the one path
-above: the meet joins the request hash, decides the rows, and supplies the
-`onExceed` default (the mode meets toward `fail`). A served run acting as a
-session that declared none reads under the serving runtime's option alone.
+serving-loop.md §3c). A served session-scoped `db.query` reads under the serving
+runtime's own option met with the carried ceiling: the meet joins the request
+hash, decides the rows, and supplies the `onExceed` default (the mode meets
+toward `fail`). A served run acting as a session that declared none reads under
+the serving runtime's option alone. A shared result instead materializes under
+its query contract on a served run too, and each reader observes that labeled
+materialization through the ordinary cell read guard.
 The session record is the seam: a ceiling the server assigns to a session
 lands in the same record and reaches the run the same way. Fail-closed at
 the edges: a client carrying a ceiling refuses a server that does not
 advertise the `sessionReadCeiling` protocol flag, since an older server
 would accept the descriptor and serve unbounded; a runtime whose storage
 manager cannot carry the ceiling refuses to be built with one; and the
-session-scoped-result rule holds on a served run exactly as on a client —
-a query whose result is broader is refused on the serving runtime before it
-is staged.
+session-scoped and shared-result rules hold on a served run exactly as on a
+client.
 
 **Read-time clearance (Phase 3.b).** Filtering by *who is asking*, rather than
 by a declared contract: `db.query(sql, { readClearance: true })` keeps only the
@@ -674,9 +679,9 @@ re-derives.
    `skip` never applies to aggregates.
 5. **Read, ceiling exceeded:** `onExceed` decides — fail the query (default)
    or skip the row (declared opt-in, row-returning queries only). The
-   runtime's ceiling, where one is declared, meets the query's first; a query
-   under a runtime ceiling whose result is not session-scoped ⟶ refuse the
-   query before it is staged.
+   runtime's ceiling meets the query's for session-scoped results. A shared
+   result retains its query-contract materialization and is withheld on cell
+   observation when its stored label exceeds the runtime ceiling.
 6. **Write, unattributable:** fail closed (Phase 2's set) — except the
    3.c-covered shapes with unlabeled inputs against a server that advertises
    commit evaluation (rule-input UPDATE, INSERT…SELECT, upsert, columnless
