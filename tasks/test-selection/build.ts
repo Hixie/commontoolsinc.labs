@@ -1033,6 +1033,16 @@ export class Fold {
    * `add` passes over one.
    */
   async addUnordered(reports: AsyncIterable<StoredReport>): Promise<void> {
+    // The spool is released before the fold says it is whole again.
+    // Releasing it is a file being closed and removed and can fail on its
+    // own, and a fold that had folded the batch and then said it was
+    // untouched would offer those records to be read a second time.
+    await this.#foldBatch(reports);
+    this.#intact = true;
+  }
+
+  /** Reads a batch aside and folds it, holding the spool meanwhile. */
+  async #foldBatch(reports: AsyncIterable<StoredReport>): Promise<void> {
     using observations = new ObservationSpool();
     const batch = noContributions();
     for await (const report of reports) {
@@ -1060,7 +1070,6 @@ export class Fold {
     if (observations.newestDay !== undefined) {
       trimContext(this.#context, observations.newestDay);
     }
-    this.#intact = true;
   }
 
   /**
