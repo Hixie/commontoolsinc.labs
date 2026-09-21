@@ -1283,7 +1283,7 @@ Deno.test("benchmark: a red run's measurements still reach the trend", async () 
       assertStringIncludes(v.value ?? "", "▲");
       // Every run was read for its artifact, the three red ones included.
       assertEquals(
-        artifactCalls(calls).filter((call) => call.endsWith("/artifacts"))
+        artifactCalls(calls).filter((call) => call.includes("/artifacts?"))
           .length,
         8,
       );
