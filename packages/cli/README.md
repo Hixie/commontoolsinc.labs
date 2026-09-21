@@ -2184,3 +2184,48 @@ the wrong set is invisible to a unit test and invisible at the prompt, because
 failure here is silent by design. The script also carries `gap` assertions for
 slots that answer nothing today, so one starting to answer fails loudly rather
 than passing quietly.
+
+## Space invitations
+
+`cf space invite` uses generic invitation service version 1. All commands take
+`--api-url`, `--identity`, and an explicit space DID through `--space`, or the
+corresponding `CF_API_URL`, `CF_IDENTITY`, and `CF_SPACE` variables. They return
+JSON and require no existing memory session to redeem.
+
+- `cf space invite create --access READ --ttl 3600 --max-uses 2` creates an
+  invitation. Access is READ or WRITE, TTL is 1–2,592,000 seconds, and max uses
+  is 1–1,000 (default 1). Output includes the bearer code; `--shell <origin>`
+  also produces a join URL whose code is in the fragment.
+- `cf space invite redeem <invite-id> --code-file <path>` reads the code from a
+  file; `--code-file -` reads stdin. The signing identity receives the grant.
+- `cf space invite list` lists active metadata without codes or verifiers.
+- `cf space invite revoke <invite-id>` ends admission without removing grants.
+- `cf space invite receipts [invite-id]` lists unique invitation/DID pairs.
+
+Creation saves its credentials before sending HTTP. With
+`--request-file <path>`, the command requires a private parent directory (0700)
+and exclusively creates a private file (0600), or loads an existing private
+regular file. Existing files are never overwritten; symlinks, malformed data,
+and mismatched host, space, signing identity, access, TTL, or max uses are
+refused before sending. Retry with the same creation flags and `--request-file`
+to reuse the exact invitation after a lost response or CLI restart. `--shell`
+only changes the output link and may differ on a retry. Retained requests are
+read through one verified open file descriptor. The CLI refuses reuse when it
+cannot verify the opened file's identity.
+
+Without `--request-file`, each creation saves a new file under
+`$XDG_STATE_HOME/commonfabric/space-invites`, defaulting to
+`$HOME/.local/state/commonfabric/space-invites`; the directory is private
+(0700). The absolute recovery path is printed to stderr before sending and
+returned as `requestFile` in successful JSON output. The file contains the
+bearer code and remains local until the caller removes it. Keep it private and
+retain it while a creation outcome is uncertain. Saving and syncing the file
+precedes HTTP; this supports process restart recovery, without promising
+recovery from filesystem or power failure. Errors never print the file contents.
+
+Only explicit owners can create, list, revoke, or list receipts. One distinct
+DID uses one slot in each invitation; a same-DID retry uses none. Copying the
+same identity to another client preserves its DID. A receipt with null current
+access means access was removed; retrying cannot restore it. See
+[the service contract](../toolshed/README.md#space-invitations) for the SDK,
+proof, deployment, and storage rules.

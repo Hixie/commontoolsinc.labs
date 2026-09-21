@@ -35,6 +35,7 @@ export type EnvReader = (name: string) => string | undefined;
  */
 export const EXPERIMENTAL_ENV_VARS = {
   modernCellRep: "EXPERIMENTAL_MODERN_CELL_REP",
+  agentBuiltin: "EXPERIMENTAL_AGENT_BUILTIN",
   // Content-addressed schemas (Phases 1 and 2) are default-on; env-reachable
   // so a process can opt out with an explicit "false" while the flag exists.
   contentAddressedSchemas: "EXPERIMENTAL_CONTENT_ADDRESSED_SCHEMAS",
@@ -58,7 +59,6 @@ export const EXPERIMENTAL_ENV_VARS = {
   serverExecution: "EXPERIMENTAL_SERVER_EXECUTION",
   viewScopedReplication: "EXPERIMENTAL_VIEW_SCOPED_REPLICATION",
   webViewScopedReplication: "EXPERIMENTAL_WEB_VIEW_SCOPED_REPLICATION",
-  agentBuiltin: "EXPERIMENTAL_AGENT_BUILTIN",
 } as const satisfies Record<keyof ExperimentalOptions, string | null>;
 
 /**
@@ -125,6 +125,7 @@ export const EXPERIMENTAL_FLAG_AUTHORITY = {
   // Link serialization: the two encodings are a hard mismatch, which the
   // memory handshake already refuses to connect across.
   modernCellRep: "server",
+  agentBuiltin: "server",
   // An emission gate whose rollout is fleet-wide and one-way: a deployment
   // turns it on only once every client of it reads references, and an
   // explicit `false` is how it rolls back. A client still emitting after that
@@ -147,7 +148,6 @@ export const EXPERIMENTAL_FLAG_AUTHORITY = {
   // Defaults are published fleet-wide; each session negotiates the mode.
   viewScopedReplication: "server",
   webViewScopedReplication: "server",
-  agentBuiltin: "server",
   // The server's traversal decides what a subscription loads, tracks, and
   // ships; a client resolving hops under the other combine rule expects
   // documents the server did not send (or ignores ones it did). The arms
@@ -204,7 +204,7 @@ export function parseServerExperimentalOptions(
   // has no posture yet — that adopts nothing, as does a malformed
   // declaration. A client that could not reach the server never calls
   // this at all and keeps its built-in defaults.
-  if (declared === null) return {};
+  if (declared === null || Array.isArray(declared)) return {};
   if (typeof declared !== "object") {
     return declared === undefined ? { readerSchemaPrecedence: false } : {};
   }
@@ -297,7 +297,7 @@ export interface DeployedClientExperimentalParams {
  * server to ask and keep reading the environment alone; the Labs development shell
  * reads its build-time defines and never fetches a posture.
  *
- * An unreachable server or a body that will not parse resolves to the
+ * An unreachable server or a body that is not a JSON object resolves to the
  * environment alone — the caller is about to fail loudly on its real work if
  * the server is genuinely down, and failing here first would only obscure
  * that. A server that ANSWERS with a pre-flag document — a meta document
@@ -342,10 +342,15 @@ export async function experimentalOptionsForDeployedClient(
       // unread stream. An error page is not a posture even when it parses
       // as one.
       await response.body?.cancel();
+      params.signal?.throwIfAborted();
       return env;
     }
-    declared = ((await response.json()) as { experimental?: unknown })
-      ?.experimental;
+    const body: unknown = await response.json();
+    params.signal?.throwIfAborted();
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return env;
+    }
+    declared = (body as { experimental?: unknown }).experimental;
   } catch {
     // A cancelled startup is the caller's decision, not a server that failed
     // to answer: propagate it instead of resolving a posture into a runtime
