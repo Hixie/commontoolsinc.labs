@@ -156,7 +156,7 @@ export const recentRuns: Tile = {
     return {
       status,
       aside: `<span class="hfacet" title="${count}">${count}</span>`,
-      extra: `<div class="evscroll">${rows}</div>`,
+      extra: `<div class="evscroll" data-focus-key="runs">${rows}</div>`,
     };
   },
 };

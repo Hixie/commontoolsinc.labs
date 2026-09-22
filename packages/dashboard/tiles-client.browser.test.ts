@@ -28,7 +28,7 @@ function withBoard(
 // Each row has a title link and an arrow link with the same href, as the
 // recent-runs tile renders them.
 function runRows(titles: string[]): string {
-  return `<div class="evscroll" style="height:40px;overflow:auto">${
+  return `<div class="evscroll" data-focus-key="runs" style="height:40px;overflow:auto">${
     titles.map((title) =>
       `<div class="ev" style="height:30px"><a class="evtxt" data-focus-key="pr-title-${title}" href="https://example.com/${title}">${title}</a><a class="evarrow" data-focus-key="pr-arrow-${title}" href="https://example.com/${title}">↗</a></div>`
     ).join("")
@@ -142,6 +142,24 @@ Deno.test("an update moves focus inside a replaced tile to the link with the sam
     const arrow = container.querySelector('[data-focus-key="pr-arrow-a"]');
     expect(arrow).not.toBeNull();
     expect(document.activeElement).toBe(arrow);
+  });
+});
+
+Deno.test("an update moves focus inside a replaced tile to the element that is not a link with the same focus key", () => {
+  const targets = (host: string) =>
+    `<div class="tile-detail-list" role="region" tabindex="0" data-focus-key="targets">${host}</div>`;
+  withBoard([[
+    "production",
+    { status: "good", extra: targets("rapids") },
+  ]], (container) => {
+    container.querySelector<HTMLElement>(".tile-detail-list")?.focus();
+    reconcileTiles(
+      container,
+      rendering(["production", { status: "bad", extra: targets("estuary") }]),
+    );
+    const region = container.querySelector(".tile-detail-list");
+    expect(region?.textContent).toBe("estuary");
+    expect(document.activeElement).toBe(region);
   });
 });
 

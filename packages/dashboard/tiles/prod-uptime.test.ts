@@ -454,6 +454,8 @@ Deno.test("prod uptime: several hosts with nothing behind them are counted", asy
     assertStringIncludes(view.extra ?? "", 'class="tile-detail-list"');
     assertStringIncludes(view.extra ?? "", 'role="region"');
     assertStringIncludes(view.extra ?? "", 'tabindex="0"');
+    // Its keyboard focus and scroll position carry over live updates.
+    assertStringIncludes(view.extra ?? "", 'data-focus-key="targets"');
     assertStringIncludes(view.extra ?? "", "scroll for more");
     assertStringIncludes(view.extra ?? "", "rapids");
     assertStringIncludes(view.extra ?? "", "bastion");

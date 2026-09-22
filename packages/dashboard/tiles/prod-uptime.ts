@@ -541,7 +541,7 @@ function view(results: readonly TargetResult[]): TileView {
     valueLabel: value,
     extra: rows === ""
       ? undefined
-      : `<div class="tile-detail-list" role="region" tabindex="0"${listAttributes} style="display:grid;grid-template-columns:auto 1fr;gap:7px 10px;margin-top:11px;font-size:12px;line-height:1.35">${rows}</div>`,
+      : `<div class="tile-detail-list" role="region" tabindex="0" data-focus-key="targets"${listAttributes} style="display:grid;grid-template-columns:auto 1fr;gap:7px 10px;margin-top:11px;font-size:12px;line-height:1.35">${rows}</div>`,
   };
 }
 

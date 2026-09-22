@@ -748,6 +748,8 @@ Deno.test("recent runs: labs and loom runs interleave chronologically, each tagg
   assertStringIncludes(v.extra ?? "", "labs · ");
   assertStringIncludes(v.extra ?? "", "loom · ");
   assertStringIncludes(v.aside ?? "", ">4 in window</span>");
+  // The list's scroll position carries over live updates.
+  assertStringIncludes(v.extra ?? "", '<div class="evscroll" data-focus-key="runs">');
 });
 
 Deno.test("dau: distinct identities per UTC day, excluding the DIDs we name", () => {

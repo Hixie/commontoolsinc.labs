@@ -112,16 +112,20 @@ snapshot for that source and shows the combined list in gray with the error.
 Each event connection receives the current tile snapshot before it waits for new
 collections. The browser matches each tile in that snapshot with the tile of the
 same label on the page, leaving unchanged elements, focus, and scroll positions
-in place. Routine data updates never navigate the page. The page shell — the
-styles and the client script — arrives only with a full page load, so the server
-hands the browser a compatibility version and the page reloads itself as soon as
-the server reports a different one. A deployed image uses the commit its
-publishing workflow checked out, which is fixed for the life of the image, so
-every display on that image agrees. A server started from a checkout reports the
-moment it started instead, because the code under it changes between one start
-and the next: a watched restart therefore pulls every open page onto the code
-that restart is serving, and the version in the page source says which start
-served it. An unattended display reloads when it reconnects to a server
+in place. Inside a tile that changed, an element carrying a `data-focus-key`
+attribute is matched with the element carrying the same key in the new markup,
+which takes over its keyboard focus and scroll position; a tile puts that
+attribute on each element whose focus or scroll position should carry over from
+one update to the next. Routine data updates never navigate the page. The page
+shell — the styles and the client script — arrives only with a full page load,
+so the server hands the browser a compatibility version and the page reloads
+itself as soon as the server reports a different one. A deployed image uses the
+commit its publishing workflow checked out, which is fixed for the life of the
+image, so every display on that image agrees. A server started from a checkout
+reports the moment it started instead, because the code under it changes between
+one start and the next: a watched restart therefore pulls every open page onto
+the code that restart is serving, and the version in the page source says which
+start served it. An unattended display reloads when it reconnects to a server
 reporting a different version.
 
 An unattended display also survives the server going away. Every serving tick
