@@ -15,7 +15,10 @@ import { attachUiContract, getUiContractHint } from "./ui-contract.ts";
 import { PrimitiveFormatter } from "./formatters/primitive-formatter.ts";
 import { ObjectFormatter } from "./formatters/object-formatter.ts";
 import { ArrayFormatter } from "./formatters/array-formatter.ts";
-import { CommonFabricFormatter } from "./formatters/common-fabric-formatter.ts";
+import {
+  CommonFabricFormatter,
+  lowersFromReferenceArguments,
+} from "./formatters/common-fabric-formatter.ts";
 import { NativeTypeFormatter } from "./formatters/native-type-formatter.ts";
 import { UnionFormatter } from "./formatters/union-formatter.ts";
 import { IntersectionFormatter } from "./formatters/intersection-formatter.ts";
@@ -876,6 +879,16 @@ function unionOfSchemas(
   return context === undefined
     ? folded
     : unionFoldedFrom(folded, kept, unique.length, context);
+}
+
+/** Whether `symbol`'s declaration introduces type parameters. */
+function declaresTypeParameters(symbol: ts.Symbol): boolean {
+  return symbol.declarations?.some((declaration) =>
+    (ts.isInterfaceDeclaration(declaration) ||
+      ts.isTypeAliasDeclaration(declaration) ||
+      ts.isClassDeclaration(declaration)) &&
+    declaration.typeParameters !== undefined
+  ) ?? false;
 }
 
 /**
@@ -2099,8 +2112,6 @@ export class SchemaGenerator {
    * followed to what it imports: bound through the node when the checker can
    * bind it, else resolved lexically, so an authored or imported declaration
    * of the same name shadows a global's the way it does for the checker.
-   * (`getSymbolsInScope` lists every visible symbol, globals included, in no
-   * order that honors shadowing.)
    */
   #resolveTypeName(
     typeNode: ts.TypeReferenceNode,
@@ -2253,6 +2264,14 @@ export class SchemaGenerator {
     return undefined;
   }
 
+  /**
+   * The declared type a reference's name denotes as seen from the reference's
+   * scope, which holds what the module declares, exported or not, and what it
+   * imports. Returns `undefined` for a qualified name, for a name that
+   * resolves to nothing the checker can type, and for a generic declared
+   * outside the default library, unless `CommonFabricFormatter` lowers the
+   * reference from its own arguments.
+   */
   #resolveTypeReferenceFromScope(
     typeNode: ts.TypeReferenceNode,
     checker: ts.TypeChecker,
@@ -2261,30 +2280,38 @@ export class SchemaGenerator {
     if (!ts.isIdentifier(typeNode.typeName)) {
       return undefined;
     }
-    const typeName = typeNode.typeName.text;
-    // A declared type that is the checker's intrinsic `any` was declared as
-    // `any`; any other type flagged `Any` stands for a name it could not type.
-    const typed = (declared: ts.Type | undefined) =>
-      declared !== undefined &&
-      (!(declared.flags & ts.TypeFlags.Any) ||
-        declared === checker.getAnyType());
-    const symbolAtNode = checker.getSymbolAtLocation(typeNode.typeName);
-    if (symbolAtNode) {
-      const declared = checker.getDeclaredTypeOfSymbol(symbolAtNode);
-      if (typed(declared)) return declared;
+    const symbol = this.#resolveTypeName(
+      typeNode,
+      typeNode.typeName,
+      checker,
+      context,
+    );
+    if (!symbol) return undefined;
+
+    // A generic declaration's declared type leaves its parameters unbound, and
+    // no reading of an unbound parameter stands in for the argument a
+    // reference supplies: its constraint drops the members an argument adds,
+    // its default is free to contradict one, and an operator over it (`keyof
+    // T`, `T["name"]`) has no schema at all. Such a reference is left unread,
+    // for the caller to treat as the guess it would be, unless
+    // `CommonFabricFormatter` lowers the reference from its own arguments.
+    if (
+      declaresTypeParameters(symbol) &&
+      !symbol.declarations?.some((declaration) =>
+        isDefaultLibrarySourceFile(declaration.getSourceFile(), context)
+      ) &&
+      !lowersFromReferenceArguments(typeNode, symbol, checker)
+    ) {
+      return undefined;
     }
 
-    const scopeNode = this.#scopeSourceFile(typeNode, checker, context);
-    if (!scopeNode) return undefined;
-
-    const candidates = checker.getSymbolsInScope(
-      scopeNode,
-      ts.SymbolFlags.Type,
-    );
-    const symbol = candidates.find((candidate) => candidate.name === typeName);
-    if (!symbol) return undefined;
+    // A declared type that is the checker's intrinsic `any` was declared as
+    // `any`; any other type flagged `Any` stands for a name it could not type.
     const declared = checker.getDeclaredTypeOfSymbol(symbol);
-    return typed(declared) ? declared : undefined;
+    return !(declared.flags & ts.TypeFlags.Any) ||
+        declared === checker.getAnyType()
+      ? declared
+      : undefined;
   }
 
   /**
