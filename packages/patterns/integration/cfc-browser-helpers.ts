@@ -1756,7 +1756,7 @@ export async function clickMarked(
             `already failed to reach it (${lostBefore}). ` +
             debugStr`Every pixel tried: $quote,indent,long${
               Object.fromEntries(lost)
-            }` +
+            }\n` +
             debugStr`Aim reached: $quote,indent,long${progress}\n` +
             debugStr`Last probe: $quote,indent,long${probe}`,
         );

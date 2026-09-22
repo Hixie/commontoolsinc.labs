@@ -5,8 +5,8 @@
  * board runs the program compiled from the sources read, without coverage
  * instrumentation, and with each lift's preview equal to its compiled text,
  * reading timing deltas and the worker's run count, and ending a sampling after
- * its operation. The TypeScript parser is its only import, so a plain
- * `deno test` exercises all of it.
+ * its operation. Its only imports are the TypeScript parser and a pure
+ * Markdown helper, so a plain `deno test` exercises all of it.
  */
 
 import ts from "typescript";
