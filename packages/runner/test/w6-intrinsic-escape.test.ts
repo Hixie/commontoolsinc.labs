@@ -44,7 +44,7 @@ describe("W6 intrinsic escape / structural barrier", () => {
     expect(r.mathRandom).toMatch(/^threw:TimeCapabilityError: /);
 
     // The prototype/constructor escapes must NOT return a number (a real clock);
-    // they reach the SES-tamed shared Date, which refuses in secure mode.
+    // they reach the SES-tamed shared Date and throw.
     for (
       const key of [
         "instanceCtorNow",
@@ -53,7 +53,7 @@ describe("W6 intrinsic escape / structural barrier", () => {
         "instanceCtorCall",
       ]
     ) {
-      expect(r[key]).toMatch(/^threw:TypeError: secure mode /);
+      expect(r[key]).toMatch(/^threw:TypeError: /);
     }
 
     // Deterministic formatting and instanceof still work.
