@@ -10,6 +10,7 @@
  */
 
 import ts from "typescript";
+import { backtickQuote } from "@commonfabric/utils/markdown";
 
 /** A position in authored source: line 1-based, column 0-based. */
 export interface SourcePosition {
@@ -374,8 +375,10 @@ export function confirmLiftImplementations(
       throw new Error(
         `\`${lift.name}\` at \`${lift.site}\` runs an implementation that ` +
           `differs from its compiled text at character ${at}: running ` +
-          `${JSON.stringify(other.slice(at, at + 40))}, compiled ` +
-          `${JSON.stringify(expected.slice(at, at + 40))}`,
+          `${backtickQuote(JSON.stringify(other.slice(at, at + 40)))}, ` +
+          `compiled ${
+            backtickQuote(JSON.stringify(expected.slice(at, at + 40)))
+          }`,
       );
     }
     confirmed.set(lift.site, expected);
