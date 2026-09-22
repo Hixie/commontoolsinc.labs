@@ -2,7 +2,7 @@
 
 Status: current implementation reference\
 Last verified: 2026-09-22\
-Revision: `4e3d5274b4+console-retraction`
+Revision: `688cd617a6`
 
 The [system map](system-map/README.md) moves in lockstep with this current-state
 reference.
@@ -140,9 +140,13 @@ The current package provides:
   transfer reads only selected current bindings; its inherited CFC context
   retains the full parent influence even when no kit is selected. Kits and
   confirmed records persist through delegation, while local authored-source
-  artifacts record the research ids that shaped them. `query_docs` is accepted
-  only as a legacy CLI or persisted-policy alias and is normalized without
-  rewriting old transcript or run-state evidence;
+  artifacts record the research ids that shaped them. Before new source
+  compiles, `run_pattern` requires an import or a one-line
+  `reuseReasons[patternId]` explanation for every selected pattern in retained
+  context, including incomplete kits; leads remain advisory. The check
+  establishes a dependency or explanation, not its semantic adequacy.
+  `query_docs` is accepted only as a legacy CLI or persisted-policy alias and is
+  normalized without rewriting old transcript or run-state evidence;
 - caller and profile return-schema definitions checked before child creation,
   with bounded argument errors for malformed contracts and unresolved
   references; valid child results remain schema-validated and sanitized, with
@@ -337,7 +341,15 @@ The current package provides:
   together ([Read-only Loom retrieval](LOOM_RETRIEVAL.md));
 - opt-in fabric-session tools — `run_pattern` and `assign_slug`
   (`--fabric-api-url`, `--fabric-identity`, and `--fabric-space` configured
-  together, or their `CF_HARNESS_FABRIC_*` environment fallbacks).
+  together, or their `CF_HARNESS_FABRIC_*` environment fallbacks). Before
+  opening Fabric or compiling new `sourceText`, `run_pattern` requires each
+  selected pattern in retained research context to be imported as
+  `cf:pattern:<id>` or explained in one nonblank line at `reuseReasons[<id>]`.
+  This includes incomplete kits; unselected leads are advisory and direct
+  indexed execution does not enter this gate. Omitting both for a selection
+  returns `error` with the retained identities and both retry paths, and
+  persists no piece.
+
   `run_pattern`: compiles and runs an inline `sourceText` pattern (capped at 256
   KiB) against a deployed Fabric space from the trusted host side over a lazy
   per-run session that caches only a healthy, authorized construction; passes
@@ -598,13 +610,14 @@ mode.
 - Package-default sandbox networking is a provisional bridge-oriented posture,
   not the final destination policy model. Product adapters may narrow it.
 - Delegation is serial: only one child runs at a time.
-- Every `run_pattern` invocation persists a piece in the configured space, and
-  never registers it: the piece joins the space's registered piece list only
-  when `assign_slug` names it. An aborted run stops its piece, but no piece is
-  ever deleted, and each piece's source-history revision is a storage-retention
-  root the piece list does not reveal. Tooling that enumerates a space's
-  contents from the piece list must not assume the list is exhaustive; there is
-  no garbage collection for these pieces yet.
+- The retained-pattern preflight returns before Fabric access or compilation
+  when it refuses a `run_pattern` request, so it persists nothing. A created
+  piece persists in the configured space and joins its registered piece list
+  only when `assign_slug` names it. An aborted run stops its piece, but no piece
+  is ever deleted, and each piece's source-history revision is a
+  storage-retention root the piece list does not reveal. Tooling that enumerates
+  a space's contents from the piece list must not assume the list is exhaustive;
+  there is no garbage collection for these pieces yet.
 - Model-driven dynamic skill activation is not implemented. Skills are
   explicitly preloaded by the caller; child skills are profile-controlled.
 - Resume is transcript-oriented and does not recover an arbitrary partially
