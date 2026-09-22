@@ -3737,7 +3737,6 @@ export function getPatternEnvironment(): PatternEnvironment {
 }
 export declare const toCompactDebugString: ToCompactDebugStringFunction;
 export declare const toIndentedDebugString: ToIndentedDebugStringFunction;
-
 export declare const debugStr: DebugStrFunction;
 
 export interface UiActionProps {
