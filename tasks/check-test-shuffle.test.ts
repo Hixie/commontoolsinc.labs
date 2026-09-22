@@ -19,7 +19,6 @@ import {
 
 const SHUFFLE = "--shuffle=$(deno task -q test-seed)";
 
-/** Makes a git repository holding one workspace member's manifest. */
 /** The fixture repositories a test made, removed once it finishes. */
 const made: string[] = [];
 
@@ -30,6 +29,7 @@ async function fixtureDir(): Promise<string> {
   return dir;
 }
 
+/** Makes a git repository holding one workspace member's manifest. */
 async function fixtureRepo(
   memberTask: unknown,
 ): Promise<string> {
