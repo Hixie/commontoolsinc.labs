@@ -536,7 +536,6 @@ function view(results: readonly TargetResult[]): TileView {
       results.filter((result) => result.status === "good").length
     }/${results.length} hosts up`;
   return {
-    label: "production",
     status,
     value,
     valueLabel: value,
@@ -547,7 +546,7 @@ function view(results: readonly TargetResult[]): TileView {
 }
 
 export const prodUptime: Tile = {
-  id: "prod-uptime",
+  label: "production",
   intervalMs: 30_000,
   async collect(ctx): Promise<TileView> {
     const commonTools = siteTarget(
@@ -566,7 +565,6 @@ export const prodUptime: Tile = {
         return commonToolsResult.status === "bad"
           ? view([commonToolsResult])
           : {
-            label: "production",
             status: "unknown",
             value: "—",
             sub: "waiting for connectivity",

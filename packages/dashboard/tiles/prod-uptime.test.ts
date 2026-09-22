@@ -399,7 +399,6 @@ Deno.test("prod uptime: healthy server checks keep pings while other hosts disap
         `${hostname} AAAA`,
       ]).sort(),
     );
-    assertEquals(view.label, "production");
     assertEquals(view.status, "good");
     assertEquals(view.value, "8/8 hosts up");
     assertEquals(view.sub, undefined);
@@ -1176,6 +1175,6 @@ Deno.test("prod uptime: an unparseable configured URL rejects the collection", a
 });
 
 Deno.test("prod uptime: identity and cadence", () => {
-  assertEquals(prodUptime.id, "prod-uptime");
+  assertEquals(prodUptime.label, "production");
   assertEquals(prodUptime.intervalMs, 30_000);
 });
