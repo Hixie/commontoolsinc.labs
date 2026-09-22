@@ -949,10 +949,10 @@ describe("validation", () => {
         });
 
         it("refuses a value whose class cannot be read, without propagating", () => {
-          // The one shape that defeats the prototype read as well. The name
-          // lookup fails on it, and the refusal has to survive that: an error
-          // raised while explaining a refusal would arrive in place of the
-          // refusal.
+          // The one shape whose class cannot be read at all: the prototype's
+          // `constructor` accessor throws. The refusal has to survive that
+          // read, since an error raised while explaining a refusal would
+          // arrive in place of the refusal.
 
           class Unreadable {}
           Object.defineProperty(Unreadable.prototype, "constructor", {
