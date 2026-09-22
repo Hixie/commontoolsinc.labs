@@ -818,6 +818,11 @@ Deno.test("the flag reaches the `deno-test` of a member running the wrapper", as
       test: "deno test --allow-net",
       "deno-test": "deno test --allow-read",
     });
+    await Deno.mkdir(path.join(root, "chained"));
+    await Deno.writeTextFile(
+      path.join(root, "chained", "deno.jsonc"),
+      JSON.stringify({ tasks: { test: { dependencies: ["a", "b"] } } }),
+    );
     const rootUrl = path.toFileUrl(`${root}/`);
     assertEquals(
       await leafTask("./wrapped", rootUrl),
@@ -826,6 +831,9 @@ Deno.test("the flag reaches the `deno-test` of a member running the wrapper", as
     // A `test` task running no wrapper is its own leaf, whatever else the
     // member defines.
     assertEquals(await leafTask("./direct", rootUrl), "deno test --allow-net");
+    // A `test` task of dependencies alone runs no command of its own for
+    // a flag to reach.
+    assertEquals(await leafTask("./chained", rootUrl), undefined);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
