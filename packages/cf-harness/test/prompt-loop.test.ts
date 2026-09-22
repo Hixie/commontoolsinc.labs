@@ -2142,6 +2142,65 @@ describe("CfHarnessPromptLoop opening research", () => {
     missing: ["an exact implementation contract"],
   });
 
+  for (
+    const selection of [
+      "pattern id",
+      "piece slug",
+      "registry skill",
+      "local skill",
+    ]
+  ) {
+    it(`starts the parent immediately for a task naming an exact ${selection}`, async () => {
+      await using skills = await createPatternSkillsFixture();
+      const task = selection === "pattern id"
+        ? "Run cf:pattern:v6_KSFHs9AmTg9PKwMmPdZyEHxZ9Oykhno4HBOfUo5s."
+        : selection === "piece slug"
+        ? "Revise pattern:demo-space/monthly-bills."
+        : selection === "registry skill"
+        ? "Use the named skill skill:commonfabric/labs/cf-spend-digest: run its script."
+        : "Use skill:pattern-dev to build a counter.";
+      const runId = `closed-task-${selection}`;
+      const requests: HarnessModelTurnRequest[] = [];
+      const engine = new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId,
+        model: "gpt-test",
+      });
+      await engine.persistSkillRegistry(
+        await discoverHarnessSkills({
+          skillsRoot: skills.skillsRoot,
+        }),
+      );
+      const loop = new CfHarnessPromptLoop({
+        engine,
+        allowedToolIds: ["research"],
+        modelClient: {
+          providerId: "test-provider",
+          complete: (request) => {
+            requests.push(request);
+            return Promise.resolve({
+              assistant: { role: "assistant", content: "Ready to use it." },
+            });
+          },
+        },
+      });
+
+      const result = await loop.runPrompt({
+        prompt: task,
+        openingResearchTask: task,
+        promptSlotBinding: directPromptSlotBinding,
+      });
+
+      expect(requests.map((request) => request.runId)).toEqual([runId]);
+      expect(requests[0].tools.map((tool) => tool.toolId)).toContain(
+        "research",
+      );
+      expect(result.runState.openingResearch).toBeUndefined();
+      expect(result.runState.researchRuns).toBeUndefined();
+      expect(result.runState.toolOutputs).toEqual([]);
+    });
+  }
+
   it("researches a fresh root before its first parent turn with normal accounting", async () => {
     const root = await Deno.makeTempDir({
       dir: "/tmp",

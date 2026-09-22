@@ -1537,17 +1537,25 @@ supply a documentation corpus or pattern index. The gateway transport uses
 Research is a private tool loop, not web search or a delegable child profile.
 
 Fresh CLI tasks and interactive sessions without retained research request an
-opening `orient` pass. Subsequent chat turns reuse the retained findings and let
-the parent request targeted answers; they do not repeat orientation. It runs
-through the ordinary policy, artifacts, provenance, cancellation, and usage path
-before the first parent turn. A host-supplied user message puts the result
-immediately before the task. The result's `purpose` limits what `complete`
-means: a complete orientation establishes a supported approach; it does not
-claim that the application has been built. Both purposes can inspect pattern
-source, describe handles, and return examples. Orientation's `leads` are
-host-observed metadata, usable as search references for delegation, and remain
-separate from inspected `patterns`. The current user goal accompanies narrower
-research questions and delegated tasks so they retain the original context.
+opening `orient` pass for open-ended tasks. A task already selecting an
+implementation skips that automatic pass only through attached `patternRefs` or
+explicit markers in the request: `pattern:<space>/<slug>`, `cf:pattern:<id>`, or
+`skill:<id>`. A skill id names a registered skill or an `owner/repository/skill`
+address. Bare ids, paths, and prose such as "use the named skill X" remain open
+unless X uses a marker. Recognition uses the existing address parsers; it does
+not resolve references, acquire skills, or grant authority. The ordinary tools
+do that. The parent can still call `research` for an unresolved question.
+Subsequent chat turns reuse the retained findings and let the parent request
+targeted answers; they do not repeat orientation. It runs through the ordinary
+policy, artifacts, provenance, cancellation, and usage path before the first
+parent turn. A host-supplied user message puts the result immediately before the
+task. The result's `purpose` limits what `complete` means: a complete
+orientation establishes a supported approach; it does not claim that the
+application has been built. Both purposes can inspect pattern source, describe
+handles, and return examples. Orientation's `leads` are host-observed metadata,
+usable as search references for delegation, and remain separate from inspected
+`patterns`. The current user goal accompanies narrower research questions and
+delegated tasks so they retain the original context.
 
 Orientation and the parent distinguish inputs already given, inputs findable
 within the granted scope, and actions the available capabilities cannot perform.
