@@ -47,14 +47,11 @@ a script of their own, `packages/cli` and `packages/piece` among them. Each of
 those scripts passes on the arguments it receives.
 
 `deno task` appends the extra arguments to the end of the task's command line.
-Where a package runs one `deno test`, they reach it.
-
-Where a package runs several commands — a type check and then its tests, a
-Deno half and a browser half, a performance baseline after the tests — its
-`test` task runs `tasks/run-member-tests.ts`, which is handed the names of
-those tasks and the order to run them in. That script gives the appended
-arguments to the package's `deno-test` and to nothing else, so a filter
-reaches the tests either way:
+A package's `test` task runs `tasks/run-member-tests.ts`, which is handed the
+names of the package's tasks that make up its tests — its `deno-test`, and any
+others such as a browser half — and the order to run them in. That script gives
+the appended arguments to `deno-test` and to nothing else, so a filter reaches
+the tests:
 
 ```bash
 deno task test --filter "test name"

@@ -3,11 +3,10 @@
 /**
  * The one command a workspace member's `test` task runs.
  *
- * A member's tests are often several commands: a type check and then the
- * tests, a Deno half and a browser half, a performance baseline after the
- * tests, a second pass under a different import map. Where a member
- * writes those as a chain or as a list of tasks for Deno to depend on,
- * whatever reads its task cannot see past the join — a chain's appended
+ * A member's tests are often several commands: a Deno half and a browser
+ * half, a compile of a harness after the tests, a second pass under a
+ * different import map. Written as a chain or as a list of tasks for
+ * Deno to depend on, whatever reads the task cannot see past the join — a chain's appended
  * flags reach only its last command, and a dependency list has no
  * command for one to be appended to at all. What that costs is records:
  * the run has nowhere to write a report, so nothing downstream learns
@@ -26,8 +25,7 @@
  *
  * `deno-test` takes whatever flags were appended to the `test` task,
  * which is how a report path and the record preload reach the one
- * command that can use them. A failure stops the rest, which is what the
- * `&&` this replaces did.
+ * command that can use them. A failure stops the rest, as `&&` would.
  *
  * The line says the whole of what runs and in what order, so a member
  * keeps whatever order it had, and both the readers of a member read one
@@ -144,7 +142,7 @@ async function main(): Promise<void> {
       task,
       task === DENO_TEST_TASK ? invocation.forwarded : [],
     );
-    // A failure stops the rest, which is what the `&&` this replaces did.
+    // A failure stops the rest, as `&&` would.
     if (code !== 0) Deno.exit(code);
   }
 }
