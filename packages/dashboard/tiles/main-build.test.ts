@@ -21,7 +21,11 @@ function ctx(runs: Run[]): Ctx {
   };
 }
 
-let nextRunId = 1;
+// The tile holds each run's earlier attempts by id for as long as that run is
+// among the runs it observes, across tests as much as within one. The ids a
+// test gives its runs by hand are all below this, so an id handed out here
+// never names a run another test built.
+let nextRunId = 1_000_000;
 
 function run(over: Partial<Run>): Run {
   const startedAt = new Date(Date.now() - 3_600_000).toISOString();
