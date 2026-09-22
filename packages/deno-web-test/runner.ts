@@ -7,6 +7,7 @@ import {
 } from "@commonfabric/test-support/records";
 import {
   shuffled,
+  shuffledPaths,
   shuffleNotice,
   shuffleSeed,
 } from "@commonfabric/test-support/shuffle";
@@ -75,7 +76,7 @@ export class Runner {
     console.log(shuffleNotice(seed));
 
     try {
-      for (const tsTestPath of shuffled(this.manifest.tests, seed)) {
+      for (const tsTestPath of shuffledPaths(this.manifest.tests, seed)) {
         const results: TestFileResults = {
           fileName: tsTestPath,
           tests: [],

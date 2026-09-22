@@ -37,7 +37,7 @@ import {
   repositoryRelativePath,
 } from "@commonfabric/test-support/records";
 import {
-  shuffled,
+  shuffledPaths,
   shuffleNotice,
   shuffleSeed,
 } from "@commonfabric/test-support/shuffle";
@@ -2403,7 +2403,7 @@ export async function runTests(
   const seed = shuffleSeed();
   console.log(shuffleNotice(seed));
 
-  for (const testPath of shuffled(paths, seed)) {
+  for (const testPath of shuffledPaths(paths, seed)) {
     console.log(`\n${basename(testPath)}`);
     const failedBefore = totalFailed;
     const fileStarted = performance.now();

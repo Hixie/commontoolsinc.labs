@@ -5,10 +5,56 @@ import {
   commitMoment,
   daySeed,
   parseSeed,
+  pinShuffleSeed,
   shuffled,
+  shuffledPaths,
   shuffleFlag,
   shuffleNotice,
+  shuffleSeed,
 } from "./shuffle.ts";
+
+/** Makes a git repository whose one commit was committed at `when`. */
+async function repoCommittedAt(when: string): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "shuffle-commit-" });
+  const git = (...args: string[]) =>
+    new Deno.Command("git", {
+      args: [
+        "-c",
+        "user.name=probe",
+        "-c",
+        "user.email=probe@example.com",
+        ...args,
+      ],
+      cwd: dir,
+      env: {
+        GIT_COMMITTER_DATE: when,
+        GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
+      },
+      stdout: "null",
+      stderr: "null",
+    }).outputSync();
+  expect(git("init", "-q").success).toBe(true);
+  await Deno.writeTextFile(join(dir, "a.txt"), "a");
+  expect(git("add", "a.txt").success).toBe(true);
+  expect(git("commit", "-q", "-m", "probe").success).toBe(true);
+  return dir;
+}
+
+/** Runs `body` with the seed variable as `value`, restoring it after. */
+async function withSeedVariable(
+  value: string | undefined,
+  body: () => void | Promise<void>,
+): Promise<void> {
+  const previous = Deno.env.get("CF_TEST_SHUFFLE_SEED");
+  if (value === undefined) Deno.env.delete("CF_TEST_SHUFFLE_SEED");
+  else Deno.env.set("CF_TEST_SHUFFLE_SEED", value);
+  try {
+    await body();
+  } finally {
+    if (previous === undefined) Deno.env.delete("CF_TEST_SHUFFLE_SEED");
+    else Deno.env.set("CF_TEST_SHUFFLE_SEED", previous);
+  }
+}
 
 describe("shuffle", () => {
   describe("daySeed()", () => {
@@ -40,35 +86,13 @@ describe("shuffle", () => {
 
   describe("commitMoment()", () => {
     it("reads when the checked-out commit was committed", async () => {
-      const dir = await Deno.makeTempDir({ prefix: "shuffle-commit-" });
+      // Late on the 21st in the Pacific zone, early on the 22nd in UTC, so
+      // reading the wrong zone gives the wrong day, and an author date
+      // years earlier, so reading the wrong date gives the wrong year.
+      const dir = await repoCommittedAt("2026-09-21T23:30:00-07:00");
       try {
-        const git = (...args: string[]) =>
-          new Deno.Command("git", {
-            args: [
-              "-c",
-              "user.name=probe",
-              "-c",
-              "user.email=probe@example.com",
-              ...args,
-            ],
-            cwd: dir,
-            env: {
-              // Late on the 21st in the Pacific zone, early on the 22nd
-              // in UTC, so reading the wrong zone gives the wrong day.
-              GIT_COMMITTER_DATE: "2026-09-21T23:30:00-07:00",
-              GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z",
-            },
-            stdout: "null",
-            stderr: "null",
-          }).outputSync();
-        expect(git("init", "-q").success).toBe(true);
-        await Deno.writeTextFile(join(dir, "a.txt"), "a");
-        expect(git("add", "a.txt").success).toBe(true);
-        expect(git("commit", "-q", "-m", "probe").success).toBe(true);
-
         const moment = commitMoment(dir);
         expect(moment?.toISOString()).toBe("2026-09-22T06:30:00.000Z");
-        // The committer's date, not the author's, and its Pacific day.
         expect(daySeed(moment!)).toBe(20260921);
       } finally {
         await Deno.remove(dir, { recursive: true });
@@ -104,6 +128,14 @@ describe("shuffle", () => {
       );
       expect(() => parseSeed("1.5", new Date())).toThrow(
         "CF_TEST_SHUFFLE_SEED",
+      );
+      // Past 2^53 a number cannot hold every integer, so this one would
+      // round to a neighbor and name a seed nobody chose.
+      expect(() => parseSeed("9007199254740993", new Date())).toThrow(
+        "CF_TEST_SHUFFLE_SEED",
+      );
+      expect(parseSeed("9007199254740991", new Date())).toBe(
+        Number.MAX_SAFE_INTEGER,
       );
     });
   });
@@ -153,6 +185,75 @@ describe("shuffle", () => {
     it("handles the sizes a permutation cannot change", () => {
       expect(shuffled([], 20260922)).toEqual([]);
       expect(shuffled(["only"], 20260922)).toEqual(["only"]);
+    });
+  });
+
+  describe("shuffleSeed()", () => {
+    it("takes the day the checked-out commit was committed", async () => {
+      const dir = await repoCommittedAt("2026-09-21T23:30:00-07:00");
+      try {
+        await withSeedVariable(undefined, () => {
+          expect(shuffleSeed(dir)).toBe(20260921);
+        });
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("takes the environment's seed over the commit's", async () => {
+      const dir = await repoCommittedAt("2026-09-21T23:30:00-07:00");
+      try {
+        await withSeedVariable("7", () => {
+          expect(shuffleSeed(dir)).toBe(7);
+        });
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("takes today's outside a git checkout", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "shuffle-no-commit-" });
+      try {
+        await withSeedVariable(undefined, () => {
+          const before = daySeed(new Date());
+          const seed = shuffleSeed(dir);
+          // Read either side of the call, so a Pacific midnight between
+          // the two cannot make the case fail.
+          expect([before, daySeed(new Date())]).toContain(seed);
+        });
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+  });
+
+  describe("pinShuffleSeed()", () => {
+    it("settles the seed in the environment and names it", async () => {
+      await withSeedVariable("7", () => {
+        const announced: string[] = [];
+        expect(pinShuffleSeed((line) => announced.push(line))).toBe(7);
+        expect(Deno.env.get("CF_TEST_SHUFFLE_SEED")).toBe("7");
+        expect(announced).toEqual([shuffleNotice(7)]);
+      });
+    });
+
+    it("writes a seed read from git where none was named", async () => {
+      await withSeedVariable(undefined, () => {
+        const seed = pinShuffleSeed(() => {});
+        expect(Deno.env.get("CF_TEST_SHUFFLE_SEED")).toBe(String(seed));
+      });
+    });
+  });
+
+  describe("shuffledPaths()", () => {
+    it("gives one order whatever order the paths arrived in", () => {
+      const paths = Array.from({ length: 20 }, (_, index) => `f${index}.ts`);
+      expect(shuffledPaths([...paths].reverse(), 20260922)).toEqual(
+        shuffledPaths(paths, 20260922),
+      );
+      expect([...shuffledPaths(paths, 20260922)].sort()).toEqual(
+        [...paths].sort(),
+      );
     });
   });
 });

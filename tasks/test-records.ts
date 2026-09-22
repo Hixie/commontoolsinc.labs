@@ -32,7 +32,11 @@ import {
   tokenFromKey,
   tryAdoptSpool,
 } from "@commonfabric/test-support/records";
-import { shuffleSeed } from "@commonfabric/test-support/shuffle";
+import {
+  commitMoment,
+  parseSeed,
+  SHUFFLE_SEED_VARIABLE,
+} from "@commonfabric/test-support/shuffle";
 import {
   localSubmissionsPrefix,
   parsePersonalKeyFile,
@@ -120,11 +124,18 @@ export async function buildLocalContext(
   cwd: string,
   env: Environment = Deno.env.get,
 ): Promise<RunContext> {
+  const commit = await git(cwd, "rev-parse", "HEAD");
   return composeLocalContext({
-    commit: await git(cwd, "rev-parse", "HEAD"),
+    commit,
     branch: await git(cwd, "branch", "--show-current"),
     status: await git(cwd, "status", "--porcelain"),
-    shuffleSeed: shuffleSeed(cwd),
+    // The seed of the commit already read, so a checkout that moves
+    // while the run starts cannot pair one commit with another's order.
+    shuffleSeed: parseSeed(
+      readEnv(SHUFFLE_SEED_VARIABLE, env),
+      (commit === undefined ? undefined : commitMoment(cwd, commit)) ??
+        new Date(),
+    ),
   }, env);
 }
 

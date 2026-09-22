@@ -4,8 +4,10 @@ Every test run in this repository reorders the tests it runs, seeded by the
 Pacific day the commit under test was committed on.
 [TESTING.md](../development/TESTING.md#every-test-run-shuffles-its-order) is
 the reference for how that works and what it reaches. This plan carries the
-two pieces that are not built. Neither is implemented; nothing below
-describes current behavior.
+two pieces that are not built, the two stages below. Neither stage is
+implemented. Where a stage names something that already exists — the wrapper
+every test file's `describe()` and `it()` resolve to, the seed in the test
+records — that thing is current, and the stage is what would be built on it.
 
 ## Stage 1: a day-ahead run, at 1am Pacific
 

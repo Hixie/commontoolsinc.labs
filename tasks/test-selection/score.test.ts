@@ -436,6 +436,19 @@ describe("score", () => {
       expect(flakeRate(state, "2026-08-20")).toBe(0);
     });
 
+    it("judges a failure in the pass's order beside one in another", () => {
+      // An older failure in another order is dropped, and does not take
+      // the same-order failure after it down with it.
+      const state = stateFrom([
+        saw("fail", { day: "2026-08-19", commit: "c0", seed: 20260819 }),
+        saw("fail", { day: "2026-08-20", commit: "c1", seed: 20260820 }),
+        saw("pass", { commit: "c2", seed: 20260820 }),
+      ]);
+      expect(state.mainCatches).toBe(1);
+      expect(state.lastCatch).toBe("2026-08-20");
+      expect(state.pendingMain).toEqual([]);
+    });
+
     it("still credits a catch to a failure a later commit in one order ended", () => {
       const state = stateFrom([
         saw("fail", { day: "2026-08-20", commit: "c0", seed: 20260820 }),

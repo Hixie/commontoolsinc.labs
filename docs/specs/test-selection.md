@@ -34,11 +34,15 @@ for a commit: the Pacific day the commit was committed on, unless an override
 names another
 ([TESTING.md](../development/TESTING.md#every-test-run-shuffles-its-order)).
 Each record's context carries the seed as `shuffleSeed`, and a context without
-one records a run in declaration order. The rules below compare two runs at
-**one point**: the same commit, with the same seed or both without one. A test
-that depends on the order its siblings run in passes in one order and fails in
-another, which is a bug in the test rather than chance, so two runs at one
-commit in different orders are not compared at all.
+one records a run in declaration order. Two of the rules below compare one
+run's outcome with another's: a pass and a failure of the same identity read
+as a flake, and a failure on the default branch judged by the pass that
+follows it. Both compare runs at **one point** only: the same commit, with the
+same seed or both without one. A test that depends on the order its siblings
+run in passes in one order and fails in another, which is a bug in the test
+rather than chance, so outcomes at one commit in different orders are not
+compared. The rules that read the default branch's most recent outcome, and
+those that count failures across sources, take runs in any order.
 
 ### What a catch is
 

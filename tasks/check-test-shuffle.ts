@@ -130,16 +130,22 @@ export interface Violation {
 }
 
 /**
- * The text of a command, with any command substitutions taken out. What
- * a substitution produces is an argument to the command around it rather
- * than a command of its own, and one of them writes a `deno eval` that
- * would otherwise read as one.
+ * A command's text split in two: the text with every command
+ * substitution taken out, and the body of each substitution. What a
+ * substitution produces is an argument to the command around it, but
+ * the shell runs its body as commands of their own, so both halves are
+ * read.
  */
-function withoutSubstitutions(command: string): string {
-  let out = "";
+function splitSubstitutions(
+  command: string,
+): { outer: string; bodies: string[] } {
+  let outer = "";
+  const bodies: string[] = [];
   let depth = 0;
+  let body = "";
   for (let index = 0; index < command.length; index++) {
     if (command.startsWith("$(", index)) {
+      if (depth > 0) body += "$(";
       depth++;
       index++;
       continue;
@@ -147,19 +153,32 @@ function withoutSubstitutions(command: string): string {
     if (depth > 0) {
       if (command[index] === "(") depth++;
       else if (command[index] === ")") depth--;
+      if (depth === 0) {
+        bodies.push(body);
+        body = "";
+      } else {
+        body += command[index];
+      }
       continue;
     }
-    out += command[index];
+    outer += command[index];
   }
-  return out;
+  return { outer, bodies };
 }
 
-/** The separate commands a task line runs, in the order it runs them. */
+/**
+ * The separate commands a task line runs: those joined at its top level,
+ * and those inside each command substitution, found the same way.
+ */
 export function commandsOf(task: string): string[] {
-  return withoutSubstitutions(task)
-    .split(/&&|\|\||;|(?<!\|)\|(?!\|)/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const { outer, bodies } = splitSubstitutions(task);
+  return [
+    ...outer
+      .split(/&&|\|\||;|(?<!\|)\|(?!\|)/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0),
+    ...bodies.flatMap(commandsOf),
+  ];
 }
 
 /**
@@ -369,7 +388,7 @@ function taskCommands(
  * suite inside itself.
  */
 function announcesNoTests(command: string): boolean {
-  return /^echo /.test(command);
+  return /^echo (['"])No tests defined\.\1$/.test(command);
 }
 
 /** Runs the check over `root`, reporting what it found. */

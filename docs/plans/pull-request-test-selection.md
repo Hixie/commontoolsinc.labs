@@ -89,8 +89,9 @@ has landed, archive it under
   what makes a test worth running; the whole score is built on them.
 - A **flake** is a test that disagrees with itself: it passed and failed
   at the same commit, in the same order, with nothing between the two runs
-  but chance. Every test run shuffles its order by a seed fixed for the
-  commit, so the order is part of what "the same" means here; see
+  but chance. A run that shuffles its tests does so by a seed fixed for the
+  commit, and a run that does not keeps them in declaration order, so the
+  order is part of what "the same" means here; see
   [Flakes and repeats](#flakes-and-repeats).
 - A **repeat** is running one item more than once inside a lane, to raise
   the chance of catching something intermittent.
@@ -1893,7 +1894,9 @@ came next. **A failure on `main` is judged by the next
 itself, so the failure is a flake observation. The two runs can arrive in
 separate batches, which is why this is a rule of its own rather than the
 directly observable case above. At a later commit the failure counts as a
-catch.
+catch. Both hold only when the two runs used the same shuffle seed; a pass
+under another seed ends the failure without judging it, for the reason
+given under "Both rules compare runs in the same order" below.
 
 A run of failures ended by one pass counts one catch, dated to the first
 of them, so a week of `main` being red is worth one catch and not seven.
@@ -1985,8 +1988,9 @@ observations at one commit in one environment — so the measurement
 sharpens itself.
 
 **Both rules compare runs in the same order, not only at the same
-commit.** Every test run shuffles the order its tests run in, by a seed
-that is the Pacific day the commit under test was committed on
+commit.** Test runners here shuffle the order their tests run in, apart
+from the few whose order is the test, by a seed that is the Pacific day
+the commit under test was committed on
 ([TESTING.md](../development/TESTING.md#every-test-run-shuffles-its-order)).
 A test that depends on the order its siblings run in passes in one order
 and fails in another. That is a bug in the test, not chance, and counting
@@ -2022,10 +2026,10 @@ passing, and for the tests it holds the evidence points one way by
 construction.
 
 The score moves at the same time. A `main` failure that the next `main`
-run passes at a later commit is credited as a catch, and with nothing
-beside it at its own commit that is what each of an excluded test's
-spurious failures becomes. So the test returns to pull requests with a
-share near nothing and a score raised by its own noise.
+run passes at a later commit, in the same order, is credited as a catch,
+and with nothing beside it at its own commit that is what each of an
+excluded test's spurious failures becomes. So the test returns to pull
+requests with a share near nothing and a score raised by its own noise.
 
 Two rules answer this. They are separable, and only the second carries any
 risk, so they are argued separately.

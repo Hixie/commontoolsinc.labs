@@ -19,6 +19,8 @@
  * than fixed.
  */
 
+import { utf8Compare } from "@commonfabric/utils/utf8";
+
 /** Names the seed to use, in place of the commit's. */
 export const SHUFFLE_SEED_VARIABLE = "CF_TEST_SHUFFLE_SEED";
 
@@ -45,16 +47,21 @@ export function daySeed(moment: Date): number {
 }
 
 /**
- * When the commit checked out at `cwd` was committed, or nothing where
- * git cannot say. The committer date rather than the author's: a rebased
- * or cherry-picked commit keeps the date it was first written, which can
- * be arbitrarily old, while the committer date moves with the tree.
+ * When a commit was committed, or nothing where git cannot say: `rev`
+ * as the repository at `cwd` resolves it, which is the commit checked
+ * out there unless a caller names another. The committer date rather
+ * than the author's: a rebased or cherry-picked commit keeps the date it
+ * was first written, which can be arbitrarily old, while the committer
+ * date moves with the tree.
  */
-export function commitMoment(cwd: string = Deno.cwd()): Date | undefined {
+export function commitMoment(
+  cwd: string = Deno.cwd(),
+  rev: string = "HEAD",
+): Date | undefined {
   let output: Deno.CommandOutput;
   try {
     output = new Deno.Command("git", {
-      args: ["log", "-1", "--format=%cI", "HEAD"],
+      args: ["log", "-1", "--format=%cI", rev],
       cwd,
       stdout: "piped",
       stderr: "null",
@@ -72,18 +79,20 @@ export function commitMoment(cwd: string = Deno.cwd()): Date | undefined {
 
 /**
  * The seed an override names, or otherwise the one `moment` falls in. An
- * override that is not a non-negative integer throws: a run that ignored
- * it would report an order nobody asked for under a seed somebody chose.
+ * override that is not a non-negative integer, or is too large to hold
+ * without rounding, throws: a run that ignored or rounded it would report
+ * an order nobody asked for under a seed somebody chose.
  */
 export function parseSeed(override: string | undefined, moment: Date): number {
   if (override === undefined || override === "") return daySeed(moment);
-  if (!/^\d+$/.test(override)) {
+  const seed = Number(override);
+  if (!/^\d+$/.test(override) || !Number.isSafeInteger(seed)) {
     throw new Error(
       `${SHUFFLE_SEED_VARIABLE} is "${override}", which is not a ` +
-        `non-negative integer.`,
+        `non-negative integer this process can hold exactly.`,
     );
   }
-  return Number(override);
+  return seed;
 }
 
 /**
@@ -150,4 +159,17 @@ export function shuffled<T>(items: readonly T[], seed: number): T[] {
     [out[index], out[pick]] = [out[pick]!, out[index]!];
   }
   return out;
+}
+
+/**
+ * Paths in the order the seed puts them in. They are sorted first, so
+ * the order depends on the set of paths and the seed alone, and not on
+ * the order a directory listing happened to return them in, which
+ * differs from one filesystem to another.
+ */
+export function shuffledPaths(
+  paths: readonly string[],
+  seed: number,
+): string[] {
+  return shuffled([...paths].sort(utf8Compare), seed);
 }

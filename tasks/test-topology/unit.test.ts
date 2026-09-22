@@ -164,6 +164,21 @@ describe("the workspace unit suites", () => {
     ).toBeUndefined();
   });
 
+  it("hands the run's seed to every `deno test` it builds", async () => {
+    const root = await workspace({
+      "./packages/bakery": {
+        tasks: { test: "deno test test/glaze.test.ts" },
+        files: ["test/glaze.test.ts"],
+      },
+    });
+    const suite = workspaceUnit(await loadUnitSuites(root));
+    const [invocation] = await suite.command(
+      [{ unit: "packages/bakery/test/glaze.test.ts", skip: [] }],
+      { root, outputDir: "/out", spoolDir: "/spool" },
+    );
+    expect(invocation!.command).toContain(shuffleFlag(shuffleSeed()));
+  });
+
   it("runs the chosen files with the member's own flags", async () => {
     const root = await workspace({
       "./packages/bakery": {
@@ -343,21 +358,6 @@ describe("running a member that cannot be handed a subset", () => {
     });
     const suite = workspaceUnit(await loadUnitSuites(root));
     expect(suite.units).toEqual(["packages/bakery#browser-test"]);
-  });
-
-  it("hands the run's seed to every `deno test` it builds", async () => {
-    const root = await workspace({
-      "./packages/bakery": {
-        tasks: { test: "deno test test/glaze.test.ts" },
-        files: ["test/glaze.test.ts"],
-      },
-    });
-    const suite = workspaceUnit(await loadUnitSuites(root));
-    const [invocation] = await suite.command(
-      [{ unit: "packages/bakery/test/glaze.test.ts", skip: [] }],
-      { root, outputDir: "/out", spoolDir: "/spool" },
-    );
-    expect(invocation!.command).toContain(shuffleFlag(shuffleSeed()));
   });
 
   it("builds nothing for a unit no member holds", async () => {

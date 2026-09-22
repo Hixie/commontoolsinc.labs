@@ -186,8 +186,7 @@ committer date, not the author date, so a rebased commit takes the day it was
 rebased. Each runner prints it:
 
 ```text
-Test order shuffled with seed 20260922. Set CF_TEST_SHUFFLE_SEED=20260922 to
-run this order again.
+Test order shuffled with seed 20260922. Set CF_TEST_SHUFFLE_SEED=20260922 to run this order again.
 ```
 
 So one commit runs in one order wherever and whenever it runs. Every job of a

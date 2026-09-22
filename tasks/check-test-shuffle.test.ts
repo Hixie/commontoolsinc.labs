@@ -6,7 +6,7 @@
  * thing the gate exists to stop.
  */
 
-import { describe, it } from "@std/testing/bdd";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { assert } from "@std/assert";
 import { join } from "@std/path";
@@ -20,10 +20,20 @@ import {
 const SHUFFLE = "--shuffle=$(deno task -q test-seed)";
 
 /** Makes a git repository holding one workspace member's manifest. */
+/** The fixture repositories a test made, removed once it finishes. */
+const made: string[] = [];
+
+/** A temporary directory, recorded so that it is removed after the test. */
+async function fixtureDir(): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "check-test-shuffle-" });
+  made.push(dir);
+  return dir;
+}
+
 async function fixtureRepo(
   memberTask: unknown,
 ): Promise<string> {
-  const root = await Deno.makeTempDir({ prefix: "check-test-shuffle-" });
+  const root = await fixtureDir();
   const run = async (...args: string[]) => {
     const { success, stderr } = await new Deno.Command("git", {
       args,
@@ -51,6 +61,12 @@ async function fixtureRepo(
 }
 
 describe("check-test-shuffle", () => {
+  afterEach(async () => {
+    for (const dir of made.splice(0)) {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
   describe("commandsOf()", () => {
     it("separates the commands a task line joins", () => {
       expect(commandsOf("deno test -A && deno check .")).toEqual([
@@ -59,15 +75,18 @@ describe("check-test-shuffle", () => {
       ]);
     });
 
-    it("keeps a command substitution out of the command list", () => {
-      // The `deno eval` below is an argument to the permission flag, not
-      // a command of its own, and reading it as one would have the gate
-      // judging a command nobody runs.
+    it("reads a command substitution's body as commands of their own", () => {
+      // What the substitution produces is an argument to the command
+      // around it, but the shell runs its body, so a runner written there
+      // is held to the same rule as one written anywhere else.
       expect(
         commandsOf(
           'deno test --allow-run=$(deno eval "console.log(Deno.execPath())")',
         ),
-      ).toEqual(["deno test --allow-run="]);
+      ).toEqual([
+        "deno test --allow-run=",
+        'deno eval "console.log(Deno.execPath())"',
+      ]);
     });
   });
 
@@ -124,6 +143,15 @@ describe("check-test-shuffle", () => {
       // The word appears, but not as the command.
       expect(problemWith("deno run -A ./tasks/latest-deno-test-report.ts"))
         .toBeUndefined();
+    });
+  });
+
+  describe("a runner written where it is easy to miss", () => {
+    it("finds a `deno test` inside a command substitution", () => {
+      const problems = commandsOf("echo $(deno test -A)")
+        .map(problemWith)
+        .filter((problem) => problem !== undefined);
+      expect(problems).toHaveLength(1);
     });
   });
 
@@ -199,6 +227,15 @@ describe("check-test-shuffle", () => {
       expect(violations[0]!.where).toContain("member/deno.jsonc");
     });
 
+    it("fails a member whose test task only echoes before its runner", async () => {
+      // An `echo` beside a runner says nothing about whether the member
+      // has tests; only the exact marker does.
+      const root = await fixtureRepo("echo setup && node ./run-my-tests.js");
+      const violations = await scan(root);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.problem).toContain("RUNNERS");
+    });
+
     it("passes a member that says it has no tests", async () => {
       const root = await fixtureRepo("echo 'No tests defined.'");
       expect(await scan(root)).toEqual([]);
@@ -212,7 +249,7 @@ describe("check-test-shuffle", () => {
     });
 
     it("follows a test task built out of the member's other tasks", async () => {
-      const root = await Deno.makeTempDir({ prefix: "check-test-shuffle-" });
+      const root = await fixtureDir();
       const run = async (...args: string[]) => {
         const { success } = await new Deno.Command("git", {
           args,

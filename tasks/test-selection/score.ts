@@ -182,24 +182,26 @@ function bump(counts: Record<string, number>, day: string): void {
 }
 
 /**
- * Judges the failures on `main` that were waiting for a later `main` run.
- * A failure the next run still shows is the same breakage continuing, so
- * it keeps waiting and nothing new is learned. A failure the next run
- * does not show is a flake when that run is at the same commit in the
- * same order, and a catch when it is at a later commit in the same
- * order. A pass in a different order is neither, and the failure is
- * dropped: an order-dependent test stops failing when the order moves
- * on, so the pass says nothing about whether a change fixed anything.
- * Nothing separates a failure a change fixed from one that healed
- * itself, so a failure that healed itself in one order is credited as a
- * catch as well.
- */
-/**
  * The longest window any of a state's per-day counters is kept for, which
  * is also how long a failure on the default branch waits to be judged.
  */
 const LONGEST_WINDOW_DAYS = Math.max(CHURN_WINDOW_DAYS, FLAKE_WINDOW_DAYS);
 
+/**
+ * Judges the failures on `main` that were waiting for a later `main` run.
+ * A failure the next run still shows is the same breakage continuing, so
+ * it keeps waiting and nothing new is learned. A failure the next run
+ * does not show is a flake when that run is at the same commit in the
+ * same order, and a catch when it is at a later commit in the same
+ * order. A pass in a different order is neither, and the failures in
+ * other orders are dropped: an order-dependent test stops failing when
+ * the order moves on, so the pass says nothing about whether a change
+ * fixed anything. Failures in the pass's own order are judged whatever
+ * else is waiting beside them.
+ * Nothing separates a failure a change fixed from one that healed
+ * itself, so a failure that healed itself in one order is credited as a
+ * catch as well.
+ */
 function resolvePendingMain(
   state: IdentityState,
   observation: Observation,
@@ -213,7 +215,8 @@ function resolvePendingMain(
   // to answer this on its own: a fold resolves every observation it
   // reads before it ages anything.
   const live = state.pendingMain.filter((pending) =>
-    daysBetween(pending.day, observation.day) <= LONGEST_WINDOW_DAYS
+    daysBetween(pending.day, observation.day) <= LONGEST_WINDOW_DAYS &&
+    pending.seed === observation.seed
   );
   state.pendingMain = [];
   if (live.length === 0) return;
@@ -226,7 +229,6 @@ function resolvePendingMain(
   const first = live.reduce((earliest, pending) =>
     pending.day < earliest.day ? pending : earliest
   );
-  if (first.seed !== observation.seed) return;
   if (first.commit === observation.commit) {
     // The same commit, passing now and failing before, is the test
     // disagreeing with itself there. The two runs can arrive in separate
@@ -272,16 +274,17 @@ export interface FoldContext {
   >;
 
   /**
-   * The most recently seen commits, oldest first, at most
-   * `FLAKE_COMMIT_REACH` of them. Outcomes are remembered at a commit
+   * The most recently seen points (see `pointOf`), oldest first, at most
+   * `FLAKE_COMMIT_REACH` of them. Outcomes are remembered at a point
    * while it is in here, and afterwards only for identities the failure
-   * witness still names.
+   * witness still names. A commit run in one order is one point, which is
+   * every commit that runs without an override.
    */
   recentCommits: string[];
 
   /**
-   * What the default branch said about one identity at one commit, with
-   * the day. A rerun of a commit can arrive long after the run it
+   * What the default branch said about one identity at one point (see
+   * `pointOf`), with the day. A rerun of a commit can arrive long after the run it
    * repeats, so this outlives the batch: without it, a later pass
    * elsewhere would make that rerun look like the first failure at a
    * commit the branch had already shown broken.

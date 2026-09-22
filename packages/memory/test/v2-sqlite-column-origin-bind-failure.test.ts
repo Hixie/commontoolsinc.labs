@@ -11,16 +11,19 @@ import {
 } from "../v2/sqlite/column-origin.ts";
 
 Deno.test("a bind failure is recorded and surfaces in the reason and the throw", async () => {
-  // Point @db/sqlite's own loader at a file that is not a library — the shape
-  // of a libsqlite3 built without SQLITE_ENABLE_COLUMN_METADATA, which loads
-  // for @db/sqlite but exposes no column-origin symbols.
-  // ensureColumnOriginAvailable must resolve false, record why, and make a
-  // later labeled read throw the reason.
+  // Point @db/sqlite's own loader at a file that is not a library at all, so
+  // the bind fails. ensureColumnOriginAvailable must resolve false, record
+  // why, and make a later labeled read throw the reason. DENO_SQLITE_LOCAL
+  // outranks DENO_SQLITE_PATH when it is "1", so it is cleared for the test.
 
   const notALibrary = Deno.makeTempFileSync({ suffix: ".dylib" });
   Deno.writeTextFileSync(notALibrary, "not a library");
-  const previous = Deno.env.get("DENO_SQLITE_PATH");
+  const previous = {
+    DENO_SQLITE_PATH: Deno.env.get("DENO_SQLITE_PATH"),
+    DENO_SQLITE_LOCAL: Deno.env.get("DENO_SQLITE_LOCAL"),
+  };
   Deno.env.set("DENO_SQLITE_PATH", notALibrary);
+  Deno.env.delete("DENO_SQLITE_LOCAL");
   try {
     assertEquals(await ensureColumnOriginAvailable(), false);
 
@@ -32,10 +35,9 @@ Deno.test("a bind failure is recorded and surfaces in the reason and the throw",
     // the generic "must resolve first" message.
     assertThrows(() => columnOrigins(null, 1), Error, reason!);
   } finally {
-    if (previous === undefined) {
-      Deno.env.delete("DENO_SQLITE_PATH");
-    } else {
-      Deno.env.set("DENO_SQLITE_PATH", previous);
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
     }
     Deno.removeSync(notALibrary);
   }
