@@ -17,6 +17,7 @@ import {
   recordsDir,
   spoolWriteArgument,
 } from "@commonfabric/test-support/records";
+import { DENO_TEST_TASK } from "./run-member-tests.ts";
 import { parseShard, type Shard } from "./shard-utils.ts";
 import { WORKSPACE_TEST_WEIGHTS } from "./test-timing-weights.ts";
 import { writeUnlaunchedMembers } from "./unlaunched-members.ts";
@@ -286,6 +287,7 @@ interface MemberManifest {
 async function memberManifest(
   member: string,
   root: string | URL,
+  task = "test",
 ): Promise<MemberManifest> {
   const rootUrl = directoryUrl(root);
   for (const manifest of ["deno.json", "deno.jsonc"]) {
@@ -299,9 +301,43 @@ async function memberManifest(
     const tasks = (parseJsonc(text) as {
       tasks?: Record<string, TaskDefinition>;
     })?.tasks;
-    return { path: manifestPath, testTask: tasks?.test };
+    return { path: manifestPath, testTask: tasks?.[task] };
   }
   return { path: `${member}/deno.jsonc`, testTask: undefined };
+}
+
+/**
+ * The wrapper a member's `test` task runs where it runs several
+ * commands, and the task that wrapper hands the appended flags to.
+ */
+const MEMBER_TEST_RUNNER = "run-member-tests.ts";
+
+/**
+ * The command a member's appended flags reach.
+ *
+ * `deno task` appends to the `test` task's own command line, so for most
+ * members that command is the one. A member running the wrapper above is
+ * the exception: the wrapper hands the flags to that member's
+ * `deno-test` and to nothing else, so that is the command whose shape
+ * decides whether a report path and the preload can be used at all.
+ *
+ * Reading through the wrapper here is what keeps this runner and the
+ * test topology reading one thing. The topology already prefers a
+ * member's `deno-test` over its `test`, and a member whose two readers
+ * disagree is selectable a file at a time and recorded not at all.
+ */
+export async function leafTask(
+  member: string,
+  root: string | URL = Deno.cwd(),
+): Promise<string | undefined> {
+  const task = await memberTestTask(member, root);
+  if (task === undefined) return undefined;
+  const runs = task.split(/\s+/).some((word) =>
+    word.endsWith(`/${MEMBER_TEST_RUNNER}`)
+  );
+  if (!runs) return task;
+  const { testTask } = await memberManifest(member, root, DENO_TEST_TASK);
+  return typeof testTask === "string" ? testTask : testTask?.command;
 }
 
 /**
@@ -440,7 +476,7 @@ export async function memberRecordingArguments(
 ): Promise<Map<string, string[]>> {
   const recording = new Map<string, string[]>();
   for (const member of members) {
-    const task = await memberTestTask(member, root);
+    const task = await leafTask(member, root);
     if (!acceptsPreload(member, task)) {
       recording.set(member, []);
       continue;
@@ -461,7 +497,7 @@ export async function junitCapableMembers(
 ): Promise<Set<string>> {
   const capable = new Set<string>();
   for (const member of members) {
-    if (acceptsJUnitPath(member, await memberTestTask(member, root))) {
+    if (acceptsJUnitPath(member, await leafTask(member, root))) {
       capable.add(member);
     }
   }

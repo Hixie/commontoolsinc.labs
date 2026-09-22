@@ -12,6 +12,7 @@ import {
   initializeDb,
   junitCapableMembers,
   leafFlags,
+  leafTask,
   memberRecordingArguments,
   memberTestTask,
   parseDisabledPackageList,
@@ -774,20 +775,41 @@ Deno.test("the workspace's capable members are read from their manifests", async
   const members = await readWorkspaceMembers(new URL("deno.jsonc", rootUrl));
   const capable = await junitCapableMembers(members, rootUrl);
 
-  // An ordinary package, a flag-forwarding runner, and a member whose task
-  // ends in a `deno test`, all of which take the flag.
+  // An ordinary package, a flag-forwarding runner, a member whose task
+  // ends in a `deno test`, and one running several commands through
+  // `run-member-tests.ts`, which hands the flag to its `deno-test`.
   for (
-    const member of ["./packages/navigation", "./tasks", "./packages/runner"]
+    const member of [
+      "./packages/navigation",
+      "./tasks",
+      "./packages/runner",
+      "./packages/api",
+      "./packages/memory",
+    ]
   ) {
     assertEquals(capable.has(member), true, `${member} should take the flag`);
   }
-  // A chained task, a runner that runs several test commands, and a
-  // browser harness, none of which do.
-  for (
-    const member of ["./packages/api", "./packages/cli", "./packages/dashboard"]
-  ) {
+  // A runner that runs several test commands, and a browser harness,
+  // neither of which does.
+  for (const member of ["./packages/cli", "./packages/dashboard"]) {
     assertEquals(capable.has(member), false, `${member} should not`);
   }
+});
+
+Deno.test("the flag reaches the `deno-test` of a member running the wrapper", async () => {
+  // `deno task` appends to the `test` task's own line, which for such a
+  // member runs the wrapper. What decides whether the flag can be used
+  // at all is the command the wrapper hands it to, so that is what is
+  // read.
+  const rootUrl = new URL("../", import.meta.url);
+  const leaf = await leafTask("./packages/memory", rootUrl);
+  assertEquals(leaf?.startsWith("deno test"), true, "reads the Deno half");
+
+  // A member running one command is its own leaf.
+  assertEquals(
+    (await leafTask("./packages/navigation", rootUrl))?.includes("deno test"),
+    true,
+  );
 });
 
 Deno.test("the spool a run records into is resolved once", () => {

@@ -979,7 +979,8 @@ export const set = (cache: Cache, key: string, value: string) =>
   the required test jobs are already in the same rough timing band.
 - Check typings with `deno task check`.
 - Run linter with `deno lint`.
-- Run all tests using `deno task test` (NOT `deno test`)
+- Run all tests using `deno task test` (NOT `deno test`). It runs tests and
+  does not type check, so it is the line above rather than a substitute for it.
 - To run a single test file use `deno test path/to/test.ts`.
 - To test a specific package, `cd` into the package directory and run
   `deno task test`.

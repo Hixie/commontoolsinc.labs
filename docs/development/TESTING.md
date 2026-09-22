@@ -15,6 +15,20 @@ deno task test
 
 **Important:** Always use `deno task test` from the root, NOT `deno test`, as the task includes necessary flags.
 
+A package's `test` task runs its tests and nothing else — it does not type
+check. `deno task check` at the root is what does that, for the whole
+workspace at once, so run both:
+
+```bash
+deno task check
+deno task test
+```
+
+A package with a `check` task of its own runs the same check over its own
+files, which is useful while working inside one package and is not a
+substitute: the root check is the one continuous integration runs, and it
+covers trees no package's own check reaches.
+
 ### Running one test by name
 
 Use `--filter` on a package's `test` task, not on the root one. The root task
@@ -32,22 +46,29 @@ all still applied. The same holds for the packages that run their tests through
 a script of their own, `packages/cli` and `packages/piece` among them. Each of
 those scripts passes on the arguments it receives.
 
-`deno task` appends the extra arguments to the end of the task's command line,
-so the flag is passed to the last command on that line. Two kinds of task have
-something other than a `deno test` at the end, and both run their whole suite:
+`deno task` appends the extra arguments to the end of the task's command line.
+Where a package runs one `deno test`, they reach it.
 
-- A task that lists other tasks and has no command of its own. `packages/memory`
-  and `packages/static` are two. There is no command for the flag to be passed
-  to. Name the underlying task instead. In `packages/memory` that is
-  `deno task just-test --filter "test name"`.
-- A task that chains two commands with `&&`, as `packages/ui` does to run its
-  browser tests after its other tests. The flag is passed only to the second
-  command, so the first runs unfiltered. Run the command that holds the test
-  directly, using the flags the `test` task gives it.
+Where a package runs several commands — a type check and then its tests, a
+Deno half and a browser half, a performance baseline after the tests — its
+`test` task runs `tasks/run-member-tests.ts`, which is handed the names of
+those tasks and the order to run them in. That script gives the appended
+arguments to the package's `deno-test` and to nothing else, so a filter
+reaches the tests either way:
 
-The package's `test` task in its `deno.jsonc` says which kind it is.
-`deno task test` also prints the command line it runs, which shows where the
-flag was appended.
+```bash
+deno task test --filter "test name"
+```
+
+The package's `test` task in its `deno.jsonc` names what it runs, and
+`deno task <name>` runs any one of them on its own. `deno task test` also
+prints each command line as it runs it, which shows where the flag was
+appended.
+
+A handful of packages run a test runner of their own — `packages/cli`,
+`packages/dashboard` and `packages/identity` among them — and appended
+arguments reach whatever that runner does with them, which its own source
+says.
 
 A test's name is also its identity in the run-record store, so a renamed test
 must be listed in `tasks/test-identity-aliases/` to keep its recorded

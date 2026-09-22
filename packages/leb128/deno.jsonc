@@ -8,7 +8,8 @@
     ".": "./src/index.ts"
   },
   "tasks": {
-    "test": "deno test"
+    "test": "deno run --allow-env --allow-read --allow-run=$(deno eval \"console.log(Deno.execPath())\") ../../tasks/run-member-tests.ts deno-test",
+    "deno-test": "deno test"
   },
   "test": {
     "include": [

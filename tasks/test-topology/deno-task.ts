@@ -326,11 +326,12 @@ export async function taskEnvironment(
  *
  * The Deno-only half is `deno-test` where a member names one and `test`
  * otherwise, which is the same rule the per-package coverage gate
- * measures by. A task written as a dependency list — several members
- * write `test` as a type check followed by `just-test` — resolves to
- * whichever of its dependencies is a readable `deno test`, so those
- * members keep their file granularity instead of running whole over a
- * wrapper task.
+ * measures by, and the same task `tasks/run-member-tests.ts` hands a
+ * member's appended flags to. A member running several commands names
+ * that half, so this and the workspace runner read one task rather than
+ * one each. A task written as a dependency list resolves to whichever of
+ * its dependencies is a readable `deno test`, which is what a member
+ * still writing one keeps its file granularity by.
  */
 export async function memberTasks(
   memberDir: string,

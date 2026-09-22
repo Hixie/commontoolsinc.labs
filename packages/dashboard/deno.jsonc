@@ -5,7 +5,8 @@
   },
   "tasks": {
     "watch": "deno run --watch --allow-net --allow-run=deno --allow-read --allow-write --allow-env server.ts",
-    "test": "deno run --allow-env --allow-read --allow-write --allow-run test/runner.ts",
+    "test": "deno run --allow-env --allow-read --allow-run=$(deno eval \"console.log(Deno.execPath())\") ../../tasks/run-member-tests.ts deno-test",
+    "deno-test": "deno run --allow-env --allow-read --allow-write --allow-run test/runner.ts",
     // Resvg's Linux loader checks the C library through Node's process report,
     // which reads CPU, network-interface, and hostname information.
     // The run grant cannot be narrowed to `deno`: these tests start the Deno
