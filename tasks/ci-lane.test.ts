@@ -180,7 +180,7 @@ describe("the moment a lane resolves its manifest at", () => {
     // Git writes the committer's own offset and manifest names carry
     // UTC, so the two are only comparable once this one is normalized.
     const root = await repository("2026-09-01T10:41:59-07:00");
-    expect((await manifestMoment({ ...lane, root })).at).toBe(
+    expect(manifestMoment({ ...lane, root }).at).toBe(
       "2026-09-01T17:41:59.000Z",
     );
   });
@@ -190,15 +190,15 @@ describe("the moment a lane resolves its manifest at", () => {
     // comes from the run, so a re-run resolves what the first attempt
     // resolved.
     const root = await repository("2026-09-01T10:41:59-07:00");
-    const first = await manifestMoment({ ...lane, root });
-    const again = await manifestMoment({ ...lane, root });
+    const first = manifestMoment({ ...lane, root });
+    const again = manifestMoment({ ...lane, root });
     expect(again.at).toBe(first.at);
     expect(first.note).toBeUndefined();
   });
 
   it("lets a caller ask about a moment that is not this tree's", async () => {
     const root = await repository("2026-09-01T10:41:59-07:00");
-    const moment = await manifestMoment({
+    const moment = manifestMoment({
       ...lane,
       root,
       at: "2026-08-01T00:00:00.000Z",
@@ -208,7 +208,7 @@ describe("the moment a lane resolves its manifest at", () => {
 
   it("falls back to the newest manifest outside a repository, and says so", async () => {
     const root = await Deno.makeTempDir({ prefix: "ci-lane-nogit-" });
-    const moment = await manifestMoment({ ...lane, root });
+    const moment = manifestMoment({ ...lane, root });
     expect(moment.note).toContain("cannot read the commit's date");
     expect(Number.isNaN(new Date(moment.at).getTime())).toBe(false);
   });

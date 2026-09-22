@@ -267,9 +267,9 @@ export function parseLaneArgs(
  * The seed test order is shuffled by is taken from the same moment, for
  * the same reasons.
  */
-export async function manifestMoment(
+export function manifestMoment(
   options: LaneOptions,
-): Promise<{ at: string; note?: string }> {
+): { at: string; note?: string } {
   if (options.at !== undefined) return { at: options.at };
   // Git writes the committer's own offset, and manifest names carry UTC,
   // so the two are only comparable once this one is normalized.
@@ -1182,7 +1182,7 @@ async function read(
   deps: LaneDeps,
   say: (line: string) => void,
 ): Promise<Reading> {
-  const moment = await manifestMoment(options);
+  const moment = manifestMoment(options);
   if (moment.note !== undefined) say(`ci-lane: ${moment.note}`);
   const manifest = await deps.manifest({ at: moment.at });
   // A full run reads the manifest for what things cost and nothing else,
