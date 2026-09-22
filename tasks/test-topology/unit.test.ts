@@ -1,6 +1,7 @@
 import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
 import { SKIP_LIST_VARIABLE } from "@commonfabric/test-support/records";
+import { shuffleFlag, shuffleSeed } from "@commonfabric/test-support/shuffle";
 import { loadUnitSuites } from "./unit.ts";
 import type { Suite } from "./suite.ts";
 import { EXCLUDED_FROM_COVERAGE_GATE } from "../test-selection/policy.ts";
@@ -342,6 +343,21 @@ describe("running a member that cannot be handed a subset", () => {
     });
     const suite = workspaceUnit(await loadUnitSuites(root));
     expect(suite.units).toEqual(["packages/bakery#browser-test"]);
+  });
+
+  it("hands the run's seed to every `deno test` it builds", async () => {
+    const root = await workspace({
+      "./packages/bakery": {
+        tasks: { test: "deno test test/glaze.test.ts" },
+        files: ["test/glaze.test.ts"],
+      },
+    });
+    const suite = workspaceUnit(await loadUnitSuites(root));
+    const [invocation] = await suite.command(
+      [{ unit: "packages/bakery/test/glaze.test.ts", skip: [] }],
+      { root, outputDir: "/out", spoolDir: "/spool" },
+    );
+    expect(invocation!.command).toContain(shuffleFlag(shuffleSeed()));
   });
 
   it("builds nothing for a unit no member holds", async () => {

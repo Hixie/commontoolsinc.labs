@@ -1,3 +1,4 @@
+import { shuffleFlag, shuffleSeed } from "@commonfabric/test-support/shuffle";
 import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
 import {
@@ -199,6 +200,14 @@ describe("a suite of deno test files over several packages", () => {
     );
     expect(invocation!.command).not.toContain("--allow-write=/spool");
     expect(invocation!.command).toContain(preloadArgument());
+  });
+
+  it("hands the run's seed to every `deno test` it builds", async () => {
+    const [invocation] = await twoParts().command(
+      [{ unit: "packages/mill/integration/grind.test.ts", skip: [] }],
+      context,
+    );
+    expect(invocation!.command).toContain(shuffleFlag(shuffleSeed()));
   });
 
   it("builds nothing for a unit it does not hold", async () => {

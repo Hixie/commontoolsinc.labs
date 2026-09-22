@@ -234,6 +234,7 @@ describe("the repository's gate suites", () => {
       "check-local-program",
       "check-package-cycles",
       "check-skill-facts",
+      "check-test-shuffle",
       "check-test-topology",
       "check-unused-deps",
       "deno-fmt",

@@ -32,6 +32,7 @@ import {
   tokenFromKey,
   tryAdoptSpool,
 } from "@commonfabric/test-support/records";
+import { shuffleSeed } from "@commonfabric/test-support/shuffle";
 import {
   localSubmissionsPrefix,
   parsePersonalKeyFile,
@@ -72,6 +73,9 @@ interface CheckoutFacts {
 
   /** Output of `git status --porcelain`; empty when the tree is clean. */
   status?: string;
+
+  /** The seed the run's test runners shuffle their order by. */
+  shuffleSeed?: number;
 }
 
 /**
@@ -100,6 +104,7 @@ export function composeLocalContext(
   if (facts.branch !== undefined && facts.branch.length > 0) {
     context.branch = facts.branch;
   }
+  if (facts.shuffleSeed !== undefined) context.shuffleSeed = facts.shuffleSeed;
   const agent = agentLabel(env);
   if (agent !== undefined) context.agent = agent;
   return context;
@@ -108,7 +113,8 @@ export function composeLocalContext(
 /**
  * The context of a local run, captured at start: the commit and branch the
  * run actually began against, so a branch switch mid-run cannot mis-stamp
- * it. Runs git in `cwd` and composes the context from its answers.
+ * it, and the seed its test runners shuffle by. Runs git in `cwd` and
+ * composes the context from its answers.
  */
 export async function buildLocalContext(
   cwd: string,
@@ -118,6 +124,7 @@ export async function buildLocalContext(
     commit: await git(cwd, "rev-parse", "HEAD"),
     branch: await git(cwd, "branch", "--show-current"),
     status: await git(cwd, "status", "--porcelain"),
+    shuffleSeed: shuffleSeed(cwd),
   }, env);
 }
 

@@ -88,7 +88,10 @@ has landed, archive it under
   points at a change rather than at the test or the machine. Catches are
   what makes a test worth running; the whole score is built on them.
 - A **flake** is a test that disagrees with itself: it passed and failed
-  at the same commit, with nothing between the two runs but chance.
+  at the same commit, in the same order, with nothing between the two runs
+  but chance. Every test run shuffles its order by a seed fixed for the
+  commit, so the order is part of what "the same" means here; see
+  [Flakes and repeats](#flakes-and-repeats).
 - A **repeat** is running one item more than once inside a lane, to raise
   the chance of catching something intermittent.
 
@@ -789,9 +792,11 @@ one case can run without its siblings. Jasmine, Jest and Mocha use the
 same vocabulary, and parts of that family shuffle declaration order by
 default to keep the claim honest.
 
-Nothing here enforces it. The module says nothing about ordering, Deno
-runs the cases in the order they were declared, and no part of this
-repository has ever run them in any other order. A dependence between two
+Nothing here enforces it. The module says nothing about ordering, and Deno
+runs the cases in the order they were declared. Every test run in this
+repository now shuffles its order, but `deno test --shuffle` reorders files
+and each file's top-level registrations, not the `it`s inside one, so the
+cases of one `describe` still run in declaration order. A dependence between two
 cases is therefore not something anybody would have been told about, and
 the reasonable prior is that some exist.
 
@@ -1979,6 +1984,32 @@ Repeats also generate the cleanest flake data there is — several
 observations at one commit in one environment — so the measurement
 sharpens itself.
 
+**Both rules compare runs in the same order, not only at the same
+commit.** Every test run shuffles the order its tests run in, by a seed
+that is the Pacific day the commit under test was committed on
+([TESTING.md](../development/TESTING.md#every-test-run-shuffles-its-order)).
+A test that depends on the order its siblings run in passes in one order
+and fails in another. That is a bug in the test, not chance, and counting
+it as a flake would withhold it from pull requests instead of getting it
+fixed. Fixing the seed to the commit is what keeps every job of a run, and
+every later attempt at it, in one order, for the reason the manifest a
+lane reads is fixed to the same commit
+([Why the lanes do not coordinate the plan](#why-the-lanes-do-not-coordinate-the-plan)). An override can still put one commit in two orders, so each
+record's context carries the seed as `shuffleSeed`, and the fold compares
+outcomes only at one point: the same commit and the same seed, or both
+without one, which is a run in declaration order. The same holds for the
+second rule. A failure on `main` followed by a pass under a different seed
+is neither a flake nor a catch, and is dropped: the order moved on, and the
+pass says nothing about whether a change fixed anything. That also drops
+the catch of a real breakage whose fix landed on a later Pacific day than
+the breakage did, which is the price of never crediting an order change as
+a fix.
+
+- [x] The context line carries `shuffleSeed`, written by local runs and by
+  each CI job's gather step, and carried by the relay.
+- [x] The fold keys same-commit disagreement, and the judgement of a
+  pending failure on `main`, on the commit and the seed together.
+
 ### An excluded test still runs on `main`
 
 The exclusion takes a test out of pull requests, and pull requests are
@@ -2471,6 +2502,12 @@ current when the tree under test came into being.
 The committer date rather than the author date. A rebased or
 cherry-picked commit keeps the author date it was first written at, which
 can be arbitrarily old, while the committer date moves with the tree.
+
+The seed every test run shuffles its order by is taken from the same
+moment, for the same reasons: every lane of a run and every later attempt
+at it has to run one commit in one order, and the clock at a job's start
+gives neither. `commitMoment` in `packages/test-support/src/shuffle.ts`
+reads it for both.
 
 ## What the census can project
 

@@ -27,6 +27,19 @@ almost no information per failure; a test that failed four times in two
 years, each time because somebody broke something, carries a great deal.
 Flakiness is dealt with separately, below.
 
+### Two runs under the same conditions
+
+Every test run shuffles the order its tests run in, by a seed that is fixed
+for a commit: the Pacific day the commit was committed on, unless an override
+names another
+([TESTING.md](../development/TESTING.md#every-test-run-shuffles-its-order)).
+Each record's context carries the seed as `shuffleSeed`, and a context without
+one records a run in declaration order. The rules below compare two runs at
+**one point**: the same commit, with the same seed or both without one. A test
+that depends on the order its siblings run in passes in one order and fails in
+another, which is a bug in the test rather than chance, so two runs at one
+commit in different orders are not compared at all.
+
 ### What a catch is
 
 For every failing record, the publisher asks whether the failure says
@@ -35,9 +48,9 @@ something about a change or something about the test. A failure is a
 
 - The identity was already failing in the most recent run on the default
   branch. The test was already broken and this run learned nothing.
-- The identity both passed and failed at the same commit, with nothing
-  between the two runs but chance. That is a flake observation, and it is
-  counted as one.
+- The identity both passed and failed at one point, with nothing between
+  the two runs but chance. That is a flake observation, and it is counted as
+  one.
 - The identity failed across at least `ENVIRONMENTAL_MIN_SOURCES` distinct
   sources within `CATCH_BREADTH_WINDOW_DAYS`. That is the environment or a
   dependency, not any one change.
@@ -53,11 +66,16 @@ there never contradicts itself, and counting each such failure as a catch
 would make the least valuable test in the repository look like the most
 valuable. Such a failure waits for the next run on that branch. Still
 failing is the same breakage continuing, and nothing new is learned.
-Passing at the same commit is the test disagreeing with itself, and counts
-as a flake observation. Passing at a later commit counts as a catch: the
-change between the two commits fixed what the test found. A run of
-failures ended by one pass counts one catch, dated to the first of them,
-so a week of the branch being red is worth one catch and not seven.
+Passing at the same point is the test disagreeing with itself, and counts
+as a flake observation. Passing at a later commit with the same seed counts
+as a catch: the change between the two commits fixed what the test found.
+Passing with a different seed is neither, and the failure is dropped: the
+order moved on, and an order-dependent test stops failing when it does, so
+the pass says nothing about whether a change fixed anything. That drops the
+catch of a real breakage whose fix landed on a later Pacific day than the
+breakage did, which is the price of not crediting an order change as a fix.
+A run of failures ended by one pass counts one catch, dated to the first of
+them, so a week of the branch being red is worth one catch and not seven.
 
 Nothing separates a failure a change fixed from one that healed itself, so
 a test flaky on the default branch is credited for its own noise. The
@@ -243,7 +261,7 @@ sharpens itself on exactly the tests it is least sure of.
 
 Nothing is charged against the count, and no belief about how tests
 usually behave survives into it. **A disagreement is a proof rather than a
-sample**: a test that is deterministic cannot pass and fail at one commit,
+sample**: a test that is deterministic cannot pass and fail at one point,
 so an observation of one rules out the possibility the share would
 otherwise be shrunk toward. A test seen twice that disagreed once reads a
 half, and a test that disagreed once in ten thousand runs reads a

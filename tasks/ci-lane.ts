@@ -38,6 +38,10 @@ import {
   type TestRecord,
 } from "@commonfabric/test-support/records";
 import {
+  commitMoment,
+  pinShuffleSeed,
+} from "@commonfabric/test-support/shuffle";
+import {
   type CapabilityId,
   logTail,
   openCapabilities,
@@ -260,32 +264,24 @@ export function parseLaneArgs(
  * terms — the manifest worth reading is the one that was current when
  * the tree under test came into being.
  *
- * The committer date rather than the author's: a rebased or cherry-picked
- * commit keeps the date it was first written, which can be arbitrarily
- * old, while the committer date moves with the tree.
+ * The seed test order is shuffled by is taken from the same moment, for
+ * the same reasons.
  */
 export async function manifestMoment(
   options: LaneOptions,
 ): Promise<{ at: string; note?: string }> {
   if (options.at !== undefined) return { at: options.at };
-  const result = await new Deno.Command("git", {
-    args: ["log", "-1", "--format=%cI", "HEAD"],
-    cwd: options.root,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  const raw = new TextDecoder().decode(result.stdout).trim();
   // Git writes the committer's own offset, and manifest names carry UTC,
   // so the two are only comparable once this one is normalized.
-  const at = result.success ? new Date(raw).getTime() : Number.NaN;
-  if (Number.isNaN(at)) {
+  const moment = commitMoment(options.root);
+  if (moment === undefined) {
     return {
       at: new Date().toISOString(),
       note: "cannot read the commit's date, so the manifest is the newest " +
         "there is rather than the one this tree was made against",
     };
   }
-  return { at: new Date(at).toISOString() };
+  return { at: moment.toISOString() };
 }
 
 /** The files this change touched, as the repository names them. */
@@ -1542,4 +1538,11 @@ const store: LaneDeps = { manifest: fetchManifest };
 // `Deno.exitCode` rather than `Deno.exit`, which would end the process
 // before the unload handlers run — and one of those is what writes a
 // test run's name map into its spool.
-if (import.meta.main) Deno.exitCode = await main(Deno.args, Deno.cwd(), store);
+//
+// The seed is settled before any invocation is built, so that every
+// command this lane builds and every task it starts shuffles the same
+// way.
+if (import.meta.main) {
+  pinShuffleSeed();
+  Deno.exitCode = await main(Deno.args, Deno.cwd(), store);
+}

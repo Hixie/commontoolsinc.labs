@@ -120,6 +120,7 @@ describe("test-records-gather", () => {
       expect(facts.job).toBe("Test (3/8)");
       expect(facts.shard).toBe("3/8");
       expect(facts.denoVersion).toBe(Deno.version.deno);
+      expect(Number.isSafeInteger(facts.shuffleSeed)).toBe(true);
 
       const lines = (await Deno.readTextFile(join(out, "records.ndjson")))
         .trimEnd().split("\n");
@@ -172,6 +173,7 @@ describe("test-records-gather", () => {
           if (name === "GITHUB_SHA") return "a".repeat(40);
           if (name === "GITHUB_HEAD_REF") return "feature-branch";
           if (name === "GITHUB_EVENT_PATH") return eventPath;
+          if (name === "CF_TEST_SHUFFLE_SEED") return "7";
           return undefined;
         },
       });
@@ -181,6 +183,9 @@ describe("test-records-gather", () => {
       expect(facts.commit).toBe("a".repeat(40));
       expect(facts.branch).toBe("feature-branch");
       expect(facts.headCommit).toBe("f".repeat(40));
+      // The seed a job's runners shuffled by, which an override the job
+      // set decides.
+      expect(facts.shuffleSeed).toBe(7);
     });
 
     it("keeps ingesting after one unreadable JUnit file", async () => {
