@@ -26,9 +26,9 @@ Authoritative implementation sources:
 If this document conflicts with code or passing tests, code/tests win.
 
 Package exports (`deno.jsonc`): `.` → `src/index.ts` (no `mod.ts`), plus
-seven subpaths — `./cell-brand`, `./default-brand`, `./wrapper-names`,
-`./property-optionality`, `./property-name`, `./numeric-expression`,
-`./type-node`.
+eight subpaths — `./cell-brand`, `./common-fabric-symbols`, `./default-brand`,
+`./wrapper-names`, `./property-optionality`, `./property-name`,
+`./numeric-expression`, `./type-node`.
 `src/index.ts` exports the `SchemaGenerator` class, the
 `SchemaGenerationOptions`, `SchemaGenerationDiagnostic`, and
 `WriterSourceIdentity` types, and re-exports `MutableJSONSchemaObj`.
@@ -48,7 +48,9 @@ consumer package is `@commonfabric/ts-transformers`, along two axes:
    (cast-validation, type-shrinking, call-kind), `property-name`
    (reactive-keys, type-shrinking), `property-optionality` (`ast/utils.ts`),
    `type-node` (type-building, type-shrinking, schema-injection,
-   cast-validation, pattern-context-validation, capability-analysis). The
+   cast-validation, pattern-context-validation, capability-analysis),
+   `common-fabric-symbols` (type-building, type-shrinking, capability-analysis,
+   cast-validation, assert-diagnostics, call-kind, dataflow). The
    `src/typescript/` tables are load-bearing for the whole transformer
    pipeline, not just schema output.
 
@@ -449,10 +451,30 @@ traversal (apparent type, reference targets, base types —
 `cell-brand.ts`, `type-traversal.ts`), memoized per
 (checker, type) in a `TwoLevelWeakCache` (`cell-brand.ts`). Node-level
 detection (`detectWrapperViaNode`/`resolveWrapperNode`,
-`type-utils.ts`) follows alias chains syntactically; **circular alias
-chains throw** (`Circular type alias detected: A -> B -> …`; a
-second detection in union alias resolution, `union-formatter.ts`;
-both tested by `circular-alias-error.test.ts`).
+`type-utils.ts`) reads a node through parentheses and follows alias chains
+syntactically — local, imported, and namespace-qualified aliases, generic
+ones included (`getTypeAliasDeclaration`, `src/typescript/type-node.ts`). The
+node it resolves to is one whose type arguments are the wrapper's own at the
+reference: the wrapper reference itself; the reference an alias declares,
+where none of its type arguments mentions the alias's type parameters; or,
+through an alias that passes its parameters to the wrapper unchanged and in
+order (`type UserDefault<T, V> = Default<T, V>`), the reference as written.
+An alias that does more with its parameters (`Default<T[], []>`,
+`Default<string, V>`) leaves no such node, so its reference is not a wrapper
+reference to node-level detection and is read from the type it instantiates
+(§6.3); the chain is still followed, so a circular one throws. A cell
+wrapper's
+name counts only where it resolves, through its import binding, to the
+wrapper `commonfabric` declares (`isCommonFabricSymbol`,
+`src/typescript/common-fabric-symbols.ts`), under whatever name it was
+imported as: a type of the author's own named `Writable` is not a cell. A
+node the checker cannot resolve, as one ts-transformers synthesizes, is read
+by its spelling, and `Default` is recognized by its spelling (§7).
+**Circular alias chains throw** (`Circular type alias detected: A -> B ->
+…`; a second detection in union alias resolution, `union-formatter.ts`; both
+tested by `circular-alias-error.test.ts`). `wrapper-reference.test.ts` pins
+the parentheses, the imported aliases, the identity rule, and both kinds of
+generic alias.
 
 ### 6.2 Emission
 
@@ -485,9 +507,12 @@ pre-cleanup schemas.
 
 ### 6.3 Node/type interplay
 
-- A generic alias whose resolved type is a Cell uses that resolved wrapper's
-  payload. The alias's own first argument need not be the payload; source
-  type arguments supply an inner node only for direct Cell wrapper syntax.
+- A generic alias whose resolved type is a Cell or a `Default`, and that
+  leaves no node carrying the wrapper's arguments (§6.1), uses that resolved
+  wrapper's payload. The alias's own first argument need not be the payload;
+  source type arguments supply an inner node only where they are the
+  wrapper's own: direct wrapper syntax, and an alias that passes its
+  parameters through.
   Non-generic aliases retain their resolved declaration node so payload
   defaults remain available to schema generation.
 - Capability re-wrap fidelity: when a **synthetic** node narrows a capability
@@ -573,13 +598,14 @@ runner (C5).
 
 ## 7. `Default<T,V>` And `DeepDefault<V>`
 
-`Default` detection is two-axis: node references named `Default` (fast path on
-identifier text, alias chains followed — `isDefaultTypeRef`,
+`Default` detection is two-axis: node references named `Default` (by
+spelling, read through parentheses and alias chains — `resolveWrapperNode`,
 `type-utils.ts`) and, when the checker erased the node, the type's
-aliasSymbol — the latter **source-checked** to `packages/api/index.ts` /
-`@commonfabric/api` / `commonfabric.d.ts` (`isDefaultAliasSymbol`,
-`property-optionality.ts`), so a user type merely *named* `Default` does
-not take the alias path. (Contrast §11: CFC detection has no source check.)
+aliasSymbol — the latter **source-checked** to a `commonfabric` declaration
+(`isDefaultAliasSymbol`, `property-optionality.ts`, through
+`isCommonFabricSymbol`, `common-fabric-symbols.ts`), so a user type merely
+*named* `Default` does not take the alias path. (Contrast §11: CFC detection
+has no source check.)
 
 **V extraction**, in priority order:
 
@@ -1068,11 +1094,11 @@ synthetic node resolution failure → `any` → `true`
   (`test/utils.ts`) — so golden JSON ordering is not emission ordering.
 - Fixture inputs compile against a synthetic prelude declaring the wrapper
   interfaces with `CELL_BRAND` markers, `Reactive<T> = T`, `Writable<T> =
-  Cell<T>`, and the scope wrappers (`test/utils.ts`); `Default` is
-  declared per-fixture (e.g. `default-type.input.ts`), relying on §7's
-  name-based node detection. The `commonfabric.d.ts` filename accepted by
-  `isDefaultAliasSymbol`/property-name serves consumer test environments that
-  register api types under that synthetic path.
+  Cell<T>`, and the scope wrappers (`test/utils.ts`). The prelude is its own
+  file of the test program, `commonfabric.d.ts`, declared both as globals and
+  as the `"commonfabric"` module, so its wrappers are `commonfabric`'s by the
+  identity check in §6.1. `Default` is declared per-fixture (e.g.
+  `default-type.input.ts`), relying on §7's name-based node detection.
 - **Cross-package pinning**: the ts-transformers `schema-transform` and
   `schema-injection` fixture suites (ts-transformers behavior spec §12 and §20)
   exercise this package end-to-end through `SchemaGeneratorTransformer`;
