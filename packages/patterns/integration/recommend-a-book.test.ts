@@ -1,4 +1,4 @@
-/** The authored book pair creates and publishes a library in a fresh space. */
+/** The authored book pair publishes a shelf within one dedicated space. */
 
 import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
@@ -99,7 +99,7 @@ function shareClick() {
 }
 
 describe("personalized book invitation", () => {
-  it("seeds the library, creates a new space, and publishes a reviewed copy", async () => {
+  it("seeds the library and publishes a reviewed invitation in the same space", async () => {
     const identity = await Identity.fromPassphrase(
       "book invitation originator",
     );
@@ -139,6 +139,24 @@ describe("personalized book invitation", () => {
         space: identity.did(),
         tx,
       });
+      const resultSchema = factory.resultSchema as {
+        properties: {
+          invitation: { $ref: string };
+          invitations: { items: { $ref: string } };
+        };
+        $defs: Record<string, { required: string[] }>;
+      };
+      expect(resultSchema.properties.invitation.$ref).not.toBe(
+        resultSchema.properties.invitations.items.$ref,
+      );
+      const invitationDefinition = resultSchema.properties.invitation.$ref
+        .split("/").at(-1)!;
+      expect(resultSchema.$defs[invitationDefinition].required).toContain(
+        "library",
+      );
+      expect(resultSchema.$defs[invitationDefinition].required).not.toContain(
+        "publish",
+      );
       seedHomeAgentQueue(runtime, identity.did(), tx);
       const home = runtime.getCell(
         identity.did(),
@@ -202,22 +220,16 @@ describe("personalized book invitation", () => {
       await runtime.editWithRetry((tx) =>
         library.withTx(tx).key("createInvitation").send()
       );
-      const invitations = library.key("invitations").asSchema<Cell<unknown>[]>({
-        type: "array",
-        items: { asCell: ["cell"] },
-      });
       await waitForCellValue(
         runtime,
-        invitations,
-        (value) => Array.isArray(value) && value.length === 1,
+        library.key("invitationReady"),
+        (value) => value === true,
         {
-          stuckLabel: "the create action stores its anonymous-space invitation",
+          stuckLabel: "the create action makes the invitation available",
         },
       );
-      const invitation = invitations.get()[0];
-      expect(invitation.getAsNormalizedFullLink().space).not.toBe(
-        identity.did(),
-      );
+      const invitation = library.key("invitation");
+      expect(invitation.getAsNormalizedFullLink().space).toBe(identity.did());
       await invitation.sync();
       const view = library.key(UI).asSchema(rendererVDOMSchema);
       const shareProps = await elementProps(view, "cf-share-snapshot");
@@ -226,14 +238,11 @@ describe("personalized book invitation", () => {
       const source = binding(shareProps, "$source");
       const recipient = binding(shareProps, "$recipient");
       const sharedResult = binding(shareProps, "$result");
-      const onShared = binding(shareProps, "oncf-shared");
       expect(source.equals(library.key("reading").resolveAsCell())).toBe(true);
       expect(recipient.equals(invitation.resolveAsCell())).toBe(true);
       expect(sharedResult.equals(
-        invitation.key("reviewedLibrary", "value").resolveAsCell(),
+        library.key("publishedLibrary", "value").resolveAsCell(),
       )).toBe(true);
-      expect(onShared.equals(invitation.key("publishReviewed").resolveAsCell()))
-        .toBe(true);
       const prepared = prepareSnapshotShare(source, { space: recipient });
       expect(prepared.audience).toEqual(cfcAtom.space(
         invitation.getAsNormalizedFullLink().space,
@@ -245,13 +254,11 @@ describe("personalized book invitation", () => {
         { blind: true },
       );
       expect(committed.error).toBeUndefined();
-      onShared.send({});
       await runtime.idle();
       expect(invitation.key("library", "value", "books").get()).toEqual([
         { title: "Kindred", author: "Octavia E. Butler" },
         { title: "Solaris", author: "Stanisław Lem" },
       ]);
-      expect(invitation.key("reviewedLibrary").get()).toEqual({});
       expect(invitation.key("library", "value", "favoriteAuthors").get())
         .toEqual(["Ursula K. Le Guin"]);
       const publicPointer = invitation.key("library", "value").resolveAsCell();
@@ -271,7 +278,7 @@ describe("personalized book invitation", () => {
       open.send({});
       await runtime.settled();
       expect(navigations).toEqual([
-        entityRefToString(invitation.entityId),
+        entityRefToString(invitation.resolveAsCell().entityId),
       ]);
     } finally {
       if (coverage && coverageDir) {
