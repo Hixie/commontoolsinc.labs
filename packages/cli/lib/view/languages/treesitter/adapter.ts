@@ -83,6 +83,10 @@ interface LoadedGrammar {
 const loaded = new Map<string, LoadedGrammar>();
 const loading = new Map<string, Promise<void>>();
 
+/** Why a grammar's load failed, kept so using it says that rather than that it
+ * was never loaded. */
+const failures = new Map<string, unknown>();
+
 /** The runtime shared by every loaded grammar, present once one is loaded. */
 let runtime: TreeSitterModule | undefined;
 
@@ -95,6 +99,15 @@ export function prepareGrammar(grammar: TreeSitterGrammar): Promise<void> {
 }
 
 async function loadGrammar(grammar: TreeSitterGrammar): Promise<void> {
+  try {
+    await loadGrammarNow(grammar);
+  } catch (error) {
+    failures.set(grammar.id, error);
+    throw error;
+  }
+}
+
+async function loadGrammarNow(grammar: TreeSitterGrammar): Promise<void> {
   // The runtime is loaded when a view selects a parser-backed language, and
   // not before.
   // deno-lint-ignore cf-imports/no-inline-module-import -- loaded on selection
@@ -132,6 +145,9 @@ async function readGrammar(grammar: TreeSitterGrammar): Promise<Uint8Array> {
 
 function loadedGrammar(grammar: TreeSitterGrammar): LoadedGrammar {
   const ready = loaded.get(grammar.id);
+  if (ready === undefined && failures.has(grammar.id)) {
+    throw failures.get(grammar.id);
+  }
   if (ready === undefined) {
     throw new Error(
       `cf view: the ${grammar.id} grammar is used before it is loaded.`,

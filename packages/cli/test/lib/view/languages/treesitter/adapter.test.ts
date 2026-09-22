@@ -37,13 +37,23 @@ function classesOf(lines: readonly Line[], text: string): string[] {
 describe("adapter", () => {
   describe("prepareGrammar()", () => {
     it("shares one load between concurrent callers and repeats", async () => {
-      await Promise.all([
-        prepareGrammar(pythonGrammar),
-        prepareGrammar(pythonGrammar),
-      ]);
-      await prepareGrammar(pythonGrammar);
+      // A grammar nothing has loaded yet, so the two calls race the load
+      // itself rather than finding it already done.
+      let reads = 0;
+      const counted: TreeSitterGrammar = {
+        ...pythonGrammar,
+        id: "python-counted-load",
+        wasmUrl: () => {
+          reads++;
+          return pythonGrammar.wasmUrl();
+        },
+      };
 
-      expect(verbatim(highlightLines(pythonGrammar, "x = 1"))).toBe("x = 1");
+      await Promise.all([prepareGrammar(counted), prepareGrammar(counted)]);
+      await prepareGrammar(counted);
+
+      expect(reads).toBe(1);
+      expect(verbatim(highlightLines(counted, "x = 1"))).toBe("x = 1");
     });
 
     it("names the grammar when its parser cannot be read", async () => {
@@ -69,6 +79,23 @@ describe("adapter", () => {
 
       await expect(prepareGrammar(mistyped)).rejects.toThrow(
         /captures "commnet", which is not a token class/,
+      );
+    });
+
+    it("says why a parser would not load when the grammar is used", async () => {
+      // The pager warms every language and leaves one that will not load to
+      // report itself when a file in it is opened.
+      const missing: TreeSitterGrammar = {
+        ...pythonGrammar,
+        id: "python-unreadable-parser",
+        wasmUrl: () => new URL("./no-such-grammar.wasm", import.meta.url).href,
+      };
+
+      await expect(prepareGrammar(missing)).rejects.toThrow(
+        /could not be read from/,
+      );
+      expect(() => highlightLines(missing, "x = 1")).toThrow(
+        /the python-unreadable-parser grammar could not be read from/,
       );
     });
 

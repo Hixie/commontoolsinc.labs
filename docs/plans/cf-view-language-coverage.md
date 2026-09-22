@@ -206,9 +206,10 @@ body. The separately maintained Lezer Bash grammar marked that fixture as
 containing an error and left the heredoc body unclassified. Lezer's smaller
 runtime and built-in HTML nesting do not outweigh using two parser families or
 accepting weaker shell coverage. Focused scanners remain suitable for simple
-data formats, but the existing Python scanner's 862 lines and YAML scanner's 970
-lines make one custom scanner per measured source language the larger
-maintenance surface. They also require a second implementation for structure.
+data formats, but the Python scanner's 862 lines when this was written — 863
+by the time it was removed — and the YAML scanner's 970 lines make one custom
+scanner per measured source language the larger maintenance surface. They also
+require a second implementation for structure.
 
 Depend on the complete npm packages rather than checking selected WebAssembly
 artifacts into the repository. The measured packages occupy 35.66 MiB when
@@ -266,21 +267,22 @@ The maximum came from a 131-line probe that loaded a grammar, ran a query, and
 split the result into lines. A shipped adapter also reports which grammar is
 missing, converts between the two offset conventions Tree-sitter uses, gives
 each bracket its nesting depth, leaves the space between tokens uncolored,
-derives an edit from two versions of a text, and re-colors only the lines an
-edit reaches. The overrun is in that work rather than in Tree-sitter.
+derives an edit from two versions of a text, and colors a document from the
+parse that edit produced. The overrun is in that work rather than in
+Tree-sitter.
 
 Compare the marginal costs a switch would remove, which is the Python-specific
 part: 127 lines of highlight query and structure rule, against the 863-line
 focused Python scanner they replaced. The scanner covered highlighting alone,
 so the focused implementation would be larger and cover less. The remaining 457
-lines are the adapter that Go, shell, and HTML use as well, and the cumulative
-maximum those three are held to — 1,000 lines for the adapter and four host
-languages together — still holds at about 170 lines each.
+lines are the adapter that Go, shell, and HTML use as well.
 
 Raise the first-language maximum to 650 lines and leave every other maximum
-where it is. Each later host language keeps its 200-line addition, and the
-1,000-line cumulative maximum is unchanged, so a later language overrunning
-still starts its own comparison.
+where it is. The 1,000-line cumulative maximum is what binds the three
+languages after Python: 584 lines are spent, so 416 remain, about 139 each. The
+200 lines a later host language may add is a ceiling on any one of them rather
+than an allowance all three can take, and the first to reach the cumulative
+maximum starts its own comparison.
 
 #### Reconsidering the dependency
 

@@ -349,9 +349,15 @@ export function prepareLanguages(
   ).then(() => {});
 }
 
-/** Load every language's parser, for a view that can open any file. */
-export function prepareAllLanguages(): Promise<void> {
-  return prepareLanguages(allLanguages());
+/**
+ * Warm every language's parser, for a view that can open any file. A language
+ * whose parser will not load leaves the rest of them working; opening a file in
+ * that language then fails, saying why the parser did not load.
+ */
+export async function warmAllLanguages(): Promise<void> {
+  await Promise.allSettled(
+    allLanguages().map((language) => language.prepare?.()),
+  );
 }
 
 /** Whether a renderer can be projected onto line-aligned diff content. */

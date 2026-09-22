@@ -315,6 +315,68 @@ Deno.test("python: soft keywords are keywords only where they open a statement",
   assertEquals(verbatim(lines), source);
 });
 
+Deno.test("python: soft keywords resolve across line continuations", () => {
+  // A backslash continuation and a CRLF one both put the evidence that settles
+  // a soft keyword on the next physical line.
+  const assignment = "match  \\\n    = lambda x: x";
+  const alias = "type Alias \\\n    = int";
+
+  assertEquals(
+    classOnLine(highlight(assignment), "match  \\", "match"),
+    "identifier",
+  );
+  assertEquals(
+    classOnLine(highlight(alias), "type Alias \\", "type"),
+    "storageKeyword",
+  );
+  assertEquals(
+    classOnLine(
+      highlight("match, \\\r\n    other = lambda: 1"),
+      "match, \\\r",
+      "match",
+    ),
+    "identifier",
+  );
+  assertEquals(
+    classOnLine(
+      highlight("type Alias \\\r\n    = int"),
+      "type Alias \\\r",
+      "type",
+    ),
+    "storageKeyword",
+  );
+  assertEquals(
+    classOnLine(
+      highlight("match lambda x=1: x:\n    case 1:\n        pass"),
+      "match lambda x=1: x:",
+      "match",
+    ),
+    "controlKeyword",
+  );
+  for (const source of [assignment, alias, "match subject"]) {
+    assertEquals(verbatim(highlight(source)), source, source);
+  }
+});
+
+Deno.test("python: incomplete formatted fields recover without dropping text", () => {
+  const source = [
+    'escaped = f"{{literal}}"',
+    'line_break = f"{value',
+    "next = True",
+    'commented = f"""{value  # field comment',
+    '}"""',
+    String.raw`backslash = f"{value\}}"`,
+    "lower_hex = 0xdead_beef",
+    "bare = 😀",
+  ].join("\n");
+  const lines = highlight(source);
+
+  assertEquals([...classesOf(lines, 'f"{{literal}}"')], ["template"]);
+  assertEquals([...classesOf(lines, "# field comment")], ["comment"]);
+  assertEquals([...classesOf(lines, "0xdead_beef")], ["number"]);
+  assertEquals(verbatim(lines), source);
+});
+
 Deno.test("python: malformed and incomplete input stays lossless", () => {
   for (
     const source of [
