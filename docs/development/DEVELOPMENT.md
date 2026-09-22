@@ -1005,7 +1005,8 @@ suite will break.
    to a message rather than a CI timeout.
 
    For a package with tests, `"test"` runs `tasks/run-member-tests.ts`, naming
-   the package's `"deno-test"` task, which holds the `deno test` itself; see
+   the package's `"deno-test"` task, which runs the tests themselves — a
+   `deno test` for most packages, or a runner of the package's own; see
    [TESTING.md](TESTING.md) for why. The `--allow-env` names the two variables
    the test-records preload reads, as `docs/development/test-records.md`
    explains. A package without tests yet uses `"echo 'No tests defined.'"`.

@@ -10,7 +10,8 @@ paths:
 
 A package's `deno.jsonc` must contain a `"tasks"` object with a `"test"` entry.
 When the package has tests, that entry runs `tasks/run-member-tests.ts` over a
-`"deno-test"` entry holding the `deno test`; when it does not have them yet, it
+`"deno-test"` entry that runs the tests themselves — a `deno test` for most
+packages, or a runner of the package's own; when it does not have them yet, it
 is `"echo 'No tests defined.'"`.
 
 This is not a tidiness rule. The root test runner (`tasks/test.ts`) walks every
