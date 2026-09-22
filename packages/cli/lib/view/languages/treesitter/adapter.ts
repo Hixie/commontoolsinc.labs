@@ -158,7 +158,10 @@ function loadedGrammar(grammar: TreeSitterGrammar): LoadedGrammar {
 
 function parseWith(ready: LoadedGrammar, text: string, from?: Tree): Tree {
   const tree = ready.parser.parse(text, from);
+  // deno-coverage-ignore-start -- a parse returns no tree only when it is
+  // cancelled or given a deadline, and this one is given neither
   if (tree === null) throw new Error("cf view: Tree-sitter returned no tree.");
+  // deno-coverage-ignore-stop
   return tree;
 }
 
@@ -411,9 +414,7 @@ function structureNodes(
   depth: number,
 ): StructureNode[] {
   const out: StructureNode[] = [];
-  for (let index = 0; index < node.childCount; index++) {
-    const child = node.child(index);
-    if (child === null) continue;
+  for (const child of node.children) {
     const entry = grammar.structureEntry(child);
     if (entry === undefined) {
       out.push(...structureNodes(grammar, child, walk, depth));

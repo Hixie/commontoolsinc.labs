@@ -316,8 +316,8 @@ Deno.test("python: soft keywords are keywords only where they open a statement",
 });
 
 Deno.test("python: soft keywords resolve across line continuations", () => {
-  // A backslash continuation and a CRLF one both put the evidence that settles
-  // a soft keyword on the next physical line.
+  // What follows a soft keyword settles it, and a line continuation can put
+  // that on the next physical line.
   const assignment = "match  \\\n    = lambda x: x";
   const alias = "type Alias \\\n    = int";
 

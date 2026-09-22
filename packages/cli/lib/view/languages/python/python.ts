@@ -105,14 +105,13 @@ export const pythonGrammar: TreeSitterGrammar = {
       return undefined;
     }
     const name = node.childForFieldName("name");
-    if (name === null) return undefined;
     const asynchronous = node.child(0)?.type === "async";
     const keyword = node.type === "class_definition"
       ? "class"
       : asynchronous
       ? "async def"
       : "def";
-    return {
+    return name === null ? undefined : {
       kind: node.type === "class_definition"
         ? "class"
         : declaredInClass(node)
