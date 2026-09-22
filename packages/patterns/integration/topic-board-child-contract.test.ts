@@ -241,7 +241,10 @@ describe("topic-board-pivot-contract", () => {
       // A path that has produced nothing yet reads as undefined rather than as
       // an empty array, so the count has to treat the two alike.
       (v) => ((v ?? []) as unknown[]).length === length,
-      { stuckLabel: `${length} edges in \`${key}\` on ${t.id}` },
+      {
+        stuckLabel:
+          debugStr`${length} edges in $quote${key} on $quote,long${t.id}`,
+      },
     );
   };
 
@@ -287,9 +290,8 @@ describe("topic-board-pivot-contract", () => {
           rows.every((title, index) => title === wanted[index]);
       },
       {
-        stuckLabel: `the inbound edges on ${t.id} settling to [${
-          wanted.join(", ")
-        }]`,
+        stuckLabel: debugStr`the inbound edges on $quote,long${t.id}` +
+          debugStr` settling to $quote,long${wanted}`,
       },
     );
   };
