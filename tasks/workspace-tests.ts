@@ -217,26 +217,21 @@ const INTERNALLY_SHARDED_PACKAGES: Record<
   tasks: { total: 3, envVar: "TASK_TEST_SHARD" },
 };
 
-// A member's test task takes an appended `--junit-path` whole when it runs
-// exactly one `deno test`. That is read from the task itself, so a package
-// that lands with an ordinary test task is covered without being listed
-// anywhere. Two shapes are not readable from the task line, and both are
-// named below.
+// A member's leaf — its `test` task, or the `deno-test` that task hands
+// the flags to when it runs `tasks/run-member-tests.ts` — takes an
+// appended `--junit-path` whole when it runs exactly one `deno test`.
+// That is read from the task itself, so a package that lands with an
+// ordinary leaf is covered without being listed anywhere. A leaf carrying
+// a shell metacharacter puts the appended flag somewhere other than the
+// test command, and takes it for none.
 //
-// A task carrying a shell metacharacter puts the appended flag somewhere
-// other than the test command: `api` chains a type-performance benchmark
-// after its tests, and `patterns` runs two test commands, so the flag
-// would reach only the last one. A member that names its halves as
-// separate tasks has no `test` command at all, and takes neither flag for
-// the same reason a dependencies-only task does not.
-//
-// A task that runs a script cannot show what the script does with the
-// flags it is handed. The members listed here route through a runner that
-// forwards them to one `deno test`. The runners that do not appear here
-// keep their leaves out: `cli` runs three `deno test` invocations per
-// slice, which would each overwrite the file, and `dashboard` and
-// `identity` drive browser harnesses that record through the
-// deno-web-test reporter instead.
+// A leaf that runs a script of its own cannot show what the script does
+// with the flags it is handed. The members listed here route through a
+// runner that forwards them to one `deno test`. The runners that do not
+// appear here keep their leaves out: `cli` runs three `deno test`
+// invocations per slice, which would each overwrite the file, and
+// `dashboard` and `identity` drive browser harnesses that record through
+// the deno-web-test reporter instead.
 const FLAG_FORWARDING_RUNNERS = new Set([
   "./packages/connectors/agents/host",
   "./packages/piece",
@@ -378,9 +373,10 @@ export async function assertMemberTestTasksDefined(
     [
       `Every workspace member needs a \`test\` task of its own.`,
       `Missing from: ${named}.`,
-      `Add a \`test\` entry to that manifest's \`tasks\` — \`deno test\` where`,
-      `the package has tests, or \`echo 'No tests defined.'\` where it has`,
-      `none yet, as \`packages/utils/deno.jsonc\` shows. Put it in the file`,
+      `Add a \`test\` entry to that manifest's \`tasks\` — one running`,
+      `\`tasks/run-member-tests.ts\` over a \`deno-test\` entry where the`,
+      `package has tests, as \`packages/utils/deno.jsonc\` shows, or`,
+      `\`echo 'No tests defined.'\` where it has none yet. Put it in the file`,
       `named above rather than in a second manifest beside it: where a member`,
       `carries both a \`deno.json\` and a \`deno.jsonc\`, Deno takes the`,
       `\`deno.json\` and ignores the other whole, \`imports\` and all.`,

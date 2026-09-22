@@ -62,6 +62,15 @@ describe("reading a member's test task", () => {
     expect(parsed?.flags).toEqual(["--allow-run=/usr/bin/deno"]);
   });
 
+  it("keeps a quoted execPath substitution one flag when the path has a space", () => {
+    const parsed = parseTestTask(
+      'deno test --allow-run="$(deno eval "console.log(Deno.execPath())")" a.test.ts',
+      "/Users/Some One/bin/deno",
+    );
+    expect(parsed?.flags).toEqual(["--allow-run=/Users/Some One/bin/deno"]);
+    expect(parsed?.paths).toEqual(["a.test.ts"]);
+  });
+
   it("strips shell quoting from inside a flag's value", () => {
     // Several members write `--allow-env=API_URL,"TSC_*",NODE_ENV`. The
     // quotes are the shell's; a flag passed through with them names a

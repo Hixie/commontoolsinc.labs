@@ -15,9 +15,9 @@ deno task test
 
 **Important:** Always use `deno task test` from the root, NOT `deno test`, as the task includes necessary flags.
 
-A package's `test` task runs its tests and nothing else — it does not type
-check. `deno task check` at the root is what does that, for the whole
-workspace at once, so run both:
+A package's `test` task is no substitute for a type check: some packages' tests
+skip checking outright, and the rest check only the modules their tests reach.
+`deno task check` at the root checks the whole workspace at once, so run both:
 
 ```bash
 deno task check
@@ -430,10 +430,11 @@ under the other gets a report with every file missing.
 Deno resolves an allowlist entry of `deno` through `PATH` as well, so
 `--allow-run=deno` refuses the very binary the test is running under. Name that
 binary instead of widening the grant. A task line can compute it, because `deno`
-inside one runs the Deno running the task whatever `PATH` says:
+inside one runs the Deno running the task whatever `PATH` says. The quotes keep
+a path holding a space one argument:
 
 ```
---allow-run=$(deno eval "console.log(Deno.execPath())")
+--allow-run="$(deno eval "console.log(Deno.execPath())")"
 ```
 
 A test launched from a script can read `Deno.execPath()` directly, as

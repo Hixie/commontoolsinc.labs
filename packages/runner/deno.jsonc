@@ -1,6 +1,7 @@
 {
   "name": "@commonfabric/runner",
   "tasks": {
+    "test": "deno run --allow-read --allow-run=\"$(deno eval \"console.log(Deno.execPath())\")\" ../../tasks/run-member-tests.ts deno-test",
     // --preload runs test/clock-preload.ts before the test modules; it replaces
     // the clock so the runtime's own timers auto-advance and test sleeps freeze.
     // See that file and docs/development/waiting-in-tests.md. --no-check: the
@@ -11,7 +12,6 @@
     // silent-backstop-guard.test.ts spawns the Deno running the task
     // (`Deno.execPath()`, which a bare `deno` entry does not permit — Deno
     // resolves the allowlist through PATH) to run a fixture under this preload.
-    "test": "deno run --allow-env --allow-read --allow-run=$(deno eval \"console.log(Deno.execPath())\") ../../tasks/run-member-tests.ts deno-test",
     "deno-test": "ENV=test deno test --no-check --preload=test/clock-preload.ts --allow-ffi --allow-env --allow-read --allow-write=/tmp,/var/folders --allow-run=git,deno,\"$(deno eval \"console.log(Deno.execPath())\")\" test/**/*.test.ts test/**/*.test.tsx",
     "bench": {
       "description": "Run Cell benchmarks for performance analysis",

@@ -23,6 +23,7 @@ import {
   testConcurrency,
   testPackage,
 } from "./workspace-tests.ts";
+import * as path from "@std/path";
 import { preloadArgument } from "@commonfabric/test-support/records";
 import { WORKSPACE_TEST_WEIGHTS } from "./test-timing-weights.ts";
 import {
@@ -775,9 +776,8 @@ Deno.test("the workspace's capable members are read from their manifests", async
   const members = await readWorkspaceMembers(new URL("deno.jsonc", rootUrl));
   const capable = await junitCapableMembers(members, rootUrl);
 
-  // An ordinary package, a flag-forwarding runner, a member whose task
-  // ends in a `deno test`, and one running several commands through
-  // `run-member-tests.ts`, which hands the flag to its `deno-test`.
+  // Members whose `deno-test` is one `deno test`, reached through
+  // `run-member-tests.ts`, and a flag-forwarding runner behind it.
   for (
     const member of [
       "./packages/navigation",
@@ -801,15 +801,56 @@ Deno.test("the flag reaches the `deno-test` of a member running the wrapper", as
   // member runs the wrapper. What decides whether the flag can be used
   // at all is the command the wrapper hands it to, so that is what is
   // read.
-  const rootUrl = new URL("../", import.meta.url);
-  const leaf = await leafTask("./packages/memory", rootUrl);
-  assertEquals(leaf?.startsWith("deno test"), true, "reads the Deno half");
+  const root = await Deno.makeTempDir({ prefix: "leaf-task-" });
+  try {
+    const write = async (member: string, tasks: Record<string, string>) => {
+      await Deno.mkdir(path.join(root, member), { recursive: true });
+      await Deno.writeTextFile(
+        path.join(root, member, "deno.jsonc"),
+        JSON.stringify({ tasks }),
+      );
+    };
+    await write("wrapped", {
+      test: "deno run --allow-read ../tasks/run-member-tests.ts deno-test",
+      "deno-test": "deno test --allow-read",
+    });
+    await write("direct", {
+      test: "deno test --allow-net",
+      "deno-test": "deno test --allow-read",
+    });
+    const rootUrl = path.toFileUrl(`${root}/`);
+    assertEquals(
+      await leafTask("./wrapped", rootUrl),
+      "deno test --allow-read",
+    );
+    // A `test` task running no wrapper is its own leaf, whatever else the
+    // member defines.
+    assertEquals(await leafTask("./direct", rootUrl), "deno test --allow-net");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
 
-  // A member running one command is its own leaf.
-  assertEquals(
-    (await leafTask("./packages/navigation", rootUrl))?.includes("deno test"),
-    true,
-  );
+Deno.test("every member whose leaf takes the preload lets it read its variables", async () => {
+  // The preload reads the spool and the skip list from the environment,
+  // and a refused read is swallowed, so a leaf that cannot read them
+  // records no file map and skips nothing it is told to skip, silently.
+  const rootUrl = new URL("../", import.meta.url);
+  const members = await readWorkspaceMembers(new URL("deno.jsonc", rootUrl));
+  const recording = await memberRecordingArguments(members, "/spool", rootUrl);
+  const unreadable: string[] = [];
+  for (const [member, args] of recording) {
+    if (args.length === 0) continue;
+    const flags = leafFlags(member, (await leafTask(member, rootUrl)) ?? "");
+    const reads = flags.some((flag) =>
+      flag === "-A" || flag === "--allow-all" || flag === "--allow-env" ||
+      (flag.startsWith("--allow-env=") &&
+        flag.includes("CF_TEST_RECORDS_DIR") &&
+        flag.includes("CF_TEST_SKIP_LIST"))
+    );
+    if (!reads) unreadable.push(member);
+  }
+  assertEquals(unreadable, []);
 });
 
 Deno.test("the spool a run records into is resolved once", () => {

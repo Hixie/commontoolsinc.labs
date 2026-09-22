@@ -6,8 +6,8 @@
   },
   "tasks": {
     "check": "deno check .",
-    "deno-test": "deno test",
-    "test": "deno run --allow-env --allow-read --allow-run=$(deno eval \"console.log(Deno.execPath())\") ../../tasks/run-member-tests.ts deno-test"
+    "deno-test": "deno test --allow-env=CF_TEST_RECORDS_DIR,CF_TEST_SKIP_LIST",
+    "test": "deno run --allow-read --allow-run=\"$(deno eval \"console.log(Deno.execPath())\")\" ../../tasks/run-member-tests.ts deno-test"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.19"

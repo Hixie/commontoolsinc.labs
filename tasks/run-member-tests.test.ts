@@ -18,14 +18,41 @@ afterEach(async () => {
 });
 
 /** A member directory holding the manifest a case describes. */
-async function member(tasks: Record<string, unknown>): Promise<string> {
+async function member(
+  tasks: Record<string, unknown>,
+  manifest: "deno.json" | "deno.jsonc" = "deno.json",
+): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "member-tests-" });
   made.push(dir);
   await Deno.writeTextFile(
-    `${dir}/deno.json`,
-    JSON.stringify({ tasks }, null, 2),
+    `${dir}/${manifest}`,
+    `// The member's tasks.\n${JSON.stringify({ tasks }, null, 2)}\n`,
   );
   return dir;
+}
+
+/** The script under test, run in a member the way its `test` task runs it. */
+async function run(
+  dir: string,
+  args: string[],
+  env: Record<string, string> = {},
+): Promise<{ code: number; stdout: string }> {
+  const deno = Deno.execPath();
+  const { code, stdout } = await new Deno.Command(deno, {
+    // The permissions every member's `test` task grants it.
+    args: [
+      "run",
+      "--allow-read",
+      `--allow-run=${deno}`,
+      new URL("./run-member-tests.ts", import.meta.url).pathname,
+      ...args,
+    ],
+    cwd: dir,
+    env,
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  return { code, stdout: new TextDecoder().decode(stdout) };
 }
 
 describe("run-member-tests", () => {
@@ -109,15 +136,61 @@ describe("run-member-tests", () => {
       const dir = await member({
         [DENO_TEST_TASK]: "deno test",
         check: "deno check",
-      });
+      }, "deno.jsonc");
       expect([...await memberTasks(dir)].toSorted())
         .toEqual([DENO_TEST_TASK, "check"].toSorted());
+    });
+
+    it("reads a `deno.json` where the member has one", async () => {
+      const dir = await member({ [DENO_TEST_TASK]: "deno test" });
+      expect([...await memberTasks(dir)]).toEqual([DENO_TEST_TASK]);
     });
 
     it("returns nothing for a directory holding no manifest", async () => {
       const dir = await Deno.makeTempDir({ prefix: "member-tests-none-" });
       made.push(dir);
       expect([...await memberTasks(dir)]).toEqual([]);
+    });
+  });
+
+  describe("the script", () => {
+    it("runs the tasks in order, forwarding flags to `deno-test` alone", async () => {
+      const dir = await member({
+        [DENO_TEST_TASK]: "echo tests",
+        after: "echo after",
+      });
+      const { code, stdout } = await run(dir, [
+        DENO_TEST_TASK,
+        "after",
+        "--filter",
+        "a name",
+      ]);
+      expect(code).toBe(0);
+      expect(stdout).toBe("tests --filter a name\nafter\n");
+    });
+
+    it("stops at the first failing task, exiting with its code", async () => {
+      const dir = await member({
+        [DENO_TEST_TASK]: "exit 3",
+        after: "echo after",
+      });
+      expect(await run(dir, [DENO_TEST_TASK, "after"]))
+        .toEqual({ code: 3, stdout: "" });
+    });
+
+    it("hands its environment to the tasks without reading it", async () => {
+      // The run owner's variables, the spool and the skip list among
+      // them, reach the tests through the script, which is granted no
+      // environment access of its own.
+      const dir = await member({ [DENO_TEST_TASK]: "echo $CF_TEST_SKIP_LIST" });
+      expect(await run(dir, [DENO_TEST_TASK], { CF_TEST_SKIP_LIST: "/skips" }))
+        .toEqual({ code: 0, stdout: "/skips\n" });
+    });
+
+    it("refuses a misconfigured line before running anything", async () => {
+      const dir = await member({ [DENO_TEST_TASK]: "echo tests" });
+      expect(await run(dir, [DENO_TEST_TASK, "typo-test"]))
+        .toEqual({ code: 2, stdout: "" });
     });
   });
 });

@@ -232,13 +232,14 @@ is missed:
 
 1. Its path added to the `"workspace"` array in the root `deno.jsonc`.
 2. A `"tasks"` object in its own `deno.jsonc` carrying a `"test"` entry — either
-   `"deno test"`, or `"echo 'No tests defined.'"` when it has no tests yet.
-   Without one, `deno task test` falls through to the root workspace's task,
-   which would re-run the whole suite inside itself, spawning processes
-   exponentially. The workspace runner reads every member's manifest before it
-   runs any of their test tasks, and refuses to start when one has no `"test"`
-   entry, so what a missing entry costs is a message naming the member rather
-   than a CI timeout. `packages/utils/deno.jsonc` is a correct example.
+   one running `tasks/run-member-tests.ts` over a `"deno-test"` entry, or
+   `"echo 'No tests defined.'"` when it has no tests yet. Without one,
+   `deno task test` falls through to the root workspace's task, which would
+   re-run the whole suite inside itself, spawning processes exponentially. The
+   workspace runner reads every member's manifest before it runs any of their
+   test tasks, and refuses to start when one has no `"test"` entry, so what a
+   missing entry costs is a message naming the member rather than a CI timeout.
+   `packages/utils/deno.jsonc` is a correct example.
 3. A checked path in `tasks/typecheck.ts`, usually a single directory entry, so
    `deno task check` opens the package at all. Naming the package in the
    `workspace` array is what puts it under the type check's coverage claim, so a
@@ -252,9 +253,9 @@ When the package needs a dependency, follow `docs/development/DEPENDENCIES.md`.
 
 Before committing, squashing, or otherwise getting a branch ready to be reviewed
 or landed: Execute repo-wide `deno fmt --check`, `deno lint` and
-`deno task
-check`, and run all relevant tests. The type check is its own step
-because a package's `test` task runs its tests and nothing else.
+`deno task check`, and run all relevant tests. The type check is its own step: a
+package's `test` task runs its tests, and whatever those happen to type-check on
+the way is no substitute for checking the workspace.
 
 When babysitting a PR through CI, look for review comments in addition to failed
 CI jobs. Cubic reviews nearly every PR here, and its review lands a few minutes

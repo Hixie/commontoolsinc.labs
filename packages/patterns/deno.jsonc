@@ -68,7 +68,7 @@
     // DOM. The `*.browser.test.ts` name is what routes a file there: the same
     // glob keeps it out of the Deno-only pass, so only executed tests count.
     "test:browser": "deno run --allow-env --allow-read --allow-write --allow-run --allow-net ../deno-web-test/cli.ts **/*.browser.test.ts",
-    "test": "deno run --allow-env --allow-read --allow-run=$(deno eval \"console.log(Deno.execPath())\") ../../tasks/run-member-tests.ts deno-test source-coverage-test test:browser",
+    "test": "deno run --allow-read --allow-run=\"$(deno eval \"console.log(Deno.execPath())\")\" ../../tasks/run-member-tests.ts deno-test source-coverage-test test:browser",
     "deno-test": "deno test -A --import-map ./test-import-map.json --ignore='**/*.test.tsx' --ignore='integration' --ignore='test/source-coverage' --ignore='**/*.browser.test.ts' .",
     "source-coverage-test": "deno test -A test/source-coverage/"
   },

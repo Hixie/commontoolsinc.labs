@@ -9,8 +9,9 @@ paths:
 ## Every package needs its own test task
 
 A package's `deno.jsonc` must contain a `"tasks"` object with a `"test"` entry.
-Use `"deno test"` when the package has tests, or `"echo 'No tests defined.'"`
-when it does not have them yet.
+When the package has tests, that entry runs `tasks/run-member-tests.ts` over a
+`"deno-test"` entry holding the `deno test`; when it does not have them yet, it
+is `"echo 'No tests defined.'"`.
 
 This is not a tidiness rule. The root test runner (`tasks/test.ts`) walks every
 workspace member and runs `deno task test` in each. A member with no `test`
