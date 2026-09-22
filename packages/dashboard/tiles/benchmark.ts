@@ -647,7 +647,6 @@ function benchmarkUnavailable(sub: string, aside?: string): TileView {
   return {
     ...benchmarkDrill,
     aside,
-    label: "all benchmarks",
     status: "unknown",
     value: "—",
     sub,
@@ -1036,7 +1035,6 @@ function benchmarkIndexView(
     if (failed) {
       return {
         ...benchmarkDrill,
-        label: "all benchmarks",
         status: "bad",
         value: "failed",
         sub: failSub,
@@ -1115,7 +1113,6 @@ function benchmarkIndexView(
   );
   return {
     ...benchmarkDrill,
-    label: "all benchmarks",
     status,
     value,
     valueLabel: status === "bad"
@@ -1433,19 +1430,17 @@ async function collectBenchmarkTileRuns(
 
 /** Builds a benchmark tile over the selected product measurements. */
 function makeBenchmarkTile(
-  id: string,
   label: string,
   select: (key: string) => boolean = () => true,
   href = benchmarkDrill.href,
 ): Tile {
   return {
-    id,
     label,
     intervalMs: 60_000,
     showOnlyCompletedViews: true,
     async collect(ctx): Promise<TileView> {
       const token = ctx.env("GH_TOKEN") ?? ctx.env("GITHUB_TOKEN");
-      if (!token) return { ...benchmarkUnavailable("set GH_TOKEN"), label, href };
+      if (!token) return { ...benchmarkUnavailable("set GH_TOKEN"), href };
       let collection = benchmarkTileCollections.get(token);
       if (!collection) {
         collection = collectBenchmarkTileRuns(ctx, token).finally(() => {
@@ -1454,14 +1449,14 @@ function makeBenchmarkTile(
         benchmarkTileCollections.set(token, collection);
       }
       const { runs, offline } = await collection;
-      return { ...benchmarkIndexView(runs, Date.now(), select, offline), label, href };
+      return { ...benchmarkIndexView(runs, Date.now(), select, offline), href };
     },
   };
 }
 
 /** All product benchmarks, with the shared performance history routes. */
 export const benchmark: Tile = {
-  ...makeBenchmarkTile("benchmark", "all benchmarks"),
+  ...makeBenchmarkTile("all benchmarks"),
   routes: [
     {
       path: "/bench",
@@ -1505,7 +1500,6 @@ export const benchmark: Tile = {
 
 /** Topic board journey and 100-topic load measurements. */
 export const keyBenchmarks: Tile = makeBenchmarkTile(
-  "key-benchmarks",
   "key benchmarks",
   isKeyBenchmark,
   `${benchmarkDrill.href}&key=1`,
