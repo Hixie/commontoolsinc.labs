@@ -98,8 +98,10 @@ import {
   humanSpan,
   jsonFromZip,
   multiSparkline,
+  type GitHubJson,
   performanceGithub,
   performanceGithubDownload,
+  runArtifactId,
 } from "../lib.ts";
 import {
   BENCH_HEADLINE_MAX_AGE_HOURS,
@@ -150,8 +152,7 @@ const COLLECTION_BUCKET_MS = ciHistoryBucketMs(CI_HISTORY_MIN_DAYS);
 const BENCHMARK_REFRESH_MS = 30 * 60_000;
 const BENCHMARK_FETCH_CONCURRENCY = 8;
 
-interface BenchmarkGitHub {
-  json<T>(path: string, token: string): Promise<T>;
+interface BenchmarkGitHub extends GitHubJson {
   download(path: string, token: string): Promise<GitHubDownload>;
 }
 
@@ -185,11 +186,6 @@ interface Run {
   status?: string;
   created_at: string;
   conclusion: string | null;
-}
-interface Artifact {
-  id: number;
-  name: string;
-  expired: boolean;
 }
 
 const benchmarkStore = new BenchmarkHistoryStore();
@@ -440,14 +436,15 @@ async function loadRun(
   let metrics = new Map<string, Stats>();
   let zip: Uint8Array<ArrayBuffer> | undefined;
   try {
-    const arts = await github.json<{ artifacts?: Artifact[] }>(
-      `repos/${REPO}/actions/runs/${run.id}/artifacts`,
+    const artifactId = await runArtifactId({
+      github,
+      runId: run.id,
+      name: ARTIFACT,
       token,
-    );
-    const art = (arts.artifacts ?? []).find((a) =>
-      a.name === ARTIFACT && !a.expired
-    );
-    if (art) zip = await fetchZip(art.id, token, github);
+    });
+    if (artifactId !== undefined) {
+      zip = await fetchZip(artifactId, token, github);
+    }
   } catch (error) {
     // The read failed, so whether this run has usable results is still unknown.
     // Caching the empty map here would answer that question with "no" and never ask
