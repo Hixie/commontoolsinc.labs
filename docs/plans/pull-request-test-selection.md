@@ -1253,9 +1253,14 @@ anything a binary is built from does. `tasks/binary-cache-key.ts` computes
 it as a digest of the git object id of every tracked file under
 `BINARY_SOURCES` in `tasks/build-binaries.ts`. The tests in
 `tasks/build-binaries.test.ts` hold the list to every path the build reads
-and to every local module the binaries' import graphs reach. A change to the shell's service worker, to
-the Deno release that `mise.toml` pins, or to a JSON file an import reaches
-therefore moves the key like a change to any other source. Everything a
+and to every local module the binaries' import graphs reach. A change to the
+shell's service worker, to the Deno release that `mise.toml` pins, or to a
+JSON file an import reaches therefore moves the key like a change to any
+other source. Those graphs start from each entry point and from each module
+in a path the compile embeds with `--include`, because `deno compile`
+follows the imports of both. The toolshed binary leaves out the patterns'
+integration tests, so the test harness modules only those tests import are
+not embedded either. Everything a
 lane wants to keep between runs sits under that one directory — the built
 binaries, and the pattern compile byte cache — because one step covering
 one directory is what keeps the workflow independent of what the lane turns
