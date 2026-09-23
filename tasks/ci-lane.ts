@@ -1258,7 +1258,7 @@ export async function fullLanes(
   if (needed <= FULL_LANES_MAX) return needed;
   console.error(
     `ci-lane: the full run needs ${needed} lanes and takes ` +
-      `${FULL_LANES_MAX}, the most FULL_LANES_MAX allows, so each lane runs ` +
+      `${FULL_LANES_MAX}, the most FULL_LANES_MAX allows, so a lane may run ` +
       `past its budget`,
   );
   return FULL_LANES_MAX;
