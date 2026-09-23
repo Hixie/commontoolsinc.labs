@@ -447,8 +447,133 @@ describe("the order a runner is handed its work in", () => {
     }));
     const suiteIds = (chosen: readonly Selection[]) =>
       batchesOf(bakery, seen.manifest, chosen).map((batch) => batch.suite.id);
-    expect(suiteIds(selections)).toEqual(["repo-gates", "workspace-unit"]);
+    expect(suiteIds(selections).toSorted()).toEqual([
+      "repo-gates",
+      "workspace-unit",
+    ]);
     expect(suiteIds([...selections].reverse())).toEqual(suiteIds(selections));
+  });
+});
+
+describe("the order a lane runs its batches in", () => {
+  // A lane that runs out of time is killed with its later batches unrun
+  // and unmeasured, so the order decides which suites the cost model can
+  // learn. Each case turns on one ordering key, and its second assertion
+  // shows that key is what decides it.
+
+  /**
+   * What one suite's identities each cost, how many of them there are,
+   * what the suite is corrected by, and how many times each repeats.
+   */
+  interface Share {
+    cost?: number;
+    identities?: number;
+    correction?: number;
+    repeats?: number;
+  }
+
+  /**
+   * The suites a lane would run, in the order it would run them, of
+   * `alpha` and `zebra` (one identity each unless `shares` says
+   * otherwise), with the `fitted` ones measured, and the selections
+   * listed in reverse where `reversed` says.
+   */
+  function order(
+    fitted: readonly string[],
+    shares: Readonly<Record<string, Share>> = {},
+    reversed = false,
+  ): string[] {
+    const made = manifestOf(
+      ["zebra", "alpha"].flatMap((id) =>
+        Array.from({ length: shares[id]?.identities ?? 1 }, (_, n) => ({
+          test: { k: "unit", s: id, n: `test ${n}` },
+          suite: id,
+          unit: `${id}.ts`,
+          cost: shares[id]?.cost ?? 1,
+        }))
+      ),
+    );
+    for (const id of fitted) {
+      made.calibration.suites[id] = {
+        overhead: 5,
+        correction: shares[id]?.correction ?? 1,
+        unitOverhead: 0,
+      };
+    }
+    const topology = ["zebra", "alpha"].map((id) =>
+      suite({
+        id,
+        units: [`${id}.ts`],
+        locate: () => ({ level: "unit" as const, unit: `${id}.ts` }),
+      })
+    );
+    const selections = made.entries.map((entry) => ({
+      entry,
+      reason: "value" as const,
+      repeats: shares[entry.suite]?.repeats ?? 1,
+    }));
+    return batchesOf(
+      topology,
+      made,
+      reversed ? selections.toReversed() : selections,
+    ).map((batch) => batch.suite.id);
+  }
+
+  it("runs a suite nothing has measured before one something has", () => {
+    // The measured suite is the larger, so only this key puts it second.
+    expect(order(["alpha"], { alpha: { cost: 90 } }))
+      .toEqual(["zebra", "alpha"]);
+    expect(order(["alpha", "zebra"], { alpha: { cost: 90 } }))
+      .toEqual(["alpha", "zebra"]);
+  });
+
+  it("runs the largest share of the lane first within a group", () => {
+    expect(order([], { zebra: { cost: 90 } })).toEqual(["zebra", "alpha"]);
+    expect(order([], { alpha: { cost: 90 } })).toEqual(["alpha", "zebra"]);
+  });
+
+  it("counts every selected identity of a suite in its share", () => {
+    // Two thirty-second tests of `zebra` are more of the lane than one
+    // fifty-second test of `alpha`.
+    expect(order([], {
+      alpha: { cost: 50 },
+      zebra: { cost: 30, identities: 2 },
+    })).toEqual(["zebra", "alpha"]);
+    expect(order([], {
+      alpha: { cost: 50 },
+      zebra: { cost: 30 },
+    })).toEqual(["alpha", "zebra"]);
+  });
+
+  it("counts a suite's correction in its share", () => {
+    // Thirty seconds of `zebra` measured, running at twice that, is more
+    // of the lane than fifty seconds of `alpha`.
+    expect(order(["alpha", "zebra"], {
+      alpha: { cost: 50 },
+      zebra: { cost: 30, correction: 2 },
+    })).toEqual(["zebra", "alpha"]);
+    expect(order(["alpha", "zebra"], {
+      alpha: { cost: 50 },
+      zebra: { cost: 30 },
+    })).toEqual(["alpha", "zebra"]);
+  });
+
+  it("counts a selection's repeats in its share", () => {
+    // Thirty seconds run three times is more of the lane than sixty run
+    // once.
+    expect(order([], {
+      alpha: { cost: 60 },
+      zebra: { cost: 30, repeats: 3 },
+    })).toEqual(["zebra", "alpha"]);
+    expect(order([], {
+      alpha: { cost: 60 },
+      zebra: { cost: 30 },
+    })).toEqual(["alpha", "zebra"]);
+  });
+
+  it("settles a tie by the suite's identifier whatever order the plan listed", () => {
+    expect(order([])).toEqual(["alpha", "zebra"]);
+    expect(order([], {}, true)).toEqual(["alpha", "zebra"]);
   });
 });
 
