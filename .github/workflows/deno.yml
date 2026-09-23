@@ -13,7 +13,7 @@ on:
     # these a label reaches continuous integration only on the next push
     # — which is the one thing somebody reaching for the label does not
     # want to have to do. The cost is that changing any label starts a
-    # run, and the concurrency group above cancels whatever was going.
+    # run, and the concurrency group below cancels whatever was going.
     types:
       - opened
       - synchronize
@@ -162,10 +162,13 @@ jobs:
     steps:
       # Full depth, so the gates that read the revision a change is measured
       # against have it, and so the suites that replay a recorded vintage do.
+      # Nothing in a lane talks to the remote, so the checkout keeps no
+      # credential for anything a lane runs to find.
       - name: 📥 Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 🦕 Setup Deno
         uses: ./.github/actions/deno-setup

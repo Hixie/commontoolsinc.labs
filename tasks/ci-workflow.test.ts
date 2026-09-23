@@ -581,6 +581,19 @@ Deno.test("the workflow spells the dials the packer reads", async () => {
   );
 });
 
+Deno.test("a lane's checkout keeps no credential", async () => {
+  // A lane runs whatever the change under test put in the tree, and a
+  // checkout that persisted its token leaves it in `.git/config` for any
+  // of that to read. Nothing in a lane talks to the remote.
+  const contents = await workflow("deno.yml");
+  for (const jobId of ["pr-tests", "full-tests"]) {
+    assertStringIncludes(
+      stepBlock(jobBlock(contents, jobId), "📥 Checkout repository"),
+      "persist-credentials: false",
+    );
+  }
+});
+
 Deno.test("a lane keeps binaries and compiled bytes under different keys", async () => {
   // The two want opposite keys. A capability that finds a binary uses it
   // without asking what it was built from, so a binary is keyed exactly on
