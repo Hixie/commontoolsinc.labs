@@ -30,6 +30,7 @@
  *   deno run -A tasks/ci-lane.ts --lane 1 --of 5 --dry-run
  */
 
+import { exists } from "@std/fs";
 import * as path from "@std/path";
 import {
   FragmentWriter,
@@ -43,10 +44,12 @@ import {
 } from "@commonfabric/test-support/shuffle";
 import {
   type CapabilityId,
+  COMPILE_CACHE_FILE,
   logTail,
   openCapabilities,
   takeGithubToken,
 } from "./ci-capabilities.ts";
+import type { CompileCacheState } from "./ci-check-lib.ts";
 import {
   capabilitiesBySuite,
   loadTopology,
@@ -553,6 +556,18 @@ export function batchCoverage(
 export const COVERAGE_FAILURE_MARKER = "measured-through-a-failure.txt";
 
 /**
+ * The record a lane that opened the pattern compile byte cache leaves of
+ * whether it found one restored: `cold` or `warm`, the whole of the file.
+ *
+ * A cold cache compiles every pattern from scratch, which runs compile
+ * branches a warm run never reaches, so it moves the repository-wide
+ * figure that the pattern suites contribute to. The record goes beside the
+ * lane's reports, in the directory its coverage artifact holds, so that
+ * whatever reads the figure can tell a cold run's from a warm one's.
+ */
+export const COMPILE_CACHE_STATE_FILE = "compile-cache-state.txt";
+
+/**
  * Marks each measured set whose units a lane saw fail, beside the report
  * it wrote for that set.
  */
@@ -580,6 +595,23 @@ export async function markMeasuredFailures(
     marked.push(measuredSetName(ref));
   }
   return marked.sort();
+}
+
+/**
+ * Writes the record of whether the compile byte cache was restored, at the
+ * top of the directory the lane's coverage artifact carries.
+ */
+export async function writeCompileCacheState(
+  options: LaneOptions,
+  state: CompileCacheState,
+): Promise<void> {
+  const at = path.join(
+    coverageRoot(options),
+    path.dirname(COVERAGE_REPORT_DIR),
+    COMPILE_CACHE_STATE_FILE,
+  );
+  await Deno.mkdir(path.dirname(at), { recursive: true });
+  await Deno.writeTextFile(at, `${state}\n`);
 }
 
 /**
@@ -1355,6 +1387,13 @@ export async function runLane(
   describeWithheld(laid.withheld, seen.mandatory);
   if (options.dryRun) return true;
 
+  // Asked before any batch runs, because the first pattern a batch
+  // compiles writes the file whatever the cache held.
+  const compileCacheState = needs.has("compile-cache")
+    ? await exists(path.join(options.root, COMPILE_CACHE_FILE))
+      ? "warm"
+      : "cold"
+    : undefined;
   const workDir = await Deno.makeTempDir({ prefix: "ci-lane-" });
   const spool = (deps.spool ?? recordsDir)();
   // The directory belongs to the lane from the moment it exists, and a
@@ -1468,6 +1507,9 @@ export async function runLane(
   const converted = await convertCoverage(options);
   if (!converted.ok) ok = false;
   const marked = await markMeasuredFailures(options, suites, failedUnits);
+  if (compileCacheState !== undefined) {
+    await writeCompileCacheState(options, compileCacheState);
+  }
   describeCoverage(seen.coverage, converted.reports, marked);
   return ok;
 }
