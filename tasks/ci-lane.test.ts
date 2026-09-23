@@ -2055,11 +2055,12 @@ describe("the lane's own housekeeping", () => {
         dryRun: false,
         laneCount: false,
         root,
+        at: "2026-09-01T00:00:00Z",
       }, {
         topology: () => Promise.resolve([wanting]),
         manifest: ({ at }) =>
           Promise.resolve({ absent: `no manifest at ${at}: held out here` }),
-      })).rejects.toThrow();
+      })).rejects.toThrow("no such capability: nothing-opens-this");
     } finally {
       console.log = log;
       restore();
@@ -2156,7 +2157,15 @@ describe("the lane's own housekeeping", () => {
     console.log = () => {};
     try {
       return await runLane(
-        { lane: 1, of: 1, full: true, dryRun: false, laneCount: false, root },
+        {
+          lane: 1,
+          of: 1,
+          full: true,
+          dryRun: false,
+          laneCount: false,
+          root,
+          at: "2026-09-01T00:00:00Z",
+        },
         {
           topology: () => Promise.resolve(suites),
           manifest: ({ at }) =>
