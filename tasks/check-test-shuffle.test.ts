@@ -12,9 +12,11 @@ import { assert } from "@std/assert";
 import { join } from "@std/path";
 import {
   commandsOf,
+  main,
   problemWith,
   scan,
   staleRecords,
+  writtenCommands,
 } from "./check-test-shuffle.ts";
 
 const SHUFFLE = "--shuffle=$(deno task -q test-seed)";
@@ -34,9 +36,13 @@ async function fixtureRepo(memberTask: unknown): Promise<string> {
   return await fixtureMember({ test: memberTask });
 }
 
-/** Makes a git repository holding one member with the tasks given. */
+/**
+ * Makes a git repository holding one member with the tasks given, and any
+ * other files named, each tracked.
+ */
 async function fixtureMember(
   memberTasks: Record<string, unknown>,
+  files: Record<string, string> = {},
 ): Promise<string> {
   const root = await fixtureDir();
   const run = async (...args: string[]) => {
@@ -61,8 +67,31 @@ async function fixtureMember(
     join(root, "member", "deno.jsonc"),
     JSON.stringify({ tasks: memberTasks }, null, 2),
   );
-  await run("add", "deno.jsonc", "member/deno.jsonc");
+  for (const [path, contents] of Object.entries(files)) {
+    await Deno.mkdir(join(root, path, ".."), { recursive: true });
+    await Deno.writeTextFile(join(root, path), contents);
+  }
+  await run("add", "deno.jsonc", "member/deno.jsonc", ...Object.keys(files));
   return root;
+}
+
+/** Runs `body` with console output captured. */
+async function captureConsole(
+  body: () => Promise<void>,
+): Promise<{ out: string; err: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const log = console.log;
+  const error = console.error;
+  console.log = (...args) => out.push(args.map(String).join(" "));
+  console.error = (...args) => err.push(args.map(String).join(" "));
+  try {
+    await body();
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+  return { out: out.join("\n"), err: err.join("\n") };
 }
 
 describe("check-test-shuffle", () => {
@@ -151,12 +180,51 @@ describe("check-test-shuffle", () => {
     });
   });
 
+  describe("writtenCommands()", () => {
+    it("names the line of each command in a script, skipping comments", () => {
+      const found = writtenCommands(
+        "set -e\n# deno test -A would run here\ndeno test -A && echo done\n",
+      );
+      expect(found).toEqual([
+        { line: 1, command: "set -e" },
+        { line: 3, command: "deno test -A" },
+        { line: 3, command: "echo done" },
+      ]);
+    });
+
+    it("reads a substitution nested inside another", () => {
+      // The outer substitution runs `b` with its own substitution taken
+      // out, and that one runs `c`.
+      expect(commandsOf("a $(b $(c)) d")).toEqual(["a  d", "b", "c"]);
+    });
+  });
+
   describe("a runner written where it is easy to miss", () => {
     it("finds a `deno test` inside a command substitution", () => {
       const problems = commandsOf("echo $(deno test -A)")
         .map(problemWith)
         .filter((problem) => problem !== undefined);
       expect(problems).toHaveLength(1);
+    });
+  });
+
+  describe("main()", () => {
+    it("passes this repository", async () => {
+      const { out } = await captureConsole(async () => {
+        expect(await main()).toBe(0);
+      });
+      expect(out).toContain("shuffles its order");
+    });
+
+    it("fails a tree with an unshuffled runner, naming it and the fix", async () => {
+      const root = await fixtureRepo("deno test -A");
+      const { err } = await captureConsole(async () => {
+        expect(await main(root)).toBe(1);
+      });
+      expect(err).toContain("member/deno.jsonc (task `test`)");
+      expect(err).toContain("deno test -A");
+      expect(err).toContain("--shuffle=$(deno task -q test-seed)");
+      expect(err).toContain("deno task test-seed");
     });
   });
 
@@ -239,6 +307,115 @@ describe("check-test-shuffle", () => {
       const violations = await scan(root);
       expect(violations).toHaveLength(1);
       expect(violations[0]!.problem).toContain("RUNNERS");
+    });
+
+    it("fails a workflow step that runs `deno test` with no seed", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        ".github/workflows/ci.yml":
+          "jobs:\n  test:\n    steps:\n      # deno test is fine in a comment\n" +
+          "      - run: deno test -A\n",
+      });
+      const violations = await scan(root);
+      expect(violations.map((violation) => violation.where)).toEqual([
+        ".github/workflows/ci.yml:5",
+      ]);
+    });
+
+    it("fails a shell script that runs `deno test` with no seed", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "scripts/run.sh": "#!/bin/sh\ndeno test -A\n",
+      });
+      const violations = await scan(root);
+      expect(violations.map((violation) => violation.where)).toEqual([
+        "scripts/run.sh:2",
+      ]);
+    });
+
+    it("passes over a tracked script the working tree no longer holds", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "scripts/run.sh": "deno test -A\n",
+      });
+      await Deno.remove(join(root, "scripts/run.sh"));
+      expect(await scan(root)).toEqual([]);
+    });
+
+    it("follows `deno task` into another of the member's tasks", async () => {
+      const root = await fixtureMember({
+        test: "deno task deno-test",
+        "deno-test": { command: "deno test -A" },
+      });
+      const violations = await scan(root);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.where).toContain("`deno-test`");
+    });
+
+    it("follows a task that names itself only once", async () => {
+      const root = await fixtureMember({
+        test: `deno task test && deno test ${SHUFFLE} -A`,
+      });
+      expect(await scan(root)).toEqual([]);
+    });
+
+    it("passes over a member with no manifest of its own", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "deno.jsonc": JSON.stringify({
+          workspace: ["./member", "./bare"],
+          tasks: {},
+        }),
+        "bare/README.md": "no manifest here\n",
+      });
+      expect(await scan(root)).toEqual([]);
+    });
+
+    it("passes over a manifest that declares no tasks", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "tools/deno.jsonc": JSON.stringify({ imports: {} }),
+      });
+      expect(await scan(root)).toEqual([]);
+    });
+
+    it("passes over a tracked manifest the working tree no longer holds", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "tools/deno.jsonc": JSON.stringify({ tasks: { t: "deno test -A" } }),
+      });
+      await Deno.remove(join(root, "tools/deno.jsonc"));
+      expect(await scan(root)).toEqual([]);
+    });
+
+    it("refuses a manifest that is not JSON rather than passing it", async () => {
+      // A manifest this cannot read is one whose runners it cannot judge,
+      // and passing it would claim they shuffle.
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "tools/deno.jsonc": "{ not json",
+      });
+      await expect(scan(root)).rejects.toThrow();
+    });
+
+    it("refuses a member manifest that is not JSON", async () => {
+      // The same holds for a member's own manifest, which the check reads
+      // whether or not git tracks it.
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "deno.jsonc": JSON.stringify({
+          workspace: ["./member", "./broken"],
+          tasks: {},
+        }),
+      });
+      await Deno.mkdir(join(root, "broken"));
+      await Deno.writeTextFile(join(root, "broken", "deno.json"), "{ nope");
+      await expect(scan(root)).rejects.toThrow();
+    });
+
+    it("refuses a tracked script it cannot read", async () => {
+      const root = await fixtureMember({ test: `deno test ${SHUFFLE} -A` }, {
+        "scripts/run.sh": "deno test -A\n",
+      });
+      await Deno.remove(join(root, "scripts/run.sh"));
+      await Deno.mkdir(join(root, "scripts/run.sh"));
+      await expect(scan(root)).rejects.toThrow();
+    });
+
+    it("refuses to judge a tree git cannot list", async () => {
+      await expect(scan(await fixtureDir())).rejects.toThrow("git ls-files");
     });
 
     it("passes a member that says it has no tests", async () => {

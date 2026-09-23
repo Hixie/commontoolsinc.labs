@@ -56,6 +56,47 @@ async function withSeedVariable(
   }
 }
 
+/**
+ * Runs `commitMoment()` against this checkout in a child process, whose
+ * permissions and search path a test can choose, and reports what it did.
+ */
+async function probeCommitMoment(
+  options: { allowRun: boolean; path?: string },
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  const module = new URL("./shuffle.ts", import.meta.url).href;
+  const root = new URL("../../..", import.meta.url).pathname;
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--frozen=true",
+      "--allow-read",
+      ...(options.allowRun ? ["--allow-run=git"] : []),
+      "-",
+    ],
+    cwd: root,
+    ...(options.path === undefined
+      ? {}
+      : { env: { PATH: options.path }, clearEnv: false }),
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(
+    new TextEncoder().encode(
+      `import { commitMoment } from ${JSON.stringify(module)};\n` +
+        `console.log(String(commitMoment(${JSON.stringify(root)})));\n`,
+    ),
+  );
+  await writer.close();
+  const output = await child.output();
+  return {
+    success: output.success,
+    stdout: new TextDecoder().decode(output.stdout).trim(),
+    stderr: new TextDecoder().decode(output.stderr),
+  };
+}
+
 describe("shuffle", () => {
   describe("daySeed()", () => {
     it("reads the date in the Pacific zone rather than in UTC", () => {
@@ -97,6 +138,20 @@ describe("shuffle", () => {
       } finally {
         await Deno.remove(dir, { recursive: true });
       }
+    });
+
+    it("answers nothing where there is no git to ask", async () => {
+      const result = await probeCommitMoment({ allowRun: true, path: "" });
+      expect(result.stdout).toBe("undefined");
+    });
+
+    it("refuses a process that may not run git rather than guess", async () => {
+      // A missing permission is a caller's mistake. Reading it as "no
+      // commit" would shuffle by today's date and name that seed as the
+      // commit's.
+      const result = await probeCommitMoment({ allowRun: false });
+      expect(result.success).toBe(false);
+      expect(result.stderr).toContain("NotCapable");
     });
 
     it("answers nothing outside a git checkout", async () => {

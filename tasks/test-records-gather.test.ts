@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
+import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
 
 import {
   gather,
@@ -200,6 +201,60 @@ describe("test-records-gather", () => {
       const lines = (await Deno.readTextFile(join(out, "records.ndjson")))
         .trimEnd().split("\n");
       expect(lines.length).toBe(1);
+    });
+  });
+
+  describe("the command line continuous integration runs", () => {
+    const ROOT = fromFileUrl(new URL("..", import.meta.url));
+    const SCRIPT = fromFileUrl(
+      new URL("./test-records-gather.ts", import.meta.url),
+    );
+    let out: string;
+
+    beforeEach(async () => {
+      out = await Deno.makeTempDir({ prefix: "test-records-gather-cli-" });
+    });
+
+    afterEach(async () => {
+      await Deno.remove(out, { recursive: true });
+    });
+
+    /** Runs the gather step as a job does, with the environment given. */
+    const gatherAsAJob = (args: string[], env: Record<string, string>) =>
+      runDenoCommandWithTemporaryLock({
+        root: ROOT,
+        args: (lock) => [
+          "run",
+          `--lock=${lock}`,
+          "--allow-read",
+          "--allow-write",
+          "--allow-env",
+          "--allow-run=git",
+          SCRIPT,
+          ...args,
+        ],
+        env,
+      });
+
+    it("writes the seed the job's runners shuffled by into the job facts", async () => {
+      const result = await gatherAsAJob(
+        ["--out", join(out, "artifact"), "--job", "Probe"],
+        { CF_TEST_SHUFFLE_SEED: "7", CF_TEST_RECORDS_DIR: "" },
+      );
+      expect(result.success).toBe(true);
+      const facts = JSON.parse(
+        await Deno.readTextFile(join(out, "artifact", "job.json")),
+      );
+      expect(facts.job).toBe("Probe");
+      expect(facts.shuffleSeed).toBe(7);
+    });
+
+    it("refuses a command line that names no output directory", async () => {
+      const result = await gatherAsAJob(["--job", "Probe"], {});
+      expect(result.code).toBe(2);
+      expect(new TextDecoder().decode(result.stderr)).toContain(
+        "usage: test-records-gather.ts",
+      );
     });
   });
 

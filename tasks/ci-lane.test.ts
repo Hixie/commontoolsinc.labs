@@ -1,5 +1,8 @@
 import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
+import { fromFileUrl } from "@std/path";
+import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
+import { shuffleNotice } from "@commonfabric/test-support/shuffle";
 import {
   type TestIdentity,
   testIdentityKey,
@@ -114,6 +117,30 @@ function manifestOf(entries: readonly Partial<ManifestEntry>[]): Manifest {
 }
 
 describe("reading the lane's command line", () => {
+  it("names the seed it settled on even when it refuses the command line", async () => {
+    // The lane settles one seed for every command it builds, and says
+    // which before it reads anything, so a log that stops early still
+    // names the order its tests would have run in.
+    const result = await runDenoCommandWithTemporaryLock({
+      root: fromFileUrl(new URL("..", import.meta.url)),
+      args: (lock) => [
+        "run",
+        `--lock=${lock}`,
+        "-A",
+        fromFileUrl(new URL("./ci-lane.ts", import.meta.url)),
+        "--bogus",
+      ],
+      env: { CF_TEST_SHUFFLE_SEED: "7" },
+    });
+    expect(result.code).toBe(2);
+    const stderr = new TextDecoder().decode(result.stderr);
+    expect(stderr).toContain(shuffleNotice(7));
+    expect(stderr).toContain("usage: ci-lane.ts");
+    expect(stderr.indexOf(shuffleNotice(7))).toBeLessThan(
+      stderr.indexOf("usage: ci-lane.ts"),
+    );
+  });
+
   it("takes the lane, its share, and the moment to resolve at", () => {
     const options = parseLaneArgs([
       "--lane",
