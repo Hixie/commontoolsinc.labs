@@ -1260,13 +1260,31 @@ other source. Those graphs start from each entry point and from each module
 in a path the compile embeds with `--include`, because `deno compile`
 follows the imports of both. The toolshed binary leaves out the patterns'
 integration tests, so the test harness modules only those tests import are
-not embedded either. Everything a
-lane wants to keep between runs sits under that one directory — the built
-binaries, and the pattern compile byte cache — because one step covering
-one directory is what keeps the workflow independent of what the lane turns
-out to need. That step is in the workflow rather than in the runner because
-the cache service is only reachable through the action, and it is written
-once and never touched again.
+not embedded either.
+
+A binary is also made from the environment it is built in, because the
+shell bundle bakes environment variables in as compile-time defines. So a
+capability that builds a binary it caches runs the build with a cleared
+environment. It passes through only `BUILD_HOST_VARIABLES` in
+`tasks/build-binaries.ts`, the variables the build needs from the machine,
+such as `PATH` and `DENO_DIR`. A test fails if the shell's configuration
+reads one of them, so none reaches a binary. The build is given only the
+other variables that `cachedBinaries()` in `tasks/ci-capabilities.ts` names
+for that binary, and every other variable it reads is unset. The key covers
+that table as well as the sources, so a change to what a cached binary's
+build is given moves the key even where no source changes, as when
+`tasks/server-execution-ci.ts` changes which define the opposite arm is
+given. A variable set in the lane's own environment cannot reach a cached
+binary. Nothing sets `COMMIT_SHA` in a cached build, because a binary built
+at one commit serves every later commit with the same sources.
+
+Everything a lane wants to keep between runs sits under that one
+directory — the built binaries, and the pattern compile byte cache —
+because one step covering one directory is what keeps the workflow
+independent of what the lane turns out to need. That step is in the
+workflow rather than in the runner because the cache service is only
+reachable through the action, and it is written once and never touched
+again.
 
 That split is the argument for having capabilities at all. Three ways of
 providing "a Toolshed server" coexist, suites say which one they need, and

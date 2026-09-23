@@ -39,6 +39,31 @@ export const BINARY_SOURCES = [
   "docs/common/",
 ] as const;
 
+/**
+ * The environment variables a build needs from the machine it runs on: where
+ * to find programs, the home and temporary directories, where Deno keeps its
+ * cache, and how it reaches the network to fetch dependencies, whose contents
+ * the lockfile pins. None of them reaches a binary, which
+ * `build-binaries.test.ts` holds the shell bundle's configuration to. A CI
+ * lane building a binary it caches passes these through from its own
+ * environment, and nothing else, so every other variable the build reads is
+ * one the lane either sets or leaves unset.
+ */
+export const BUILD_HOST_VARIABLES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "DENO_DIR",
+  "XDG_CACHE_HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "DENO_CERT",
+  "DENO_TLS_CA_STORE",
+  "DENO_AUTH_TOKENS",
+  "NPM_CONFIG_REGISTRY",
+] as const;
+
 export function requestedBinaries(args: readonly string[]): BinaryName[] {
   if (args.length === 0) return [...BINARY_NAMES];
   if (args.length === 1 && args[0] === "--cli-only") return ["cf"];
@@ -358,15 +383,12 @@ async function buildShell(config: BuildConfig): Promise<void> {
         task,
       ],
       cwd: config.shellProjectPath(),
+      // The shell's configuration reads what it bakes in from the
+      // environment this build inherited: the same `COMMIT_SHA` and
+      // `EXPERIMENTAL_SERVER_EXECUTION` that `prepareWorkspace()` writes into
+      // the markers, each unset where the caller left it unset.
       stdout: "inherit",
       stderr: "inherit",
-      env: {
-        // `clearEnv` remains false, so this child inherits the caller's
-        // EXPERIMENTAL_SERVER_EXECUTION value and bakes the same posture as
-        // the parent binary build. This is load-bearing for the opposite
-        // CI lane's cache-miss path.
-        COMMIT_SHA: Deno.env.get("COMMIT_SHA") || mode,
-      },
     }).output();
     if (!success) {
       throw new Error("Failed to build shell app");
