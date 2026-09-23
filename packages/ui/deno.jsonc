@@ -5,12 +5,7 @@
   },
   "tasks": {
     "bundle": "../../scripts/bundle.ts src/index.ts",
-    "test": {
-      "dependencies": [
-        "deno-test",
-        "browser-test"
-      ]
-    },
+    "test": "deno run --allow-read --allow-run=\"$(deno eval \"console.log(Deno.execPath())\")\" ../../tasks/run-member-tests.ts deno-test browser-test",
     // The `*.browser.test.ts` name is what routes a file: the glob keeps it
     // out of the plain `deno test` run and hands it to the browser runner.
     "deno-test": "deno test --allow-env --allow-ffi --allow-read --allow-write --allow-run --ignore='**/*.browser.test.ts'",

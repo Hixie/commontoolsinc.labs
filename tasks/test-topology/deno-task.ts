@@ -47,6 +47,13 @@ const METACHARACTER = /[&;|<>`$()]/;
 const EXEC_PATH_SUBSTITUTION =
   /\$\(deno eval ["']console\.log\(Deno\.execPath\(\)\)["']\)/g;
 
+/**
+ * What stands in for that substitution while the task is split into
+ * words. The path goes in afterwards, because a path holding a space
+ * would otherwise be split into two words that are neither of them it.
+ */
+const EXEC_PATH_PLACEHOLDER = "@DENO_EXEC_PATH@";
+
 /** `NAME=value` in front of the command. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
@@ -89,10 +96,12 @@ export function parseTestTask(
   task: string,
   execPath: string = Deno.execPath(),
 ): ParsedTestTask | undefined {
-  const resolved = task.replace(EXEC_PATH_SUBSTITUTION, execPath);
+  const resolved = task.replace(EXEC_PATH_SUBSTITUTION, EXEC_PATH_PLACEHOLDER);
   if (METACHARACTER.test(resolved)) return undefined;
   if (/--import-map[= ]/.test(resolved)) return undefined;
-  const words = resolved.trim().split(/\s+/).filter((word) => word.length > 0);
+  const words = resolved.trim().split(/\s+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word.replaceAll(EXEC_PATH_PLACEHOLDER, execPath));
   const env: Record<string, string> = {};
   let index = 0;
   for (; index < words.length; index++) {
@@ -326,11 +335,12 @@ export async function taskEnvironment(
  *
  * The Deno-only half is `deno-test` where a member names one and `test`
  * otherwise, which is the same rule the per-package coverage gate
- * measures by. A task written as a dependency list — several members
- * write `test` as a type check followed by `just-test` — resolves to
- * whichever of its dependencies is a readable `deno test`, so those
- * members keep their file granularity instead of running whole over a
- * wrapper task.
+ * measures by, and the same task `tasks/run-member-tests.ts` hands a
+ * member's appended flags to. A member running several commands names
+ * that half, so this and the workspace runner read one task rather than
+ * one each. A task written as a dependency list resolves to whichever of
+ * its dependencies is a readable `deno test`, which is what a member
+ * still writing one keeps its file granularity by.
  */
 export async function memberTasks(
   memberDir: string,
