@@ -1397,6 +1397,15 @@ async function fullLanesNeeded(
   });
 }
 
+/**
+ * The directory the continuous-integration job keeps its own temporary
+ * files in, where the lane is running inside one.
+ */
+function runnerTemp(): string | undefined {
+  const at = Deno.env.get("RUNNER_TEMP");
+  return at === undefined || at.length === 0 ? undefined : at;
+}
+
 /** Runs one lane, and says whether everything in it passed. */
 export async function runLane(
   options: LaneOptions,
@@ -1457,7 +1466,25 @@ export async function runLane(
       ? "warm"
       : "cold"
     : undefined;
-  const workDir = await Deno.makeTempDir({ prefix: "ci-lane-" });
+  const temp = runnerTemp();
+  const workDir = await Deno.makeTempDir({
+    prefix: "ci-lane-",
+    // Under the job's own temporary directory where there is one, which
+    // is where a workflow step can upload what a failing lane left
+    // behind.
+    ...(temp === undefined ? {} : { dir: temp }),
+  });
+  // A lane that passed leaves nothing behind. A lane that failed in a job
+  // keeps what its capabilities wrote, because a server's log is what
+  // says why a suite could not reach it, and a workflow step can upload
+  // the directory from the job's temporary directory. Anywhere else
+  // nothing would collect it, and one directory would accumulate per
+  // failed run.
+  const leaveWorkDir = async (passed: boolean) => {
+    if (passed || temp === undefined) {
+      await Deno.remove(workDir, { recursive: true }).catch(() => {});
+    }
+  };
   const spool = (deps.spool ?? recordsDir)();
   // The directory belongs to the lane from the moment it exists, and a
   // capability that refuses to open is one of the ways the lane ends.
@@ -1470,7 +1497,7 @@ export async function runLane(
       ...(githubToken === undefined ? {} : { githubToken }),
     });
   } catch (error) {
-    await Deno.remove(workDir, { recursive: true }).catch(() => {});
+    await leaveWorkDir(false);
     throw error;
   }
   if (spool !== undefined) {
@@ -1557,9 +1584,7 @@ export async function runLane(
     // and the logs are large.
     if (!ok) await describeCapabilityLogs(opened.logs);
     await opened.close();
-    // The lane owns this directory and nothing outside the lane reads
-    // it, so it goes whether the batches passed, failed, or never ran.
-    await Deno.remove(workDir, { recursive: true }).catch(() => {});
+    await leaveWorkDir(ok);
   }
   describeConflicts(conflicts);
   // After the capabilities are closed, because a conversion is the lane's
