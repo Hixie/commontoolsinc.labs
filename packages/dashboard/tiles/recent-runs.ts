@@ -41,7 +41,6 @@ const utcFallback = (iso: string): string => {
 const repoOf = (run: Run): string => run.repo ?? REPO;
 
 function runDuration(run: Run): string | null {
-  if (run.status !== "completed") return null;
   const ran = runDurationMs(run);
   return ran === undefined ? null : humanDuration(ran);
 }

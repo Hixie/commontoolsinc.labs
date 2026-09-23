@@ -341,6 +341,27 @@ Deno.test("labs ci trust: an earlier attempt GitHub does not return fails the co
   );
 });
 
+Deno.test("labs ci trust: an earlier attempt that is not the one asked for fails the collection", async () => {
+  const retried = run({ conclusion: "success", run_attempt: 2 });
+  const answers: Run[] = [
+    // Still going, so it carries no verdict to read.
+    { ...attemptOf(retried, 1, "failure"), status: "in_progress", conclusion: null },
+    // Another run's attempt.
+    { ...attemptOf(retried, 1, "failure"), id: retried.id + 1 },
+    // Another attempt of the same run.
+    attemptOf(retried, 2, "failure"),
+  ];
+  for (const answer of answers) {
+    await withGithubAttempt(answer, async () => {
+      await assertRejects(
+        () => labsCiTrust.collect(ctx([retried])),
+        Error,
+        "did not include a completed conclusion",
+      );
+    });
+  }
+});
+
 Deno.test("labs ci trust: a job count GitHub does not return fails the collection", async (t) => {
   const cases: { name: string; answer: GithubAnswer; message: string }[] = [
     {
