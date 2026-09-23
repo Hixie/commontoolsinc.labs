@@ -22,8 +22,9 @@ export function sampleManifest(fields: Partial<Manifest> = {}): Manifest {
 /**
  * A new repository in a temporary directory whose one commit was made at
  * `committed`, for a case about which manifest a commit resolves. The
- * caller removes the directory. Throws where git refuses a step, since a
- * repository with no commit would read as one whose date cannot be read.
+ * caller removes the directory. Throws where git refuses a step, having
+ * removed the directory, since a repository with no commit would read as
+ * one whose date cannot be read.
  */
 export async function repositoryCommittedAt(
   committed: string,
@@ -51,9 +52,14 @@ export async function repositoryCommittedAt(
       );
     }
   };
-  await git("init", "-q");
-  await Deno.writeTextFile(`${root}/a.txt`, "a");
-  await git("add", "a.txt");
-  await git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "one");
+  try {
+    await git("init", "-q");
+    await Deno.writeTextFile(`${root}/a.txt`, "a");
+    await git("add", "a.txt");
+    await git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "one");
+  } catch (error) {
+    await Deno.remove(root, { recursive: true });
+    throw error;
+  }
   return root;
 }

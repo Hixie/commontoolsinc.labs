@@ -234,6 +234,7 @@ describe("the moment a lane resolves its manifest at", () => {
 
   it("falls back to the newest manifest outside a repository, and says so", async () => {
     const root = await Deno.makeTempDir({ prefix: "ci-lane-nogit-" });
+    roots.push(root);
     const moment = manifestMoment({ ...lane, root });
     expect(moment.note).toContain("cannot read the commit's date");
     expect(Number.isNaN(new Date(moment.at).getTime())).toBe(false);

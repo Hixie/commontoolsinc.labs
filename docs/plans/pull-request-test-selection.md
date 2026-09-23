@@ -3913,7 +3913,7 @@ continuous integration asks the same question from inside a job.
 job summary, so the two cannot disagree about what would run. Every mode
 that reads a manifest resolves it the way a lane does, at the moment the
 checked-out commit was made, so each reads the manifest the lanes testing
-that commit read.
+that commit read, or the one current at the moment `--at` names.
 
 ## Every dial in one place
 
