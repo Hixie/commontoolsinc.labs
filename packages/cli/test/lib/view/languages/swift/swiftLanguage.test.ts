@@ -266,7 +266,7 @@ describe("swiftLanguage", () => {
       "}",
       "",
       "struct Store: Loader {",
-      '  let name = "store"',
+      '  let (name, alias) = ("store", "s")',
       "  init() {}",
       "  func load() throws -> Data {",
       "    let local = Data()",

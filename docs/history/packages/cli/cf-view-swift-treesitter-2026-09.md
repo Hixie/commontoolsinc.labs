@@ -39,7 +39,7 @@ deno run --allow-read --allow-env --allow-run \
   ../../docs/history/packages/cli/cf-view-swift-treesitter-2026-09-probe.ts
 ```
 
-The source repeats a nine-line unit — an attributed generic class holding an
+The source repeats a seven-line unit — an attributed generic class holding an
 asynchronous throwing method whose body interpolates a call into a string —
 after one line of non-ASCII comment, to exactly 100,009 UTF-8 bytes. The edit
 renames the first `renderItem` after the middle of the source to `renderUnit`.

@@ -143,7 +143,7 @@ function propertyEntry(
   const binding = [...node.namedChildren, ...pattern.namedChildren].find(
     (child) => child.type === "value_binding_pattern",
   );
-  const name = pattern.childForFieldName("bound_identifier");
+  const name = pattern.descendantsOfType("simple_identifier")[0] ?? null;
   return namedEntry("variable", binding!.text, name);
 }
 
