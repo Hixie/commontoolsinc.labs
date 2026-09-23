@@ -722,7 +722,7 @@ Deno.test("acceptsJUnitPath takes a runner only when it is known to forward", ()
   const runner = "deno run -A test/run-tests.ts";
   assertEquals(acceptsJUnitPath("./packages/piece", runner), true);
   assertEquals(acceptsJUnitPath("./tasks", runner), true);
-  assertEquals(acceptsJUnitPath("./packages/cli", runner), false);
+  assertEquals(acceptsJUnitPath("./packages/cli", runner), true);
   assertEquals(acceptsJUnitPath("./packages/dashboard", runner), false);
 });
 
@@ -777,11 +777,13 @@ Deno.test("the workspace's capable members are read from their manifests", async
   const capable = await junitCapableMembers(members, rootUrl);
 
   // Members whose `deno-test` is one `deno test`, reached through
-  // `run-member-tests.ts`, and a flag-forwarding runner behind it.
+  // `run-member-tests.ts`, and flag-forwarding runners behind it, one of
+  // them running its files as several `deno test` commands.
   for (
     const member of [
       "./packages/navigation",
       "./tasks",
+      "./packages/cli",
       "./packages/runner",
       "./packages/api",
       "./packages/memory",
@@ -789,11 +791,12 @@ Deno.test("the workspace's capable members are read from their manifests", async
   ) {
     assertEquals(capable.has(member), true, `${member} should take the flag`);
   }
-  // A runner that runs several test commands, and a browser harness,
-  // neither of which does.
-  for (const member of ["./packages/cli", "./packages/dashboard"]) {
-    assertEquals(capable.has(member), false, `${member} should not`);
-  }
+  // A browser harness, which does not.
+  assertEquals(
+    capable.has("./packages/dashboard"),
+    false,
+    "./packages/dashboard should not",
+  );
 });
 
 Deno.test("the flag reaches the `deno-test` of a member running the wrapper", async () => {
@@ -926,7 +929,7 @@ Deno.test("a recording leaf is given the preload and a write it needs", async ()
   // is what finds the files that replace them.
   assertEquals(recording.get("./packages/utils"), [preload]);
   // A member whose task cannot take the preload takes nothing at all.
-  assertEquals(recording.get("./packages/cli"), []);
+  assertEquals(recording.get("./packages/dashboard"), []);
 });
 
 //

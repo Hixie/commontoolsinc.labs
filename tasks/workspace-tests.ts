@@ -211,7 +211,6 @@ const INTERNALLY_SHARDED_PACKAGES: Record<
     total: 5,
     envVar: "AGENTS_HOST_TEST_SHARD",
   },
-  // packages/cli/test/run-tests.ts reads CLI_TEST_SHARD.
   cli: { total: 10, envVar: "CLI_TEST_SHARD" },
   piece: { total: 3, envVar: "PIECE_TEST_SHARD" },
   tasks: { total: 3, envVar: "TASK_TEST_SHARD" },
@@ -226,13 +225,13 @@ const INTERNALLY_SHARDED_PACKAGES: Record<
 // test command, and takes it for none.
 //
 // A leaf that runs a script of its own cannot show what the script does
-// with the flags it is handed. The members listed here route through a
-// runner that forwards them to one `deno test`. The runners that do not
-// appear here keep their leaves out: `cli` runs three `deno test`
-// invocations per slice, which would each overwrite the file, and
-// `dashboard` and `identity` drive browser harnesses that record through
-// the deno-web-test reporter instead.
+// with the flags it is handed. The members listed here route through
+// `tasks/run-sharded-test-files.ts`, which forwards them to its `deno test`
+// runs and leaves one report where the flag names. The runners that do not
+// appear here keep their leaves out: `dashboard` and `identity` drive
+// browser harnesses that record through the deno-web-test reporter instead.
 const FLAG_FORWARDING_RUNNERS = new Set([
+  "./packages/cli",
   "./packages/connectors/agents/host",
   "./packages/piece",
   "./tasks",
