@@ -25,11 +25,6 @@ const SCRIPT = await Deno.readTextFile(
   new URL("../integration/fuse-exec.sh", import.meta.url),
 );
 
-/** The CI workflow, whose cli-integration-test job dispatches a section. */
-const WORKFLOW = await Deno.readTextFile(
-  new URL("../../../.github/workflows/deno.yml", import.meta.url),
-);
-
 /** The shell function that runs a phase, by the script's naming rule. */
 function phaseFunction(phase: string): string {
   return `run_${phase.replaceAll("-", "_")}`;
@@ -108,24 +103,6 @@ function recordedBy(script: string, fn: string): string[] {
   });
 }
 
-/** The cli-integration-test job's block of the workflow. */
-function ciJobBlock(workflow: string): string {
-  const start = workflow.indexOf("\n  cli-integration-test:\n");
-  if (start < 0) throw new Error("deno.yml has no cli-integration-test job");
-  const rest = workflow.slice(start + 1);
-  const next = rest.search(/\n {2}[a-z][a-z0-9-]*:\n/);
-  return next < 0 ? rest : rest.slice(0, next + 1);
-}
-
-/** The sections that job dispatches, one per step that runs the script. */
-function ciSections(workflow: string): string[] {
-  return [
-    ...ciJobBlock(workflow).matchAll(
-      /^ +CF_FUSE_INTEGRATION_SECTION: (\S+)$/gm,
-    ),
-  ].map((m) => m[1]);
-}
-
 const { arms, malformed } = parseDispatchTable(SCRIPT);
 const byArm = new Map(arms.map((arm) => [arm.section, arm.phases]));
 const prelude = shellArray(SCRIPT, "PRELUDE");
@@ -158,21 +135,12 @@ describe("fuse-sections", () => {
     expect(selectable.filter((phase) => !all.has(phase))).toEqual([]);
   });
 
-  it("runs every selectable phase under a section CI dispatches", () => {
-    const sections = ciSections(WORKFLOW);
-    expect(sections.length).toBeGreaterThan(0);
-    expect(sections.filter((section) => !byArm.has(section))).toEqual([]);
-    const covered = new Set(
-      sections.flatMap((section) => byArm.get(section) ?? []),
-    );
-    expect(selectable.filter((phase) => !covered.has(phase))).toEqual([]);
-  });
-
   it("gives every selectable phase a section besides `all`", () => {
     // `all` is the union, not a hiding place. A phase reachable only from it
     // cannot be selected as part of anything smaller, which is the whole
-    // point of the table, and it would run nowhere the day CI dispatches
-    // sections rather than `all`.
+    // point of the table, and it runs nowhere in continuous integration: the
+    // `cli-fuse` suite in `tasks/test-topology/cli.ts` makes each section
+    // besides `all` a unit and leaves `all` to hand runs.
     const grouped = new Set(
       arms.filter((arm) => arm.section !== "all").flatMap((arm) => arm.phases),
     );

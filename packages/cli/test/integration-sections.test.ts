@@ -25,11 +25,6 @@ const SCRIPT = await Deno.readTextFile(
   new URL("../integration/integration.sh", import.meta.url),
 );
 
-/** The CI workflow, whose cli-integration-test job names the sections. */
-const WORKFLOW = await Deno.readTextFile(
-  new URL("../../../.github/workflows/deno.yml", import.meta.url),
-);
-
 /** The shell function that runs a step, by the table's naming rule. */
 function stepFunction(step: string): string {
   return `run_${step.replaceAll("-", "_")}`;
@@ -117,21 +112,6 @@ function definedFunctions(script: string): string[] {
   return [...script.matchAll(/^(run_[a-z_]+)\(\) \{$/gm)].map((m) => m[1]);
 }
 
-/** The cli-integration-test job's block of the workflow. */
-function ciJobBlock(workflow: string): string {
-  const start = workflow.indexOf("\n  cli-integration-test:\n");
-  if (start < 0) throw new Error("deno.yml has no cli-integration-test job");
-  const rest = workflow.slice(start + 1);
-  const next = rest.search(/\n {2}[a-z][a-z0-9-]*:\n/);
-  return next < 0 ? rest : rest.slice(0, next + 1);
-}
-
-/** The sections that job's matrix dispatches, one per leg. */
-function ciSections(workflow: string): string[] {
-  return [...ciJobBlock(workflow).matchAll(/^ +core_section: (\S+)$/gm)]
-    .map((m) => m[1]);
-}
-
 const { arms, malformed } = parseDispatchTable(SCRIPT);
 const bySection = new Map(arms.map((arm) => [arm.section, arm.steps]));
 const everyStep = [...new Set(arms.flatMap((arm) => arm.steps))].sort();
@@ -163,32 +143,16 @@ describe("integration-sections", () => {
     expect(everyStep.filter((step) => !all.has(step))).toEqual([]);
   });
 
-  it("runs every step under a section CI dispatches", () => {
-    const sections = ciSections(WORKFLOW);
-    expect(sections.length).toBeGreaterThan(0);
-    const unknown = sections.filter((section) => !bySection.has(section));
-    expect(unknown).toEqual([]);
-    const covered = new Set(
-      sections.flatMap((section) => bySection.get(section) ?? []),
-    );
-    expect(everyStep.filter((step) => !covered.has(step))).toEqual([]);
-  });
-
   it("gives every step an arm that runs it alone", () => {
-    // What makes a step schedulable on its own. A step reachable only
-    // inside a group can only be asked for as the whole group, and a
-    // group is one thing that takes as long as everything in it. This
-    // says nothing about which arms CI dispatches, which is the check
-    // above: an arm may exist for a step nothing schedules by itself.
+    // What makes a step schedulable on its own, and what continuous
+    // integration dispatches: the `cli-core` suite in
+    // `tasks/test-topology/cli.ts` makes each arm that runs one step that
+    // step's unit, and a lane runs the units it is given. A step reachable
+    // only inside a group can only be asked for as the whole group, and a
+    // group is one thing that takes as long as everything in it.
     const alone = new Set(
       arms.filter((arm) => arm.steps.length === 1).map((arm) => arm.steps[0]),
     );
     expect(everyStep.filter((step) => !alone.has(step))).toEqual([]);
-  });
-
-  it("reads the CI section from the matrix leg it is named for", () => {
-    expect(ciJobBlock(WORKFLOW)).toContain(
-      "CF_CLI_INTEGRATION_SECTION: ${{ matrix.core_section }}",
-    );
   });
 });
