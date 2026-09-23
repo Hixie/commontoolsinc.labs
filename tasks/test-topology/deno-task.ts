@@ -591,6 +591,7 @@ export async function unmatchedGlobs(
   paths: readonly string[],
   globs: readonly string[],
 ): Promise<string[]> {
+  if (globs.length === 0) return [];
   const files = await memberTestFiles(memberDir, {
     paths: [...paths],
     ignores: [],
