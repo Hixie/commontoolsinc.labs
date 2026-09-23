@@ -4,6 +4,7 @@ import { testIdentityKey } from "@commonfabric/test-support/records";
 
 import {
   crowdingLine,
+  foldWholeUnits,
   fullLaneCount,
   plan,
   type PlanInput,
@@ -1010,17 +1011,41 @@ describe("a unit its runner runs whole", () => {
   });
 
   it("reports each test under its own reason, and the rest under the unit's", () => {
+    // Two tests are mandatory for different reasons. The unit is placed
+    // under the first, so the second keeping its own is what the plan
+    // has to show, and the third takes the unit's.
     const result = run(corpus(), {
       wholeUnits: WHOLE,
       mandatory: new Map([
         [testIdentityKey({ k: "browser", s: "ui", n: "half 1" }), "changed"],
+        [testIdentityKey({ k: "browser", s: "ui", n: "half 0" }), "unknown"],
       ]),
     });
     const reasons = new Map(
       selected(result).map((s) => [s.entry.test.n, s.reason]),
     );
     expect(reasons.get("half 1")).toBe("changed");
-    expect(reasons.get("half 0")).toBe("changed");
+    expect(reasons.get("half 0")).toBe("unknown");
+    expect(reasons.get("half 2")).toBe("changed");
+  });
+
+  it("dates a unit's last run by its least-run test", () => {
+    // The exploration pass draws the longest-unrun entries first, and a
+    // unit is as unrun as its least-run test.
+    const merged = (days: (string | undefined)[]) =>
+      foldWholeUnits(
+        sampleManifest({
+          entries: days.map((day, i) =>
+            sampleEntry({ k: "browser", s: "ui", n: `half ${i}` }, {
+              unit: HALF,
+              ...(day === undefined ? {} : { lastRun: day }),
+            })
+          ),
+        }),
+        WHOLE,
+      ).entries[0]!;
+    expect(merged(["2026-08-01", "2026-07-01"]).lastRun).toBe("2026-07-01");
+    expect(merged(["2026-08-01", undefined]).lastRun).toBeUndefined();
   });
 
   it("names only the tests in the plan, never the unit", () => {

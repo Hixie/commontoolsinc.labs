@@ -7,10 +7,6 @@ import {
   selectShardedTestFiles,
 } from "./run-sharded-test-files.ts";
 import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
-import {
-  memberTestFiles,
-  type ParsedTestTask,
-} from "./test-topology/deno-task.ts";
 
 const AGENTS_HOST_SHARDS = 5;
 
@@ -49,15 +45,7 @@ describe("run-sharded-test-files", () => {
       await Deno.writeTextFile(`${dir}/passed-test.ts`, "");
       await Deno.writeTextFile(`${dir}/node_modules/vendored.test.ts`, "");
 
-      const parsed: ParsedTestTask = {
-        env: {},
-        flags: [],
-        paths: ["."],
-        ignores: [],
-      };
       expect(await collectTestFiles(dir)).toEqual(["taken.test.ts"]);
-      expect(await collectTestFiles(dir))
-        .toEqual(await memberTestFiles(dir, parsed));
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

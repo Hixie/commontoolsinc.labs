@@ -26,5 +26,6 @@ describe("readOnlyArguments()", () => {
 
   it("refuses the next flag read as a term", () => {
     expect(readOnlyArguments(["--only", "--pin"])).toHaveProperty("error");
+    expect(readOnlyArguments(["--only", "-x"])).toHaveProperty("error");
   });
 });

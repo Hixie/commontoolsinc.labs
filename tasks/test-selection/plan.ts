@@ -321,7 +321,7 @@ function mandatoryPlaced(
 }
 
 /** The corpus with each whole unit merged, and the maps that expand it. */
-interface Folding {
+export interface Folding {
   entries: ManifestEntry[];
 
   /** For each entry standing for a whole unit, the entries it stands for. */
@@ -349,13 +349,15 @@ interface Folding {
  *   distinct sources saw a catch, not which ones.
  * - Flake rate and repeat count are the largest, because a test disagreeing
  *   with itself makes the whole invocation disagree.
+ * - The last run is the oldest of the tests' last runs, and absent when any
+ *   test has never run.
  * - Score is computed from the combined inputs as of the day the manifest
  *   was written, which is the date of every other score in it.
  *
  * A unit holding one identity keeps that identity's entry. A test the manifest
  * lists twice counts once.
  */
-function foldWholeUnits(
+export function foldWholeUnits(
   manifest: Manifest,
   wholeUnits: ReadonlySet<string>,
 ): Folding {
@@ -392,7 +394,13 @@ function foldWholeUnits(
       churn: Math.max(...group.map((entry) => entry.inputs.churn)),
       ...(caught === undefined ? {} : { lastCatch: caught }),
     };
-    const ran = latest(group.map((entry) => entry.lastRun));
+    // The unit last ran when its stalest test did, and never where one of
+    // its tests never has. The exploration pass draws the longest-unrun
+    // entries first, and a unit is as unrun as its least-run test.
+    const days = group.map((entry) => entry.lastRun);
+    const ran = days.includes(undefined)
+      ? undefined
+      : days.filter((day): day is string => day !== undefined).sort()[0];
     // Named for the suite and the unit. No record carries such a name, because
     // records are named for tests. The name has to be unique in the corpus,
     // because two entries sharing a key would leave one of them unplaced.

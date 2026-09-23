@@ -1754,13 +1754,35 @@ describe("what the capture and promote commands print", () => {
   });
 
   it("takes a fixture whose path holds a filter value, and only then", () => {
-    const fixture = "packages/piece/test/vintages/system/home.test.tsx/" +
+    const root = "/work/labs";
+    const relative = "packages/piece/test/vintages/system/home.test.tsx/" +
       "pinned/2026-07-30T21-32-46.548Z-abc.sqlite";
-    expect(replayFilterTakes(fixture, [])).toBe(true);
-    expect(replayFilterTakes(fixture, [fixture])).toBe(true);
-    expect(replayFilterTakes(fixture, ["system/home.test.tsx"])).toBe(true);
-    expect(replayFilterTakes(fixture, ["topics/topics.test.tsx"])).toBe(false);
-    expect(replayFilterTakes(fixture, ["topics", "system"])).toBe(true);
+    const fixture = `${root}/${relative}`;
+    const takes = (only: string[]) => replayFilterTakes(fixture, root, only);
+    expect(takes([])).toBe(true);
+    expect(takes([relative])).toBe(true);
+    expect(takes(["system/home.test.tsx"])).toBe(true);
+    expect(takes(["topics/topics.test.tsx"])).toBe(false);
+    expect(takes(["topics", "system"])).toBe(true);
+  });
+
+  it("matches a filter against the path inside the repository only", () => {
+    // A term that names part of the checkout's directory matches no
+    // fixture.
+    const fixture =
+      "/work/labs/packages/piece/test/vintages/a.test.tsx/x.sqlite";
+    expect(replayFilterTakes(fixture, "/work/labs", ["labs"])).toBe(false);
+  });
+
+  it("matches a filter written with either separator", () => {
+    const root = "C:\\work\\labs";
+    const fixture = `${root}\\packages\\piece\\test\\vintages\\a.test.tsx`;
+    expect(replayFilterTakes(fixture, root, ["piece/test/vintages"])).toBe(
+      true,
+    );
+    expect(
+      replayFilterTakes(fixture, root, ["piece\\test\\vintages"]),
+    ).toBe(true);
   });
 
   it("says why a filter cannot be given beside a capture", () => {

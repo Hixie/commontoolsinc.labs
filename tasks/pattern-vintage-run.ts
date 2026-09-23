@@ -1039,7 +1039,9 @@ export async function replayAll(
   }
 > {
   const vintages = (await collectVintages(roots.vintagesRoot))
-    .filter((vintage) => replayFilterTakes(vintage.path, options.only ?? []));
+    .filter((vintage) =>
+      replayFilterTakes(vintage.path, roots.repoRoot, options.only ?? [])
+    );
   const perVintage: VintageOutcome[] = [];
   const covered = new Set<string>();
   const coveredBy = new Map<string, VintageAttribution>();

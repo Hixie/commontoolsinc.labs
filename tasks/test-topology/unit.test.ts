@@ -16,13 +16,14 @@ import { EXCLUDED_FROM_COVERAGE_GATE } from "../test-selection/policy.ts";
 const REPOSITORY = new URL("../../", import.meta.url);
 
 /**
- * The import map the registration preload's modules resolve through. Deno takes
- * `--preload` as a path rather than through the import map, so a fixture that
- * runs the preload has to supply the specifiers it imports.
+ * The import map the registration preload's modules resolve through. Deno
+ * takes `--preload` as a path rather than through the import map, so a
+ * fixture that runs the preload has to supply the specifiers it imports.
  *
- * This is the repository's own map, with each relative entry resolved against
- * the repository so it still names the same file. Workspace members are not in
- * it, because the workspace resolves them.
+ * The map is the repository's own, with each relative entry resolved against
+ * the repository so it still names the same file. The preload's
+ * `@commonfabric/` imports need no entry here, and the case that runs the
+ * preload shows that they resolve without one.
  */
 async function preloadImports(): Promise<Record<string, string>> {
   const manifest = parseJsonc(
@@ -34,8 +35,6 @@ async function preloadImports(): Promise<Record<string, string>> {
       ? new URL(target, REPOSITORY).href
       : target;
   }
-  imports["@commonfabric/utils/types"] =
-    new URL("packages/utils/src/types.ts", REPOSITORY).href;
   return imports;
 }
 

@@ -559,12 +559,24 @@ export const KNOWN_FLAGS = [
 /** The flag that restricts a replay, in the form that carries its value. */
 const ONLY_PREFIX = "--only=";
 
-/** Whether a fixture path is one a filter asked for. */
+/**
+ * Whether a fixture is one a filter asked for. The filter is matched
+ * against the fixture's repository-relative path with `/` separators, which
+ * is how a lane names it, so a term matching part of the checkout's own
+ * directory matches nothing.
+ */
 export function replayFilterTakes(
   path: string,
+  repoRoot: string,
   only: readonly string[],
 ): boolean {
-  return only.length === 0 || only.some((value) => path.includes(value));
+  if (only.length === 0) return true;
+  const relative = relativeToRepo(
+    path.replaceAll("\\", "/"),
+    repoRoot.replaceAll("\\", "/"),
+  );
+  const terms = only.map((value) => value.replaceAll("\\", "/"));
+  return terms.some((value) => relative.includes(value));
 }
 
 /** What the task prints when a filter matched no fixture in the tree. */

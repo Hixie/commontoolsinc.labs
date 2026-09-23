@@ -517,22 +517,15 @@ whole run, so nothing may hydrate the piece before it.
 those orderings, and to every phase being reachable — from `all`, from a
 section smaller than `all`, and from what the workflow dispatches.
 
-`pattern-reload` needs nothing done to it, and is not a special case
-either. `packages/patterns/integration/reload/` holds a single file with a
-single `it()`, which is a fact about what is in the directory rather than
-a property of the suite: it runs `deno test` like the other integration
-suites, and [the skip
-list](#selecting-one-test-rather-than-one-file) reaches inside its file
-without anything being threaded through `tasks/integration.ts` to get
-there.
-
-What that layer would block is subsetting the suite's *files*, if it ever
-had more than one. `tasks/integration.ts` dispatches `patterns-reload` in
-a branch ahead of the one honoring the name filter, so a filter handed to
-that target is dropped without a word, and `packages/patterns`'
-`integration:reload` task hard-codes its glob. Neither matters while the
-directory holds one file. If a second reload case lands, moving that
-branch below the filter branch is the whole of the fix.
+`pattern-reload` is one unit, the reload directory, and its suite lists that
+unit in `whole`. `packages/patterns/integration/reload/` holds a single file
+with a single `it()`, so the unit holds one identity and there is nothing inside
+it to leave out. The task cannot be pointed at part of the directory:
+`packages/patterns`' `integration:reload` task hard-codes its glob, and
+`tasks/integration.ts` dispatches `patterns-reload` in a branch ahead of the one
+honoring the name filter, so a filter handed to that target is dropped. A second
+reload case would still run with the first. Giving the suite one unit per file
+would need both of those changed.
 
 `pattern-reload` also shows why capabilities are named rather than
 implied. It needs a server, but not the one the other integration suites
@@ -553,7 +546,14 @@ and replaces its paths with the chosen ones.
 
 Most of the forty-seven members are readable that way, and nearly every
 unit the topology holds is one test file. The rest are one unit each and
-run whole. Three task shapes are still read a file at a time. A task written as a dependency list is read through to the `deno test` it depends on. The one command substitution the workspace writes, which names the running Deno in an `--allow-run` list, is resolved rather than treated as a shell metacharacter. A task that runs the shard wrapper `tasks/run-sharded-test-files.ts` is read as the `deno test` that wrapper runs. The directory the wrapper walks gives the paths to enumerate, and the flags after its `--` are the flags the tests run under.
+run whole. Three task shapes are still read a file at a time. A task written as
+a dependency list is read through to the `deno test` it depends on. The one
+command substitution the workspace writes, which names the running Deno in an
+`--allow-run` list, is resolved rather than treated as a shell metacharacter. A
+task that runs the shard wrapper `tasks/run-sharded-test-files.ts` is read as
+the `deno test` that wrapper runs. The directory the wrapper walks gives the
+paths to enumerate, and the flags after its `--` are the flags the tests run
+under.
 
 Two things a member's own `deno test` would apply are applied during
 enumeration instead: the task's `--ignore` globs and the member's
@@ -669,9 +669,10 @@ environment variable is inherited by whatever a task spawns, so a suite
 reached through `tasks/integration.ts` or a package's own runner is
 reached without those learning a new flag. `--filter` would have needed
 every one of them to pass it along, and at least one does not:
-`tasks/integration.ts` dispatches `patterns-reload` in a branch that sits
-ahead of the one honoring the name filter, so a filter handed to that
-target is dropped without a word. That suite is reachable here anyway.
+`tasks/integration.ts` dispatches `patterns-reload` in a branch that sits ahead
+of the one honoring the name filter, so a filter handed to that target is
+dropped without a word. That suite takes no skip list either, because it runs
+whole.
 
 One more thing recommends routing it through a module of ours.
 `@std/testing/bdd` is deprecated: its own documentation says it will be
@@ -716,9 +717,16 @@ mechanism is a skip list rather than a selection list.
 
 ### Every invocation unit, and the identities inside it
 
-Most invocation units hold one identity. The skip list exists for the kinds that hold more. One of those kinds holds almost everything: the workspace and runner unit shards carry 15,997 of the reference build's 17,999 executions.
+Most invocation units hold one identity. The skip list exists for the kinds that
+hold more. One of those kinds holds almost everything: the workspace and runner
+unit shards carry 15,997 of the reference build's 17,999 executions.
 
-The topology records which units a lane may hand a subset to. Each suite lists in `whole` the units whose runner runs every identity in them, whatever it is asked. `tasks/test-topology.test.ts` requires every other unit to be a test file in the tree, because the registration preload reads a skip list under that file's path. A unit that is neither would get a skip list that matches nothing, and its lane would run every test in it while being charged for one.
+The topology records which units a lane may hand a subset to. Each suite lists
+in `whole` the units whose runner runs every identity in them, whatever it is
+asked. `tasks/test-topology.test.ts` requires every other unit to be a test file
+in the tree, because the registration preload reads a skip list under that
+file's path. A unit that is neither would get a skip list that matches nothing,
+and its lane would run every test in it while being charged for one.
 
 | Invocation unit | Suites | Identities inside it | Reaching one of them |
 | --- | --- | --- | --- |
@@ -741,9 +749,14 @@ change is smaller than removing a concept sounds. The topology does not
 gain a mechanism for them; they simply stop being described as items
 holding one identity each and start being described as identities.
 
-Four rows hold more than one identity and offer nothing finer to reach: a member that runs whole, a member's browser half, the reload directory, and a `fuse-exec.sh` section. These are the units in `whole` that cost something, and the last column of the table says why each is there.
+Four rows hold more than one identity and offer nothing finer to reach: a member
+that runs whole, a member's browser half, the reload directory, and a
+`fuse-exec.sh` section. These are the units in `whole` that cost something, and
+the last column of the table says why each is there.
 
-A member is in that group because of its test task. It leaves the group when the topology can point that task at files. Three large members are read a file at a time through the shard wrapper rather than through a plain `deno test`.
+A member is in that group because of its test task. It leaves the group when the
+topology can point that task at files. Three large members are read a file at a
+time through the shard wrapper rather than through a plain `deno test`.
 
 ### What it reaches, and what it does not
 
@@ -815,11 +828,32 @@ runner that could not be handed a subset could say so and the packer could
 charge it for everything whenever anything in it was picked. Both halves
 move one level down, to `Suite.whole`.
 
-The packer charges a whole unit for all of its identities. [`unitOverhead`](#what-it-costs-to-run-one-test) charges a lane for opening a unit and then for each identity the lane chose. That is correct for a unit that can skip the rest. It is too little for a unit that cannot, because a lane taking one test of a whole unit runs all of them. `plan()` therefore merges each unit in `whole` into one choice before it packs. That choice costs what all its identities cost together, and it is held back when any of them is. The plan lists the identities again in its place. The merge exists only inside the packer. The manifest and the records name identities, so every reader that matches a record to an entry or to a plan finds it by its own name.
+The packer charges a whole unit for all of its identities.
+[`unitOverhead`](#what-it-costs-to-run-one-test) charges a lane for opening a
+unit and then for each identity the lane chose. That is correct for a unit that
+can skip the rest. It is too little for a unit that cannot, because a lane
+taking one test of a whole unit runs all of them. `plan()` therefore merges each
+unit in `whole` into one choice before it packs. That choice costs what all its
+identities cost together, and it is held back when any of them is. The plan
+lists the identities again in its place. The merge exists only inside the
+packer. The manifest and the records name identities, so every reader that
+matches a record to an entry or to a plan finds it by its own name.
 
-The declaration moves with it. Whether the identities inside an invocation unit can be skipped is a property of that unit, not of the suite around it. `cli-fuse` shows this. Its phases record separately, and a section holding four of them cannot skip one of the four. A `deno test` file with four tests can skip one. Both suites would have carried the same value of the old field, yet they behave differently, so the field was in the wrong place.
+The declaration moves with it. Whether the identities inside an invocation unit
+can be skipped is a property of that unit, not of the suite around it.
+`cli-fuse` shows this. Its phases record separately, and a section holding four
+of them cannot skip one of the four. A `deno test` file with four tests can skip
+one. Both suites would have carried the same value of the old field, yet they
+behave differently, so the field was in the wrong place.
 
-A unit that runs whole has to be declared, because its shape does not show it. The skip list the preload reads is keyed by the repository-relative file that registered a test. No skip list can name anything inside a unit that is not such a file. A suite that neither declared such a unit nor made it a file would give its lane a skip list that matches nothing. A run would not show the problem: every test of the unit passes, and the lane reports a pass while running longer than the packer planned. `tasks/test-topology.test.ts` therefore checks the declaration: every unit outside `whole` has to be a test file in the tree.
+A unit that runs whole has to be declared, because its shape does not show it.
+The skip list the preload reads is keyed by the repository-relative file that
+registered a test. No skip list can name anything inside a unit that is not such
+a file. A suite that neither declared such a unit nor made it a file would give
+its lane a skip list that matches nothing. A run would not show the problem:
+every test of the unit passes, and the lane reports a pass while running longer
+than the packer planned. `tasks/test-topology.test.ts` therefore checks the
+declaration: every unit outside `whole` has to be a test file in the tree.
 
 ### What replaces the item
 
@@ -1077,7 +1111,9 @@ what a `beforeAll` that throws should do to the rest of its group.
       unlisted new test runs, a renamed test runs, a listed test is
       reported as skipped rather than missing, and two files holding the
       same test name skip independently.
-- [x] Every unit a lane may hand a subset to is a test file the preload can key a skip list on. A unit whose runner runs it whole is listed in `Suite.whole` and gets no skip list.
+- [x] Every unit a lane may hand a subset to is a test file the preload can key
+      a skip list on. A unit whose runner runs it whole is listed in
+      `Suite.whole` and gets no skip list.
 
 ### The drift guard
 
