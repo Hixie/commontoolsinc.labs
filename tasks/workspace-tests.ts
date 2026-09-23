@@ -395,8 +395,8 @@ export async function assertMemberTestTasksDefined(
  */
 export function acceptsJUnitPath(task: string | undefined): boolean {
   if (task === undefined) return false;
-  if (runsForwardingRunner(task)) return true;
   if (/[&;|<>]/.test(task)) return false;
+  if (runsForwardingRunner(task)) return true;
   return /(^|\s)deno test(\s|$)/.test(task);
 }
 

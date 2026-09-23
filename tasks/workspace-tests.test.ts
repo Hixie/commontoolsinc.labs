@@ -733,6 +733,14 @@ Deno.test("acceptsJUnitPath takes a runner only when it is known to forward", ()
     true,
   );
   assertEquals(acceptsJUnitPath("deno run -A test/runner.ts"), false);
+  // Chained with another command, the runner is not the one the appended
+  // flag reaches.
+  assertEquals(
+    acceptsJUnitPath(
+      "deno run -A ./run-sharded-test-files.ts X tasks . -- -A && echo done",
+    ),
+    false,
+  );
 });
 
 Deno.test("memberTestTask accepts a directory path as well as a URL", async () => {
