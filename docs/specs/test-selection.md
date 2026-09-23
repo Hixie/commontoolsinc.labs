@@ -505,6 +505,15 @@ the suite, and the identities of a suite in the second case are left out
 of the report that names identities, since the suite's line says what
 every one of them would.
 
+**A unit that runs whole is one choice.** Some units have a runner that
+runs every identity in them, whatever it is asked. The topology lists
+these, and the packer places each as one choice rather than one choice
+per identity. That choice costs what all its identities cost together.
+It is held back when any of its identities is held back. It runs when
+any of its identities must run. The plan still lists each identity,
+under the reason that put it there. The manifest and every record
+therefore name identities, never units.
+
 Neither reading changes what the packer does. What they change is what a
 plan can be asked. A plan that reported only the identities says nothing
 at all in the first case, and in the second says the same thing once per

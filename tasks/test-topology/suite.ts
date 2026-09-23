@@ -172,6 +172,23 @@ export interface Suite {
   unavailable: readonly Unavailable[];
 
   /**
+   * The units whose runner runs every identity in them, whatever a lane asks
+   * for. Examples are a workspace member whose test task takes no file list, a
+   * browser half, a section of a script that brings one environment up for
+   * several phases, and a gate that is a single identity.
+   *
+   * A lane writes no skip list for one of these, because its runner reads none.
+   * Every other unit is a file that `deno test` is pointed at, and the
+   * registration preload reads the skip list under that file's
+   * repository-relative path.
+   *
+   * `tasks/test-topology.test.ts` checks this list in both directions. A unit
+   * left out of it has to be such a file. A unit named in it has to be one its
+   * suite writes no skip list for.
+   */
+  whole: readonly Unit[];
+
+  /**
    * Tree paths this suite accounts for beyond its units. A suite whose
    * units are files needs none; a suite whose units are dispatch arms
    * names the scripts those arms run, so the drift guard can tell that
@@ -415,12 +432,12 @@ export interface ConfiguredSkip {
 export function unavailableFrom(
   skips: readonly ConfiguredSkip[],
   packageDir: string,
-): { whole: Set<Unit>; unavailable: Unavailable[] } {
-  const whole = new Set<Unit>();
+): { excluded: Set<Unit>; unavailable: Unavailable[] } {
+  const excluded = new Set<Unit>();
   const unavailable: Unavailable[] = [];
   for (const skip of skips) {
     const unit = `${packageDir}/${skip.file}`;
-    if (skip.step === undefined) whole.add(unit);
+    if (skip.step === undefined) excluded.add(unit);
     unavailable.push({
       unit,
       ...(skip.step === undefined ? {} : { leafName: skip.step }),
@@ -428,7 +445,7 @@ export function unavailableFrom(
       reason: skip.reason,
     });
   }
-  return { whole, unavailable };
+  return { excluded, unavailable };
 }
 
 /**
@@ -557,6 +574,9 @@ export function fileSuite(options: FileSuiteOptions): Suite {
     needs: options.needs,
     units,
     unavailable,
+    // Every unit here is a file the command names. The preload reads the skip
+    // list under the same path.
+    whole: [],
     ...(options.measured === undefined ? {} : { measured: options.measured }),
 
     locate(record) {

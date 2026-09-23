@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-env --allow-read --allow-run
 
-import * as path from "@std/path";
 import { parseShard, type Shard } from "./shard-utils.ts";
+import { memberTestFiles } from "./test-topology/deno-task.ts";
 import {
   AGENTS_HOST_TEST_WEIGHTS,
   PIECE_TEST_WEIGHTS,
@@ -17,26 +17,24 @@ const PROFILES = {
 
 type ProfileName = keyof typeof PROFILES;
 
-/** Returns whether a file follows Deno's test-module naming convention. */
-export function isTestFile(name: string): boolean {
-  return /(?:^|[._-])test\.[cm]?[jt]sx?$/.test(name);
-}
-
-/** Lists test modules below `root` using stable slash-separated paths. */
-export async function collectTestFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  async function visit(dir: string): Promise<void> {
-    for await (const entry of Deno.readDir(dir)) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory) {
-        await visit(entryPath);
-      } else if (entry.isFile && isTestFile(entry.name)) {
-        files.push(entryPath.replaceAll("\\", "/").replace(/^\.\//, ""));
-      }
-    }
-  }
-  await visit(root);
-  return files.sort();
+/**
+ * Lists the test modules below `root` in the member at `memberDir`, as
+ * stable slash-separated paths relative to the member.
+ *
+ * The list comes from the topology's own `memberTestFiles`, including the
+ * member's `exclude` lists. The runner and the topology therefore list the same
+ * files, so every test the runner runs belongs to a unit a lane can ask for.
+ */
+export async function collectTestFiles(
+  memberDir: string,
+  root = ".",
+): Promise<string[]> {
+  return (await memberTestFiles(memberDir, {
+    env: {},
+    flags: [],
+    paths: [root],
+    ignores: [],
+  })).map((file) => file.replaceAll("\\", "/"));
 }
 
 /** Selects the files assigned to one weighted shard. */
@@ -74,7 +72,7 @@ async function main(): Promise<void> {
   const shardRaw = Deno.env.get(envName);
   const shard = shardRaw ? parseShard(shardRaw) : undefined;
   const files = selectShardedTestFiles(
-    await collectTestFiles(root),
+    await collectTestFiles(Deno.cwd(), root),
     shard,
     profile.weights,
     profile.defaultWeight,

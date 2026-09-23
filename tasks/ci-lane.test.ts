@@ -12,7 +12,11 @@ import {
   CAPABILITY_LOG_TAIL_LINES,
   type CapabilityId,
 } from "./ci-capabilities.ts";
-import { capabilitiesBySuite, loadTopology } from "./test-topology.ts";
+import {
+  capabilitiesBySuite,
+  loadTopology,
+  wholeUnits,
+} from "./test-topology.ts";
 
 import {
   accountFor,
@@ -80,6 +84,7 @@ function suite(partial: Partial<Suite> & { id: string }): Suite {
     needs: ["deno"],
     units: [],
     unavailable: [],
+    whole: [],
     locate: () => undefined,
     command: () => Promise.resolve([]),
     ...partial,
@@ -264,6 +269,30 @@ describe("turning a lane's selections into batches", () => {
     }]);
   });
 
+  it("skips nothing inside a unit its suite declares whole", () => {
+    // The runner of such a unit reads no skip list. The batch therefore carries
+    // none, and the lane's report of what it ran lists every test in the unit.
+
+    const member = suite({
+      id: "workspace-unit",
+      units: ["packages/bakery"],
+      whole: ["packages/bakery"],
+    });
+    const manifest = manifestOf([
+      { unit: "packages/bakery" },
+      {
+        test: { k: "unit", s: "bakery", n: "glaze > browns" },
+        unit: "packages/bakery",
+      },
+    ]);
+    const batches = batchesOf([member], manifest, [{
+      entry: manifest.entries[0]!,
+      reason: "value",
+      repeats: 1,
+    }]);
+    expect(batches[0]!.units).toEqual([{ unit: "packages/bakery", skip: [] }]);
+  });
+
   it("skips nothing when every identity of a unit was chosen", () => {
     const manifest = manifestOf([{}]);
     const batches = batchesOf([bakery], manifest, [{
@@ -356,6 +385,7 @@ function unitsPerLane(
     manifest: seen.manifest,
     mandatory: seen.mandatory,
     capabilities: capabilitiesBySuite(suites),
+    wholeUnits: wholeUnits(suites),
     lanes,
     ...(policy === undefined ? {} : { policy }),
   });
@@ -576,6 +606,7 @@ describe("how many lanes the full run asks for", () => {
       manifest: seen.manifest,
       mandatory: seen.mandatory,
       capabilities: capabilitiesBySuite(deps.suites),
+      wholeUnits: wholeUnits(deps.suites),
       policy: "everything",
       lanes,
     });
@@ -607,6 +638,7 @@ describe("how many lanes the full run asks for", () => {
       manifest: seen.manifest,
       mandatory: seen.mandatory,
       capabilities: capabilitiesBySuite(deps.suites),
+      wholeUnits: wholeUnits(deps.suites),
       policy: "everything",
       lanes,
     });
@@ -698,6 +730,7 @@ describe("how many lanes the full run asks for", () => {
       manifest: seen.manifest,
       mandatory: seen.mandatory,
       capabilities: capabilitiesBySuite(suites),
+      wholeUnits: wholeUnits(suites),
       policy: "everything",
       lanes,
     });
@@ -809,6 +842,7 @@ describe("what the two runs agree about", () => {
       manifest: seen.manifest,
       mandatory: new Map<string, SelectionReason>(),
       capabilities: capabilitiesBySuite(suites),
+      wholeUnits: wholeUnits(suites),
       lanes: 3,
       budgetSeconds: 1_000_000,
     };
@@ -868,6 +902,7 @@ describe("running a lane's work", () => {
       needs: [],
       units: ["packages/bakery/glaze.test.ts"],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: (_units, context) => {
         given = context;
@@ -900,6 +935,7 @@ describe("running a lane's work", () => {
       needs: [],
       units: ["packages/bakery/glaze.test.ts"],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: (_units, context) => {
         given = context;
@@ -1687,6 +1723,7 @@ describe("the lane's own housekeeping", () => {
       needs: [],
       units: [],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: () => Promise.resolve([]),
     };
@@ -1729,6 +1766,7 @@ describe("the lane's own housekeeping", () => {
       needs: ["nothing-opens-this" as CapabilityId],
       units: ["packages/bakery/glaze.test.ts"],
       unavailable: [],
+      whole: [],
       locate: () => undefined,
       command: () => Promise.resolve([]),
     };

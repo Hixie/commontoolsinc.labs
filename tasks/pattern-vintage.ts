@@ -52,9 +52,21 @@
  * doc is still a finding.
  *
  *   deno task pattern-vintage                                  # replay; fail on a stranded fixture
+ *   deno task pattern-vintage --only topics/topics.test.tsx    # replay matching fixtures alone
  *   deno task pattern-vintage --update topics/topics.test.tsx  # first pinned fixture
  *   deno task pattern-vintage --capture-changed                # capture a generation where due
  *   deno task pattern-vintage --pin topics/topics.test.tsx     # promote the newest generation
+ *
+ * `--only` takes one value per flag and may be repeated. It restricts the
+ * replay to the fixtures whose repository-relative path contains one of the
+ * values. Each fixture's replay restores its own store, drives its own roots,
+ * and compares against its own manifest, so its result is the same whether or
+ * not other fixtures replay.
+ *
+ * A filtered run skips the three checks that need every fixture replayed:
+ * whether every required pattern is covered, whether each accepted removal
+ * still applies to some fixture, and whether each accepted removal names a
+ * pattern that some fixture records.
  *
  * `--update` always names a TEST path, never a pattern path — a fixture is
  * produced by RUNNING a test, and covers whatever that test instantiates, which
@@ -123,6 +135,7 @@ import {
   recordExistsUnder,
   reportBreakRegistryFindings,
 } from "./pattern-break-registry-guards.ts";
+import { readOnlyArguments } from "./only-arguments.ts";
 import {
   armVerdictGuard,
   type CommandOutput,
@@ -133,7 +146,9 @@ import {
   reportCapturesSuperseded,
   reportDropsApplied,
   reportFailures,
+  reportNothingMatched,
   reportNothingReplayed,
+  reportOnlyWithCapture,
   reportReplaySummary,
   reportUncovered,
   reportUnknownFlags,
@@ -171,6 +186,9 @@ const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url)).replace(
  */
 const FIXTURE_SIGNER = await Identity.fromPassphrase("pattern vintage fixture");
 
+/** The commands that read every fixture to decide what to do. */
+const CAPTURE_FLAGS = ["--update", "--capture-changed", "--pin"] as const;
+
 /**
  * Print what a command decided to say and exit with the code it chose.
  *
@@ -204,6 +222,21 @@ async function main() {
   // answered a question nobody asked.
   const unknown = unknownFlags(Deno.args);
   if (unknown.length > 0) emit({ err: reportUnknownFlags(unknown), code: 1 });
+
+  // The fixtures this run replays. A lane passes one exact fixture path per
+  // `--only`, and a person may pass part of a path. An empty list means every
+  // fixture, and only such a run makes the checks that need every fixture
+  // replayed.
+  const filter = readOnlyArguments(Deno.args);
+  if ("error" in filter) emit({ err: filter.error, code: 1 });
+  const only = filter.only;
+  const whole = only.length === 0;
+  // A capture command decides what is due by reading every fixture, and its
+  // positional argument is a test key rather than a fixture. A filter next to
+  // one has no meaning, so the task refuses the pair.
+  if (!whole && CAPTURE_FLAGS.some((flag) => Deno.args.includes(flag))) {
+    emit({ err: reportOnlyWithCapture(), code: 1 });
+  }
 
   // The required set comes from the runtime's OWN constants, so the gate
   // cannot drift from what actually auto-updates, and a constant that stopped
@@ -270,7 +303,7 @@ async function main() {
     ));
   }
 
-  const replay = await replayAll(roots, { recordResults: true });
+  const replay = await replayAll(roots, { recordResults: true, only });
 
   if (Deno.args.includes("--capture-changed")) {
     emit(describeCaptureOutcome(
@@ -282,10 +315,9 @@ async function main() {
   // Coverage is judged against the SAME list that was replayed. A second walk
   // would be a second answer to one question, and "replayed nothing" paired with
   // "everything is covered" is the disagreement that reads as a pass.
-  const uncovered = uncoveredRequiredPatterns(
-    [...required.keys],
-    replay.covered,
-  );
+  const uncovered = whole
+    ? uncoveredRequiredPatterns([...required.keys], replay.covered)
+    : [];
 
   if (uncovered.length > 0) {
     console.error(reportUncovered(
@@ -294,7 +326,11 @@ async function main() {
       new Set(replay.failures.map((failure) => failure.testKey)),
     ));
   }
-  if (replay.replayed === 0) console.error(`\n${reportNothingReplayed()}`);
+  if (replay.replayed === 0) {
+    console.error(
+      `\n${whole ? reportNothingReplayed() : reportNothingMatched(only)}`,
+    );
+  }
   if (replay.failures.length > 0) {
     console.error(`\n${reportFailures(replay.failures)}`);
   }
@@ -309,15 +345,15 @@ async function main() {
 
   // Which patterns this run is in a position to judge: a fixture's manifest
   // names it, so a replay either used its entries or proved they were not
-  // needed. `replayAll` walks every fixture in the tree whatever else the
-  // invocation was for, so this is a fact about the whole store.
+  // needed. The two audits below rely on every fixture having replayed, so only
+  // an unfiltered run makes them.
   const judged = new Set(
     [...replay.covered, ...replay.coveredBy.keys()],
   );
   // An accepted removal that forgave nothing is an exemption outliving what it
   // was granted for — the same rule Tier 1's accepted breaks carry, asked per
   // PATH so an entry cannot keep a line nothing needs.
-  const staleDrops = ACCEPTED_STATE_DROPS
+  const staleDrops = !whole ? [] : ACCEPTED_STATE_DROPS
     .filter((drop) => judged.has(drop.pattern))
     .flatMap((drop) =>
       drop.paths
@@ -336,7 +372,7 @@ async function main() {
   // nothing replayed could have needed it, so the run has no evidence either
   // way. Reported separately because the remedy differs — capture a vintage
   // that covers the pattern, or drop an entry that was never load-bearing.
-  const unjudgeableDrops = ACCEPTED_STATE_DROPS
+  const unjudgeableDrops = !whole ? [] : ACCEPTED_STATE_DROPS
     .filter((drop) => !judged.has(drop.pattern))
     .map((drop) => drop.pattern);
   if (unjudgeableDrops.length > 0) {
