@@ -434,7 +434,9 @@ function jobDetail(job: Job, now: number): string {
     ? ""
     : `${compactSpan(now - job.startedAt)} ago`;
   if (job.status === "good") return age;
-  if (job.status !== "bad") return job.result;
+  // A failure says how long ago it ran whether it is red or has aged to
+  // orange; for an old one, how long it has been failing is the point.
+  if (!job.failing) return job.result;
   return age === "" ? job.result : `${job.result} · ${age}`;
 }
 

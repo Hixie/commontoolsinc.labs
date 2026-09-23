@@ -420,8 +420,13 @@ Deno.test("ci: a failure nobody has fixed in two days goes orange, still failing
       const view = await createCiHealth().collect(ctx());
 
       assertEquals(view.status, "warn");
-      // It is still one of the failing jobs, and still named as one.
+      // It is still one of the failing jobs, and still named as one, with how
+      // long ago it failed.
       assertEquals(view.value, "loom failing");
+      assertStringIncludes(
+        view.extra ?? "",
+        `failure · ${Math.floor(stale / 60 / 24)}d ago`,
+      );
       // It was read perfectly well, so nothing reports it as unreadable.
       assertEquals(
         wire.logged.filter((line) => line.startsWith("ci: could not read:")),
