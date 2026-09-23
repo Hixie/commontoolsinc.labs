@@ -31,9 +31,12 @@ function row(entry: DetailRow): string {
     }" style="color:var(--text-muted);font-variant-numeric:tabular-nums;${LINE}">${
       escapeHtml(entry.detail)
     }</span>`;
+  // A linked row is one grid item across both columns, laid out on the list's
+  // own columns, so the link is a box a keyboard and a screen reader can reach
+  // rather than an element that draws nothing of its own.
   return entry.href === undefined ? content : `<a href="${
     escapeHtml(entry.href)
-  }" target="_blank" rel="noopener" style="display:contents;color:inherit;text-decoration:none">${content}</a>`;
+  }" target="_blank" rel="noopener" style="grid-column:1/-1;display:grid;grid-template-columns:subgrid;color:inherit;text-decoration:none">${content}</a>`;
 }
 
 /** What a list is called, to a screen reader and to the page's live updates. */

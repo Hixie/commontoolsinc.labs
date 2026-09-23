@@ -241,6 +241,7 @@ const TILE_LAYOUT_FIXTURE_INPUTS: readonly TileLayoutFixture[] = [
           status: "bad" as Status,
           name,
           detail: "connection refused",
+          href: `https://example.com/${name}`,
         })),
         { subject: "Production target details", focusKey: "targets" },
       ),
