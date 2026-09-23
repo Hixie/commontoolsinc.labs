@@ -3695,7 +3695,7 @@ dashboard is where it gets answered.
 over each measured set.** Nothing will fail because a change lowered the
 repository's whole coverage number. What replaces that is a weekly trend
 somebody has to choose to look at, plus a comment naming the source
-groups where the debt rose. Over the 35 [measured
+groups where the debt rose. Over the 34 [measured
 sets](#the-measured-set) the ratchet still fails a pull request, because
 there both sides measure the same complete thing. The reduction in
 enforcement is real and confined to what could no longer be measured per
