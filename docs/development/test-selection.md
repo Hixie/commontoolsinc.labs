@@ -184,6 +184,12 @@ The run's identity is required rather than defaulted, because the gate
 looks a baseline up by the commit it was measured at and a figure stamped
 with none matches nothing.
 
+The report also publishes whether the run's compile byte cache was cold,
+read from the record each lane that opened the cache leaves beside its
+coverage, so that the dashboard can leave a cold run out of its trend.
+[Compile cache state and cold runs](COVERAGE.md#compile-cache-state-and-cold-runs)
+says why a cold run's figure differs.
+
 One set can come out of that with no baseline. A lane that saw a unit of
 a measured set fail writes a marker beside that set's report, and the
 report goes on merging into the repository-wide figure while the set

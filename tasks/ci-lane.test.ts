@@ -1,4 +1,5 @@
 import { expect } from "@std/expect";
+import { exists } from "@std/fs";
 import { describe, it } from "@std/testing/bdd";
 import { fromFileUrl } from "@std/path";
 import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
@@ -11,6 +12,7 @@ import {
 import {
   CAPABILITY_LOG_TAIL_LINES,
   type CapabilityId,
+  COMPILE_CACHE_FILE,
 } from "./ci-capabilities.ts";
 import {
   capabilitiesBySuite,
@@ -24,6 +26,7 @@ import {
   batchesOf,
   batchRepeats,
   changedFiles,
+  COMPILE_CACHE_STATE_FILE,
   convertCoverage,
   COVERAGE_FAILURE_MARKER,
   COVERAGE_PROFILE_DIR,
@@ -1908,6 +1911,62 @@ describe("the lane's own housekeeping", () => {
     expect(spooled).not.toContain("ci-lane setup");
     await Deno.remove(temp, { recursive: true });
     await Deno.remove(spool, { recursive: true });
+  });
+
+  /** Runs the only lane of a full run over `suites` in `root`, quietly. */
+  async function onlyLane(root: string, suites: Suite[]): Promise<boolean> {
+    const log = console.log;
+    console.log = () => {};
+    try {
+      return await runLane(
+        { lane: 1, of: 1, full: true, dryRun: false, laneCount: false, root },
+        {
+          topology: () => Promise.resolve(suites),
+          manifest: ({ at }) =>
+            Promise.resolve({ absent: `no manifest at ${at}: held out here` }),
+          spool: () => undefined,
+        },
+      );
+    } finally {
+      console.log = log;
+    }
+  }
+
+  it("records whether it found the compile byte cache restored", async () => {
+    // The record goes where the coverage artifact carries it, and is
+    // read before the lane's first batch could write the file itself.
+    const root = await Deno.makeTempDir({ prefix: "lane-cache-" });
+    const compiling = [suite({
+      id: "pattern-unit",
+      needs: ["compile-cache"],
+      units: ["packages/patterns/counter.test.tsx"],
+      command: (_units, context) =>
+        Deno.writeTextFile(`${context.root}/${COMPILE_CACHE_FILE}`, "{}")
+          .then(() => []),
+    })];
+    const record = `${root}/coverage/lcov/${COMPILE_CACHE_STATE_FILE}`;
+    try {
+      await onlyLane(root, compiling);
+      expect(await Deno.readTextFile(record)).toBe("cold\n");
+      await onlyLane(root, compiling);
+      expect(await Deno.readTextFile(record)).toBe("warm\n");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("records no cache state where it opened no compile byte cache", async () => {
+    const root = await Deno.makeTempDir({ prefix: "lane-cache-" });
+    try {
+      await onlyLane(root, [suite({
+        id: "workspace-unit",
+        units: ["packages/bakery/glaze.test.ts"],
+      })]);
+      expect(await exists(`${root}/coverage/lcov/${COMPILE_CACHE_STATE_FILE}`))
+        .toBe(false);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 });
 
