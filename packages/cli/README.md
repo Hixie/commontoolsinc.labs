@@ -2382,6 +2382,12 @@ JSON and require no existing memory session to redeem.
 - `cf space invite revoke <invite-id>` ends admission without removing grants.
 - `cf space invite receipts [invite-id]` lists unique invitation/DID pairs.
 
+An invitation ID may begin with `-`. Written where the argument goes, such an ID
+is read as an option, so `redeem`, `revoke`, and `receipts` also take the ID as
+the one word after `--`, which comes after every option:
+`cf space invite revoke -- -Pj4…` or
+`cf space invite redeem --code-file code.txt -- -Pj4…`.
+
 Creation saves its credentials before sending HTTP. With
 `--request-file <path>`, the command requires a private parent directory (0700)
 and exclusively creates a private file (0600), or loads an existing private
