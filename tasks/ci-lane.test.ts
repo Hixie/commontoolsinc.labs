@@ -2271,7 +2271,7 @@ describe("the lane's own housekeeping", () => {
       // A lane that ended by throwing failed as well, whether a capability
       // would not open or a batch could not be run.
       await expect(onlyLane(root, refusing, { RUNNER_TEMP: temp })).rejects
-        .toThrow();
+        .toThrow("no such capability: nothing-opens-this");
       expect(await lanes()).toHaveLength(2);
       await expect(onlyLane(root, throwing, { RUNNER_TEMP: temp })).rejects
         .toThrow("the command could not be built");
