@@ -4,6 +4,7 @@ import { join } from "@std/path";
 import {
   commitMoment,
   daySeed,
+  nextDaySeed,
   parseSeed,
   pinShuffleSeed,
   shuffled,
@@ -122,6 +123,36 @@ describe("shuffle", () => {
       const end = daySeed(new Date("2026-09-23T06:59:00Z"));
       expect(start).toBe(20260922);
       expect(end).toBe(start);
+    });
+  });
+
+  describe("nextDaySeed()", () => {
+    it("names the Pacific day after the one the moment falls on", () => {
+      // 04:00 UTC on the 23rd is the evening of the 22nd in the Pacific
+      // zone, in summer and in winter alike.
+      expect(nextDaySeed(new Date("2026-09-23T04:00:00Z"))).toBe(20260923);
+      expect(nextDaySeed(new Date("2026-12-23T04:00:00Z"))).toBe(20261223);
+      expect(nextDaySeed(new Date("2026-09-22T08:00:00Z"))).toBe(20260923);
+    });
+
+    it("gives the next day across the ends of months and years", () => {
+      expect(nextDaySeed(new Date("2026-09-30T20:00:00Z"))).toBe(20261001);
+      expect(nextDaySeed(new Date("2026-12-31T20:00:00Z"))).toBe(20270101);
+      expect(nextDaySeed(new Date("2028-02-28T20:00:00Z"))).toBe(20280229);
+      expect(nextDaySeed(new Date("2027-02-28T20:00:00Z"))).toBe(20270301);
+    });
+
+    it("gives the next calendar day across the zone's offset changes", () => {
+      // March 8th 2026 is 23 hours long in the Pacific zone and November
+      // 1st is 25. A day's worth of time added to 23:30 on the day before
+      // the short day lands two days on, and one added to 00:30 on the
+      // long day lands on the same day.
+      const beforeShortDay = new Date("2026-03-08T07:30:00Z");
+      expect(daySeed(beforeShortDay)).toBe(20260307);
+      expect(nextDaySeed(beforeShortDay)).toBe(20260308);
+      const startOfLongDay = new Date("2026-11-01T07:30:00Z");
+      expect(daySeed(startOfLongDay)).toBe(20261101);
+      expect(nextDaySeed(startOfLongDay)).toBe(20261102);
     });
   });
 

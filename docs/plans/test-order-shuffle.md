@@ -4,50 +4,24 @@ Every test run in this repository reorders the tests it runs, seeded by the
 Pacific day the commit under test was committed on.
 [TESTING.md](../development/TESTING.md#every-test-run-shuffles-its-order) is
 the reference for how that works and what it reaches. This plan carries the
-two pieces that are not built, the two stages below. Neither stage is
-implemented. Where a stage names something that already exists — the wrapper
-every test file's `describe()` and `it()` resolve to, the seed in the test
-records — that thing is current, and the stage is what would be built on it.
+two stages below. Stage 1 is built, and Stage 2 is not. Where Stage 2 names
+something that already exists — the wrapper every test file's `describe()` and
+`it()` resolve to, the seed in the test records — that thing is current, and
+the stage is what would be built on it.
 
-## Stage 1: a day-ahead run, at 1am Pacific
+## Stage 1: a run under the next day's seed, a day ahead
 
-Status: not built.
+Status: built.
+[TESTING.md](../development/TESTING.md#tomorrows-seed-run-a-day-ahead)
+describes it.
 
-The seed is the Pacific day the commit under test was committed on, so the
-order changes with the first commit of each Pacific day. A test that the new
-order breaks therefore starts failing at the beginning of a working day, on
-whatever change happens to land first, and the team meets it as a broken
-morning rather than as a piece of news.
-
-A scheduled job running at 1am Pacific each day converts that into a day of
-warning. It checks out the head of `main` and runs the suites under the seed
-the next day's commits will take, which is the day after the one it runs on.
-When it fails, the team knows before the order arrives which tests it will
-break, and can fix them, or decide to, while the current day's runs are
-still green.
-
-What it needs:
-
-- A way to ask for that seed. `tasks/test-seed.ts` prints the seed of the
-  commit checked out; the day-ahead job needs the Pacific day after the one
-  it runs on instead. A flag on that task is the smallest form of it, and
-  the job then exports `CF_TEST_SHUFFLE_SEED` from what it prints, which
-  every runner already honors.
-- A schedule that lands on 1am Pacific in both halves of the year. GitHub
-  Actions cron is Coordinated Universal Time only, and the Pacific zone is
-  seven hours behind it from March to November and eight hours behind it
-  otherwise, so one cron entry drifts by an hour twice a year. Two entries —
-  08:00 and 09:00 UTC — with a first step that exits unless the Pacific hour
-  is 1 gives exactly one run a day at the right local hour.
-- A result that reads as a warning rather than as a failure. The run is
-  about an order no commit has run in yet, so its failures must not be
-  counted against the commit it ran at, and must not feed the flake
-  statistics that decide what is withheld from pull requests. Recording its
-  seed already keeps both apart: its records carry a seed that differs from
-  the commit's own, and test selection compares outcomes only between runs
-  in one order, so a failure there is neither a flake of that commit nor a
-  catch. Whether it should record at all, where its output goes, and who
-  reads it are the open questions in this stage.
+The scheduled workflow runs every CI test suite at the head of `main` under the
+next Pacific day's seed. It differs from the first design of this stage in two
+ways. It runs at 11:00 UTC, which is 04:00 Pacific in summer and 03:00 in
+winter, so one schedule entry serves the whole year and no step has to check
+the Pacific hour. Its result is its conclusion: a failed test fails the run.
+Its records reach the store under their own seed, as the first design
+proposed.
 
 ## Stage 2: reordering the cases inside a file
 
