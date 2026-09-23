@@ -9,6 +9,7 @@ import {
 import {
   collectTestFiles,
   mergeJUnitReports,
+  runShardedTests,
   runTestBatches,
   selectShardedTestFiles,
 } from "./run-sharded-test-files.ts";
@@ -174,7 +175,7 @@ describe("run-sharded-test-files", () => {
       );
     });
 
-    it("refuses a report with no root element", () => {
+    it("throws on a report with no root element", () => {
       expect(() => mergeJUnitReports(["<testsuite/>"])).toThrow(
         "Not a JUnit report",
       );
@@ -295,6 +296,118 @@ describe("run-sharded-test-files", () => {
       } finally {
         await Deno.remove(dir, { recursive: true });
       }
+    });
+  });
+
+  describe("runShardedTests()", () => {
+    async function member(files: Record<string, string>): Promise<string> {
+      const dir = await Deno.makeTempDir({ prefix: "sharded-member-" });
+      for (const [name, source] of Object.entries(files)) {
+        await Deno.writeTextFile(`${dir}/${name}`, source);
+      }
+      return dir;
+    }
+
+    async function outcomes(file: string): Promise<Map<string, string>> {
+      return new Map(
+        dropContainerCases(parseJUnit(await Deno.readTextFile(file)))
+          .map((leaf) => [leaf.name, leaf.outcome]),
+      );
+    }
+
+    const FILES = {
+      "rise.test.ts": 'Deno.test("rises", () => {});\n',
+      "proof.serial.test.ts": 'Deno.test("proofs", () => {});\n',
+    };
+
+    it("runs every file in its group, and leaves one report", async () => {
+      const dir = await member(FILES);
+      const report = await Deno.makeTempFile({ suffix: ".xml" });
+      try {
+        const code = await runShardedTests(
+          [
+            "BAKERY_SHARD",
+            "cli",
+            ".",
+            "--serial=**/*.serial.test.ts",
+            "--",
+            "--no-config",
+            "--parallel",
+            `--junit-path=${report}`,
+          ],
+          dir,
+          () => undefined,
+        );
+        expect(code).toBe(0);
+        expect(await outcomes(report)).toEqual(
+          new Map([["rises", "pass"], ["proofs", "pass"]]),
+        );
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(report);
+      }
+    });
+
+    it("runs only the files of the shard the variable names", async () => {
+      const dir = await member(FILES);
+      const report = await Deno.makeTempFile({ suffix: ".xml" });
+      try {
+        const run = (shard: string) =>
+          runShardedTests(
+            [
+              "BAKERY_SHARD",
+              "cli",
+              ".",
+              "--",
+              "--no-config",
+              `--junit-path=${report}`,
+            ],
+            dir,
+            (variable) => variable === "BAKERY_SHARD" ? shard : undefined,
+          );
+        expect(await run("1/2")).toBe(0);
+        const first = [...(await outcomes(report)).keys()];
+        expect(await run("2/2")).toBe(0);
+        const second = [...(await outcomes(report)).keys()];
+        expect(first).toHaveLength(1);
+        expect(second).toHaveLength(1);
+        expect([...first, ...second].sort()).toEqual(["proofs", "rises"]);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(report);
+      }
+    });
+
+    it("throws naming a glob that matches no test file", async () => {
+      const dir = await member(FILES);
+      try {
+        await expect(
+          runShardedTests(
+            ["X", "cli", ".", "--all-access=oven.test.ts", "--", "--no-config"],
+            dir,
+            () => undefined,
+          ),
+        ).rejects.toThrow("No test file matches `oven.test.ts`.");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("throws when the member holds no test file to run", async () => {
+      const dir = await member({ "helper.ts": "export {};\n" });
+      try {
+        await expect(
+          runShardedTests(["X", "cli", ".", "--"], dir, () => undefined),
+        ).rejects.toThrow("No test files selected.");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("throws the usage for a profile it does not know", async () => {
+      await expect(
+        runShardedTests(["X", "bakery", ".", "--"], ".", () => undefined),
+      ).rejects.toThrow("Usage: run-sharded-test-files.ts");
     });
   });
 });

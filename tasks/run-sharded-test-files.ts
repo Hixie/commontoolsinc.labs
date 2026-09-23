@@ -133,8 +133,8 @@ function joinedReportPath(flags: readonly string[]): string[] {
 }
 
 /**
- * Runs each batch as a `deno test` in the working directory, in turn, and
- * returns the exit code of the first that fails, or zero when none does.
+ * Runs each batch as a `deno test` in `cwd`, in turn, and returns the exit
+ * code of the first that fails, or zero when none does.
  * A batch that fails does not stop the ones after it, so that a run
  * reports every test it was given.
  *
@@ -146,6 +146,7 @@ function joinedReportPath(flags: readonly string[]): string[] {
  */
 export async function runTestBatches(
   batches: readonly TestBatch[],
+  cwd: string = Deno.cwd(),
 ): Promise<number> {
   let junitPath: string | undefined;
   const reports: string[] = [];
@@ -161,6 +162,7 @@ export async function runTestBatches(
       });
     const status = await new Deno.Command(Deno.execPath(), {
       args: ["test", ...flags, ...batch.files],
+      cwd,
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
@@ -185,17 +187,31 @@ export async function runTestBatches(
   return code;
 }
 
-async function main(): Promise<void> {
-  const args = readShardedRunnerArguments(Deno.args);
-  if (args === undefined || !(args.profile in PROFILES)) {
+/**
+ * Runs the runner over the member at `memberDir`, given its arguments, and
+ * returns the exit code of the first `deno test` that failed, or zero when
+ * none did. `shardOf` reads the environment variable the arguments name for
+ * the shard, and a shard is taken only where it gives one.
+ *
+ * Throws on arguments it cannot read, on a `--serial`, `--all-access` or
+ * `--ignore` glob that names no test file, and on a shard holding no file.
+ */
+export async function runShardedTests(
+  args: readonly string[],
+  memberDir: string,
+  shardOf: (variable: string) => string | undefined = (variable) =>
+    Deno.env.get(variable),
+): Promise<number> {
+  const read = readShardedRunnerArguments(args);
+  if (read === undefined || !(read.profile in PROFILES)) {
     throw new Error(
       "Usage: run-sharded-test-files.ts VARIABLE PROFILE ROOT " +
         "[--serial=GLOBS] [--all-access=GLOBS] -- TEST_FLAGS...",
     );
   }
-  const profile = PROFILES[args.profile as ProfileName];
-  const { test } = args;
-  const unmatched = await unmatchedGlobs(Deno.cwd(), test.paths, [
+  const profile = PROFILES[read.profile as ProfileName];
+  const { test } = read;
+  const unmatched = await unmatchedGlobs(memberDir, test.paths, [
     ...test.serial,
     ...test.allAccess,
     ...test.ignores,
@@ -207,10 +223,10 @@ async function main(): Promise<void> {
       }.`,
     );
   }
-  const shardRaw = Deno.env.get(args.shardVariable);
+  const shardRaw = shardOf(read.shardVariable);
   const shard = shardRaw ? parseShard(shardRaw) : undefined;
   const files = selectShardedTestFiles(
-    await collectTestFiles(Deno.cwd(), args.test),
+    await collectTestFiles(memberDir, test),
     shard,
     profile.weights,
     profile.defaultWeight,
@@ -222,9 +238,13 @@ async function main(): Promise<void> {
   }
 
   const label = shardRaw ? ` shard ${shardRaw}` : "";
-  console.log(`Running ${args.profile} test${label} files:`);
+  console.log(`Running ${read.profile} test${label} files:`);
   for (const file of files) console.log(`  ${file}`);
-  const code = await runTestBatches(testBatches(args.test, files));
+  return await runTestBatches(testBatches(test, files), memberDir);
+}
+
+async function main(): Promise<void> {
+  const code = await runShardedTests(Deno.args, Deno.cwd());
   if (code !== 0) Deno.exit(code);
 }
 
