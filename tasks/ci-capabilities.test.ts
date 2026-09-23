@@ -840,6 +840,29 @@ describe("opening a capability on a machine that answers", () => {
     expect(await openBinary(false)).toBe(true);
     expect(await openBinary(true)).toBe(false);
   });
+
+  it("reports a cached binary it cannot look for rather than building one", async () => {
+    // Only a binary that is not there is a cache miss. A cache directory
+    // that is a file is a broken checkout, and building over it would hide
+    // that.
+    const m = machine();
+    const root = await Deno.makeTempDir({ prefix: "capability-" });
+    try {
+      await Deno.writeTextFile(`${root}/${CACHE_DIR}`, "");
+      await expect(
+        openCapabilities(["bg-piece-service-binary"], {
+          root,
+          dryRun: false,
+          workDir: root,
+          exec: m.exec,
+        }, CAPABILITIES),
+      ).rejects.toThrow(Deno.errors.NotADirectory);
+      expect(m.asked.some((line) => line.includes("build-binaries")))
+        .toBe(false);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
 });
 
 describe("the binaries a lane caches", () => {
