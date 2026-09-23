@@ -1969,19 +1969,25 @@ opened, for example `cf piece call ... search --query milk`, and
 before the callable name for `cf piece call` itself and the arguments after the
 name for the invoked callable.
 
-`--` belongs to the commands that have a callable section to close. On
-`cf piece call` and `cf exec` it closes the section the callable name opened and
-opens the read step's, so the only words that follow it are `--select`,
-`--schema` and `--filter`; anything else there is refused with the line that
-puts it back in the section. `--help` is the exception, and deliberately:
-written past the marker it still reaches the callable and prints that verb's own
-page, since a caller wanting this command's page writes it with no verb at all.
+On `cf piece call` and `cf exec`, which have a callable section, `--` closes the
+section the callable name opened and opens the read step's, so the only words
+that follow it are `--select`, `--schema` and `--filter`; anything else there is
+refused with the line that puts it back in the section. `--help` is the
+exception, and deliberately: written past the marker it still reaches the
+callable and prints that verb's own page, since a caller wanting this command's
+page writes it with no verb at all.
 
 `cf cell get`, `cf cell set` and `cf wish` have no callable section, so a `--`
 written on one of those is refused rather than read: the parser sets every word
 after it aside, and the command would otherwise return a value the caller did
 not ask for and exit zero. The refusal names the words that were set aside and
 the line that works.
+
+A few commands give `--` its conventional meaning instead: it ends the options,
+and the one word after it is read as an argument even when it begins with `-`.
+`cf id derive` and `cf id from-mnemonic` read the secret from the file named
+there, and `cf space invite redeem`, `revoke` and `receipts` take the invitation
+ID from it, as [Space invitations](#space-invitations) describes.
 
 ## Command visibility
 
@@ -2381,6 +2387,12 @@ JSON and require no existing memory session to redeem.
 - `cf space invite list` lists active metadata without codes or verifiers.
 - `cf space invite revoke <invite-id>` ends admission without removing grants.
 - `cf space invite receipts [invite-id]` lists unique invitation/DID pairs.
+
+An invitation ID may begin with `-`. Written where the argument goes, such an ID
+is read as an option, so `redeem`, `revoke`, and `receipts` also take the ID as
+the one word after `--`, which comes after every option:
+`cf space invite revoke -- -Pj4…` or
+`cf space invite redeem --code-file code.txt -- -Pj4…`.
 
 Creation saves its credentials before sending HTTP. With
 `--request-file <path>`, the command requires a private parent directory (0700)

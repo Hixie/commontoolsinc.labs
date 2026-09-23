@@ -12,8 +12,10 @@ import { verifyFirstPartyHttpRequest } from "@commonfabric/runner/toolshed-http-
 /**
  * Runs `cf space invite` subcommands against a stubbed fabric service that
  * checks each request's signer and route and answers every operation. Each
- * run returns the JSON the command printed. Disposing it restores the stubs
- * and removes its state directory.
+ * run places the connection options directly after the subcommand's name, so
+ * that the words after them may end with `--` and an invitation ID, and
+ * returns the JSON the command printed. Disposing it restores the stubs and
+ * removes its state directory.
  */
 async function inviteCli(passphrase: string) {
   await using stack = new AsyncDisposableStack();
@@ -69,15 +71,16 @@ async function inviteCli(passphrase: string) {
     if (operation === "revoke") return Response.json({ revoked: true });
     return Response.json([]);
   }));
-  const run = async (...args: string[]) => {
+  const run = async (command: string, ...args: string[]) => {
     await buildSpaceInviteCommand().reset().throwErrors().parse([
-      ...args,
+      command,
       "--api-url",
       "https://fabric.example",
       "--space",
       signer.did(),
       "--identity",
       keyPath,
+      ...args,
     ]);
     return JSON.parse(outputs.at(-1)!);
   };
@@ -740,6 +743,87 @@ describe("space invite", () => {
         ["revoke", created.inviteId],
         ["receipts", created.inviteId],
       ]);
+  });
+
+  it("sends an invitation ID beginning with `-` when it follows `--`", async () => {
+    await using cli = await inviteCli("invite CLI dash IDs");
+    const { requests, run } = cli;
+    const code = "A".repeat(43);
+    await Deno.writeTextFile(cli.codePath, code);
+    for (const inviteId of ["-" + "P".repeat(21), "--" + "Q".repeat(20)]) {
+      await run("redeem", "--code-file", cli.codePath, "--", inviteId);
+      expect(requests.at(-1)).toEqual({
+        operation: "redeem",
+        body: { inviteId, code },
+      });
+      await run("receipts", "--", inviteId);
+      expect(requests.at(-1)).toEqual({
+        operation: "receipts",
+        body: { inviteId },
+      });
+      await run("revoke", "--", inviteId);
+      expect(requests.at(-1)).toEqual({
+        operation: "revoke",
+        body: { inviteId },
+      });
+    }
+    await run("receipts", "--");
+    expect(requests.at(-1)).toEqual({ operation: "receipts", body: {} });
+    expect(requests).toHaveLength(7);
+  });
+
+  it("refuses an invitation ID named twice, followed by other words, or missing, before making a request", async () => {
+    using http = stub(
+      globalThis,
+      "fetch",
+      () => Promise.reject(new Error("unexpected request")),
+    );
+    const common = [
+      "--api-url",
+      "https://fabric.example",
+      "--space",
+      "named-space",
+      "--identity",
+      "/not-needed.key",
+    ];
+    const dashId = "-" + "P".repeat(21);
+    const plainId = "A".repeat(22);
+    for (const command of ["redeem", "revoke", "receipts"]) {
+      await expect(
+        buildSpaceInviteCommand().reset().throwErrors().parse([
+          command,
+          ...common,
+          dashId,
+        ]),
+      ).rejects.toThrow('Unknown option "-P');
+      for (
+        const [words, error] of [
+          [[plainId, "--", dashId], "not both"],
+          [["--", plainId, dashId], "Only the invitation ID may follow `--`"],
+          [["--", dashId, "--space", "named-space"], "options go before it"],
+        ] as const
+      ) {
+        await expect(
+          buildSpaceInviteCommand().reset().throwErrors().parse([
+            command,
+            ...common,
+            ...words,
+          ]),
+        ).rejects.toThrow(error);
+      }
+    }
+    for (const command of ["redeem", "revoke"]) {
+      for (const words of [[], ["--"]]) {
+        await expect(
+          buildSpaceInviteCommand().reset().throwErrors().parse([
+            command,
+            ...common,
+            ...words,
+          ]),
+        ).rejects.toThrow("Missing argument: `invite-id`");
+      }
+    }
+    expect(http.calls).toHaveLength(0);
   });
 
   it("refuses incomplete commands before making a request", async () => {
