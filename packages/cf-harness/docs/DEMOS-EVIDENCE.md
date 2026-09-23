@@ -349,11 +349,11 @@ empty with no error anywhere.
 Say which you mean. "After the reader reports `pending: false` and no error" is
 unambiguous and does not invite a vocabulary the data does not use.
 
-**Slugs.** `assign_slug` requires a slug, never makes one unique itself, and
-refuses one that already names another piece — and pieces are never deleted. A
-prompt naming a fixed slug therefore works once and stops to ask on every later
-run. Every prompt below ends with the sentence that authorizes the retry, which
-is what makes the same text work repeatedly and on someone else's console.
+**Slugs.** `assign_slug` never repoints a slug that already names another piece
+— and pieces are never deleted — so a prompt naming a fixed slug gets that word
+on the first run and the word with a counter (`-2`, `-3`, ...) on every later
+one. The receipt carries the name assigned; the run reads its address there and
+needs no retry.
 
 ## Checking an index entry is discoverable
 
@@ -404,10 +404,6 @@ Read alongside a 14 m 14 s bills run that did have the console to itself, this
 is informative rather than merely a caveat: a short task stayed short under load
 while a long one stayed long alone, so **duration here is a property of the task
 rather than of the machine.** Expect these numbers to hold on a quiet console.
-
-**Likely failure:** the slug it first tries is taken; it picks another and
-carries on. A second `assign_slug` in the timeline is the retry working, not a
-fault.
 
 **Proof status: PROVEN — 4/4 on `e5b9f57c6c`, 2/2 on `a77e958513`, timing under
 load.** A further run naming the pattern by id finished end to end in **16
@@ -690,11 +686,12 @@ the only entry here whose done condition has been exercised end to end. One run
 delivered `monthly-bills-mail-bank` in 427 s, 61 s of it the opening pass,
 importing both indexed readers into an authored wrapper. Its first submission
 failed on a `cf-alert` prop and the repaired version ran; its first naming
-attempt collided and the second succeeded, which is the slug sentence working.
-The run's own final text says its counts and matches were not independently
-verified, because policy withheld the results from the model — so this
-establishes a named piece and indexed composition, not that the bills it lists
-are the right ones. Whether the pairings are right is the subject of
+attempt collided and the second succeeded, which was the slug sentence working
+on a build that refused a collision. The run's own final text says its counts
+and matches were not independently verified, because policy withheld the results
+from the model — so this establishes a named piece and indexed composition, not
+that the bills it lists are the right ones. Whether the pairings are right is
+the subject of
 [§5](#5-bills-from-gmail-and-plaid-composing-two-library-patterns-by-id), which
 runs the same job with the readers named and records what varies between runs.
 
