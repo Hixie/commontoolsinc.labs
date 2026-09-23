@@ -372,6 +372,14 @@ describe("research", () => {
             id: "empty-pattern-id",
             name: "inspect_pattern",
             input: { patternId: "" },
+          }, {
+            id: "empty-prefixed-pattern-id",
+            name: "inspect_pattern",
+            input: { patternId: "cf:pattern:" },
+          }, {
+            id: "empty-prefixed-source-id",
+            name: "open_pattern_file",
+            input: { patternId: "cf:pattern:", path: "/main.tsx" },
           }]),
         () => finalResult(),
       ]);
@@ -384,6 +392,8 @@ describe("research", () => {
       expect(outputs).toEqual([
         { error: "pattern search requires text, tags, or both" },
         { results: [] },
+        { error: "patternId is required" },
+        { error: "patternId is required" },
         { error: "patternId is required" },
       ]);
       expect(searches).toBe(1);
@@ -902,6 +912,7 @@ describe("research", () => {
         resultSchema: { type: "object" },
         program: { main: "/main.tsx", files },
       };
+      const inspectedIds: string[] = [];
       const index: HarnessResearchPatternIndex = {
         searchPatterns: () =>
           Promise.resolve({
@@ -917,7 +928,10 @@ describe("research", () => {
               signals: { uses: 3, score: 2 },
             }],
           }),
-        getPattern: () => Promise.resolve(pattern),
+        getPattern: ({ patternId }) => {
+          inspectedIds.push(patternId);
+          return Promise.resolve(pattern);
+        },
       };
       const model = new ScriptedModelClient([
         () =>
@@ -930,13 +944,13 @@ describe("research", () => {
           assistant("", [{
             id: "inspect",
             name: "inspect_pattern",
-            input: { patternId },
+            input: { patternId: `cf:pattern:${patternId}` },
           }]),
         () =>
           assistant("", [{
             id: "main",
             name: "open_pattern_file",
-            input: { patternId, path: "/main.tsx" },
+            input: { patternId: `cf:pattern:${patternId}`, path: "/main.tsx" },
           }, {
             id: "title",
             name: "open_pattern_file",
@@ -978,6 +992,8 @@ describe("research", () => {
       );
 
       expect(reply.kit.status).toBe("complete");
+      expect(inspectedIds).toEqual([patternId]);
+      expect(reply.record.budgets.modelTurns).toBe(4);
       expect(reply.kit.inputs).toEqual([]);
       expect(reply.kit.patterns[0].patternId).toBe(patternId);
       expect(reply.kit.patterns[0].sourceIdentityVerified).toBe(true);
