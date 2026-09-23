@@ -17,6 +17,23 @@ import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
 
 const AGENTS_HOST_SHARDS = 5;
 
+/** A directory holding the files a case describes, by name and source. */
+async function fixture(files: Record<string, string>): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "sharded-fixture-" });
+  for (const [name, source] of Object.entries(files)) {
+    await Deno.writeTextFile(`${dir}/${name}`, source);
+  }
+  return dir;
+}
+
+/** The names and outcomes of the cases the report at `file` holds. */
+async function outcomes(file: string): Promise<Map<string, string>> {
+  return new Map(
+    dropContainerCases(parseJUnit(await Deno.readTextFile(file)))
+      .map((leaf) => [leaf.name, leaf.outcome]),
+  );
+}
+
 describe("run-sharded-test-files", () => {
   it("collects test modules recursively in stable order", async () => {
     const dir = await Deno.makeTempDir({ prefix: "sharded-tests-" });
@@ -183,22 +200,6 @@ describe("run-sharded-test-files", () => {
   });
 
   describe("runTestBatches()", () => {
-    async function fixture(files: Record<string, string>): Promise<string> {
-      const dir = await Deno.makeTempDir({ prefix: "sharded-batches-" });
-      for (const [name, source] of Object.entries(files)) {
-        await Deno.writeTextFile(`${dir}/${name}`, source);
-      }
-      return dir;
-    }
-
-    /** The names and outcomes of the cases the report at `path` holds. */
-    async function outcomes(path: string): Promise<Map<string, string>> {
-      return new Map(
-        dropContainerCases(parseJUnit(await Deno.readTextFile(path)))
-          .map((leaf) => [leaf.name, leaf.outcome]),
-      );
-    }
-
     it("leaves one report holding every batch's tests", async () => {
       const dir = await fixture({
         "a.test.ts": 'Deno.test("rises", () => {});\n',
@@ -300,28 +301,13 @@ describe("run-sharded-test-files", () => {
   });
 
   describe("runShardedTests()", () => {
-    async function member(files: Record<string, string>): Promise<string> {
-      const dir = await Deno.makeTempDir({ prefix: "sharded-member-" });
-      for (const [name, source] of Object.entries(files)) {
-        await Deno.writeTextFile(`${dir}/${name}`, source);
-      }
-      return dir;
-    }
-
-    async function outcomes(file: string): Promise<Map<string, string>> {
-      return new Map(
-        dropContainerCases(parseJUnit(await Deno.readTextFile(file)))
-          .map((leaf) => [leaf.name, leaf.outcome]),
-      );
-    }
-
     const FILES = {
       "rise.test.ts": 'Deno.test("rises", () => {});\n',
       "proof.serial.test.ts": 'Deno.test("proofs", () => {});\n',
     };
 
     it("runs every file in its group, and leaves one report", async () => {
-      const dir = await member(FILES);
+      const dir = await fixture(FILES);
       const report = await Deno.makeTempFile({ suffix: ".xml" });
       try {
         const code = await runShardedTests(
@@ -349,7 +335,7 @@ describe("run-sharded-test-files", () => {
     });
 
     it("runs only the files of the shard the variable names", async () => {
-      const dir = await member(FILES);
+      const dir = await fixture(FILES);
       const report = await Deno.makeTempFile({ suffix: ".xml" });
       try {
         const run = (shard: string) =>
@@ -379,7 +365,7 @@ describe("run-sharded-test-files", () => {
     });
 
     it("throws naming a glob that matches no test file", async () => {
-      const dir = await member(FILES);
+      const dir = await fixture(FILES);
       try {
         await expect(
           runShardedTests(
@@ -394,7 +380,7 @@ describe("run-sharded-test-files", () => {
     });
 
     it("throws when the member holds no test file to run", async () => {
-      const dir = await member({ "helper.ts": "export {};\n" });
+      const dir = await fixture({ "helper.ts": "export {};\n" });
       try {
         await expect(
           runShardedTests(["X", "cli", ".", "--"], dir, () => undefined),
