@@ -14,7 +14,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { expect } from "@std/expect";
-import { describe, it } from "@std/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { FakeTime } from "@std/testing/time";
 import {
   broadcast,
@@ -23,6 +23,7 @@ import {
   heartbeat,
   nextFaviconRedSince,
   page,
+  resetBoardForTest,
   serveTick,
   start,
   tick,
@@ -43,7 +44,18 @@ import { dashboardCacheFile } from "./history-files.ts";
 
 const req = (path: string) => new Request(`http://localhost${path}`);
 
-// intervalMs 0 keeps a stand-in due on every tick, whatever earlier tests ran.
+// Registers a test that starts from a board nothing has collected into, so that
+// it sees none of the views, run times, and red streak an earlier test left.
+// The reset after the test fails the test that left a collection running.
+function boardTest(name: string, fn: () => void | Promise<void>): void {
+  Deno.test(name, async () => {
+    resetBoardForTest();
+    await fn();
+    resetBoardForTest();
+  });
+}
+
+// intervalMs 0 keeps a stand-in due on every tick.
 function fake(label: string, collect: () => TileView | Promise<TileView>, intervalMs = 0): Tile {
   return { label, intervalMs, collect: () => Promise.resolve(collect()) };
 }
@@ -151,15 +163,20 @@ function observeUpdate(matches: () => boolean) {
   };
 }
 
-Deno.test("healthz: not ok until the board has collected something", async () => {
-  // Runs before any tick: nothing has been collected, so the probe an external
-  // uptime check reads must not claim the board is up.
+boardTest("healthz: not ok until the board has collected something", async () => {
+  // Nothing has been collected yet, so the probe an external uptime check reads
+  // must not claim the board is up.
   const res = await handle(req("/healthz"));
   assertEquals(res.status, 200);
   assertEquals(await res.json(), { ok: false, at: 0 });
+
+  await tick([fake("labs ci", () => ({ status: "good", value: "passing" }))]);
+  const collected = await (await handle(req("/healthz"))).json();
+  assertEquals(collected.ok, true);
+  assert(collected.at > 0, "collecting stamps the board's last change");
 });
 
-Deno.test("registered tiles render before their first collection completes", () => {
+boardTest("registered tiles render before their first collection completes", () => {
   const html = page(new Map());
   for (const tile of TILES) {
     const placeholder = tileHtml(tile.label, html);
@@ -168,7 +185,7 @@ Deno.test("registered tiles render before their first collection completes", () 
   }
 });
 
-Deno.test("favicon: serves distinct status PNGs and defaults unknown requests to green", async () => {
+boardTest("favicon: serves distinct status PNGs and defaults unknown requests to green", async () => {
   const signature = new Uint8Array([
     0x89,
     0x50,
@@ -196,7 +213,7 @@ Deno.test("favicon: serves distinct status PNGs and defaults unknown requests to
   assertEquals(unknown.toBase64(), encoded[0], "an unsupported status stays green");
 });
 
-Deno.test("favicon: continuous red keeps its start time and recovery resets it", () => {
+boardTest("favicon: continuous red keeps its start time and recovery resets it", () => {
   assertEquals(nextFaviconRedSince(null, "good", 1_000), null);
   assertEquals(nextFaviconRedSince(null, "bad", 2_000), 2_000);
   assertEquals(nextFaviconRedSince(2_000, "bad", 3_000), 2_000);
@@ -204,7 +221,7 @@ Deno.test("favicon: continuous red keeps its start time and recovery resets it",
   assertEquals(nextFaviconRedSince(null, "bad", 5_000), 5_000);
 });
 
-Deno.test("per-collector updates keep a red handoff's incident age", async () => {
+boardTest("per-collector updates keep a red handoff's incident age", async () => {
   const modelBad: TileView = {
     status: "bad",
     value: "failed",
@@ -262,7 +279,7 @@ Deno.test("per-collector updates keep a red handoff's incident age", async () =>
   assertEquals(faviconRedSinceInPage(), "null");
 });
 
-Deno.test("simultaneous collector completions keep a red handoff's incident age", async () => {
+boardTest("simultaneous collector completions keep a red handoff's incident age", async () => {
   const realNow = Date.now;
   const startedAt = realNow() + 1_000;
   let now = startedAt;
@@ -316,7 +333,7 @@ Deno.test("simultaneous collector completions keep a red handoff's incident age"
   }
 });
 
-Deno.test("a tile stays wide through failures and keeps its last good view", async () => {
+boardTest("a tile stays wide through failures and keeps its last good view", async () => {
   await tick([fake("recent main runs", () => {
     throw new Error("HTTP 404: Not Found");
   })]);
@@ -344,10 +361,8 @@ Deno.test("a tile stays wide through failures and keeps its last good view", asy
   );
 });
 
-Deno.test("the ticker leaves a tile alone until its interval has elapsed", async () => {
+boardTest("the ticker leaves a tile alone until its interval has elapsed", async () => {
   let collects = 0;
-  // A label of its own: an earlier tick of a registered label would already
-  // have stamped that label's last run, leaving the tile not due here.
   const t = fake("interval probe", () => {
     collects++;
     return { status: "good", value: "passing" };
@@ -362,7 +377,7 @@ Deno.test("the ticker leaves a tile alone until its interval has elapsed", async
   assertEquals((await (await handle(req("/healthz"))).json()).at, at, "and nothing is reported as changed");
 });
 
-Deno.test("an update still running after one minute stays gray until it completes", async () => {
+boardTest("an update still running after one minute stays gray until it completes", async () => {
   const realNow = Date.now;
   const realError = console.error;
   const errors: string[] = [];
@@ -457,7 +472,7 @@ Deno.test("an update still running after one minute stays gray until it complete
   }
 });
 
-Deno.test("an intermediate view with no chart keeps the chart on the tile", async () => {
+boardTest("an intermediate view with no chart keeps the chart on the tile", async () => {
   const charted: TileView = {
     status: "good",
     value: "last value",
@@ -507,7 +522,7 @@ Deno.test("an intermediate view with no chart keeps the chart on the tile", asyn
   expect(complete).not.toContain("its own chart");
 });
 
-Deno.test("a stale source log names its active GitHub operation", async () => {
+boardTest("a stale source log names its active GitHub operation", async () => {
   const realNow = Date.now;
   const realFetch = globalThis.fetch;
   const realError = console.error;
@@ -571,7 +586,7 @@ Deno.test("a stale source log names its active GitHub operation", async () => {
   }
 });
 
-Deno.test("a completed-views-only tile suppresses intermediate views and keeps its settled color", async () => {
+boardTest("a completed-views-only tile suppresses intermediate views and keeps its settled color", async () => {
   const realNow = Date.now;
   const startedAt = realNow() - 61_000;
   let now = startedAt;
@@ -635,30 +650,50 @@ Deno.test("a completed-views-only tile suppresses intermediate views and keeps i
   }
 });
 
-Deno.test("overlapping ticks skip a tile already updating and collect other due tiles", async () => {
+boardTest("the board refuses a reset while a collection is still running", async () => {
+  await tick([fake("model spend", () => ({ status: "bad", value: "failed" }))]);
+  const slow = deferred<TileView>();
+  const collection = tick([fake("model spend", () => slow.promise)]);
+  try {
+    expect(() => resetBoardForTest()).toThrow(
+      "the board cannot be reset while a collection is running",
+    );
+    assert(tileHtml("model spend").startsWith(`bad"`), "the refused reset kept the collected view");
+  } finally {
+    slow.resolve({ status: "good", value: "passing" });
+    await collection;
+  }
+  assert(tileHtml("model spend").startsWith(`good"`));
+  resetBoardForTest();
+  assert(tileHtml("model spend").startsWith(`unknown"`), "the reset cleared the collected view");
+});
+
+boardTest("overlapping ticks skip a tile already updating and collect other due tiles", async () => {
   const slow = deferred<TileView>();
   let duplicateCollects = 0;
   let otherCollects = 0;
   const first = tick([fake("overlap slow", () => slow.promise)]);
+  try {
+    await tick([
+      fake("overlap slow", () => {
+        duplicateCollects++;
+        return { status: "good" };
+      }),
+      fake("overlap fast", () => {
+        otherCollects++;
+        return { status: "good" };
+      }),
+    ]);
 
-  await tick([
-    fake("overlap slow", () => {
-      duplicateCollects++;
-      return { status: "good" };
-    }),
-    fake("overlap fast", () => {
-      otherCollects++;
-      return { status: "good" };
-    }),
-  ]);
-
-  assertEquals(duplicateCollects, 0, "the updating tile is not collected twice");
-  assertEquals(otherCollects, 1, "another due tile is still collected");
-  slow.resolve({ status: "good" });
-  await first;
+    assertEquals(duplicateCollects, 0, "the updating tile is not collected twice");
+    assertEquals(otherCollects, 1, "another due tile is still collected");
+  } finally {
+    slow.resolve({ status: "good" });
+    await first;
+  }
 });
 
-Deno.test("overlapping ticks skip an updating run source and refresh another source", async () => {
+boardTest("overlapping ticks skip an updating run source and refresh another source", async () => {
   const slowSource = { repo: "test/overlap-slow", workflow: "ci.yml" };
   const fastSource = { repo: "test/overlap-fast", workflow: "ci.yml" };
   const slowRuns = deferred<Run[]>();
@@ -711,7 +746,7 @@ Deno.test("overlapping ticks skip an updating run source and refresh another sou
   assertEquals(slowCollections, 1);
 });
 
-Deno.test("an unexpected standalone collection failure releases the tile for its next refresh", async () => {
+boardTest("an unexpected standalone collection failure releases the tile for its next refresh", async () => {
   let collections = 0;
   const unreadable: TileView = {
     get status(): TileView["status"] {
@@ -740,7 +775,7 @@ Deno.test("an unexpected standalone collection failure releases the tile for its
   assertEquals(collections, 2, "the failed update no longer keeps the tile active");
 });
 
-Deno.test("an unexpected source collection failure releases its source and tiles", async () => {
+boardTest("an unexpected source collection failure releases its source and tiles", async () => {
   const source = { repo: "test/source-cleanup", workflow: "ci.yml" };
   let fetches = 0;
   let collections = 0;
@@ -781,7 +816,7 @@ Deno.test("an unexpected source collection failure releases its source and tiles
   assertEquals(collections, 2, "the failed update no longer keeps the tile active");
 });
 
-Deno.test("a multi-source tile stays active until every source update completes", async () => {
+boardTest("a multi-source tile stays active until every source update completes", async () => {
   const realNow = Date.now;
   let now = realNow() + 20_000;
   Date.now = () => now;
@@ -869,7 +904,7 @@ Deno.test("a multi-source tile stays active until every source update completes"
   assertStringIncludes(complete, "fresh source value");
 });
 
-Deno.test("each completed collection is published while slower tiles are still running", async () => {
+boardTest("each completed collection is published while slower tiles are still running", async () => {
   const messages: string[] = [];
   let firstPublished = (_message: string) => {};
   const firstUpdate = new Promise<string>((resolve) => firstPublished = resolve);
@@ -902,7 +937,7 @@ Deno.test("each completed collection is published while slower tiles are still r
   assertStringIncludes(tileHtml("loom ci", updateFromEvent(messages[1]).gridHtml), "slow");
 });
 
-Deno.test("each run source publishes its dependent tiles as one batch", async () => {
+boardTest("each run source publishes its dependent tiles as one batch", async () => {
   const labsSource = { repo: "test/labs-incremental", workflow: "ci.yml" };
   const loomSource = { repo: "test/loom-incremental", workflow: "ci.yml" };
   const labs = deferred<Run[]>();
@@ -960,7 +995,7 @@ Deno.test("each run source publishes its dependent tiles as one batch", async ()
   }
 });
 
-Deno.test("a new source snapshot keeps the prior CI verdict during a rerun", async () => {
+boardTest("a new source snapshot keeps the prior CI verdict during a rerun", async () => {
   const failure = {
     ...sourceRun(81, "failed build"),
     conclusion: "failure",
@@ -1001,7 +1036,7 @@ Deno.test("a new source snapshot keeps the prior CI verdict during a rerun", asy
   assertStringIncludes(rerunning, "build rerunning");
 });
 
-Deno.test("a ready source publishes while an older combined collection is still running", async () => {
+boardTest("a ready source publishes while an older combined collection is still running", async () => {
   const realNow = Date.now;
   let now = realNow() + 30_000;
   const labsSource = { repo: "test/labs-independent", workflow: "ci.yml" };
@@ -1102,7 +1137,7 @@ Deno.test("a ready source publishes while an older combined collection is still 
   }
 });
 
-Deno.test("a shared run source preserves each dependent tile's per-source interval", async () => {
+boardTest("a shared run source preserves each dependent tile's per-source interval", async () => {
   const source = { repo: "test/source-cadence", workflow: "ci.yml" };
   let fetches = 0;
   let fastCollections = 0;
@@ -1144,7 +1179,7 @@ Deno.test("a shared run source preserves each dependent tile's per-source interv
   assertEquals(slowCollections, 1);
 });
 
-Deno.test("a failed run source keeps its last good snapshot", async () => {
+boardTest("a failed run source keeps its last good snapshot", async () => {
   const source = { repo: "test/stale-source", workflow: "ci.yml" };
   let failing = false;
   const sourceCtx: Ctx = {
@@ -1167,7 +1202,7 @@ Deno.test("a failed run source keeps its last good snapshot", async () => {
   assertStringIncludes(stale, "stale-source source unreachable");
 });
 
-Deno.test("a run source that reads backwards in time keeps its last good snapshot", async () => {
+boardTest("a run source that reads backwards in time keeps its last good snapshot", async () => {
   const source = { repo: "test/backwards-source", workflow: "ci.yml" };
   // sourceRun times a run from its id, so run 5000 is weeks behind run 3. A
   // fetch answering with the older one read a stale view of the workflow.
@@ -1198,7 +1233,7 @@ Deno.test("a run source that reads backwards in time keeps its last good snapsho
   assertStringIncludes(recovered, "current run");
 });
 
-Deno.test("a tile can publish cached data while its collection is still running", async () => {
+boardTest("a tile can publish cached data while its collection is still running", async () => {
   const messages: string[] = [];
   const client = {
     enqueue(value: Uint8Array) {
@@ -1254,7 +1289,7 @@ Deno.test("a tile can publish cached data while its collection is still running"
   }
 });
 
-Deno.test("a source-backed tile can publish cached data while its collection is still running", async () => {
+boardTest("a source-backed tile can publish cached data while its collection is still running", async () => {
   const source = { repo: "test/intermediate-source", workflow: "ci.yml" };
   const sourceCtx: Ctx = {
     runs: () => Promise.resolve([]),
@@ -1303,7 +1338,7 @@ Deno.test("a source-backed tile can publish cached data while its collection is 
   }
 });
 
-Deno.test("sse: /events opens a stream, tick pushes new tile markup, disconnect drops the client", async () => {
+boardTest("sse: /events opens a stream, tick pushes new tile markup, disconnect drops the client", async () => {
   const res = await handle(req("/events"));
   assertEquals(res.headers.get("content-type"), "text/event-stream");
   assertEquals(res.headers.get("cache-control"), "no-cache");
@@ -1336,7 +1371,7 @@ Deno.test("sse: /events opens a stream, tick pushes new tile markup, disconnect 
   assertEquals(clients.size, 0, "a disconnected browser is not kept as a client");
 });
 
-Deno.test("message: an edit is saved and sent to every connected dashboard", async () => {
+boardTest("message: an edit is saved and sent to every connected dashboard", async () => {
   const events = await handle(req("/events"));
   const reader = events.body!.getReader();
   await chunk(reader);
@@ -1367,7 +1402,7 @@ Deno.test("message: an edit is saved and sent to every connected dashboard", asy
   }
 });
 
-Deno.test("message: malformed edits are rejected without changing the message", async () => {
+boardTest("message: malformed edits are rejected without changing the message", async () => {
   const malformedJson = await handle(new Request("http://localhost/message", {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -1409,7 +1444,7 @@ Deno.test("message: malformed edits are rejected without changing the message", 
   assertEquals(wrongMethod.headers.get("allow"), "PUT");
 });
 
-Deno.test("message: a persistence failure returns an error", async () => {
+boardTest("message: a persistence failure returns an error", async () => {
   const temporary = `${dashboardCacheFile("fabric-wall-message.json")}.tmp`;
   await Deno.mkdir(temporary);
   try {
@@ -1427,7 +1462,7 @@ Deno.test("message: a persistence failure returns an error", async () => {
   }
 });
 
-Deno.test("message: a failed expiry write retains the saved text", async () => {
+boardTest("message: a failed expiry write retains the saved text", async () => {
   const realNow = Date.now;
   let now = realNow();
   Date.now = () => now;
@@ -1458,7 +1493,7 @@ Deno.test("message: a failed expiry write retains the saved text", async () => {
   }
 });
 
-Deno.test("message: the serving clock clears text after its fade completes", async () => {
+boardTest("message: the serving clock clears text after its fade completes", async () => {
   const realNow = Date.now;
   let now = realNow();
   Date.now = () => now;
@@ -1488,7 +1523,7 @@ Deno.test("message: the serving clock clears text after its fade completes", asy
   }
 });
 
-Deno.test("sse: every serving tick sends a heartbeat, so silence means a broken stream", async () => {
+boardTest("sse: every serving tick sends a heartbeat, so silence means a broken stream", async () => {
   const res = await handle(req("/events"));
   const reader = res.body!.getReader();
   await chunk(reader); // ": connected"
@@ -1517,7 +1552,7 @@ Deno.test("sse: every serving tick sends a heartbeat, so silence means a broken 
   await reader.cancel();
 });
 
-Deno.test("heartbeat: a client whose stream is gone is dropped rather than throwing", async () => {
+boardTest("heartbeat: a client whose stream is gone is dropped rather than throwing", async () => {
   const res = await handle(req("/events"));
   const dead = [...clients].at(-1)!;
   await res.body!.cancel();
@@ -1526,7 +1561,7 @@ Deno.test("heartbeat: a client whose stream is gone is dropped rather than throw
   assertEquals(clients.size, 0);
 });
 
-Deno.test("broadcast: a client whose stream is gone is dropped rather than throwing", async () => {
+boardTest("broadcast: a client whose stream is gone is dropped rather than throwing", async () => {
   const res = await handle(req("/events"));
   const dead = [...clients].at(-1)!;
   await res.body!.cancel(); // closes the stream, so enqueueing to it now throws
@@ -1544,7 +1579,7 @@ Deno.test("broadcast: a client whose stream is gone is dropped rather than throw
   assertEquals(clients.size, 0);
 });
 
-Deno.test("routes: a tile's drill-down path wins over the page; anything else is the page", async () => {
+boardTest("routes: a tile's drill-down path wins over the page; anything else is the page", async () => {
   const gantt = await handle(req("/bench?view=gantt&repo=loom"));
   assertEquals(gantt.status, 200);
   const html = await gantt.text();
@@ -1565,12 +1600,9 @@ Deno.test("routes: a tile's drill-down path wins over the page; anything else is
   assertEquals(fallback.status, 200);
   assertEquals(fallback.headers.get("content-type"), "text/html; charset=utf-8");
   assertStringIncludes(await fallback.text(), "<title>Dashboard — LIVE</title>");
-
-  // Views have landed by now, so the probe reports the board as up.
-  assertEquals((await (await handle(req("/healthz"))).json()).ok, true);
 });
 
-Deno.test("start: serves the handler on the configured port and keeps collecting", () => {
+boardTest("start: serves the handler on the configured port and keeps collecting", () => {
   const served: { opts: Deno.ServeTcpOptions; handler: unknown }[] = [];
   const logged: string[] = [];
   let collections = 0;
@@ -1597,7 +1629,7 @@ Deno.test("start: serves the handler on the configured port and keeps collecting
   assertEquals(collections, 1, "startup collects immediately");
 });
 
-Deno.test("start: the work it schedules on its clock both heartbeats and collects", async () => {
+boardTest("start: the work it schedules on its clock both heartbeats and collects", async () => {
   const res = await handle(req("/events"));
   const reader = res.body!.getReader();
   await chunk(reader); // ": connected"
@@ -1634,6 +1666,9 @@ Deno.test("start: the work it schedules on its clock both heartbeats and collect
 });
 
 describe("workflow activity", () => {
+  beforeEach(resetBoardForTest);
+  afterEach(resetBoardForTest);
+
   it("preserves the last badge while measurements keep refreshing", async () => {
     using time = new FakeTime(Date.now() + 86_400_000);
     let value = "50%";
