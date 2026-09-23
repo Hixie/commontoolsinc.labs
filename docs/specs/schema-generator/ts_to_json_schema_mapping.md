@@ -860,9 +860,28 @@ Mechanics:
   imports of `AnyOf` / `PolicyOf` work. A local declaration using a canonical
   name also lowers; unlike `Default`, there is no declaring-package guard
   (§7), so name collisions remain an untested foot-gun.
+- Qualified metadata references to `AnyOf` and `PolicyOf` receive their special
+  lowering only when the resolved symbol comes from Common Fabric. Provenance
+  follows import and re-export hops, including `commonfabric/cfc`, renamed
+  exports, and namespace re-exports, so companion declarations need no special
+  file path. An unrelated namespace member with the same name is read from its
+  own declaration as ordinary metadata.
+  An authored wrapper around a library alias is also read from its declaration,
+  preserving any binding fixed inside the wrapper.
 - User alias chains are followed with type-parameter node substitution until a
   canonical name is reached (`resolveCfcAliasFromDeclaration` /
-  `substituteTypeNode`); unresolvable expansions fall back to
+  `substituteTypeNode`). Substitution starts at the authored reference's
+  declaration, including a function-local generic alias whose resolved type
+  reports an inner alias: the outer reference's arguments belong to the outer
+  declaration's parameters. Fixed writer bindings and default value arguments
+  are read from that declaration. References qualified through a namespace
+  import are followed by resolving their full type name, including within a
+  nested policy payload. Cycle detection tracks resolved declarations, so
+  aliases with the same name in different modules remain distinct. Qualified
+  metadata aliases such as `cf.CurrentPrincipal` resolve through the same
+  import. Type arguments are
+  converted to checker types only when the chain reaches a canonical policy
+  alias. Unresolvable expansions fall back to
   ordinary generation (tested). A subtree holding a substituted parameter is
   built afresh, with no original node, so the payload is read from the node
   and its arguments, never back through the checker as the declaration's
