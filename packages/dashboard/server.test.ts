@@ -673,22 +673,24 @@ boardTest("overlapping ticks skip a tile already updating and collect other due 
   let duplicateCollects = 0;
   let otherCollects = 0;
   const first = tick([fake("overlap slow", () => slow.promise)]);
+  try {
+    await tick([
+      fake("overlap slow", () => {
+        duplicateCollects++;
+        return { status: "good" };
+      }),
+      fake("overlap fast", () => {
+        otherCollects++;
+        return { status: "good" };
+      }),
+    ]);
 
-  await tick([
-    fake("overlap slow", () => {
-      duplicateCollects++;
-      return { status: "good" };
-    }),
-    fake("overlap fast", () => {
-      otherCollects++;
-      return { status: "good" };
-    }),
-  ]);
-
-  assertEquals(duplicateCollects, 0, "the updating tile is not collected twice");
-  assertEquals(otherCollects, 1, "another due tile is still collected");
-  slow.resolve({ status: "good" });
-  await first;
+    assertEquals(duplicateCollects, 0, "the updating tile is not collected twice");
+    assertEquals(otherCollects, 1, "another due tile is still collected");
+  } finally {
+    slow.resolve({ status: "good" });
+    await first;
+  }
 });
 
 boardTest("overlapping ticks skip an updating run source and refresh another source", async () => {
