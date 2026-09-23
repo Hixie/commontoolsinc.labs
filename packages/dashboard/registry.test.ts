@@ -13,11 +13,11 @@ const context: Ctx = {
 describe("registry", () => {
   it("registers tiles in dashboard display order", () => {
     expect(TILES.map((tile) => tile.label)).toEqual([
-      "labs ci",
+      "ci",
       "labs ci trust",
       "labs ci duration",
       "all benchmarks",
-      "loom ci",
+      "your metric here",
       "loom ci trust",
       "loom ci duration",
       "key benchmarks",
