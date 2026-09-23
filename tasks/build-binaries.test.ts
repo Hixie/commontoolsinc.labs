@@ -15,6 +15,7 @@ import {
   BuildConfig,
   type BuildDependencies,
   type BuildSignalApi,
+  defaultBuildDependencies,
   installBuildSignalCleanup,
   prepareWorkspace,
   requestedBinaries,
@@ -22,6 +23,7 @@ import {
   runBuildBinaries,
   runBuildWithSignalCleanup,
 } from "./build-binaries.ts";
+import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
 import { type Config, ResolvedConfig } from "../packages/felt/interface.ts";
 import {
   compileFingerprintGlobs,
@@ -344,15 +346,10 @@ Deno.test("each binary's modules and assets stay within BINARY_SOURCES", async (
     ...shellConfig.entries.map((entry) => entry.in),
   ];
   for (const entry of entries) {
-    const { success, stdout, stderr } = await new Deno.Command(
-      Deno.execPath(),
-      {
-        args: ["info", "--json", entry],
-        cwd: repo,
-        stdout: "piped",
-        stderr: "piped",
-      },
-    ).output();
+    const { success, stdout, stderr } = await runDenoCommandWithTemporaryLock({
+      root: repo,
+      args: (lock) => ["info", "--json", "--lock", lock, "--frozen", entry],
+    });
     assert(success, new TextDecoder().decode(stderr));
     const info = JSON.parse(new TextDecoder().decode(stdout)) as {
       modules: { specifier: string }[];
@@ -745,6 +742,36 @@ Deno.test("main build path reverts workspace when command spawn fails", async ()
       !(await exists(config.toolshedEnvPath())),
       "COMPILED marker should be removed",
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("each build step throws naming its output when its command fails", async () => {
+  // The fake tree holds none of the entry points and no shell task, so every
+  // command the steps run fails, and none of them may pass that over.
+  const root = await makeFakeRepo();
+  try {
+    await Deno.mkdir(`${root}/packages/shell`, { recursive: true });
+    const config = new BuildConfig({ root, toolshedFlags: [] });
+    const {
+      buildShell,
+      buildToolshed,
+      buildBgPieceService,
+      buildCli,
+    } = defaultBuildDependencies;
+    const steps: [(config: BuildConfig) => Promise<void>, string][] = [
+      [buildShell, "Failed to build shell app"],
+      [buildToolshed, "Failed to build toolshed binary"],
+      [buildBgPieceService, "Failed to build background piece service binary"],
+      [buildCli, "Failed to build CLI binary"],
+    ];
+    for (const [step, message] of steps) {
+      await assertRejects(() => step(config), Error, message);
+    }
+    for (const binary of ["toolshed", "bg-piece-service", "cf"]) {
+      assert(!(await exists(config.distPath(binary))), binary);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }
