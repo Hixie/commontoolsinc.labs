@@ -467,20 +467,18 @@ Deno.test("each binary's modules and assets stay within BINARY_SOURCES", async (
 async function loadShellConfig(
   denied: readonly string[],
 ): Promise<{ success: boolean; stderr: string }> {
-  const repo = fromFileUrl(new URL("../", import.meta.url));
-  const { success, stderr } = await new Deno.Command(Deno.execPath(), {
-    args: [
+  const { success, stderr } = await runDenoCommandWithTemporaryLock({
+    root: fromFileUrl(new URL("../", import.meta.url)),
+    args: (lock) => [
       "run",
+      `--lock=${lock}`,
       "--allow-read",
       "--allow-env",
       `--deny-env=${denied.join(",")}`,
       join("packages", "shell", "felt.config.ts"),
     ],
-    cwd: repo,
     env: { NO_COLOR: "1" },
-    stdout: "null",
-    stderr: "piped",
-  }).output();
+  });
   return { success, stderr: new TextDecoder().decode(stderr) };
 }
 

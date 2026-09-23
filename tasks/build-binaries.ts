@@ -383,15 +383,12 @@ async function buildShell(config: BuildConfig): Promise<void> {
         task,
       ],
       cwd: config.shellProjectPath(),
+      // The shell's configuration reads what it bakes in from the
+      // environment this build inherited: the same `COMMIT_SHA` and
+      // `EXPERIMENTAL_SERVER_EXECUTION` that `prepareWorkspace()` writes into
+      // the markers, each unset where the caller left it unset.
       stdout: "inherit",
       stderr: "inherit",
-      env: {
-        // `clearEnv` remains false, so this child inherits the caller's
-        // EXPERIMENTAL_SERVER_EXECUTION value and bakes the same posture as
-        // the parent binary build. This is load-bearing for the opposite
-        // CI lane's cache-miss path.
-        COMMIT_SHA: Deno.env.get("COMMIT_SHA") || mode,
-      },
     }).output();
     if (!success) {
       throw new Error("Failed to build shell app");
