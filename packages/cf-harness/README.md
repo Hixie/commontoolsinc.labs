@@ -975,16 +975,18 @@ bound for model context carries tokens, while the persisted tool-output artifact
 keeps the raw addresses. Model-authored tool arguments resolve tokens back to
 canonical references before policy evaluation, summarization, and dispatch —
 except for `finish_task`, whose user-facing sentence remains text, and
-`delegate_task`, whose `goal` and `context` reach the child verbatim, so a token
-there is inert text to the parent boundary. Its `skillHandle` and `patternRefs`
-fields are resolved separately on the trusted side: materializing stored skill
-text and rebuilding selected pattern-search records are those parameters' whole
-point (see "Skill by handle" and "Pattern references by search record" below).
-And a sealed subagent structured-return string whose raw value names an address
-comes back as a token rather than an opaque `@link` object; the return's
-`linkedStringCount` counts only the positions still sealed. Denial-path tool
-messages are not swapped; that coverage, value handles, and an explicit
-release/readback mechanism are listed in [docs/ROADMAP.md](docs/ROADMAP.md).
+`delegate_task`, whose `goal` and `context` reach the child verbatim: a token
+there is not resolved at the parent boundary, and is instead seeded into the
+child's table when the parent holds it (see "Handles across a delegation"). Its
+`skillHandle` and `patternRefs` fields are resolved separately on the trusted
+side: materializing stored skill text and rebuilding selected pattern-search
+records are those parameters' whole point (see "Skill by handle" and "Pattern
+references by search record" below). And a sealed subagent structured-return
+string whose raw value names an address comes back as a token rather than an
+opaque `@link` object; the return's `linkedStringCount` counts only the
+positions still sealed. Denial-path tool messages are not swapped; that
+coverage, value handles, and an explicit release/readback mechanism are listed
+in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 #### Well-known grants
 
@@ -1239,12 +1241,13 @@ A child resolves the parent's tokens through its own boundary, against a table
 the delegation seeds. When the parent delegates, the tokens written into the
 `goal` and `context` are looked up in the parent's table, and each entry that
 resolves is copied verbatim — same token, same reference — into a fresh table
-salted with the child's run id. Nothing else crosses. A token the parent held
-but did not write into the delegation is not in the child's table, so the child
-cannot resolve it; it stays the inert text an unknown token always is. This is
-the privilege boundary: what a subagent can reach by reference is exactly what
-its delegation handed it, and the decomposition structure is therefore the
-opacity structure.
+salted with the child's run id. A research handle written there brings the
+address entries its kit binds as inputs with it. Nothing else crosses. A token
+the parent held but did not write into the delegation is not in the child's
+table, so the child cannot resolve it; it stays the inert text an unknown token
+always is. This is the privilege boundary: what a subagent can reach by
+reference is exactly what its delegation handed it, and the decomposition
+structure is therefore the opacity structure.
 
 Copying entries verbatim keeps a reference stable across the hierarchy. Minting
 looks up by address, so a child minting a handle for a seeded address gets the
@@ -1523,9 +1526,11 @@ not existing compositions or the index's stored event history.
 
 ### Researching Common Fabric
 
-`research` takes a `task`, a `purpose`, and an optional `followUpTo` naming an
-available research run or output. Both purposes have the same tools and limits;
-the question determines how much research is useful:
+`research` takes a `task`, a `purpose`, and an optional `followUpTo` naming a
+research handle this run holds or a research run it retains. A successful result
+names the handle minted for its findings under `researchHandle`. Both purposes
+have the same tools and limits; the question determines how much research is
+useful:
 
 | Purpose            | Result                                                                                                                                    | Model turns / tool calls / read characters |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
@@ -1782,27 +1787,18 @@ status, distinguishable from results known to have no omissions. SQLite schema
 inspection and migration share an immediate transaction, so concurrent openers
 cannot both migrate the same missing column.
 
-Children receive projected findings and retain the selected raw summaries in run
-state, joined by research run id. An inherited orientation lists only handles
-available in the child's own table. They have no research tool call to own a
-separate omission entry for inherited context. Only selected, current
-`inputs[].token` bindings transfer automatically. Prose mentions, superseded
-bindings, and historical bindings transfer nothing. The parent's full CFC
-context carries forward even when selection omits a result. Pattern authors
-start from these findings and ask only unresolved questions.
-
-Before compiling new `run_pattern.sourceText`, the host checks selections from
-the retained orientation and two answers. Each `kit.patterns` entry must have a
-Fabric pattern import in the source or a nonblank, one-line reason under
-`reuseReasons[patternId]` explaining why it does not fit this call. This applies
-to parent and child authors, incomplete kits, and retained findings with
-historical bindings. An unrelated atom, an existing result passed by reference,
-or a verification reader can state that narrower scope. Unverified leads and
-unselected inspected records create no requirement; direct `patternId` execution
-is unchanged. The compiler import reader excludes comments and quoted examples.
-The check establishes an import or explanation, not meaningful invocation or the
-explanation's correctness. Reasons remain in the tool-call record when old
-source attempts are collapsed.
+Research reaches a child the way any other content does: as a handle. An
+admitted kit is minted into the run's handle table as a research referent (a
+`cfh:v:` token the result names under `researchHandle`), under the kit's own CFC
+label. A parent that names the token in a delegation's `goal` or `context` seeds
+it into the child's table together with the address entries the kit binds as
+`inputs`, and nothing else about the research transfers: a child whose brief
+names no research handle receives no findings. The child reads the findings with
+`describe_handle`, which returns the kit, the patterns research confirmed, and
+the handles it described — each marked `unavailable` when the child's table does
+not hold its token — and the child's `run_pattern` can run a confirmed pattern
+by id as the parent can. The parent's full CFC context carries forward whether
+or not a handle is named.
 
 Locally authored source artifacts record the research run ids that shaped them.
 The pattern-index publication API has no research-association field, so this
