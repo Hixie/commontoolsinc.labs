@@ -1048,6 +1048,20 @@ describe("a unit its runner runs whole", () => {
     expect(merged(["2026-08-01", undefined]).lastRun).toBeUndefined();
   });
 
+  it("refuses a corpus already holding the name a merged unit takes", () => {
+    const manifest = corpus();
+    manifest.entries.push(
+      sampleEntry({
+        k: "browser",
+        s: "ui",
+        n: `whole workspace-unit ${HALF}`,
+      }, { unit: "packages/ui/test/other.test.ts" }),
+    );
+    expect(() => foldWholeUnits(manifest, WHOLE)).toThrow(
+      "another entry in the corpus already has",
+    );
+  });
+
   it("names only the tests in the plan, never the unit", () => {
     const result = run(corpus(), { wholeUnits: WHOLE, policy: "everything" });
     const names = selected(result).map((s) => s.entry.test.n);

@@ -26,6 +26,7 @@ import {
   isClean,
   isDerivedHoistSymbol,
   isStoredArgumentRefusal,
+  judgeWholeTree,
   KNOWN_FLAGS,
   newestAutoGeneration,
   parseVintagePath,
@@ -36,9 +37,11 @@ import {
   relativeToRepo,
   removeVintages,
   replayFilterTakes,
+  replayScope,
   reportCaptureRefusedOnRed,
   reportCapturesSuperseded,
   reportDropsApplied,
+  reportEmptyReplay,
   reportEveryGenerationCurrent,
   reportFailures,
   reportNothingMatched,
@@ -61,6 +64,10 @@ import {
   vintageFileName,
   VINTAGES_DIR,
 } from "./pattern-vintage-lib.ts";
+import {
+  acceptedDropKey,
+  type AcceptedStateDrop,
+} from "./pattern-vintage-accepted-drops.ts";
 import { STORED_ARGUMENT_SCHEMA_REFUSAL } from "@commonfabric/runner";
 
 const ID_A = "bafyaaaa";
@@ -1745,6 +1752,60 @@ describe("what the capture and promote commands print", () => {
     // It must name what IS valid, or the reader is left guessing at a typo.
     expect(message).toContain("--capture-changed");
     expect(message).toContain("exit 0");
+  });
+
+  it("reads a replay scope from the command line", () => {
+    expect(replayScope([])).toEqual({ only: [], whole: true });
+    expect(replayScope(["--only", "a/a.test.tsx"])).toEqual({
+      only: ["a/a.test.tsx"],
+      whole: false,
+    });
+    expect(replayScope(["--only"])).toHaveProperty("error");
+  });
+
+  it("refuses a filter beside a capture command", () => {
+    for (const flag of ["--update", "--capture-changed", "--pin"]) {
+      expect(replayScope(["--only", "a", flag])).toEqual({
+        error: reportOnlyWithCapture(),
+      });
+    }
+    // A capture on its own reads every fixture, which is what it needs.
+    expect(replayScope(["--pin"])).toEqual({ only: [], whole: true });
+  });
+
+  it("reports an empty replay by what was asked for", () => {
+    expect(reportEmptyReplay([])).toBe(reportNothingReplayed());
+    expect(reportEmptyReplay(["a"])).toBe(reportNothingMatched(["a"]));
+  });
+
+  describe("judgeWholeTree()", () => {
+    const drop = (pattern: string, paths: string[]): AcceptedStateDrop => ({
+      pattern,
+      paths,
+      capturedThrough: "2026-01-01T00-00-00.000Z",
+      reason: "test",
+      record: "docs/history/example.md",
+    });
+    const drops = [drop("a.tsx", ["x", "y"]), drop("b.tsx", ["z"])];
+    const replay = {
+      covered: new Set(["a.tsx"]),
+      coveredBy: new Map<string, unknown>(),
+      dropsApplied: new Set([acceptedDropKey("a.tsx", "x")]),
+    };
+
+    it("finds uncovered patterns and stale or unjudgeable removals", () => {
+      expect(judgeWholeTree(true, ["a.tsx", "c.tsx"], replay, drops))
+        .toEqual({
+          uncovered: ["c.tsx"],
+          staleDrops: [acceptedDropKey("a.tsx", "y")],
+          unjudgeableDrops: ["b.tsx"],
+        });
+    });
+
+    it("makes none of the three checks for a filtered run", () => {
+      expect(judgeWholeTree(false, ["a.tsx", "c.tsx"], replay, drops))
+        .toEqual({ uncovered: [], staleDrops: [], unjudgeableDrops: [] });
+    });
   });
 
   it("names the filter when it matched no fixture", () => {

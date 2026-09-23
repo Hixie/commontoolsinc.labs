@@ -12,6 +12,11 @@
  */
 
 import { exists } from "@std/fs";
+import {
+  acceptedDropKey,
+  type AcceptedStateDrop,
+} from "./pattern-vintage-accepted-drops.ts";
+import { readOnlyArguments } from "./only-arguments.ts";
 
 import {
   isStoredArgumentSchemaRefusal,
@@ -280,6 +285,78 @@ export function uncoveredRequiredPatterns(
   covered: ReadonlySet<string>,
 ): string[] {
   return requiredKeys.filter((key) => !covered.has(key)).sort();
+}
+
+/**
+ * What a run over the fixture tree is asked to judge, from what it
+ * replayed.
+ *
+ * Three checks need every fixture replayed: whether every required pattern
+ * is covered, whether each accepted removal still applies to some fixture,
+ * and whether each accepted removal names a pattern some fixture records.
+ * A filtered run makes none of them, and all three come back empty.
+ *
+ * A pattern is judged when a fixture's manifest names it, because a replay
+ * then either used its entries or showed they were not needed.
+ */
+export function judgeWholeTree(
+  whole: boolean,
+  requiredKeys: readonly string[],
+  replay: {
+    covered: ReadonlySet<string>;
+    coveredBy: ReadonlyMap<string, unknown>;
+    dropsApplied: ReadonlySet<string>;
+  },
+  drops: readonly AcceptedStateDrop[],
+): { uncovered: string[]; staleDrops: string[]; unjudgeableDrops: string[] } {
+  if (!whole) return { uncovered: [], staleDrops: [], unjudgeableDrops: [] };
+  const judged = new Set([...replay.covered, ...replay.coveredBy.keys()]);
+  return {
+    uncovered: uncoveredRequiredPatterns(requiredKeys, replay.covered),
+    // An accepted removal that applied to no replayed vintage is an
+    // exemption that no longer forgives anything. It is asked per path, so
+    // an entry cannot keep a line nothing needs.
+    staleDrops: drops
+      .filter((drop) => judged.has(drop.pattern))
+      .flatMap((drop) =>
+        drop.paths
+          .map((path) => acceptedDropKey(drop.pattern, path))
+          .filter((pair) => !replay.dropsApplied.has(pair))
+      ),
+    // An entry for a pattern no fixture records cannot be judged at all.
+    // Its remedy differs from a stale entry's, so it is reported apart.
+    unjudgeableDrops: drops
+      .filter((drop) => !judged.has(drop.pattern))
+      .map((drop) => drop.pattern),
+  };
+}
+
+/**
+ * What a run's command line asks it to replay: the `--only` terms, and
+ * whether the run covers every fixture. A filter next to a capture command
+ * is refused, because a capture decides what is due by reading every
+ * fixture and its positional argument is a test key rather than a fixture.
+ */
+export function replayScope(
+  args: readonly string[],
+): { only: string[]; whole: boolean } | { error: string } {
+  const filter = readOnlyArguments(args);
+  if ("error" in filter) return filter;
+  const whole = filter.only.length === 0;
+  if (!whole && CAPTURE_FLAGS.some((flag) => args.includes(flag))) {
+    return { error: reportOnlyWithCapture() };
+  }
+  return { only: filter.only, whole };
+}
+
+/** The commands that read every fixture to decide what to do. */
+const CAPTURE_FLAGS = ["--update", "--capture-changed", "--pin"] as const;
+
+/** What the task prints when a run replayed no fixture. */
+export function reportEmptyReplay(only: readonly string[]): string {
+  return only.length === 0
+    ? reportNothingReplayed()
+    : reportNothingMatched(only);
 }
 
 /** A vintage that could not be replayed under today's source. */
