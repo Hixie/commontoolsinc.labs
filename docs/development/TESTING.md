@@ -247,10 +247,11 @@ choose:
 #### Writing a task that runs tests
 
 A `deno test` written anywhere in this repository takes the seed from the root
-`test-seed` task:
+`test-seed` task. In a package, that is its `deno-test` task, which its `test`
+task runs through `tasks/run-member-tests.ts`:
 
 ```json
-"test": "deno test --shuffle=$(deno task -q test-seed) --allow-read test/"
+"deno-test": "deno test --shuffle=$(deno task -q test-seed) --allow-read test/"
 ```
 
 `deno task -q test-seed` resolves to the root task from any directory inside

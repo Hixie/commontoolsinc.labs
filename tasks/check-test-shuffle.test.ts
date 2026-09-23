@@ -30,8 +30,13 @@ async function fixtureDir(): Promise<string> {
 }
 
 /** Makes a git repository holding one workspace member's manifest. */
-async function fixtureRepo(
-  memberTask: unknown,
+async function fixtureRepo(memberTask: unknown): Promise<string> {
+  return await fixtureMember({ test: memberTask });
+}
+
+/** Makes a git repository holding one member with the tasks given. */
+async function fixtureMember(
+  memberTasks: Record<string, unknown>,
 ): Promise<string> {
   const root = await fixtureDir();
   const run = async (...args: string[]) => {
@@ -54,7 +59,7 @@ async function fixtureRepo(
   await Deno.mkdir(join(root, "member"));
   await Deno.writeTextFile(
     join(root, "member", "deno.jsonc"),
-    JSON.stringify({ tasks: { test: memberTask } }, null, 2),
+    JSON.stringify({ tasks: memberTasks }, null, 2),
   );
   await run("add", "deno.jsonc", "member/deno.jsonc");
   return root;
@@ -249,37 +254,30 @@ describe("check-test-shuffle", () => {
     });
 
     it("follows a test task built out of the member's other tasks", async () => {
-      const root = await fixtureDir();
-      const run = async (...args: string[]) => {
-        const { success } = await new Deno.Command("git", {
-          args,
-          cwd: root,
-          stdout: "null",
-          stderr: "null",
-        }).output();
-        assert(success, `git ${args.join(" ")}`);
-      };
-      await run("init", "-q");
-      await Deno.writeTextFile(
-        join(root, "deno.jsonc"),
-        JSON.stringify({ workspace: ["./member"], tasks: {} }, null, 2),
-      );
-      await Deno.mkdir(join(root, "member"));
-      await Deno.writeTextFile(
-        join(root, "member", "deno.jsonc"),
-        JSON.stringify(
-          {
-            tasks: {
-              test: { dependencies: ["deno-test"] },
-              "deno-test": `deno test ${SHUFFLE} -A`,
-            },
-          },
-          null,
-          2,
-        ),
-      );
-      await run("add", "deno.jsonc", "member/deno.jsonc");
+      const root = await fixtureMember({
+        test: { dependencies: ["deno-test"] },
+        "deno-test": `deno test ${SHUFFLE} -A`,
+      });
       expect(await scan(root)).toEqual([]);
+    });
+
+    it("follows the tasks a member's test script is told to run", async () => {
+      const root = await fixtureMember({
+        test: "deno run -A ../tasks/run-member-tests.ts deno-test browser-test",
+        "deno-test": `deno test ${SHUFFLE} -A`,
+        "browser-test": "deno run -A ../deno-web-test/cli.ts x.test.ts",
+      });
+      expect(await scan(root)).toEqual([]);
+    });
+
+    it("fails a member whose test script runs nothing it knows", async () => {
+      const root = await fixtureMember({
+        test: "deno run -A ../tasks/run-member-tests.ts deno-test",
+        "deno-test": "node ./run-my-tests.js",
+      });
+      const violations = await scan(root);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.problem).toContain("RUNNERS");
     });
   });
 });

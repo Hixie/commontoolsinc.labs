@@ -32,6 +32,7 @@
 
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import { readInvocation } from "./run-member-tests.ts";
 
 const REPO_ROOT = dirname(dirname(fromFileUrl(import.meta.url)));
 
@@ -349,6 +350,9 @@ function ownCommands(
   return [];
 }
 
+/** The script every member's `test` task runs its other tasks through. */
+const MEMBER_TEST_SCRIPT = "run-member-tests.ts";
+
 /** The commands one of a member's tasks runs, following its own names. */
 function taskCommands(
   tasks: Record<string, unknown>,
@@ -363,9 +367,20 @@ function taskCommands(
     const named = /^deno task (?:-q |--quiet )?([\w:.-]+)/.exec(command);
     if (named !== null && named[1]! in tasks) {
       commands.push(...taskCommands(tasks, named[1]!, seen));
-    } else {
-      commands.push(command);
+      return;
     }
+    // A member's `test` task hands its task names to the script that runs
+    // them in order, which is where the member's runners are.
+    const words = command.split(/\s+/);
+    const script = words.findIndex((word) => word.endsWith(MEMBER_TEST_SCRIPT));
+    if (script !== -1) {
+      const { tasks: names } = readInvocation(words.slice(script + 1));
+      for (const next of names) {
+        if (next in tasks) commands.push(...taskCommands(tasks, next, seen));
+      }
+      return;
+    }
+    commands.push(command);
   };
   if (typeof task === "string") {
     for (const command of commandsOf(task)) follow(command);
