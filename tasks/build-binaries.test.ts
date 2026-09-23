@@ -7,9 +7,10 @@ import {
   assertThrows,
 } from "@std/assert";
 import { exists } from "@std/fs";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 
 import {
+  BINARY_SOURCES,
   build,
   BuildConfig,
   type BuildDependencies,
@@ -21,6 +22,7 @@ import {
   runBuildBinaries,
   runBuildWithSignalCleanup,
 } from "./build-binaries.ts";
+import { type Config, ResolvedConfig } from "../packages/felt/interface.ts";
 import {
   compileFingerprintGlobs,
   computeCompilerVersion,
@@ -229,6 +231,140 @@ Deno.test("BuildConfig resolves workspace paths against the root", async () => {
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+/** Whether a repository-relative path lies within `BINARY_SOURCES`. */
+function withinBinarySources(at: string): boolean {
+  return BINARY_SOURCES.some((source) =>
+    source.endsWith("/") ? `${at}/`.startsWith(source) : at === source
+  );
+}
+
+/**
+ * The methods of `BuildConfig` that name a path the build writes. Every other
+ * method that names a path under the root names one the build reads.
+ */
+const OUTPUT_PATH_METHODS = new Set([
+  "shellOutPath",
+  "toolshedShellFrontendPath",
+  "toolshedShellFrontendPathDev",
+  "toolshedEnvPath",
+  "cliEnvPath",
+  "distDir",
+  "distPath",
+]);
+
+Deno.test("BuildConfig lists every path it reads among its sources", async () => {
+  // A method is a path method when what it returns, called with a binary name
+  // for any parameter it takes, is a path under the root or a list of them.
+  // Every one of those is either an output or among `sourcePaths()`.
+  const root = await makeFakeRepo();
+  try {
+    const config = new BuildConfig({ root, toolshedFlags: [] });
+    const sources = new Set(config.sourcePaths());
+    const pathMethods = new Map<string, string[]>();
+    for (const name of Object.getOwnPropertyNames(BuildConfig.prototype)) {
+      if (name === "constructor" || name === "sourcePaths") continue;
+      const method = Reflect.get(config, name) as (arg: string) => unknown;
+      const value = method.call(config, "cf");
+      const paths = Array.isArray(value) ? value : [value];
+      if (
+        paths.length > 0 &&
+        paths.every((at) => typeof at === "string" && at.startsWith(root))
+      ) {
+        pathMethods.set(name, paths);
+      }
+    }
+    const unsorted = [...pathMethods]
+      .filter(([name, paths]) =>
+        !OUTPUT_PATH_METHODS.has(name) && !paths.every((at) => sources.has(at))
+      )
+      .map(([name]) => name);
+    assertEquals(unsorted, []);
+    assertEquals(
+      [...OUTPUT_PATH_METHODS].filter((name) => !pathMethods.has(name)),
+      [],
+    );
+    assert(pathMethods.has("docsCommonPath"));
+    assert(!pathMethods.has("manifestOriginal"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("BuildConfig reads nothing outside BINARY_SOURCES", async () => {
+  const root = await makeFakeRepo();
+  try {
+    const config = new BuildConfig({ root, toolshedFlags: [] });
+    const outside = config.sourcePaths()
+      .map((at) => relative(root, at))
+      .filter((at) => !withinBinarySources(at));
+    assertEquals(outside, []);
+    assert(!withinBinarySources("tasks/other.ts"));
+    assert(!withinBinarySources("packagesque/mod.ts"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("each binary's modules and assets stay within BINARY_SOURCES", async () => {
+  // `deno compile` follows an entry point's imports wherever they lead, so the
+  // paths the build names are not the whole of what it reads. This asks Deno
+  // for each graph and holds every local module in it to the list. The shell
+  // bundle baked into the toolshed binary is built by the `felt` CLI from the
+  // entries, public directory and static directories its configuration names.
+  const repo = fromFileUrl(new URL("../", import.meta.url));
+  const config = new BuildConfig({ root: repo, toolshedFlags: [] });
+  const shell = config.shellProjectPath();
+  const shellConfigPath = join(shell, "felt.config.ts");
+  const { default: shellConfigInit }: { default: Config } = await import(
+    toFileUrl(shellConfigPath).href
+  );
+  const shellConfig = new ResolvedConfig(shellConfigInit, shell);
+  assert(shellConfig.entries.length > 0);
+  const outside = new Set<string>();
+  for (
+    const at of [
+      shellConfig.publicDir,
+      ...shellConfig.staticDirs.map(({ from }) => from),
+    ]
+  ) {
+    const within = relative(repo, at);
+    if (!withinBinarySources(within)) outside.add(within);
+  }
+  const entries = [
+    buildBinariesScript,
+    config.toolshedEntryPath(),
+    config.bgPieceServiceEntryPath(),
+    config.bgPieceServiceWorkerPath(),
+    config.cliEntryPath(),
+    config.cliMultiUserTestWorkerPath(),
+    join(shell, "..", "felt", "cli.ts"),
+    shellConfigPath,
+    ...shellConfig.entries.map((entry) => entry.in),
+  ];
+  for (const entry of entries) {
+    const { success, stdout, stderr } = await new Deno.Command(
+      Deno.execPath(),
+      {
+        args: ["info", "--json", entry],
+        cwd: repo,
+        stdout: "piped",
+        stderr: "piped",
+      },
+    ).output();
+    assert(success, new TextDecoder().decode(stderr));
+    const info = JSON.parse(new TextDecoder().decode(stdout)) as {
+      modules: { specifier: string }[];
+    };
+    assert(info.modules.some(({ specifier }) => specifier.startsWith("file:")));
+    for (const { specifier } of info.modules) {
+      if (!specifier.startsWith("file:")) continue;
+      const at = relative(repo, fromFileUrl(specifier));
+      if (!withinBinarySources(at)) outside.add(at);
+    }
+  }
+  assertEquals([...outside].sort(), []);
 });
 
 Deno.test("requestedBinaries selects all binaries or named subsets", () => {
