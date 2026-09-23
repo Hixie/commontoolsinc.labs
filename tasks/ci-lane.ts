@@ -454,29 +454,20 @@ export function batchesOf(
   // up smallest load first, so that it comes to one number however its
   // loads were listed, since floating-point addition rounds differently
   // in a different order.
-  const loads = new Map<string, number[]>();
-  for (const { entry, repeats } of selections) {
-    const suite = loads.get(entry.suite) ?? [];
-    suite.push(ownLoad(manifest, entry, repeats));
-    loads.set(entry.suite, suite);
-  }
-  const charged = new Map(
-    [...loads].map(([suite, each]) => [
-      suite,
-      each.toSorted((a, b) => a - b).reduce((sum, load) => sum + load, 0),
-    ]),
-  );
-  const key = (batch: Batch) => ({
+  const keyed = [...batches.values()].map((batch) => ({
+    batch,
+    id: batch.suite.id,
     measured: manifest.calibration.suites[batch.suite.id] === undefined ? 0 : 1,
-    seconds: charged.get(batch.suite.id) ?? 0,
-  });
-  return [...batches.values()].sort((a, b) => {
-    const left = key(a);
-    const right = key(b);
-    return left.measured - right.measured ||
-      right.seconds - left.seconds ||
-      (a.suite.id < b.suite.id ? -1 : a.suite.id > b.suite.id ? 1 : 0);
-  });
+    seconds: selections
+      .filter(({ entry }) => entry.suite === batch.suite.id)
+      .map(({ entry, repeats }) => ownLoad(manifest, entry, repeats))
+      .toSorted((a, b) => a - b)
+      .reduce((sum, load) => sum + load, 0),
+  }));
+  return keyed.sort((a, b) =>
+    a.measured - b.measured || b.seconds - a.seconds ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  ).map(({ batch }) => batch);
 }
 
 /** What running one invocation came to. */
