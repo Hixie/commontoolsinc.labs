@@ -12,8 +12,9 @@ import type { Status } from "./types.ts";
 
 const STATUSES: Status[] = ["good", "warn", "bad", "unknown"];
 
-// The diamond is drawn a pixel over each edge so it carries the weight the
-// circle does at the same nominal size.
+// The dot is drawn by its own layer so each status can take a shape as well
+// as a color. The diamond is drawn a pixel over each edge so it carries the
+// weight the circle does at the same nominal size.
 const DOT_SHAPE: Record<Status, string> = {
   good: "border-radius:50%",
   warn: "clip-path:polygon(50% 0,100% 100%,0 100%)",

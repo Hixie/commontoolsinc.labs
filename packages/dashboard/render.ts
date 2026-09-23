@@ -237,9 +237,6 @@ ${TILE_RULES}
   ${BIG_RULES}
   a.cell{display:block}
   a.cell:hover{outline:1px solid var(--accent);outline-offset:-1px}
-  /* The dot is drawn by its own layer so each status can take a shape as well
-     as a color. The shape carries the same signal the color does, which is
-     what a viewer who cannot separate the hues reads instead. */
   a.tile.link:hover{border-color:var(--border-hover)}
   .evscroll{max-height:340px;overflow:auto}
   .ev{display:flex;align-items:center;gap:11px;padding:6px 0;font-size:13px;border-top:1px solid var(--divider)}.ev:first-child{border-top:0}

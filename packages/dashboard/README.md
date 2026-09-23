@@ -84,13 +84,15 @@ fully visible for two hours. It then fades linearly for four hours, after which
 the server replaces it with the empty string. A new edit starts the timing
 again.
 
-GitHub CI tiles declare the workflow snapshots they read in `runSources`. The
-scheduler fetches each workflow independently. When a workflow fetch completes,
-the scheduler collects every due tile that reads it from the same stored
-snapshot and publishes those tile updates together. Each workflow can trigger a
-tile once per collection interval. A tile with several workflows can update
-once for each workflow as they arrive. This keeps a repository's build, trust,
-duration, and recent-run views in agreement when their intervals coincide.
+The trust, duration and recent-run tiles declare the workflow snapshots they
+read in `runSources`. The scheduler fetches each workflow independently. When a
+workflow fetch completes, the scheduler collects every due tile that reads it
+from the same stored snapshot and publishes those tile updates together. Each
+workflow can trigger a tile once per collection interval. A tile with several
+workflows can update once for each workflow as they arrive. This keeps a
+repository's trust, duration, and recent-run views in agreement when their
+intervals coincide. The ci tile reads no snapshot: it takes its own inventory
+of every repository's workflows on its own interval.
 
 A workflow snapshot is read a page at a time, and the pages have to describe
 one moment. A page after the first asks GitHub for the runs created at or
@@ -345,7 +347,7 @@ to the next; a view supplies everything under it.
 
 | tile | source | needs |
 |---|---|---|
-| ci | every job the organization runs outside pull requests, in every repository the token can see that is not archived: for each active workflow, the newest completed run on that repository's own default branch. The headline is `passing` when every one of them passes, the repository's name when a single job is failing, as in `loom failing`, and a count when more than one is, as in `3 failing`. The header carries how many jobs the headline speaks for and how many repositories they came from. The body lists every failing job with its conclusion and how long ago it ran; while nothing is failing it lists the labs and loom main builds instead, so the two builds the team watches stay visible. A failure older than `CI_FAILURE_FRESH_HOURS` is orange rather than red: it is still failing and still counted, and it is no longer the thing that just broke. A failure made before the workflow's file last changed does not count at all, since that is what a job someone stopped rather than fixed looks like. A repository whose workflow listing cannot be read is listed too, and turns the tile orange rather than being passed over. The rows carry no links of their own, because the tile itself opens the page below | `GH_TOKEN` (or `GITHUB_TOKEN`) with Actions read across the organization |
+| ci | every job the organization runs outside pull requests, in every repository the token can see that is not archived: for each active workflow, the newest completed run on that repository's own default branch. The headline is `passing` when every one of them passes, the repository's name when a single job is failing, as in `loom failing`, and a count when more than one is, as in `3 failing`. The header carries how many jobs the headline speaks for and how many repositories they came from. The body lists every failing job with its conclusion and how long ago it ran; while the tile is not red it also lists the labs and loom main builds, so the two builds the team watches stay visible, and a red tile lists only its failing jobs. A failure older than `CI_FAILURE_FRESH_HOURS` is orange rather than red: it is still failing and still counted, and it is no longer the thing that just broke. A failure made before the workflow's file last changed does not count at all, since that is what a job someone stopped rather than fixed looks like. A repository whose workflow listing cannot be read is listed too, and turns the tile orange rather than being passed over. The rows carry no links of their own, because the tile itself opens the page below | `GH_TOKEN` (or `GITHUB_TOKEN`) with Actions read across the organization |
 | CI jobs → `/ci` | every job the ci tile read, at full width: the repository and workflow, what started the deciding run (`push`, `schedule`, `workflow_dispatch`, and the rest, as GitHub names them), what that run concluded, how long it took, when it started, and how long ago that was. Every column sorts, once up and once down, on the value behind the cell rather than on what the cell says, so durations and times order as the measurements they are; the page opens worst first and a column of equal values keeps that order beneath it. Workflows with no verdict are listed under the table rather than through it, each with why: no completed run on the default branch, which is what a workflow only a pull request triggers looks like; recent runs that all judged nothing; or a workflow changed since it failed. So are repositories whose workflow listing could not be read. It renders the tile's own last collection rather than asking GitHub again, so opening it costs no requests and shows exactly what the tile shows | none |
 | labs ci trust, labs ci duration | GitHub Actions (`deno.yml` on main in `commonfabric/labs`), via the REST API | `GH_TOKEN` (or `GITHUB_TOKEN`) |
 | loom ci trust, loom ci duration | the same two tiles for `commonfabric/loom` (`test-fast.yml` on main) | `GH_TOKEN` (read access to loom); optional `DASHBOARD_LOOM_REPO` |
@@ -380,10 +382,13 @@ host is unreachable together.
 GitHub concludes a workflow run as `cancelled` for several reasons, among them a
 newer push replacing the run while it is still queued, a job running past its
 `timeout-minutes`, and someone stopping the run while it runs. Of those, only
-the first says nothing about the commit, and the ci and ci trust tiles recognize
-it by an empty job listing: an attempt cancelled before it started a job is
-passed over, and a cancelled attempt that ran jobs counts as a failure, as every
-conclusion other than success does. The job count misjudges two cases, both
+the first says nothing about the commit, and the ci trust tiles recognize it by
+an empty job listing: an attempt cancelled before it started a job is passed
+over, and a cancelled attempt that ran jobs counts as a failure, as every
+conclusion other than success does. The ci tile reads a cancelled run that way
+only when no newer run of its workflow replaced it; a concurrency group that
+cancels in progress replaces a run after its jobs have started as well, which
+the job count would take for a failure. The ci tile's section below says how. The job count misjudges two cases, both
 toward a failure: a run cancelled after its jobs were created but before a
 runner picked any of them up, and a partial rerun (**Re-run failed jobs**)
 replaced while queued, whose listing carries the jobs it reused. The run listing
