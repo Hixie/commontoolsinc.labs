@@ -3057,13 +3057,13 @@ something or into skipping something.
 
 Two rules keep the joined result honest. A coverage failure says in the
 summary that it is a coverage failure, so it is never mistaken for a test
-failure. And when any lane failed, every set is reported rather than
-gated, because coverage measured through a failing run says nothing about
-whether the change was tested. Every set rather than the sets the failure
-was in: `Status` is already failing for the lane, so a second failure over
-a measurement taken through it buys nothing, and attributing a lane's
-failure to a set would be a second way of asking which tests belong to
-which set.
+failure. And when any lane failed, every set a lane reported is reported
+rather than gated, because coverage measured through a failing run says
+nothing about whether the change was tested. Every such set rather than
+the sets the failure was in: `Status` is already failing for the lane, so
+a second failure over a measurement taken through it buys nothing, and
+attributing a lane's failure to a set would be a second way of asking
+which tests belong to which set.
 
 ### What moves to `main`, and what happens to coverage
 
@@ -3687,9 +3687,9 @@ is pinned to the commit's date. And if none of that settles it,
 | A measured set has no baseline, or none from an ancestor of the merge base | `Status` reports the comparison and does not fail. The next full `main` run supplies one. |
 | A measured member gains a test needing a browser or a server | It goes in the member's `browser-test` half, which no measured set holds, so the Deno-only half keeps its gate. A member with no such half yet names one. |
 | A measured set grows expensive | Reported in the publisher's summary and by `deno task test-selection coverage`. Nothing is excluded automatically; somebody splits the member's tests or adds a line to the exclusion list. |
-| A test in a measured set fails | Every set is reported rather than gated. Coverage measured through a failing run says nothing about whether the change was tested, and the failure is the thing to fix. |
+| A test in a measured set fails | Every set a lane reported is reported rather than gated. Coverage measured through a failing run says nothing about whether the change was tested, and the failure is the thing to fix. |
 | A change reaches more than two measured sets | The gate does not run at all, and `Status` says so. The full run on `main` still measures every set, and a rise it finds is reported back to the pull request. |
-| A lane dies without uploading its coverage | `Status` is already failing for the dead lane. It says the coverage total is incomplete rather than gating on a partial one. |
+| No lane's report for a forced set reaches the gate: a lane dies before uploading, or an upload or the download carries nothing | That set fails the gate, whether or not any lane failed, because the change was made to measure those sets and a rise in them cannot be ruled out. A set the cap left unforced is reported rather than failed. |
 | Two measured sets over one member disagree | Nothing joins them. Each carries its own baseline and its own verdict, and an `ACCEPT_COVERAGE_DEBT` marker naming the member accepts a rise in either. |
 | A lane exceeds five minutes repeatedly | The correction factors rise on the next publisher run and less is packed. If it persists, the publisher's summary shows the miss and somebody looks. |
 | Two attempts of one run straddle a UTC midnight | The later attempt's relay writes the earlier attempt's records a second time, under the later day, and the publisher folds both. Not observed in the store so far; see [What the store is missing](#what-the-store-is-missing). |
@@ -4288,9 +4288,10 @@ exercised on the branch on its own.
       request's description. It works out which sets the gate covers by
       running the same function the lanes run, cap included, rather than
       trusting a lane's report. A coverage failure names itself as one, a
-      run with a failing test is reported rather than gated, and a change
-      over the cap forces no set, with a line saying so, and still
-      scores any set some run measured anyway.
+      run with a failing test reports rather than gates every set a lane
+      reported, a forced set no lane reported fails, and a change over
+      the cap forces no set, with a line saying so, and still scores any
+      set some run measured anyway.
 - [ ] The gate's workflow half, which only the lanes can carry. Each
       `pr-tests` lane uploads what is under its coverage directory as an
       artifact, `Status` downloads all five into one directory, and
