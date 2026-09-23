@@ -363,7 +363,7 @@ describe("baseline store", () => {
     });
   });
 
-  it("lists a gone pattern an accepted break names, once, even without baselines", async () => {
+  it("lists each gone pattern an accepted break names, once, including one with no baselines", async () => {
     await withTree(async ({ baselines }) => {
       await writeBaseline(
         baselines,
