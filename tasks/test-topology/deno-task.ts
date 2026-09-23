@@ -12,7 +12,9 @@
  * Only the simple shape is read: leading `NAME=value` assignments, then
  * `deno test`, then flags and paths. A task carrying a shell
  * metacharacter or naming its own import map is not this shape, and the
- * member it belongs to is one unit that runs whole.
+ * member it belongs to is one unit that runs whole. The sharded runner, the one
+ * wrapper the workspace puts around `deno test`, is read as the `deno test` it
+ * runs. Each member behind it therefore becomes one unit per test file.
  */
 
 import * as path from "@std/path";
@@ -66,6 +68,9 @@ const SHUFFLE_SUBSTITUTION = /\s*--shuffle=\$\(deno task -q test-seed\)/g;
 /** `NAME=value` in front of the command. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
+/** The wrapper a member runs when its files are split across shards. */
+const SHARDED_RUNNER = "run-sharded-test-files.ts";
+
 /**
  * Strips shell quoting from a task's argument.
  *
@@ -94,12 +99,42 @@ export function unquote(word: string): string {
 }
 
 /**
+ * A `deno run` of the sharded runner, as the `deno test` it runs, or undefined
+ * for any other `deno run`.
+ *
+ * The runner takes the variable naming this job's shard, a weighting profile,
+ * the directory to walk, a `--` separator, and then the flags for the
+ * `deno test` it runs over the shard's files. A lane is pointed at files rather
+ * than at a shard, so it needs only that directory and those flags. The words
+ * before the runner are the runner's own permissions, and the tests do not run
+ * under them.
+ *
+ * A word after the separator that is not a flag makes this return undefined.
+ * The runner appends its chosen files after those words, so a path there would
+ * run alongside whatever a lane asked for.
+ */
+function parseShardedRunner(
+  env: Record<string, string>,
+  words: readonly string[],
+): ParsedTestTask | undefined {
+  const runner = words.findIndex((word) => !word.startsWith("-"));
+  if (runner < 0) return undefined;
+  if (path.basename(words[runner]!) !== SHARDED_RUNNER) return undefined;
+  const [_shard, _profile, root, separator, ...rest] = words.slice(runner + 1);
+  // A `--` in this position means all three arguments before it are present.
+  if (separator !== "--") return undefined;
+  const flags = rest.map(unquote);
+  if (flags.some((flag) => !flag.startsWith("-"))) return undefined;
+  return { env, flags, paths: [unquote(root!)], ignores: [] };
+}
+
+/**
  * A member's test task as the pieces a subset run needs, or undefined for
- * a task this cannot read: one that is not a single `deno test`, one
- * carrying a shell metacharacter, or one naming its own import map. That
- * map governs every module of the invocation, the preload included, so a
- * specifier the preload needs and the map does not carry would fail the
- * whole run.
+ * a task this cannot read. That is a task that is neither a single `deno test`
+ * nor a `deno run` of the sharded runner, a task carrying a shell
+ * metacharacter, or a task naming its own import map. A task's import map
+ * applies to every module of the invocation, including the preload, so a
+ * specifier the preload needs has to be in it.
  */
 export function parseTestTask(
   task: string,
@@ -119,6 +154,9 @@ export function parseTestTask(
     const assignment = ASSIGNMENT.exec(words[index]!);
     if (assignment === null) break;
     env[assignment[1]!] = unquote(assignment[2]!);
+  }
+  if (words[index] === "deno" && words[index + 1] === "run") {
+    return parseShardedRunner(env, words.slice(index + 2));
   }
   if (words[index] !== "deno" || words[index + 1] !== "test") return undefined;
   index += 2;

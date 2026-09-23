@@ -124,6 +124,70 @@ describe("reading a member's test task", () => {
   });
 });
 
+describe("reading a task that runs the sharded runner", () => {
+  // The runner walks a directory, keeps the files assigned to its shard, and
+  // runs `deno test` over them with the flags written after the separator. A
+  // lane is pointed at files rather than at a shard, so it needs only that
+  // directory and those flags.
+
+  const TASK = "deno run --allow-env --allow-read " +
+    '--allow-run="$(deno eval "console.log(Deno.execPath())")" ' +
+    "../../tasks/run-sharded-test-files.ts PIECE_TEST_SHARD piece . " +
+    "-- --no-check --allow-ffi";
+
+  it("returns the directory the runner walks as the path to enumerate", () => {
+    expect(parseTestTask(TASK, "/usr/bin/deno")?.paths).toEqual(["."]);
+  });
+
+  it("reads the runner past a Deno path holding a space", () => {
+    expect(parseTestTask(TASK, "/Users/Some One/deno")?.paths).toEqual(["."]);
+  });
+
+  it("returns the flags after the separator and not the wrapper's own", () => {
+    // The permissions before the runner apply to the runner itself. The tests
+    // run under the flags after the separator, and those are the flags a lane
+    // has to reproduce.
+    expect(parseTestTask(TASK, "/usr/bin/deno")?.flags).toEqual([
+      "--no-check",
+      "--allow-ffi",
+    ]);
+  });
+
+  it("returns the assignments standing in front of the command", () => {
+    expect(parseTestTask(`ENV=test ${TASK}`, "/usr/bin/deno")?.env).toEqual({
+      ENV: "test",
+    });
+  });
+
+  it("refuses a path written among the flags after the separator", () => {
+    // The runner appends its chosen files after those words, so a path there
+    // would run alongside whatever a lane asked for.
+    expect(
+      parseTestTask(
+        "deno run -A ../../tasks/run-sharded-test-files.ts X piece . " +
+          "-- --no-check extra.test.ts",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a run of the runner with no separator where one belongs", () => {
+    expect(
+      parseTestTask(
+        "deno run -A ../../tasks/run-sharded-test-files.ts X piece .",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a deno run naming no script", () => {
+    expect(parseTestTask("deno run --allow-read")).toBeUndefined();
+  });
+
+  it("refuses a deno run of any other script", () => {
+    expect(parseTestTask("deno run -A ./test/runner.ts a b . -- --no-check"))
+      .toBeUndefined();
+  });
+});
+
 describe("reading the environment a task sets", () => {
   it("takes the assignments standing before the command", async () => {
     const dir = await member({

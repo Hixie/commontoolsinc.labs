@@ -4,7 +4,6 @@ import { describe, it } from "@std/testing/bdd";
 
 import {
   collectTestFiles,
-  isTestFile,
   selectShardedTestFiles,
 } from "./run-sharded-test-files.ts";
 import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
@@ -12,15 +11,6 @@ import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
 const AGENTS_HOST_SHARDS = 5;
 
 describe("run-sharded-test-files", () => {
-  it("recognizes Deno test module names", () => {
-    expect([
-      "test.ts",
-      "donut.test.ts",
-      "donut_test.tsx",
-    ].every(isTestFile)).toBe(true);
-    expect(isTestFile("test-helper.ts")).toBe(false);
-  });
-
   it("collects test modules recursively in stable order", async () => {
     const dir = await Deno.makeTempDir({ prefix: "sharded-tests-" });
     try {
@@ -30,14 +20,36 @@ describe("run-sharded-test-files", () => {
       await Deno.writeTextFile(`${dir}/nested/helper.ts`, "");
 
       expect(await collectTestFiles(dir)).toEqual([
-        `${dir}/nested/a_test.ts`,
-        `${dir}/z.test.ts`,
+        "nested/a_test.ts",
+        "z.test.ts",
       ]);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
   });
 
+  it("leaves out what the member excludes, as the topology does", async () => {
+    // The runner and the topology have to list the same files. A file only the
+    // runner lists runs in the full run but belongs to no unit, so no lane can
+    // ask for it.
+    const dir = await Deno.makeTempDir({ prefix: "sharded-rule-" });
+    try {
+      await Deno.writeTextFile(
+        `${dir}/deno.json`,
+        JSON.stringify({ test: { exclude: ["fixtures/"] } }),
+      );
+      await Deno.mkdir(`${dir}/fixtures`);
+      await Deno.mkdir(`${dir}/node_modules`);
+      await Deno.writeTextFile(`${dir}/taken.test.ts`, "");
+      await Deno.writeTextFile(`${dir}/fixtures/sample.test.ts`, "");
+      await Deno.writeTextFile(`${dir}/passed-test.ts`, "");
+      await Deno.writeTextFile(`${dir}/node_modules/vendored.test.ts`, "");
+
+      expect(await collectTestFiles(dir)).toEqual(["taken.test.ts"]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
   it("runs every file locally when no shard is selected", () => {
     expect(selectShardedTestFiles(
       ["b.test.ts", "a.test.ts"],
@@ -61,9 +73,7 @@ describe("run-sharded-test-files", () => {
     const root = path.fromFileUrl(
       new URL("../packages/connectors/agents/host", import.meta.url),
     );
-    const files = (await collectTestFiles(root)).map((file) =>
-      path.relative(root, file).replaceAll("\\", "/")
-    );
+    const files = await collectTestFiles(root);
     const expensiveFiles = Object.entries(AGENTS_HOST_TEST_WEIGHTS)
       .toSorted(([, left], [, right]) => right - left)
       .slice(0, AGENTS_HOST_SHARDS)

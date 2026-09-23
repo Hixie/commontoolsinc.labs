@@ -47,7 +47,11 @@ import {
   openCapabilities,
   takeGithubToken,
 } from "./ci-capabilities.ts";
-import { capabilitiesBySuite, loadTopology } from "./test-topology.ts";
+import {
+  capabilitiesBySuite,
+  loadTopology,
+  wholeUnits,
+} from "./test-topology.ts";
 import {
   type Invocation,
   type Suite,
@@ -347,6 +351,9 @@ export function unitsForRun(batch: Batch, run: number): UnitRequest[] {
  * skip list of everything inside it that was not selected, so choosing
  * one test out of a file leaves its siblings registered as ignored rather
  * than missing.
+ *
+ * A unit its suite declares whole carries no skip list, because its runner runs
+ * every identity in it and reads no list.
  */
 export function batchesOf(
   suites: readonly Suite[],
@@ -355,6 +362,9 @@ export function batchesOf(
 ): Batch[] {
   const bySuite = new Map<string, Suite>(
     suites.map((suite) => [suite.id, suite]),
+  );
+  const wholeOf = new Map<Suite, ReadonlySet<Unit>>(
+    suites.map((suite) => [suite, new Set(suite.whole)]),
   );
   const inUnit = new Map<string, string[]>();
   for (const entry of manifest?.entries ?? []) {
@@ -383,7 +393,9 @@ export function batchesOf(
     const suite = bySuite.get(suiteId);
     if (suite === undefined) continue;
     const all = inUnit.get(key) ?? [];
-    const skip = all.filter((name) => !names.has(name));
+    const skip = wholeOf.get(suite)!.has(unit)
+      ? []
+      : all.filter((name) => !names.has(name));
     const batch = batches.get(suiteId);
     const request: UnitRequest = { unit, skip };
     if (batch === undefined) {
@@ -1218,6 +1230,7 @@ function packing(
     manifest: seen.manifest,
     mandatory: seen.mandatory,
     capabilities: capabilitiesBySuite(suites),
+    wholeUnits: wholeUnits(suites),
     lanes: options.of,
     ...(options.full ? { policy: "everything" as const } : {}),
   });
@@ -1271,6 +1284,7 @@ export async function fullLanes(
     const byCost = fullLaneCount({
       manifest: seen.manifest,
       capabilities: capabilitiesBySuite(suites),
+      wholeUnits: wholeUnits(suites),
     });
     const lanes = Math.max(1, running.length, byCost);
     console.error(
@@ -1284,6 +1298,7 @@ export async function fullLanes(
   return fullLaneCount({
     manifest: seen.manifest,
     capabilities: capabilitiesBySuite(suites),
+    wholeUnits: wholeUnits(suites),
   });
 }
 
