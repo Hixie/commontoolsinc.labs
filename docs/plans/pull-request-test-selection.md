@@ -3134,8 +3134,8 @@ something or into skipping something.
 
 Two rules keep the joined result honest. A coverage failure says in the
 summary that it is a coverage failure, so it is never mistaken for a test
-failure. And when any lane failed, every set a lane reported is reported
-rather than gated, because coverage measured through a failing run says
+failure. And when any lane failed, every set a lane's report measured is
+reported rather than gated, because coverage measured through a failing run says
 nothing about whether the change was tested. Every such set rather than
 the sets the failure was in: `Status` is already failing for the lane, so
 a second failure over a measurement taken through it buys nothing, and
@@ -3327,12 +3327,12 @@ list is what it is today:
 | `packages/identity` | Every one of its tests runs in a browser through `deno-web-test`. It has no Deno-only half to measure. |
 | `packages/deno-web-test` | Its tests drive the browser harness end to end. |
 | `packages/toolshed` | Its tests want the service's own environment and its initialized database. |
+| `packages/integration` | The coverage metric counts none of its lines, since it leaves out every path with an `integration` directory in it, so a set over it would measure nothing. |
 
-That leaves 35 measured sets in the tree today, `packages/memory` among
-them, out of the 45 members `deno.jsonc` lists under `packages/`: the
+That leaves 34 measured sets in the tree today, `packages/memory` among
+them, out of the 44 members `deno.jsonc` lists under `packages/`: the
 nine on the list, and one member with no Deno-only tests to measure.
-`packages/agents-host` and `packages/piece` are two of the 35: both are
-hand-sharded today, and being hand-sharded stops meaning anything once
+`packages/piece` is one of the 34: it is hand-sharded today, and being hand-sharded stops meaning anything once
 the packer does the sharding and `Status` joins what the lanes measured.
 
 One entry is there for size. Because `Status` joins the lanes' coverage, a
@@ -3544,11 +3544,14 @@ And when the manifest holds no run the branch contains, the comparison
 would be against a tree the branch does not have, so a rise measured
 against it is not the branch's rise.
 
-A third is not about the baseline at all: a set whose joined reports name
-no line of its member measured nothing, rather than covering nothing.
-Charging it every tracked line would fail a change for a measurement that
-never happened, and a set's tests always load some of their own member's
-source, so an empty report is the conversion having produced nothing.
+A forced set whose joined reports name no line of its member fails. A
+set's tests always load some of their own member's source, so an empty
+report measured nothing, rather than covering nothing. Charging it every
+tracked line would score a measurement that never happened, and passing
+it would pass a rise that nothing measured. That is the failure of a
+forced set no lane reported, and the gate treats the two alike. An
+unforced set whose reports name nothing is reported, as an unforced set
+no run measured is.
 
 The publisher fills those numbers from the `perf-metrics` artifact of each
 run on `main` it has not read yet, and carries forward what the previous
@@ -3728,7 +3731,7 @@ dashboard is where it gets answered.
 over each measured set.** Nothing will fail because a change lowered the
 repository's whole coverage number. What replaces that is a weekly trend
 somebody has to choose to look at, plus a comment naming the source
-groups where the debt rose. Over the 35 [measured
+groups where the debt rose. Over the 34 [measured
 sets](#the-measured-set) the ratchet still fails a pull request, because
 there both sides measure the same complete thing. The reduction in
 enforcement is real and confined to what could no longer be measured per
@@ -3765,9 +3768,9 @@ is pinned to the commit's date. And if none of that settles it,
 | A measured set has no baseline, or none from an ancestor of the merge base | `Status` reports the comparison and does not fail. The next full `main` run supplies one. |
 | A measured member gains a test needing a browser or a server | It goes in the member's `browser-test` half, which no measured set holds, so the Deno-only half keeps its gate. A member with no such half yet names one. |
 | A measured set grows expensive | Reported in the publisher's summary and by `deno task test-selection coverage`. Nothing is excluded automatically; somebody splits the member's tests or adds a line to the exclusion list. |
-| A test in a measured set fails | Every set a lane reported is reported rather than gated. Coverage measured through a failing run says nothing about whether the change was tested, and the failure is the thing to fix. |
+| A test in a measured set fails | Every set a lane's report measured is reported rather than gated. Coverage measured through a failing run says nothing about whether the change was tested, and the failure is the thing to fix. |
 | A change reaches more than two measured sets | The gate does not run at all, and `Status` says so. The full run on `main` still measures every set, and a rise it finds is reported back to the pull request. |
-| No lane's report for a forced set reaches the gate: a lane dies before uploading, or an upload or the download carries nothing | That set fails the gate, whether or not any lane failed, because the change was made to measure those sets and a rise in them cannot be ruled out. A set the cap left unforced is reported rather than failed. |
+| No lane's report measuring a forced set reaches the gate: a lane dies before uploading, an upload or the download carries nothing, or a lane writes an empty report | That set fails the gate, whether or not any lane failed, because the change was made to measure those sets and a rise in them cannot be ruled out. A set the cap left unforced is reported rather than failed. |
 | Two measured sets over one member disagree | Nothing joins them. Each carries its own baseline and its own verdict, and an `ACCEPT_COVERAGE_DEBT` marker naming the member accepts a rise in either. |
 | A lane exceeds five minutes repeatedly | The correction factors rise on the next publisher run and less is packed. If it persists, the publisher's summary shows the miss and somebody looks. |
 | Two attempts of one run straddle a UTC midnight | The later attempt's relay writes the earlier attempt's records a second time, under the later day, and the publisher folds both. Not observed in the store so far; see [What the store is missing](#what-the-store-is-missing). |
@@ -4369,10 +4372,10 @@ exercised on the branch on its own.
       request's description. It works out which sets the gate covers by
       running the same function the lanes run, cap included, rather than
       trusting a lane's report. A coverage failure names itself as one, a
-      run with a failing test reports rather than gates every set a lane
-      reported, a forced set no lane reported fails, and a change over
-      the cap forces no set, with a line saying so, and still scores any
-      set some run measured anyway.
+      run with a failing test reports rather than gates every set a
+      lane's report measured, a forced set no lane's report measured
+      fails, and a change over the cap forces no set, with a line saying
+      so, and still scores any set some run measured anyway.
 - [ ] The gate's workflow half, which only the lanes can carry. Each
       `pr-tests` lane uploads what is under its coverage directory as an
       artifact, `Status` downloads all five into one directory, and

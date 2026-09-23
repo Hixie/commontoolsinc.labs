@@ -207,18 +207,21 @@ Five things are worth knowing before reading a failure.
   ordinary rules; it is the run-the-whole-set part that stops. A set some
   run measured anyway is still scored, so a pull request labelled
   `ci: full`, which measures every set, is gated whatever the cap says.
-- **A run with a failing test reports rather than gates every set a lane
-  reported.** Coverage measured through a failure says nothing about
-  whether the change was tested, and the failing test is what to fix. So is a set whose reports
-  name no line of its member: that is a conversion that produced
-  nothing, not a set that covered nothing.
-- **A forced set that no lane reported fails**, in a run with a failing
-  test as in any other. The change was made to measure that set, and a
-  lane that stopped before writing its report, an upload that carried
-  nothing, and a download that found nothing all arrive at the gate
-  looking the same. The row says a rise cannot be ruled out. A set the
-  cap left unforced has nothing asking for it to be measured, so one no
-  run measured is reported rather than failed.
+- **A run with a failing test reports rather than gates every set a
+  lane's report measured.** Coverage measured through a failure says
+  nothing about whether the change was tested, and the failing test is
+  what to fix.
+- **A forced set that no lane's report measured fails**, in a run with a
+  failing test as in any other. That is a set no lane reported, or one
+  whose reports name no line of its member; a set's tests always load
+  some of their own member's source, so an empty report measured nothing
+  rather than covering nothing. The change was made to measure that set,
+  and a lane that stopped before writing its report, an upload that
+  carried nothing, a download that found nothing, and a lane that wrote
+  an empty report all arrive at the gate looking the same. The row says a
+  rise cannot be ruled out. A set the cap left unforced has nothing
+  asking for it to be measured, so one no run measured is reported rather
+  than failed.
 
 Nothing about coverage fails a run on `main`. That run measures every set,
 which is where the baselines come from, and merges every report into the
@@ -328,7 +331,7 @@ rather than a setting to fix.
 | `COVERAGE_COMMENT_LINES` | 25 | lines | chosen | Up when coverage comments are too noisy; down when debt is climbing unnoticed. |
 | `LOCAL_COVERAGE_MAX_SECONDS` | 30 | seconds | chosen | Up when too many sets are reported as expensive for the report to be worth reading; down when one is quietly eating a lane. Nothing is excluded either way; it only decides what the summary mentions. |
 | `LOCAL_COVERAGE_MAX_SETS` | 2 | measured sets | chosen | Up when broader changes should still be gated and the run can afford those sets' whole unit lists; down when sweeping changes are crowding lanes. |
-| `EXCLUDED_FROM_COVERAGE_GATE` | 8 | workspace members | chosen | Not a quantity. A line comes off when a package fits the run's budget or gains a Deno-only half, which gives it a measured set. A line goes on when a package's own tests stop being what covers it. |
+| `EXCLUDED_FROM_COVERAGE_GATE` | 9 | workspace members | chosen | Not a quantity. A line comes off when a package fits the run's budget or gains a Deno-only half, which gives it a measured set. A line goes on when a package's own tests stop being what covers it. |
 | `LOCAL_COVERAGE_BASELINE_DAYS` | 7 | days | chosen | Up when branches based further back are being reported for want of a baseline they contain; down when the manifest carries more history than anybody reads. |
 | `COVERAGE_TREND_WEEKS` | 3 | weeks | chosen | Up when the tile goes amber too readily; down when debt climbs for a month before anybody is told. |
 | `CATCH_BREADTH_WINDOW_DAYS` | 2 | days | chosen | Up when a broken runner's failures are being counted as catches; down when genuine breadth is being written off as environmental. |
