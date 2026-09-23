@@ -265,13 +265,9 @@ async function rerunSince(
   token: string,
 ): Promise<boolean> {
   const deciding = settled.deciding?.run;
-  if (deciding === undefined || runs.some((run) => run.id === deciding.id)) {
-    return false;
-  }
-  const now = await github<Run>(
-    `repos/${repo}/actions/runs/${deciding.id}`,
-    token,
-  );
+  if (deciding === undefined) return false;
+  const now = runs.find((run) => run.id === deciding.id) ??
+    await github<Run>(`repos/${repo}/actions/runs/${deciding.id}`, token);
   return now.run_attempt !== deciding.run_attempt;
 }
 

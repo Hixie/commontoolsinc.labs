@@ -419,10 +419,10 @@ going.
 The runs are read a page of twenty at a time, until a page reaches a run that
 concluded `success` or failed outright. The tile keeps, for each workflow, how
 far down it has already settled the verdict, so the next collection stops as
-soon as it reaches those runs. When the verdict comes from a run behind the
-pages read, the tile asks for that run again, because a run started again keeps
-its place among the runs; one that has been run again since sends the pages on
-as though nothing had been settled. A verdict far back therefore costs its pages
+soon as it reaches those runs. A run started again keeps its place among the
+runs, so the tile checks whether the run that decided the job has been run again
+since, asking GitHub for it when the pages read did not reach it. One that has
+been run again sends the pages on as though nothing had been settled. A verdict far back therefore costs its pages
 once, when the tile first reads the workflow, and after that one page and one
 run on each collection. GitHub lists at most a thousand runs of a workflow
 filtered by branch, so that first read is at most fifty pages, and a workflow

@@ -642,6 +642,34 @@ Deno.test("ci: a verdict found far back is not read again on the next collection
   });
 });
 
+Deno.test("ci: a failure run again and still going is no longer the verdict", async () => {
+  // The pages reach the failure itself, and nothing before it decides.
+  const runs: RunSpec[] = [
+    ...Array.from({ length: 3 }, (_, index): RunSpec => ({
+      conclusion: "skipped",
+      minutesAgo: (index + 1) * 20,
+    })),
+    { conclusion: "failure", event: "schedule", minutesAgo: 10 * 60 },
+  ];
+  await withGitHub(standingOrg(green, runs), async () => {
+    const tile = createCiHealth();
+    assertEquals((await tile.collect(ctx())).value, "loom failing");
+
+    runs[3] = {
+      ...runs[3],
+      conclusion: null,
+      status: "in_progress",
+      attempt: 2,
+    };
+    const view = await tile.collect(ctx());
+    assertEquals(view.status, "good");
+    assertStringIncludes(
+      view.extra ?? "",
+      `<span class="dot gray"></span>loom · Tests (fast)`,
+    );
+  });
+});
+
 Deno.test("ci: a failure far back that was run again and passed is read again", async () => {
   // A nightly job fails, the pushes after it all skip it, and someone runs
   // the failed run again, which keeps its place among the runs.
