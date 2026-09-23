@@ -3888,10 +3888,11 @@ test-selection`. Its modes are also how the system is tested by hand.
 - `explain <identity>` prints one test's score, the catches behind it
   with their dates and sources, its flake rate, and which item it maps to.
   A suite-level measurement instead says that it is not selectable. For an
-  item identity, the output says whether the current manifest selects it,
-  how many runs it gives it, and whether it withholds it from pull
-  requests. The argument accepts the canonical three- or
-  four-part identity key, and the output always names a present variant.
+  item identity, the output says whether the manifest the checked-out
+  commit resolves selects it, how many runs it gives it, and whether it
+  withholds it from pull requests. The argument accepts the canonical
+  three- or four-part identity key, and the output always names a present
+  variant.
   This is what somebody uses to answer "why did my test not run?", which
   is the question this system will be asked most often and the one it
   would otherwise answer badly.
@@ -3901,15 +3902,18 @@ test-selection`. Its modes are also how the system is tested by hand.
   measured one whether the figure shown is still the checked-in seed or
   one the publisher has since written back.
 - `coverage` prints every measured set, the suite and the member it pairs,
-  the task the set measures, and the baseline the newest manifest holds
-  for it, and beside them every workspace member that carries no set and
-  the reason it does not. This is what somebody uses to answer "why is my
+  the task the set measures, and the baseline the checked-out commit's
+  manifest holds for it, and beside them every workspace member that
+  carries no set and the reason it does not. This is what somebody uses to answer "why is my
   package not gated?" and "what am I being compared against?".
 
 `tasks/ci-lane.ts` keeps a `--dry-run` of its own, because that is how
 continuous integration asks the same question from inside a job.
 `plan --dry-run` is that code path with a person's output rather than a
-job summary, so the two cannot disagree about what would run.
+job summary, so the two cannot disagree about what would run. Every mode
+that reads a manifest resolves it the way a lane does, at the moment the
+checked-out commit was made, so each reads the manifest the lanes testing
+that commit read.
 
 ## Every dial in one place
 

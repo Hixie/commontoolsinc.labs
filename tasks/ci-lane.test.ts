@@ -1,6 +1,6 @@
 import { expect } from "@std/expect";
 import { exists } from "@std/fs";
-import { describe, it } from "@std/testing/bdd";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { fromFileUrl } from "@std/path";
 import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
 import { shuffleNotice } from "@commonfabric/test-support/shuffle";
@@ -75,6 +75,7 @@ import {
   LANE_BUDGET_SECONDS,
   UNMEASURED_COST_SECONDS,
 } from "./test-selection/policy.ts";
+import { repositoryCommittedAt } from "./test-selection/testing.ts";
 
 /**
  * The repository, found from this file rather than from the process's
@@ -186,30 +187,18 @@ describe("reading the lane's command line", () => {
 
 describe("the moment a lane resolves its manifest at", () => {
   const lane = { lane: 1, of: 5, full: false, dryRun: false, laneCount: false };
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    for (const root of roots.splice(0)) {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
 
   /** A repository whose one commit was made at a moment a case chose. */
   async function repository(committed: string): Promise<string> {
-    const root = await Deno.makeTempDir({ prefix: "ci-lane-commit-" });
-    const git = (...args: string[]) =>
-      new Deno.Command("git", {
-        args,
-        cwd: root,
-        env: {
-          ...Deno.env.toObject(),
-          GIT_AUTHOR_DATE: committed,
-          GIT_COMMITTER_DATE: committed,
-          GIT_AUTHOR_NAME: "A",
-          GIT_AUTHOR_EMAIL: "a@example.com",
-          GIT_COMMITTER_NAME: "A",
-          GIT_COMMITTER_EMAIL: "a@example.com",
-        },
-        stdout: "null",
-        stderr: "null",
-      }).output();
-    await git("init", "-q");
-    await Deno.writeTextFile(`${root}/a.txt`, "a");
-    await git("add", "a.txt");
-    await git("commit", "-q", "-m", "one");
+    const root = await repositoryCommittedAt(committed);
+    roots.push(root);
     return root;
   }
 

@@ -562,14 +562,7 @@ export async function main(
   const suites = await (deps.topology ?? loadTopology)(options.root);
   const changed = await changedFiles(options.root, options.base);
   const gate = coverageGateFor(suites, changed);
-  const moment = manifestMoment({
-    lane: 1,
-    of: 1,
-    full: false,
-    dryRun: false,
-    laneCount: false,
-    root: options.root,
-  });
+  const moment = manifestMoment({ root: options.root });
   const baselines = await (deps.baselines ?? publishedBaselines)(moment.at);
   let accepted: ReadonlyMap<string, number>;
   try {
