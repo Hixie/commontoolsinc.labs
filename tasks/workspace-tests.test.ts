@@ -928,6 +928,9 @@ Deno.test("a recording leaf is given the preload and a write it needs", async ()
   // write is what makes the preload take the class names, and the read
   // is what finds the files that replace them.
   assertEquals(recording.get("./packages/utils"), [preload]);
+  // A member behind the sharded runner is read by the flags its leaf takes,
+  // which here grant a write anywhere.
+  assertEquals(recording.get("./packages/cli"), [preload]);
   // A member whose task cannot take the preload takes nothing at all.
   assertEquals(recording.get("./packages/dashboard"), []);
 });

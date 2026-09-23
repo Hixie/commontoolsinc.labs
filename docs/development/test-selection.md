@@ -1150,13 +1150,16 @@ names its own import map, or a test runner of the package's own.
 
 The shard wrapper, `tasks/run-sharded-test-files.ts`, is also how a
 member whose files need different flags stays splittable. Its `--serial`
-option names files that cannot share a process with another test file,
-and those run in a `deno test` without `--parallel`. Its `--all-access`
-option names files that need every permission, and those run under
-`--allow-all`. The wrapper runs each group as a `deno test` of its own
-and merges their JUnit reports into the one path it was handed. A lane
-groups the files it selects the same way, with a report for each group.
-`packages/cli` is the member that uses both options.
+option names files that cannot run beside another test file in one
+process, and those run in a `deno test` without `--parallel`, one file
+at a time. Its `--all-access` option names files that need every
+permission, and those run under `--allow-all`. The wrapper runs each
+group as a `deno test` of its own and merges their JUnit reports into
+the one path it was handed. A lane groups the files it selects the same
+way, with a report for each group. The topology refuses a `--serial` or
+`--all-access` pattern that names no test file, and so does the wrapper,
+which also refuses such an `--ignore`. `packages/cli` is the member that
+uses both options.
 
 ## A case that fails only when its siblings do not run
 

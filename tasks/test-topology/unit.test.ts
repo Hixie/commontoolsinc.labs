@@ -368,7 +368,7 @@ describe("running a member that cannot be handed a subset", () => {
   });
 
   it("runs the files the runner sets apart in a `deno test` each", async () => {
-    // A serial file cannot share a process with another test file, and an
+    // A serial file cannot run beside another test file in one process, and an
     // all-access file needs every permission. A lane that selects some of each
     // runs them apart, as the runner does, with a report and a skip list of
     // their own.
@@ -421,6 +421,26 @@ describe("running a member that cannot be handed a subset", () => {
     expect(
       JSON.parse(await Deno.readTextFile(serial!.env![SKIP_LIST_VARIABLE]!)),
     ).toEqual({ "packages/bakery/test/proof.serial.test.ts": ["rises"] });
+  });
+
+  it("refuses a member whose serial glob names no file", async () => {
+    // Such a glob is a file renamed from under the task, which would
+    // otherwise run beside the rest under `--parallel`.
+
+    const root = await workspace({
+      "./packages/bakery": {
+        tasks: {
+          test: "deno run --allow-read " +
+            "../../tasks/run-sharded-test-files.ts BAKERY_SHARD cli . " +
+            "--serial=test/proof.serial.test.ts -- --no-check --parallel",
+        },
+        files: ["test/glaze.test.ts", "test/proof.test.ts"],
+      },
+    });
+    await expect(loadUnitSuites(root)).rejects.toThrow(
+      "No test file in `./packages/bakery` matches " +
+        "`test/proof.serial.test.ts`.",
+    );
   });
 
   it("builds one `deno test` where the files all need the same flags", async () => {

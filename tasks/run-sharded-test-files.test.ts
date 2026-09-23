@@ -11,7 +11,6 @@ import {
   mergeJUnitReports,
   runTestBatches,
   selectShardedTestFiles,
-  unmatchedGlobs,
 } from "./run-sharded-test-files.ts";
 import { AGENTS_HOST_TEST_WEIGHTS } from "./test-timing-weights.ts";
 
@@ -77,34 +76,6 @@ describe("run-sharded-test-files", () => {
         "left.test.ts",
         "taken.test.ts",
       ]);
-    } finally {
-      await Deno.remove(dir, { recursive: true });
-    }
-  });
-
-  it("names each glob that matches none of the member's test files", async () => {
-    const dir = await Deno.makeTempDir({ prefix: "sharded-unmatched-" });
-    try {
-      await Deno.writeTextFile(`${dir}/rise.serial.test.ts`, "");
-      await Deno.writeTextFile(`${dir}/oven.test.ts`, "");
-      await Deno.writeTextFile(`${dir}/fixture.test.tsx`, "");
-
-      expect(
-        await unmatchedGlobs(dir, {
-          paths: ["."],
-          serial: ["**/*.serial.test.ts"],
-          allAccess: ["oven.test.ts"],
-          ignores: ["**/*.test.tsx"],
-        }),
-      ).toEqual([]);
-      expect(
-        await unmatchedGlobs(dir, {
-          paths: ["."],
-          serial: ["**/*.serial.test.ts", "gone.test.ts"],
-          allAccess: ["renamed.test.ts"],
-          ignores: ["**/*.test.tsx", "moved/"],
-        }),
-      ).toEqual(["gone.test.ts", "renamed.test.ts", "moved/"]);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

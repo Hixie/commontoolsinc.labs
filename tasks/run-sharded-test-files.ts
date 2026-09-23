@@ -17,12 +17,12 @@
 
 import { parseShard, type Shard } from "./shard-utils.ts";
 import {
-  matchesAny,
   memberTestFiles,
   type ParsedTestTask,
   readShardedRunnerArguments,
   type TestBatch,
   testBatches,
+  unmatchedGlobs,
 } from "./test-topology/deno-task.ts";
 import {
   AGENTS_HOST_TEST_WEIGHTS,
@@ -185,23 +185,6 @@ export async function runTestBatches(
   return code;
 }
 
-/**
- * The globs among the task's `serial`, `allAccess` and `ignores` that name
- * none of the test files the task walks, before anything is left out.
- */
-export async function unmatchedGlobs(
-  memberDir: string,
-  task: Pick<ParsedTestTask, "paths" | "ignores" | "serial" | "allAccess">,
-): Promise<string[]> {
-  const files = await collectTestFiles(memberDir, {
-    paths: task.paths,
-    ignores: [],
-  });
-  return [...task.serial, ...task.allAccess, ...task.ignores].filter((glob) =>
-    !files.some((file) => matchesAny(file, [glob]))
-  );
-}
-
 async function main(): Promise<void> {
   const args = readShardedRunnerArguments(Deno.args);
   if (args === undefined || !(args.profile in PROFILES)) {
@@ -211,7 +194,12 @@ async function main(): Promise<void> {
     );
   }
   const profile = PROFILES[args.profile as ProfileName];
-  const unmatched = await unmatchedGlobs(Deno.cwd(), args.test);
+  const { test } = args;
+  const unmatched = await unmatchedGlobs(Deno.cwd(), test.paths, [
+    ...test.serial,
+    ...test.allAccess,
+    ...test.ignores,
+  ]);
   if (unmatched.length > 0) {
     throw new Error(
       `No test file matches ${

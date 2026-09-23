@@ -38,8 +38,8 @@ export interface ParsedTestTask {
   ignores: string[];
 
   /**
-   * Globs naming the files that cannot share a process with other test
-   * files, from every `--serial` the sharded runner takes. Empty for a
+   * Globs naming the files that cannot run beside another test file in one
+   * process, from every `--serial` the sharded runner takes. Empty for a
    * plain `deno test`.
    */
   serial: string[];
@@ -152,9 +152,13 @@ export function readShardedRunnerArguments(
 ): ShardedRunnerArguments | undefined {
   const [shardVariable, profile, root, ...rest] = args;
   const separator = rest.indexOf("--");
+  // A second `--` would make every word after it, the files the runner
+  // appends included, an argument to the test modules rather than to
+  // `deno test`.
   if (
     shardVariable === undefined || profile === undefined ||
-    root === undefined || separator < 0
+    root === undefined || separator < 0 ||
+    rest.indexOf("--", separator + 1) >= 0
   ) {
     return undefined;
   }
@@ -209,13 +213,7 @@ function parseShardedRunner(
     words.slice(runner + 1).map(unquote),
   );
   if (args === undefined) return undefined;
-  // A second `--` would make every word after it, the files included, an
-  // argument to the test modules rather than to `deno test`.
-  if (
-    args.test.flags.some((flag) => !flag.startsWith("-") || flag === "--")
-  ) {
-    return undefined;
-  }
+  if (args.test.flags.some((flag) => !flag.startsWith("-"))) return undefined;
   return { ...args.test, env };
 }
 
@@ -234,8 +232,8 @@ const PERMISSION_FLAG =
 
 /**
  * Splits a member's test files into the `deno test` runs they need. A file
- * one of the task's `serial` globs names runs without `--parallel`, since
- * it cannot share the process with another file. A file one of its
+ * one of the task's `serial` globs names runs without `--parallel`, so that
+ * no other test file runs beside it in its process. A file one of its
  * `allAccess` globs names runs under `--allow-all` in place of every flag
  * granting a permission. Files that need the same flags share a batch.
  *
@@ -379,7 +377,7 @@ async function memberExcludes(memberDir: string): Promise<string[]> {
 }
 
 /** Whether a member-relative path is covered by one of these globs. */
-export function matchesAny(
+function matchesAny(
   candidate: string,
   globs: readonly string[],
 ): boolean {
@@ -579,4 +577,25 @@ export async function memberTasks(
       ? {}
       : { present: false }),
   };
+}
+
+/**
+ * The globs among `globs` that name none of the test files `paths` reaches
+ * in the member at `memberDir`. The member's `exclude` lists apply, and no
+ * `--ignore` does, so that a glob naming a file the task leaves out still
+ * finds it. A glob that names nothing is a file renamed or removed from
+ * under the task that names it.
+ */
+export async function unmatchedGlobs(
+  memberDir: string,
+  paths: readonly string[],
+  globs: readonly string[],
+): Promise<string[]> {
+  const files = await memberTestFiles(memberDir, {
+    paths: [...paths],
+    ignores: [],
+  });
+  return globs.filter((glob) =>
+    !files.some((file) => matchesAny(file, [glob]))
+  );
 }

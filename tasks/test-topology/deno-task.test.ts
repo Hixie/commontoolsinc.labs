@@ -7,6 +7,7 @@ import {
   readShardedRunnerArguments,
   taskEnvironment,
   testBatches,
+  unmatchedGlobs,
   unquote,
 } from "./deno-task.ts";
 
@@ -257,6 +258,14 @@ describe("reading the sharded runner's own arguments", () => {
     expect(args?.test.paths).toEqual(["test"]);
   });
 
+  it("refuses a second separator", () => {
+    // Every word after it, the files the runner appends included, would be
+    // an argument to the test modules rather than to `deno test`.
+    expect(
+      readShardedRunnerArguments(["X", "cli", ".", "--", "-A", "--", "x"]),
+    ).toBeUndefined();
+  });
+
   it("refuses arguments with no separator", () => {
     expect(readShardedRunnerArguments(["X", "cli", ".", "--no-check"]))
       .toBeUndefined();
@@ -349,6 +358,30 @@ describe("splitting a member's files by the flags they need", () => {
 
   it("gives no files no batches", () => {
     expect(testBatches(TASK, [])).toEqual([]);
+  });
+});
+
+describe("finding the globs that name no test file", () => {
+  it("names each glob no test file matches, and none that one does", async () => {
+    const dir = await member({}, [
+      "rise.serial.test.ts",
+      "oven.test.ts",
+      "fixture.test.tsx",
+    ]);
+    expect(
+      await unmatchedGlobs(dir, ["."], [
+        "**/*.serial.test.ts",
+        "oven.test.ts",
+        "**/*.test.tsx",
+      ]),
+    ).toEqual([]);
+    expect(
+      await unmatchedGlobs(dir, ["."], [
+        "**/*.serial.test.ts",
+        "gone.test.ts",
+        "moved/",
+      ]),
+    ).toEqual(["gone.test.ts", "moved/"]);
   });
 });
 

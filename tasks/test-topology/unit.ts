@@ -32,6 +32,7 @@ import {
   memberTestFiles,
   type ParsedTestTask,
   testBatches,
+  unmatchedGlobs,
 } from "./deno-task.ts";
 import {
   claimsIdentity,
@@ -120,6 +121,19 @@ async function readMember(
     browserFiles: [],
   };
   if (tasks.denoTest === undefined) return member;
+  // A glob giving files flags of their own that names no file would leave
+  // a renamed file running under the flags of the rest.
+  const unmatched = await unmatchedGlobs(memberDir, tasks.denoTest.paths, [
+    ...tasks.denoTest.serial,
+    ...tasks.denoTest.allAccess,
+  ]);
+  if (unmatched.length > 0) {
+    throw new Error(
+      `No test file in \`${memberPath}\` matches ${
+        unmatched.map((glob) => `\`${glob}\``).join(", ")
+      }.`,
+    );
+  }
   // Normalized against the repository root, because a member's task may
   // name a file outside its own directory and a unit is a path anyone
   // else can resolve.
