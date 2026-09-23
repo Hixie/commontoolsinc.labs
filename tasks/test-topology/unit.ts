@@ -34,6 +34,7 @@ import {
   measuringInto,
   recordingArguments,
   type RecordSurface,
+  shuffleArguments,
   skipListOf,
   type Suite,
   type UnitRequest,
@@ -314,6 +315,7 @@ function unitSuite(
               Deno.execPath(),
               "test",
               ...member.run.flags,
+              ...shuffleArguments(),
               ...recordingArguments(member.run.flags, context),
               `--junit-path=${junitPath}`,
               ...files.map((request) =>

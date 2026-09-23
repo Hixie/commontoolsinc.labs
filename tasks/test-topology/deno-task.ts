@@ -38,11 +38,12 @@ export interface ParsedTestTask {
 const METACHARACTER = /[&;|<>`$()]/;
 
 /**
- * The one command substitution the workspace writes, which several
- * members use to name the Deno they are running under in an
- * `--allow-run` list. It is resolved here rather than treated as a
- * metacharacter, because the alternative is those members losing file
- * granularity over a path this process already knows.
+ * The command substitution several members use to name the Deno they are
+ * running under in an `--allow-run` list. It is resolved here rather
+ * than treated as a metacharacter, because the alternative is those
+ * members losing file granularity over a path this process already
+ * knows. The seed substitution below is the other one the workspace
+ * writes, and is taken out for the same reason.
  */
 const EXEC_PATH_SUBSTITUTION =
   /\$\(deno eval ["']console\.log\(Deno\.execPath\(\)\)["']\)/g;
@@ -53,6 +54,14 @@ const EXEC_PATH_SUBSTITUTION =
  * would otherwise be split into two words that are neither of them it.
  */
 const EXEC_PATH_PLACEHOLDER = "@DENO_EXEC_PATH@";
+
+/**
+ * The seed substitution every test task writes, which this takes out
+ * rather than resolving: a suite builds its own `--shuffle` from the
+ * seed the run settled on, which is the one to use where an override
+ * names a seed other than the commit's.
+ */
+const SHUFFLE_SUBSTITUTION = /\s*--shuffle=\$\(deno task -q test-seed\)/g;
 
 /** `NAME=value` in front of the command. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
@@ -96,7 +105,9 @@ export function parseTestTask(
   task: string,
   execPath: string = Deno.execPath(),
 ): ParsedTestTask | undefined {
-  const resolved = task.replace(EXEC_PATH_SUBSTITUTION, EXEC_PATH_PLACEHOLDER);
+  const resolved = task
+    .replace(EXEC_PATH_SUBSTITUTION, EXEC_PATH_PLACEHOLDER)
+    .replace(SHUFFLE_SUBSTITUTION, "");
   if (METACHARACTER.test(resolved)) return undefined;
   if (/--import-map[= ]/.test(resolved)) return undefined;
   const words = resolved.trim().split(/\s+/)

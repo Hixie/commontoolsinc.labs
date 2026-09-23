@@ -10,6 +10,13 @@ a record: archive it to `docs/history/plans/` following the procedure in
 
 ## Current plans
 
+- [Shuffled test order: what is left to build](test-order-shuffle.md) carries
+  the two pieces the shuffle does not yet have: a scheduled run at 1am Pacific
+  under the following day's seed, so a test the new order breaks arrives as a
+  day's warning rather than as a broken morning, and a shuffle inside this
+  repository's own `describe()` and `it()`, which every test file already
+  resolves to, reordering the cases inside a file that
+  `deno test --shuffle` leaves in place.
 - [Security and privacy roadmap](security-privacy-roadmap.md) gives an overview
   of current trust boundaries and the path from runtime security to operator
   exclusion, with remaining work and technical references in an appendix.

@@ -17,6 +17,7 @@ import {
   spoolWriteArgument,
   type TestIdentity,
 } from "@commonfabric/test-support/records";
+import { shuffleFlag, shuffleSeed } from "@commonfabric/test-support/shuffle";
 import type { CapabilityId } from "../ci-capabilities.ts";
 
 /** A kind and scope a suite's records may carry. */
@@ -445,6 +446,16 @@ export function recordingArguments(
   return write === undefined ? [preloadArgument()] : [preloadArgument(), write];
 }
 
+/**
+ * The flag every `deno test` a suite builds shuffles by. The seed is the
+ * one the commit under test was committed on unless the environment names
+ * another, and the runner that starts a run puts the seed it settled on
+ * in the environment, so every invocation of that run takes the same one.
+ */
+export function shuffleArguments(): string[] {
+  return [shuffleFlag(shuffleSeed())];
+}
+
 /** Writes a batch's skip list where its invocations will read it. */
 export async function writeSkipList(
   skipListPath: string,
@@ -607,6 +618,7 @@ export function fileSuite(options: FileSuiteOptions): Suite {
             Deno.execPath(),
             "test",
             ...part.flags,
+            ...shuffleArguments(),
             ...recordingArguments(part.flags, context),
             `--junit-path=${junitPath}`,
             ...group.map((request) =>

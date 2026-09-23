@@ -165,6 +165,102 @@ sibling passes.
 requirement one level up, for a file sharing a browser with the files beside
 it.
 
+### Every test run shuffles its order
+
+Every test run reorders the tests it runs, always, with no flag to remember.
+A test that quietly needs another test to have run before it passes for as
+long as nothing disturbs the order, and a runner left to itself walks its
+tests in the order they were declared, so such a dependence is otherwise found
+only when somebody moves or removes a test. Shuffling finds it on a schedule
+instead.
+
+This is a different failure from the one test selection finds. Selection
+leaves a test out, which breaks a test that needed it to run. Shuffling runs
+everything and changes the order, which breaks a test whose failure comes from
+another test having run before it, and also catches a test that needs a
+particular predecessor rather than merely some earlier state.
+
+The seed is the date on which the commit under test was committed, taken in
+the Pacific time zone and written `YYYYMMDD`. It is read from git as the
+committer date, not the author date, so a rebased commit takes the day it was
+rebased. Each runner prints it:
+
+```text
+Test order shuffled with seed 20260922. Set CF_TEST_SHUFFLE_SEED=20260922 to run this order again.
+```
+
+So one commit runs in one order wherever and whenever it runs. Every job of a
+continuous-integration run agrees, a re-run of that job days later agrees, and
+a checkout of the commit on a workstation agrees. The order moves on as commits
+are made, to a new one each Pacific day. Uncommitted edits run in the order of
+the commit they sit on. Outside a git checkout the seed is today's date.
+
+Setting `CF_TEST_SHUFFLE_SEED` to any non-negative integer runs that order
+instead, which is how a different order is tried against the same commit.
+
+It matters that a commit never runs in two orders. This repository decides a
+test is flaky by seeing it pass and fail at the same commit, and withholds a
+test that flakes often enough from pull requests. An order-dependent test run
+in two orders at one commit has exactly that signature, so the tests this is
+meant to surface would be withheld instead of fixed. With one order per commit,
+an order-dependent test fails every time its commit is run, until somebody
+fixes it. The test records carry the seed each run used, and
+[test selection](test-selection.md) compares outcomes only between runs that
+agree on it, so a run under an override is not read as a flake either.
+
+#### What gets reordered
+
+`deno test --shuffle=<seed>` reorders the files of a run, and within each file
+the top-level registrations — a `Deno.test()` call, or a top-level
+`describe()`. It does not reorder the steps inside a registration, and an
+`it()` inside a `describe()` is a step.
+
+What each of those can catch follows from how Deno runs a file. Each test file
+gets a realm of its own, with its own module instances, globals and built-in
+objects, so nothing held in JavaScript passes from one file to the next. File
+order therefore matters only for state the process holds: environment
+variables, the filesystem, the working directory, native libraries loaded
+through FFI, and network ports. Order among a file's top-level registrations
+reaches everything in that file's realm — module-level state, a singleton, a
+global a test replaced and did not put back — which is where the shuffle has
+found most of what it has found.
+
+A file written the way [unit-test-coding-style.md](unit-test-coding-style.md)
+asks, with a single top-level `describe()` holding everything, is one
+registration, so its cases keep their order. A dependence between two `it()`
+calls in one `describe()` is still the author's to avoid, and [Every test has to
+pass on its own](#every-test-has-to-pass-on-its-own) above is the rule that
+covers it.
+
+The runners this repository owns reach further, because their order is ours to
+choose:
+
+- `deno-web-test` shuffles both the files of a run and the tests inside each
+  file, since it drives the browser harness one test at a time and picks which.
+- `cf test` shuffles the `.test.tsx` files of a run and leaves the steps inside
+  one alone. A pattern test states its expectations as a sequence, each one
+  about the state the step before it left, so their order is the test rather
+  than an accident of it.
+- The CLI's shell harnesses under `packages/cli/integration/` run in a fixed
+  order for that same reason: each is one scenario driven end to end.
+
+#### Writing a task that runs tests
+
+A `deno test` written anywhere in this repository takes the seed from the root
+`test-seed` task. In a package, that is its `deno-test` task, which its `test`
+task runs through `tasks/run-member-tests.ts`:
+
+```json
+"deno-test": "deno test --shuffle=$(deno task -q test-seed) --allow-read test/"
+```
+
+`deno task -q test-seed` resolves to the root task from any directory inside
+the checkout, prints the seed on standard output and the line naming it on
+standard error. `deno task check-test-shuffle` fails when a command that
+starts a test runner does not carry a seed, and lists the runners this
+repository owns along with the ones whose order is the test.
+`packages/test-support/src/shuffle.ts` holds the seed and the permutation.
+
 ### Browser tests in agent sandboxes
 
 Headless Chrome registers with AppKit and needs Launch Services and

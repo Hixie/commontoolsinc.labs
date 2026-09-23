@@ -352,6 +352,15 @@ Each of these gates fails CI on its own, and none of them run as part of
   other than newline, in tracked source. Written as an escape (`\x00`, `\t`) the
   string is identical; written as the byte, a single NUL makes the whole file
   read as binary, so `grep` skips it silently
+- `deno task check-test-shuffle` — a command that starts a test runner without a
+  seed to shuffle its order by. Every test run reorders its tests, so that a
+  test needing another test to have run before it fails on a schedule rather
+  than when somebody happens to move a test. A `deno test` takes
+  `--shuffle=$(deno task -q test-seed)`; a runner this repository owns either
+  shuffles in its own code or forwards that flag, and each is recorded in the
+  task with which of the two it does. A runner whose order is the test — a
+  scenario whose every step acts on what the step before it left — is recorded
+  there too, with that reason
 - `deno task check-skill-facts` — a path or import cited by a skill, an
   `AGENTS.md`, a rule, or a hook script under `.claude/scripts/` that stopped
   resolving

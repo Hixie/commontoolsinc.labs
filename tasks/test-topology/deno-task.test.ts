@@ -71,6 +71,28 @@ describe("reading a member's test task", () => {
     expect(parsed?.paths).toEqual(["a.test.ts"]);
   });
 
+  it("takes the seed substitution out rather than refusing it", () => {
+    // A suite builds the run's own `--shuffle` from the seed it settled
+    // on, so what the task writes is taken out here rather than carried
+    // through; what matters is that its `$(...)` does not cost the
+    // member its per-file granularity.
+    const parsed = parseTestTask(
+      "deno test --shuffle=$(deno task -q test-seed) --no-check test/a.test.ts",
+    );
+    expect(parsed?.flags).toEqual(["--no-check"]);
+    expect(parsed?.paths).toEqual(["test/a.test.ts"]);
+  });
+
+  it("takes both substitutions out of one task", () => {
+    const parsed = parseTestTask(
+      "deno test --shuffle=$(deno task -q test-seed) " +
+        '--allow-run=$(deno eval "console.log(Deno.execPath())") .',
+      "/usr/bin/deno",
+    );
+    expect(parsed?.flags).toEqual(["--allow-run=/usr/bin/deno"]);
+    expect(parsed?.paths).toEqual(["."]);
+  });
+
   it("strips shell quoting from inside a flag's value", () => {
     // Several members write `--allow-env=API_URL,"TSC_*",NODE_ENV`. The
     // quotes are the shell's; a flag passed through with them names a

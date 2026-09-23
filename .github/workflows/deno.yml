@@ -168,6 +168,12 @@ jobs:
           deno task run-recorded gate repo check-conflict-markers --
           deno task check-conflict-markers
 
+      - name: 🚧 Guard every test runner to shuffle its order
+        timeout-minutes: *work-timeout
+        run: >-
+          deno task run-recorded gate repo check-test-shuffle --
+          deno task check-test-shuffle
+
       - name: 🩹 Check for literal control characters in source
         timeout-minutes: *work-timeout
         run: >-
@@ -539,7 +545,7 @@ jobs:
           # These permissions mirror the `test` task in
           # packages/runner/deno.jsonc; a test that needs a new one needs it
           # in both places, because this shard runs deno test directly.
-          ENV=test deno test \
+          ENV=test deno test --shuffle=$(deno task -q test-seed) \
             --no-check \
             --preload=test/clock-preload.ts \
             --preload=../../packages/test-support/src/records/preload.ts \
@@ -787,7 +793,7 @@ jobs:
           printf 'Generated patterns shard ${{ matrix.shard }}/${{ matrix.total }} files:\n'
           printf '  %s\n' $TEST_FILES
           mkdir -p ../../test-results
-          LOG_LEVEL=warn deno test --trace-leaks -A --parallel \
+          LOG_LEVEL=warn deno test --shuffle=$(deno task -q test-seed) --trace-leaks -A --parallel \
             --junit-path=../../test-results/generated-patterns-${{ matrix.shard }}.xml \
             $TEST_FILES
 
@@ -1245,7 +1251,7 @@ jobs:
           TOOLSHED_PORT: ${{ matrix.toolshed_port }}
         run: |
           mkdir -p ../../test-results
-          API_URL="http://localhost:${TOOLSHED_PORT}" deno test --no-check \
+          API_URL="http://localhost:${TOOLSHED_PORT}" deno test --shuffle=$(deno task -q test-seed) --no-check \
             --junit-path=../../test-results/cli-piece-integration.xml \
             --allow-net --allow-ffi --allow-read --allow-write --allow-env \
             --allow-run test/piece-integration.test.ts
@@ -1451,7 +1457,7 @@ jobs:
           PATTERN_INTEGRATION_SHARD="${{ matrix.shard }}/${{ matrix.total }}" \
           CF_COMPILE_CACHE_FILE="${{ github.workspace }}/.compile-cache/pattern-integration-${{ matrix.shard }}.json" \
           DENO_COVERAGE_DIR=../../coverage/raw/pattern-integration-${{ matrix.shard }} \
-          deno test --no-check --v8-flags=--max-old-space-size=4096 --trace-leaks -A \
+          deno test --shuffle=$(deno task -q test-seed) --no-check --v8-flags=--max-old-space-size=4096 --trace-leaks -A \
             --junit-path=../../test-results/patterns-${{ matrix.shard }}.xml \
             "${TEST_FILES[@]}"
 
@@ -1616,7 +1622,7 @@ jobs:
           API_URL=http://localhost:8000/ \
           PATTERN_INTEGRATION_SHARD="${{ matrix.shard }}/${{ matrix.total }}" \
           CF_COMPILE_CACHE_FILE="${{ github.workspace }}/.compile-cache/pattern-integration-${{ matrix.shard }}.json" \
-          deno test --no-check --v8-flags=--max-old-space-size=4096 --trace-leaks -A \
+          deno test --shuffle=$(deno task -q test-seed) --no-check --v8-flags=--max-old-space-size=4096 --trace-leaks -A \
             --junit-path=../../test-results/patterns-server-execution-opposite-${{ matrix.shard }}.xml \
             "${TEST_FILES[@]}"
 
@@ -1883,7 +1889,7 @@ jobs:
           BG_PIECE_SERVICE_BIN: ${{ github.workspace }}/common-binaries/bg-piece-service
         run: |
           mkdir -p ../../test-results
-          deno test --no-check \
+          deno test --shuffle=$(deno task -q test-seed) --no-check \
             --junit-path=../../test-results/bg-piece-service-posture-gate.xml \
             --allow-env --allow-run --allow-net \
             integration/posture-gate.test.ts
@@ -1895,7 +1901,7 @@ jobs:
           API_URL: http://localhost:8000
         run: |
           mkdir -p ../../test-results
-          deno test --no-check \
+          deno test --shuffle=$(deno task -q test-seed) --no-check \
             --junit-path=../../test-results/cf-harness-posture-gate.xml \
             -A \
             integration/fabric-session-posture-gate.test.ts

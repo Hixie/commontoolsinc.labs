@@ -1,5 +1,8 @@
 import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
+import { fromFileUrl } from "@std/path";
+import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
+import { shuffleNotice } from "@commonfabric/test-support/shuffle";
 import {
   type TestIdentity,
   testIdentityKey,
@@ -114,6 +117,30 @@ function manifestOf(entries: readonly Partial<ManifestEntry>[]): Manifest {
 }
 
 describe("reading the lane's command line", () => {
+  it("names the seed it settled on even when it refuses the command line", async () => {
+    // The lane settles one seed for every command it builds, and says
+    // which before it reads anything, so a log that stops early still
+    // names the order its tests would have run in.
+    const result = await runDenoCommandWithTemporaryLock({
+      root: fromFileUrl(new URL("..", import.meta.url)),
+      args: (lock) => [
+        "run",
+        `--lock=${lock}`,
+        "-A",
+        fromFileUrl(new URL("./ci-lane.ts", import.meta.url)),
+        "--bogus",
+      ],
+      env: { CF_TEST_SHUFFLE_SEED: "7" },
+    });
+    expect(result.code).toBe(2);
+    const stderr = new TextDecoder().decode(result.stderr);
+    expect(stderr).toContain(shuffleNotice(7));
+    expect(stderr).toContain("usage: ci-lane.ts");
+    expect(stderr.indexOf(shuffleNotice(7))).toBeLessThan(
+      stderr.indexOf("usage: ci-lane.ts"),
+    );
+  });
+
   it("takes the lane, its share, and the moment to resolve at", () => {
     const options = parseLaneArgs([
       "--lane",
@@ -180,7 +207,7 @@ describe("the moment a lane resolves its manifest at", () => {
     // Git writes the committer's own offset and manifest names carry
     // UTC, so the two are only comparable once this one is normalized.
     const root = await repository("2026-09-01T10:41:59-07:00");
-    expect((await manifestMoment({ ...lane, root })).at).toBe(
+    expect(manifestMoment({ ...lane, root }).at).toBe(
       "2026-09-01T17:41:59.000Z",
     );
   });
@@ -190,15 +217,15 @@ describe("the moment a lane resolves its manifest at", () => {
     // comes from the run, so a re-run resolves what the first attempt
     // resolved.
     const root = await repository("2026-09-01T10:41:59-07:00");
-    const first = await manifestMoment({ ...lane, root });
-    const again = await manifestMoment({ ...lane, root });
+    const first = manifestMoment({ ...lane, root });
+    const again = manifestMoment({ ...lane, root });
     expect(again.at).toBe(first.at);
     expect(first.note).toBeUndefined();
   });
 
   it("lets a caller ask about a moment that is not this tree's", async () => {
     const root = await repository("2026-09-01T10:41:59-07:00");
-    const moment = await manifestMoment({
+    const moment = manifestMoment({
       ...lane,
       root,
       at: "2026-08-01T00:00:00.000Z",
@@ -208,7 +235,7 @@ describe("the moment a lane resolves its manifest at", () => {
 
   it("falls back to the newest manifest outside a repository, and says so", async () => {
     const root = await Deno.makeTempDir({ prefix: "ci-lane-nogit-" });
-    const moment = await manifestMoment({ ...lane, root });
+    const moment = manifestMoment({ ...lane, root });
     expect(moment.note).toContain("cannot read the commit's date");
     expect(Number.isNaN(new Date(moment.at).getTime())).toBe(false);
   });
