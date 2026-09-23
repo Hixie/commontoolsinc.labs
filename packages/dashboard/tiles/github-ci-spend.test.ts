@@ -432,10 +432,11 @@ Deno.test("github spend: an undated row weighs on the comparison as it does on t
 Deno.test("github spend: a date that names no day reads as no date at all", async () => {
   // Each of these reaches the report as a date and names no calendar day: not
   // text, a month past twelve, a day past thirty-one, and the thirtieth of
-  // February, which a lenient parser would roll into March. Each must weigh
-  // exactly as the undated row above does, not land on some other day.
-  for (const date of [null, "2026-13-01", "2026-01-32", "2026-02-30"]) {
-    const v = await view("2026-01-20T09:00:00Z", {
+  // February, which a lenient parser would roll into March. Each must read
+  // exactly as the undated row above does, chart and all: landing on some
+  // other day would leave the totals as they are and move the chart.
+  const reading = (date: unknown) =>
+    view("2026-01-20T09:00:00Z", {
       [usagePath(2026, 1)]: {
         usageItems: [
           ...days(2026, 1, 1, 10, 18),
@@ -445,13 +446,12 @@ Deno.test("github spend: a date that names no day reads as no date at all", asyn
       },
       [budgetsPath()]: { budgets: [productBudget("actions", 400)] },
     });
-    assertEquals(v.value, "~$482/mo", String(date));
-    assertEquals(
-      v.aside,
-      '<span class="hfacet" title="$280 MTD">$280 MTD</span>',
-      String(date),
-    );
-    assertEquals(v.status, "warn", String(date));
+  const undated = await reading("");
+  const onTheThirteenth = await reading("2026-01-13");
+  // The chart does tell a dated row from an undated one.
+  assert(onTheThirteenth.extra !== undated.extra);
+  for (const date of [null, "2026-13-01", "2026-01-32", "2026-02-30"]) {
+    assertEquals(await reading(date), undated, String(date));
   }
 });
 
