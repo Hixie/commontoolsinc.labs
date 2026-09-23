@@ -1246,14 +1246,22 @@ not available. `toolshed-baked` is the server for the default arm.
 a compile-time define baked into that same shell whichever way it goes.
 Both have a different provider: restore the binary from the Actions cache
 if the key hits, and build it in place if it does not. The lane workflow
-carries one fixed `actions/cache` step covering `.ci-cache`, keyed on a
-hash of the sources the binaries are built from. Everything a lane wants
-to keep between runs sits under that one directory — the built binaries,
-and the pattern compile byte cache — because one step covering one
-directory is what keeps the workflow independent of what the lane turns
-out to need. That step is in the workflow rather than in the runner
-because the cache service is only reachable through the action, and it is
-written once and never touched again.
+carries one fixed `actions/cache` step covering `.ci-cache`, under an exact
+key with no restore prefix. A capability that finds a binary there uses it
+without asking what it was built from, so the key has to change whenever
+anything a binary is built from does. `tasks/binary-cache-key.ts` computes
+it as a digest of the git object id of every tracked file under
+`BINARY_SOURCES` in `tasks/build-binaries.ts`. The tests in
+`tasks/build-binaries.test.ts` hold the list to every path the build reads
+and to every local module the binaries' import graphs reach. A change to the shell's service worker, to
+the Deno release that `mise.toml` pins, or to a JSON file an import reaches
+therefore moves the key like a change to any other source. Everything a
+lane wants to keep between runs sits under that one directory — the built
+binaries, and the pattern compile byte cache — because one step covering
+one directory is what keeps the workflow independent of what the lane turns
+out to need. That step is in the workflow rather than in the runner because
+the cache service is only reachable through the action, and it is written
+once and never touched again.
 
 That split is the argument for having capabilities at all. Three ways of
 providing "a Toolshed server" coexist, suites say which one they need, and
