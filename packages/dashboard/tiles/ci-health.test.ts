@@ -46,6 +46,7 @@ interface RunSpec {
   startedJobs?: number; // jobs the attempt listing reports, for a cancelled run
   status?: string; // "completed" unless the run is still going
   ranMinutes?: number; // how long a completed run went on before it ended
+  jobsStatus?: number; // the status its job-count read answers with
 }
 
 interface RepoSpec {
@@ -56,6 +57,8 @@ interface RepoSpec {
   workflowsStatus?: number;
   runsStatus?: number; // the status every run listing of this repo answers with
   commitsStatus?: number; // the status every commit listing of this repo answers with
+  workflowsBody?: unknown; // what the workflow listing answers, in place of the workflows
+  commitsBody?: unknown; // what every commit listing answers, in place of the history
 }
 
 // The two repositories whose main build the tile keeps in the body.
@@ -94,6 +97,7 @@ async function withGitHub(
     repos.map((repo) => [`${ORG}/${repo.name}`, repo]),
   );
   const startedJobsById = new Map<number, number>();
+  const jobsStatusById = new Map<number, number>();
   const pages = Math.max(1, Math.ceil(repos.length / 100));
 
   globalThis.fetch = ((input: string | URL | Request) => {
@@ -121,6 +125,9 @@ async function withGitHub(
           new Response("no access", { status: repo.workflowsStatus }),
         );
       }
+      if (repo.workflowsBody !== undefined) {
+        return Promise.resolve(Response.json(repo.workflowsBody));
+      }
       return Promise.resolve(Response.json({
         workflows: (repo.workflows ?? []).map((workflow) => ({
           id: workflowId(listing[1], workflow.file),
@@ -140,6 +147,9 @@ async function withGitHub(
           new Response("no access", { status: repo.commitsStatus }),
         );
       }
+      if (repo.commitsBody !== undefined) {
+        return Promise.resolve(Response.json(repo.commitsBody));
+      }
       const path = url.searchParams.get("path") ?? "";
       const workflow = (repo.workflows ?? []).find((candidate) =>
         path === `.github/workflows/${candidate.file}`
@@ -157,6 +167,10 @@ async function withGitHub(
       /^\/repos\/(.+)\/actions\/runs\/(\d+)\/attempts\/1\/jobs$/,
     );
     if (jobs) {
+      const failing = jobsStatusById.get(Number(jobs[2]));
+      if (failing !== undefined) {
+        return Promise.resolve(new Response("unavailable", { status: failing }));
+      }
       return Promise.resolve(Response.json({
         total_count: startedJobsById.get(Number(jobs[2])) ?? 0,
       }));
@@ -185,11 +199,20 @@ async function withGitHub(
             wanted === null || (run.status ?? "completed") === wanted ||
             run.conclusion === wanted
           )
+          .map((run, index) => ({ run, index }))
           // A page holds as many runs as it was asked for, newest first.
-          .slice(0, Number(url.searchParams.get("per_page") ?? 30))
-          .map((run, index) => {
+          .slice(
+            (Number(url.searchParams.get("page") ?? 1) - 1) *
+              Number(url.searchParams.get("per_page") ?? 30),
+            Number(url.searchParams.get("page") ?? 1) *
+              Number(url.searchParams.get("per_page") ?? 30),
+          )
+          .map(({ run, index }) => {
             const id = Number(runs[2]) * 100 + index;
             startedJobsById.set(id, run.startedJobs ?? 0);
+            if (run.jobsStatus !== undefined) {
+              jobsStatusById.set(id, run.jobsStatus);
+            }
             const createdAgo = run.minutesAgo ?? 0;
             const completed = (run.status ?? "completed") === "completed";
             const endedAgo = completed
@@ -637,6 +660,156 @@ Deno.test("ci: a run still going is not a verdict", async () => {
   );
 });
 
+Deno.test("ci: a fork's pull request from a branch named main does not crowd out the job's runs", async () => {
+  // Twenty-five runs a pull request started fill more than the first page;
+  // the job's own failure is behind them.
+  const forkRuns = Array.from({ length: 25 }, (_, index): RunSpec => ({
+    conclusion: "success",
+    event: "pull_request",
+    minutesAgo: index + 1,
+  }));
+  await withGitHub(
+    standingOrg(green, [...forkRuns, { conclusion: "failure", minutesAgo: 100 }]),
+    async (wire) => {
+      const view = await createCiHealth().collect(ctx());
+
+      assertEquals(view.value, "loom failing");
+      const loomPages = wire.calls.filter((call) =>
+        call.startsWith(`/repos/${LOOM_REPO}/actions/workflows/`) &&
+        call.includes("/runs?")
+      );
+      assertEquals(loomPages.length, 2, "the second page holds the job's run");
+      assertStringIncludes(loomPages[1], "&page=2");
+    },
+  );
+});
+
+Deno.test("ci: runs a pull request review started are a pull request's too", async () => {
+  await withGitHub(
+    standingOrg(green, [
+      { conclusion: "success", event: "pull_request_review", minutesAgo: 5 },
+      { conclusion: "success", event: "pull_request_review_comment", minutesAgo: 10 },
+      { conclusion: "failure", minutesAgo: 60 },
+    ]),
+    async () => {
+      const view = await createCiHealth().collect(ctx());
+      assertEquals(view.value, "loom failing");
+    },
+  );
+});
+
+Deno.test("ci: a red tile lists only its failing jobs", async () => {
+  await withGitHub(
+    standingOrg(green, [{ conclusion: "failure", minutesAgo: 30 }], [
+      { name: "pond", workflowsStatus: 403 },
+    ]),
+    async () => {
+      const view = await createCiHealth().collect(ctx());
+
+      assertEquals(view.status, "bad");
+      assertStringIncludes(view.extra ?? "", "loom · Tests (fast)");
+      // Neither the unreadable repository nor the passing labs build.
+      assert(!(view.extra ?? "").includes("pond"));
+      assert(!(view.extra ?? "").includes("labs · CI"));
+    },
+  );
+});
+
+Deno.test("ci: a workflow listing that is not a list of workflows is unreadable", async () => {
+  await withGitHub(
+    standingOrg(green, green, [{ name: "pond", workflowsBody: { workflows: "none" } }]),
+    async () => {
+      const view = await createCiHealth().collect(ctx());
+
+      assertEquals(view.status, "warn");
+      assertEquals(view.value, "1 unreadable");
+      assertStringIncludes(view.extra ?? "", "pond · workflows");
+    },
+  );
+});
+
+Deno.test("ci: a failure stands when its workflow's history makes no sense", async () => {
+  const cases: { body: unknown; logged: boolean }[] = [
+    // Not a list of commits at all.
+    { body: { message: "moved" }, logged: true },
+    // A commit with no date the check can compare.
+    { body: [{ commit: { committer: { date: "yesterday" } } }], logged: true },
+    // No commit ever touched the file on this branch, so nothing redefined it.
+    { body: [], logged: false },
+  ];
+  for (const testCase of cases) {
+    await withGitHub(
+      standingOrg(green, [{ conclusion: "failure", minutesAgo: 30 }]).map(
+        (repo) =>
+          repo.name === LOOM_REPO.split("/")[1]
+            ? { ...repo, commitsBody: testCase.body }
+            : repo,
+      ),
+      async (wire) => {
+        const view = await createCiHealth().collect(ctx());
+
+        assertEquals(view.value, "loom failing", JSON.stringify(testCase.body));
+        assertEquals(
+          wire.logged.some((line) =>
+            line.includes("GitHub commits returned invalid data")
+          ),
+          testCase.logged,
+          JSON.stringify(testCase.body),
+        );
+      },
+    );
+  }
+});
+
+Deno.test("ci: a cancelled run whose job count cannot be read is unreadable, not passed", async () => {
+  await withGitHub(
+    standingOrg(green, [
+      { conclusion: "cancelled", minutesAgo: 20, jobsStatus: 500 },
+      { conclusion: "success", minutesAgo: 200 },
+    ]),
+    async () => {
+      const view = await createCiHealth().collect(ctx());
+
+      assertEquals(view.status, "warn");
+      assertEquals(view.value, "1 unreadable");
+      assertStringIncludes(view.extra ?? "", "loom · Tests (fast)");
+    },
+  );
+});
+
+Deno.test("ci: a repository that leaves the inventory takes its job counts with it", async () => {
+  // A cancelled run's job count is held across collections. Once its
+  // repository has left the inventory, the count held for it goes too, so
+  // the repository's return reads its runs afresh.
+  const repos = standingOrg(green, [
+    { conclusion: "cancelled", minutesAgo: 20, startedJobs: 2 },
+  ]);
+  const loom = repos[1];
+  await withGitHub(repos, async (wire) => {
+    const tile = createCiHealth();
+    const realNow = Date.now;
+    const counts = () =>
+      wire.calls.filter((call) => call.includes("/attempts/1/jobs")).length;
+    try {
+      await tile.collect(ctx());
+      assertEquals(counts(), 1);
+
+      repos.splice(1, 1);
+      Date.now = () => T0 + HOUR + 60_000;
+      await tile.collect(ctx());
+      assertEquals(counts(), 1, "a repository not in the inventory is not read");
+
+      repos.push(loom);
+      Date.now = () => T0 + 2 * HOUR + 120_000;
+      const view = await tile.collect(ctx());
+      assertEquals(counts(), 2, "its count was read again");
+      assertEquals(view.value, "loom failing");
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});
+
 Deno.test("ci: a job with no run carrying a verdict is not counted as failing", async () => {
   await withGitHub(
     standingOrg(green, green, [{
@@ -800,6 +973,27 @@ Deno.test("ci: an unavailable organization listing stays gray", async () => {
     assert(
       logged.some((line) =>
         line.startsWith("ci: could not read the repository inventory:")
+      ),
+    );
+  } finally {
+    globalThis.fetch = real.fetch;
+    console.error = real.error;
+  }
+});
+
+Deno.test("ci: an organization listing that is not a list of repositories stays gray", async () => {
+  const real = { fetch: globalThis.fetch, error: console.error };
+  const logged: string[] = [];
+  globalThis.fetch = (() =>
+    Promise.resolve(Response.json({ message: "moved" }))) as typeof fetch;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  try {
+    const view = await createCiHealth().collect(ctx());
+    assertEquals(view.status, "unknown");
+    assertEquals(view.value, "—");
+    assert(
+      logged.some((line) =>
+        line.includes("GitHub organization repositories returned invalid data")
       ),
     );
   } finally {

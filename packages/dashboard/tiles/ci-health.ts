@@ -85,7 +85,18 @@ const FAILING_CONCLUSIONS = new Set([
   "startup_failure",
 ]);
 
-const PULL_REQUEST_EVENTS = new Set(["pull_request", "pull_request_target"]);
+const PULL_REQUEST_EVENTS = new Set([
+  "pull_request",
+  "pull_request_target",
+  "pull_request_review",
+  "pull_request_review_comment",
+]);
+
+// Runs asked for a page at a time. A pull request from a fork's branch named
+// after the default branch lands among the default branch's runs, so the pages
+// go on until the window holds enough runs that are not a pull request's; a
+// page this large almost always holds them.
+const RUNS_PAGE = 20;
 
 interface OrgRepo {
   full_name: string;
@@ -111,7 +122,7 @@ interface RepoInventory {
 interface Listing {
   inventory: RepoInventory;
   workflow: Workflow;
-  runs: Run[];
+  runs: Run[]; // newest first, none of them a pull request's
   error?: string;
 }
 
@@ -230,20 +241,36 @@ async function readInventory(token: string): Promise<RepoInventory[]> {
   );
 }
 
-/** One workflow's newest runs on its repository's default branch. */
+/**
+ * One workflow's newest runs on its repository's default branch, leaving out
+ * any a pull request started. A run that lands between two pages moves an
+ * earlier one onto the next, so a run is taken once however many pages hold it.
+ */
 async function readRuns(
   inventory: RepoInventory,
   workflow: Workflow,
   token: string,
 ): Promise<Listing> {
   try {
-    const answer = await github<{ workflow_runs?: Run[] }>(
-      `repos/${inventory.repo}/actions/workflows/${workflow.id}/runs` +
-        `?branch=${encodeURIComponent(inventory.branch)}` +
-        `&per_page=${RUNS_PER_WORKFLOW}`,
-      token,
-    );
-    return { inventory, workflow, runs: answer.workflow_runs ?? [] };
+    const runs = new Map<number, Run>();
+    for (let page = 1; runs.size < RUNS_PER_WORKFLOW; page++) {
+      const answer = await github<{ workflow_runs?: Run[] }>(
+        `repos/${inventory.repo}/actions/workflows/${workflow.id}/runs` +
+          `?branch=${encodeURIComponent(inventory.branch)}` +
+          `&per_page=${RUNS_PAGE}&page=${page}`,
+        token,
+      );
+      const batch = answer.workflow_runs ?? [];
+      for (const run of batch) {
+        if (!PULL_REQUEST_EVENTS.has(run.event)) runs.set(run.id, run);
+      }
+      if (batch.length < RUNS_PAGE) break;
+    }
+    return {
+      inventory,
+      workflow,
+      runs: [...runs.values()].slice(0, RUNS_PER_WORKFLOW),
+    };
   } catch (error) {
     return { inventory, workflow, runs: [], error: messageOf(error) };
   }
@@ -268,7 +295,6 @@ async function verdictOf(
     // that judges nothing about the code.
     const ended = Date.parse(run.updated_at);
     const replaced = runs.some((other) =>
-      !PULL_REQUEST_EVENTS.has(other.event) &&
       Date.parse(other.created_at) > Date.parse(run.created_at) &&
       Date.parse(other.created_at) <= ended
     );
@@ -340,9 +366,7 @@ async function jobOf(
   }
 
   for (const run of listing.runs) {
-    if (run.status !== "completed" || PULL_REQUEST_EVENTS.has(run.event)) {
-      continue;
-    }
+    if (run.status !== "completed") continue;
     let status: Status | undefined;
     try {
       status = await verdictOf(run, listing.runs, attempts);
@@ -389,9 +413,7 @@ async function jobOf(
   }
   // A job whose recent runs all passed over their work, as one gated off with
   // a job-level `if:` does, has runs and no verdict among them.
-  const ran = listing.runs.some((run) =>
-    run.status === "completed" && !PULL_REQUEST_EVENTS.has(run.event)
-  );
+  const ran = listing.runs.some((run) => run.status === "completed");
   return {
     ...job,
     status: "unknown",
@@ -457,10 +479,12 @@ function ciHealthView(collected: CiJobs, now = Date.now()): TileView {
     ? "—"
     : "passing";
 
+  // A red tile lists only what is failing, however old. Any other lists what
+  // could not be read beside that, and the two main builds.
   const visible = rows
     .filter((row) =>
-      row.status === "bad" || row.status === "warn" ||
-      (status !== "bad" && row.pinned)
+      row.failing ||
+      (status !== "bad" && (row.status === "warn" || row.pinned))
     )
     .sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status]);
 
