@@ -450,14 +450,22 @@ export function batchesOf(
   //
   // Both keys are a function of the plan, and the identifier settles a
   // tie, so every attempt at a lane runs its batches in the same order
-  // whatever order the plan listed its selections in.
-  const charged = new Map<string, number>();
+  // whatever order the plan listed its selections in. A share is added
+  // up smallest load first, so that it comes to one number however its
+  // loads were listed, since floating-point addition rounds differently
+  // in a different order.
+  const loads = new Map<string, number[]>();
   for (const { entry, repeats } of selections) {
-    charged.set(
-      entry.suite,
-      (charged.get(entry.suite) ?? 0) + ownLoad(manifest, entry, repeats),
-    );
+    const suite = loads.get(entry.suite) ?? [];
+    suite.push(ownLoad(manifest, entry, repeats));
+    loads.set(entry.suite, suite);
   }
+  const charged = new Map(
+    [...loads].map(([suite, each]) => [
+      suite,
+      each.toSorted((a, b) => a - b).reduce((sum, load) => sum + load, 0),
+    ]),
+  );
   const key = (batch: Batch) => ({
     measured: manifest.calibration.suites[batch.suite.id] === undefined ? 0 : 1,
     seconds: charged.get(batch.suite.id) ?? 0,

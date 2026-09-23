@@ -462,20 +462,19 @@ describe("the order a lane runs its batches in", () => {
   // shows that key is what decides it.
 
   /**
-   * What one suite's identities each cost, how many of them there are,
-   * what the suite is corrected by, and how many times each repeats.
+   * What each of one suite's identities costs, what the suite is
+   * corrected by, and how many times each identity repeats.
    */
   interface Share {
-    cost?: number;
-    identities?: number;
+    costs?: readonly number[];
     correction?: number;
     repeats?: number;
   }
 
   /**
    * The suites a lane would run, in the order it would run them, of
-   * `alpha` and `zebra` (one identity each unless `shares` says
-   * otherwise), with the `fitted` ones measured, and the selections
+   * `alpha` and `zebra` (one identity costing a second each unless
+   * `shares` says otherwise), with the `fitted` ones measured, and the selections
    * listed in reverse where `reversed` says.
    */
   function order(
@@ -485,11 +484,11 @@ describe("the order a lane runs its batches in", () => {
   ): string[] {
     const made = manifestOf(
       ["zebra", "alpha"].flatMap((id) =>
-        Array.from({ length: shares[id]?.identities ?? 1 }, (_, n) => ({
+        (shares[id]?.costs ?? [1]).map((cost, n) => ({
           test: { k: "unit", s: id, n: `test ${n}` },
           suite: id,
           unit: `${id}.ts`,
-          cost: shares[id]?.cost ?? 1,
+          cost,
         }))
       ),
     );
@@ -521,27 +520,27 @@ describe("the order a lane runs its batches in", () => {
 
   it("runs a suite nothing has measured before one something has", () => {
     // The measured suite is the larger, so only this key puts it second.
-    expect(order(["alpha"], { alpha: { cost: 90 } }))
+    expect(order(["alpha"], { alpha: { costs: [90] } }))
       .toEqual(["zebra", "alpha"]);
-    expect(order(["alpha", "zebra"], { alpha: { cost: 90 } }))
+    expect(order(["alpha", "zebra"], { alpha: { costs: [90] } }))
       .toEqual(["alpha", "zebra"]);
   });
 
   it("runs the largest share of the lane first within a group", () => {
-    expect(order([], { zebra: { cost: 90 } })).toEqual(["zebra", "alpha"]);
-    expect(order([], { alpha: { cost: 90 } })).toEqual(["alpha", "zebra"]);
+    expect(order([], { zebra: { costs: [90] } })).toEqual(["zebra", "alpha"]);
+    expect(order([], { alpha: { costs: [90] } })).toEqual(["alpha", "zebra"]);
   });
 
   it("counts every selected identity of a suite in its share", () => {
     // Two thirty-second tests of `zebra` are more of the lane than one
     // fifty-second test of `alpha`.
     expect(order([], {
-      alpha: { cost: 50 },
-      zebra: { cost: 30, identities: 2 },
+      alpha: { costs: [50] },
+      zebra: { costs: [30, 30] },
     })).toEqual(["zebra", "alpha"]);
     expect(order([], {
-      alpha: { cost: 50 },
-      zebra: { cost: 30 },
+      alpha: { costs: [50] },
+      zebra: { costs: [30] },
     })).toEqual(["alpha", "zebra"]);
   });
 
@@ -549,12 +548,12 @@ describe("the order a lane runs its batches in", () => {
     // Thirty seconds of `zebra` measured, running at twice that, is more
     // of the lane than fifty seconds of `alpha`.
     expect(order(["alpha", "zebra"], {
-      alpha: { cost: 50 },
-      zebra: { cost: 30, correction: 2 },
+      alpha: { costs: [50] },
+      zebra: { costs: [30], correction: 2 },
     })).toEqual(["zebra", "alpha"]);
     expect(order(["alpha", "zebra"], {
-      alpha: { cost: 50 },
-      zebra: { cost: 30 },
+      alpha: { costs: [50] },
+      zebra: { costs: [30] },
     })).toEqual(["alpha", "zebra"]);
   });
 
@@ -562,13 +561,24 @@ describe("the order a lane runs its batches in", () => {
     // Thirty seconds run three times is more of the lane than sixty run
     // once.
     expect(order([], {
-      alpha: { cost: 60 },
-      zebra: { cost: 30, repeats: 3 },
+      alpha: { costs: [60] },
+      zebra: { costs: [30], repeats: 3 },
     })).toEqual(["zebra", "alpha"]);
     expect(order([], {
-      alpha: { cost: 60 },
-      zebra: { cost: 30 },
+      alpha: { costs: [60] },
+      zebra: { costs: [30] },
     })).toEqual(["alpha", "zebra"]);
+  });
+
+  it("orders suites whose shares differ by rounding alone the same way whatever order the plan listed", () => {
+    // Added up in the order listed, a tenth, a fifth and three tenths come
+    // to exactly six tenths one way round and a rounding step more the
+    // other, which is a tie with `alpha` one way and not the other.
+    const shares = {
+      alpha: { costs: [0.6] },
+      zebra: { costs: [0.1, 0.2, 0.3] },
+    };
+    expect(order([], shares)).toEqual(order([], shares, true));
   });
 
   it("settles a tie by the suite's identifier whatever order the plan listed", () => {
