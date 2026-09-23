@@ -361,12 +361,15 @@ pattern, run the lane, upload what a failing lane left behind, upload the
 coverage reports, ship test records. Everything conditional happens inside the
 lane runner, which is what makes the workflow independent of the topology.
 
-The cache step covers one directory under one exact key. A capability that
-finds a binary under `.ci-cache` uses it without asking what it was built
-from, so the key hashes the sources a binary is built from and carries no
-restore-key prefix. The key also carries the lane number: the packing is
-stable, so lane N tends to want the same binaries run after run, and five lanes
-saving one key would keep only whichever finished first.
+The binary cache step covers one directory under one exact key. A capability
+that finds a binary under `.ci-cache` uses it without asking what it was built
+from, so the key names everything a binary is built from and carries no
+restore-key prefix. `tasks/binary-cache-key.ts` computes it from
+`BINARY_SOURCES` in `tasks/build-binaries.ts` and from what each cached build
+is given, and that module's tests hold the list to every path the build names
+and every module the binaries embed. Every lane shares the key: an entry holds
+whichever lane's binaries were saved first, and a lane wanting another builds
+it, which is what a miss costs anyway.
 
 A lane that failed keeps its own working directory, under the job's temporary
 directory, and the upload step carries it out. A server's log is written there,
