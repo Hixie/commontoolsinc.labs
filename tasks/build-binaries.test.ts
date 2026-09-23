@@ -13,6 +13,7 @@ import {
   BINARY_NAMES,
   BINARY_SOURCES,
   build,
+  BUILD_HOST_VARIABLES,
   BuildConfig,
   type BuildDependencies,
   type BuildSignalApi,
@@ -455,6 +456,48 @@ Deno.test("each binary's modules and assets stay within BINARY_SOURCES", async (
   assertEquals([...outside].sort(), []);
   assert(
     roots.includes(join(config.patternPaths()[0], "counter", "counter.tsx")),
+  );
+});
+
+/**
+ * Loads the shell bundle's configuration in a process refused `denied` from
+ * the environment, and returns whether it loaded and what it wrote to
+ * standard error.
+ */
+async function loadShellConfig(
+  denied: readonly string[],
+): Promise<{ success: boolean; stderr: string }> {
+  const repo = fromFileUrl(new URL("../", import.meta.url));
+  const { success, stderr } = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-env",
+      `--deny-env=${denied.join(",")}`,
+      join("packages", "shell", "felt.config.ts"),
+    ],
+    cwd: repo,
+    env: { NO_COLOR: "1" },
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  return { success, stderr: new TextDecoder().decode(stderr) };
+}
+
+Deno.test("the shell configuration reads no host variable", async () => {
+  // A lane passes the host variables through to a build it caches, and the
+  // cache key does not cover them, so one baked into the shell would reach a
+  // binary the key does not describe. Deno refuses a read of a denied
+  // variable and names it. This sees what the configuration reads while it
+  // loads, which is when it computes its defines, and not a read in a
+  // function it hands the bundler.
+  const loaded = await loadShellConfig(BUILD_HOST_VARIABLES);
+  assert(loaded.success, loaded.stderr);
+  const denied = await loadShellConfig(["EXPERIMENTAL_SERVER_EXECUTION"]);
+  assert(!denied.success);
+  assertStringIncludes(
+    denied.stderr,
+    'Requires env access to "EXPERIMENTAL_SERVER_EXECUTION"',
   );
 });
 

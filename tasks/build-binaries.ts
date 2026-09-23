@@ -39,6 +39,31 @@ export const BINARY_SOURCES = [
   "docs/common/",
 ] as const;
 
+/**
+ * The environment variables a build needs from the machine it runs on: where
+ * to find programs, the home and temporary directories, where Deno keeps its
+ * cache, and how it reaches the network to fetch dependencies, whose contents
+ * the lockfile pins. None of them reaches a binary, which
+ * `build-binaries.test.ts` holds the shell bundle's configuration to. A CI
+ * lane building a binary it caches passes these through from its own
+ * environment, and nothing else, so every other variable the build reads is
+ * one the lane either sets or leaves unset.
+ */
+export const BUILD_HOST_VARIABLES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "DENO_DIR",
+  "XDG_CACHE_HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "DENO_CERT",
+  "DENO_TLS_CA_STORE",
+  "DENO_AUTH_TOKENS",
+  "NPM_CONFIG_REGISTRY",
+] as const;
+
 export function requestedBinaries(args: readonly string[]): BinaryName[] {
   if (args.length === 0) return [...BINARY_NAMES];
   if (args.length === 1 && args[0] === "--cli-only") return ["cf"];
