@@ -1197,6 +1197,20 @@ async function read(
   const moment = manifestMoment(options);
   if (moment.note !== undefined) say(`ci-lane: ${moment.note}`);
   const manifest = await deps.manifest({ at: moment.at });
+  // Every lane of a run packs its share of one plan, and the plan is only
+  // one plan if every lane read the same manifest. A manifest never
+  // changes once created, so lanes asking about one moment get one answer
+  // from the store, but a store one lane could not reach may be one the
+  // next lane read. Packing without a manifest then would lay out a plan
+  // its siblings are not following, and a test the two plans put in each
+  // other's lanes would run in neither while the run reports a pass.
+  if (manifest.unreachable) {
+    throw new Error(
+      `ci-lane: the manifest store could not be read (${manifest.absent}), ` +
+        "and a lane that packed without it might not follow the plan the " +
+        "other lanes of this run packed from",
+    );
+  }
   // A full run reads the manifest for what things cost and nothing else,
   // and a run with no diff has touched nothing.
   const changed = options.full

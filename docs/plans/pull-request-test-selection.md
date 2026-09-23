@@ -2866,8 +2866,8 @@ What the runner does, in order:
    before the lane reads, plans, opens or runs anything, and a suite that
    declared `github-api` is given the token back through that capability.
 2. Resolve the manifest from the commit's date and fetch it. No manifest
-   at or before that date, or a fetch failure, takes the fallback (see
-   [Failure modes](#failure-modes)).
+   at or before that date takes the fallback, and a store the lane could
+   not read fails the lane (see [Failure modes](#failure-modes)).
 3. Enumerate every suite against the working tree, and read the manifest
    against that enumeration. The tree decides which tests exist and the
    manifest decides what each is worth and costs, so an entry naming a
@@ -3672,9 +3672,10 @@ is pinned to the commit's date. And if none of that settles it,
 
 | What goes wrong | What happens |
 | --- | --- |
-| The store is unreachable from a lane | The lane reads its share from the tree instead. Nothing has records, so the whole corpus is mandatory and the lanes divide it between them, printing that they are running everything. Pull requests keep flowing, and slower. |
+| The store holds no manifest at or before the commit | The lane reads its share from the tree instead. Nothing has records, so the whole corpus is mandatory and the lanes divide it between them, printing that they are running everything. Pull requests keep flowing, and slower. |
+| The store is unreachable from a lane | The lane fails, saying so. An answer from the store is the same for every lane, but a failure to reach it can happen to one lane and not to the next. A lane that packed without the manifest its siblings packed from would lay out a plan they are not following, and a test each plan put in the other's lanes would run in neither. The full run's lane count is planned from the same reading, so it fails the same way. Re-running the job reads the store again, and a store that stays unreachable stops every pull request's lanes until it is reachable again. |
 | The publisher has not run for a day | Lanes use the last manifest. Selection quality decays slowly; nothing fails. |
-| The manifest is malformed or a newer schema | Rejected whole, treated as absent, same path as unreachable. |
+| The manifest is malformed or a newer schema | Rejected whole and treated as absent, the same path as a store holding none. |
 | A selected item no longer exists in the tree | Dropped with a line in the summary. A renamed test is simultaneously an unknown item, so it runs anyway. |
 | A new test surface nobody registered | `check-test-topology` fails on the next `main` run and names the unclaimed identities. |
 | A gate wired into a workflow job and into no suite | The workflow half of the drift guard fails on the pull request that adds the step, before the gate has ever run. |
@@ -3959,10 +3960,9 @@ selection have data. That window is one `main` run and one manual
 dispatch, not days.
 
 Pull requests in that window are already handled. A lane that finds no
-manifest takes the same path as a lane that cannot reach the store:
-nothing has records, so every unit the tree holds is an identity with none
-and the whole corpus is mandatory. The lanes divide it between them and
-print that they are running everything. Feedback costs the time selection
+manifest takes the fallback: nothing has records, so every unit the tree
+holds is an identity with none and the whole corpus is mandatory. The
+lanes divide it between them and print that they are running everything. Feedback costs the time selection
 would have saved for one afternoon, and it misses nothing.
 
 The calibration numbers converge over the days after that, from the lanes'

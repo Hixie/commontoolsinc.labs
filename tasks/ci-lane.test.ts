@@ -36,6 +36,7 @@ import {
   describePlan,
   describeWithheld,
   fullLanes,
+  type LaneDeps,
   main,
   manifestMoment,
   markMeasuredFailures,
@@ -631,7 +632,8 @@ describe("how many lanes the full run asks for", () => {
     const deps = awkward();
     const lanes = await fullLanes(options, {
       topology: deps.topology,
-      manifest: () => Promise.resolve({ absent: "the store is gone" }),
+      manifest: () =>
+        Promise.resolve({ absent: "the store holds no manifest" }),
     });
     const seen = census(deps.suites, undefined, new Set());
     const laid = plan({
@@ -696,7 +698,8 @@ describe("how many lanes the full run asks for", () => {
     );
     const lanes = await fullLanes(options, {
       topology: () => Promise.resolve(suites),
-      manifest: () => Promise.resolve({ absent: "the store is gone" }),
+      manifest: () =>
+        Promise.resolve({ absent: "the store holds no manifest" }),
     });
     expect(lanes).toBeGreaterThan(suites.length);
     expect(lanes).toBe(Math.ceil((perLane + 40) * 2 / perLane));
@@ -757,7 +760,8 @@ describe("how many lanes the full run asks for", () => {
     try {
       lanes = await fullLanes(options, {
         topology: () => Promise.resolve(suites),
-        manifest: () => Promise.resolve({ absent: "the store is gone" }),
+        manifest: () =>
+          Promise.resolve({ absent: "the store holds no manifest" }),
       });
     } finally {
       console.error = error;
@@ -1274,7 +1278,7 @@ describe("running a lane's work", () => {
         lane,
         [],
         [],
-        { absent: "the store is unreachable" },
+        { absent: "the store holds no manifest" },
         [],
         [],
         { manifest: manifestOf([]), selections: [], projectedSeconds: 0 },
@@ -1283,7 +1287,7 @@ describe("running a lane's work", () => {
     } finally {
       console.log = log;
     }
-    expect(lines.join("\n")).toContain("the store is unreachable");
+    expect(lines.join("\n")).toContain("the store holds no manifest");
   });
 
   it("names what the manifest withheld, and what came back", () => {
@@ -1536,17 +1540,55 @@ describe("planning a lane the manifest chose", () => {
     try {
       await runLane(
         { lane: 1, of: 5, full: false, dryRun: true, laneCount: false, root },
-        { manifest: () => Promise.resolve({ absent: "the store is gone" }) },
+        {
+          manifest: () =>
+            Promise.resolve({ absent: "the store holds no manifest" }),
+        },
       );
     } finally {
       console.log = log;
     }
     // A lane with no manifest runs the mandatory set plus a
     // deterministic slice rather than failing, so pull requests keep
-    // flowing while the store is unreachable.
+    // flowing while the store holds nothing to read. Every lane of a run
+    // gets that answer from the store alike, so they pack alike.
     const printed = lines.join("\n");
-    expect(printed).toContain("the store is gone");
+    expect(printed).toContain("the store holds no manifest");
     expect(printed).toContain("workspace-unit");
+  });
+
+  /** A store no listing or read could reach. */
+  const unreachable: LaneDeps = {
+    manifest: () =>
+      Promise.resolve({
+        absent: "listing failed: connection reset",
+        unreachable: true,
+      }),
+  };
+
+  it("refuses to pack when the store could not be read", async () => {
+    // A store one lane could not reach is one the lane beside it may have
+    // read, and a lane packing without the manifest its siblings packed
+    // from lays out a different plan: a test each plan puts in the
+    // other's lanes runs in neither.
+    const refused = runLane(
+      { lane: 1, of: 5, full: false, dryRun: true, laneCount: false, root },
+      unreachable,
+    );
+    await expect(refused).rejects.toThrow(
+      "the manifest store could not be read",
+    );
+    await expect(refused).rejects.toThrow("connection reset");
+  });
+
+  it("refuses to count a full run's lanes when the store could not be read", async () => {
+    // The full run's count is planned from the same reading, so it
+    // refuses too rather than counting lanes for a plan no lane follows.
+    const refused = main(["--full", "--lane-count"], root, unreachable);
+    await expect(refused).rejects.toThrow(
+      "the manifest store could not be read",
+    );
+    await expect(refused).rejects.toThrow("connection reset");
   });
 });
 
