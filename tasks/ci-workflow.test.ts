@@ -1479,6 +1479,9 @@ Deno.test("the run in tomorrow's order runs the CI suites and ships nothing", as
   }
 
   // The relay follows a workflow by its own name, and a called run belongs to
-  // its caller, so the relay names this workflow for its records to ship.
-  assertStringIncludes(workflowTriggers(relay), `"${tomorrow.name}"`);
+  // its caller, so the relay names this workflow as well as the CI workflow
+  // for the records of both to ship.
+  const followed = workflowTriggers(relay);
+  assertStringIncludes(followed, `"${ci.name}"`);
+  assertStringIncludes(followed, `"${tomorrow.name}"`);
 });
