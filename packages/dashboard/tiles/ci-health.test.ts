@@ -13,6 +13,7 @@ import {
   LOOM_REPO,
   REPO,
 } from "../config.ts";
+import { compactSpan } from "../lib.ts";
 import type { Ctx } from "../types.ts";
 import { createCiHealth } from "./ci-health.ts";
 
@@ -425,7 +426,7 @@ Deno.test("ci: a failure nobody has fixed in two days goes orange, still failing
       assertEquals(view.value, "loom failing");
       assertStringIncludes(
         view.extra ?? "",
-        `failure · ${Math.floor(stale / 60 / 24)}d ago`,
+        `failure · ${compactSpan(stale * 60_000)} ago`,
       );
       // It was read perfectly well, so nothing reports it as unreadable.
       assertEquals(
