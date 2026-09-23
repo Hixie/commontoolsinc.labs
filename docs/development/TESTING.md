@@ -208,6 +208,37 @@ fixes it. The test records carry the seed each run used, and
 [test selection](test-selection.md) compares outcomes only between runs that
 agree on it, so a run under an override is not read as a flake either.
 
+#### Tomorrow's seed, run a day ahead
+
+The order changes with the first commit of each Pacific day, so a test that
+the new order breaks starts failing on that commit, whatever the commit
+changed. The Tomorrow's Test Order workflow,
+`.github/workflows/test-order-tomorrow.yml`, runs the next day's seed a day
+ahead, so that such a test can be found and fixed before the day it would
+break.
+
+The workflow runs at 11:00 UTC every day. That is 04:00 in the Pacific zone in
+summer and 03:00 in winter, early on a Pacific day either way. It asks
+`deno task -q test-seed --tomorrow` for the seed of the next Pacific day, and
+calls the CI workflow at the head of `main` with that seed, which runs every CI
+test suite under it. When a test fails, the run fails. The run's checks on the
+commit are listed under "Tomorrow's order", apart from the checks of the
+commit's own run. The CI workflow skips its coverage and topology gates, and
+its attestation and deploy jobs, when another workflow calls it. The records
+relay follows the workflow, and its records carry the seed they ran under, so
+[test selection](test-selection.md) keeps them apart from the commit's own
+runs.
+
+The order a run takes depends on the set of test files as well as the seed:
+`deno test --shuffle` and the runners this repository owns permute the whole
+list, so adding or removing one test file can move every other file.
+The next day's commits therefore run the next day's seed over a set of files
+that commits made in between may have changed. What the run gives is one more
+order, on a day's notice, that no commit has taken yet.
+
+To run a failing order again locally, set `CF_TEST_SHUFFLE_SEED` to the seed
+the run printed.
+
 #### What gets reordered
 
 `deno test --shuffle=<seed>` reorders the files of a run, and within each file

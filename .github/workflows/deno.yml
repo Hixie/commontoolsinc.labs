@@ -7,6 +7,17 @@ on:
   pull_request:
     branches:
       - main
+  # The run of the suites in the next day's order calls this workflow with that
+  # day's seed; see .github/workflows/test-order-tomorrow.yml. A called run
+  # runs the tests and nothing else. The jobs that gate the commit on coverage
+  # and topology, and the jobs that attest and deploy it, run only for a push
+  # or a pull request, whose own run already covers the commit.
+  workflow_call:
+    inputs:
+      shuffle-seed:
+        description: The seed every test runner in the run shuffles by.
+        type: string
+        required: true
 
 # Runs of a pull request are grouped by the pull request, and a new push to the
 # branch cancels the run already going. Runs of a push to main are grouped by
@@ -33,6 +44,9 @@ env:
   # GitHub's Ubuntu image includes Chrome. Astral uses it directly instead of
   # downloading another browser when the first browser test starts.
   ASTRAL_BIN_PATH: /usr/bin/google-chrome
+  # Empty unless a caller names a seed, and an empty value leaves every runner
+  # on the seed of the commit under test.
+  CF_TEST_SHUFFLE_SEED: ${{ inputs.shuffle-seed }}
   WORK_TIMEOUT_MINUTES: &work-timeout 30
   JOB_TIMEOUT_MINUTES: &job-timeout 40
   CLI_WORK_TIMEOUT_MINUTES: &cli-work-timeout 10
@@ -1932,7 +1946,7 @@ jobs:
 
   coverage-check:
     name: "Coverage Check"
-    if: (github.event_name == 'pull_request') || (github.ref_name == 'main')
+    if: (github.event_name == 'pull_request') || (github.event_name == 'push' && github.ref_name == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     needs:
@@ -2028,7 +2042,7 @@ jobs:
   # separately and are not together, which no single pull request can see.
   test-topology-store-check:
     name: "Test Topology Store Check"
-    if: (github.event_name == 'pull_request') || (github.ref_name == 'main')
+    if: (github.event_name == 'pull_request') || (github.event_name == 'push' && github.ref_name == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     needs:
@@ -2126,7 +2140,7 @@ jobs:
 
   attest-binaries:
     name: "Attest and Upload Binaries"
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     # A release artifact must not outlive a failed pattern-migration gate.
@@ -2404,7 +2418,7 @@ jobs:
   # Automatic deployment to staging (rapids)
   deploy-rapids:
     name: "Deploy to Rapids (Staging)"
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: ["attest-binaries"]
     runs-on: ubuntu-latest
     environment: toolshed
@@ -2428,7 +2442,7 @@ jobs:
   # Deploy shell static assets to staging GCS bucket
   deploy-shell-staging:
     name: "Deploy Shell to Staging"
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       [
         "test",

@@ -47,6 +47,23 @@ export function daySeed(moment: Date): number {
 }
 
 /**
+ * The seed of the Pacific day after the one `moment` falls on, which is
+ * the order the commits of that day will run in. The next day is found on
+ * the calendar rather than by adding a day's worth of time to `moment`,
+ * because the zone's days are not all the same length.
+ */
+export function nextDaySeed(moment: Date): number {
+  const today = daySeed(moment);
+  const next = new Date(Date.UTC(
+    Math.floor(today / 10000),
+    Math.floor(today / 100) % 100 - 1,
+    today % 100 + 1,
+  ));
+  return next.getUTCFullYear() * 10000 + (next.getUTCMonth() + 1) * 100 +
+    next.getUTCDate();
+}
+
+/**
  * When a commit was committed, or nothing where git cannot say: `rev`
  * as the repository at `cwd` resolves it, which is the commit checked
  * out there unless a caller names another. The committer date rather
