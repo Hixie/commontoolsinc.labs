@@ -19,6 +19,25 @@ Every local query about test selection goes through one entry point:
 deno task test-selection <mode>
 ```
 
+Every mode that reads a manifest reads the one the lanes testing the
+checked-out commit read: the newest the store had created at or before
+that commit's committer date, resolved by the same code a lane resolves it
+with. [The spec](../specs/test-selection.md#determinism) says why a lane
+resolves at that moment. On a commit made before the newest manifest was
+published, a mode therefore describes what lanes testing that commit would
+read, not what the newest manifest says.
+
+A pull request's lanes test the merge commit the continuous-integration
+provider makes, which is dated when that commit was made rather than when
+the branch's own last commit was. Checking out that merge commit is how to
+ask about them exactly.
+
+`--at <moment>`, in ISO 8601, reads the manifest that was current at that
+moment instead, which is how to ask about a manifest published after the
+checked-out commit was made. Where the commit's date cannot be read and no
+moment is named, the mode says so on the error stream and reads the newest
+manifest.
+
 ## The modes
 
 ### `explain <identity>`
@@ -36,9 +55,10 @@ It prints the suite and the invocation unit the identity belongs to, its
 score and its cost, the catches behind that score and how many distinct
 sources they came from, when the most recent one was, its churn and flake
 rate, whether the manifest withholds it, how many times it would run, and
-whether the current manifest reaches it. An identity the store has never
-seen is reported as mandatory, which is what an identity with no history
-is.
+whether a lane testing this commit reaches it when the change touches
+nothing, which is the plan `plan --dry-run` prints. An identity the store
+has never seen is reported as mandatory, which is what an identity with no
+history is.
 
 Each of those is printed on its own, because they are not alternatives: a
 withheld identity a change reaches runs anyway, so an answer that picked
@@ -55,11 +75,13 @@ where the value comes from, and which way you would move it.
 
 ### `coverage`
 
-Every measured set — one suite's units over one workspace member's lines
-— with how many units it holds and the baseline the newest manifest holds
+Every measured set — one suite's units over one workspace member's lines —
+with how many units it holds and the baseline this commit's manifest holds
 for it, and then every workspace member that carries no set, with the
-reason. This is what answers "why is my package not gated?" and "what am
-I being compared against?".
+reason. That baseline is the one the coverage gate compares this commit
+against, since the gate resolves its manifest at the commit's moment too.
+This is what answers "why is my package not gated?" and "what am I being
+compared against?".
 
 A member with two measured sets has two lines and two baselines. The
 counts are never added together: a line one suite's tests cover says
@@ -72,6 +94,16 @@ holds, how many are withheld, and per lane the number of tests, the
 projected seconds against the budget, the capabilities it would open, and
 a count by why each test was chosen. Given a lane number it answers "what
 would lane three do?", and given none it prints all of them.
+
+The plan is the one a lane computes, taken from the lane's own code rather
+than worked out again here, so the two cannot disagree. It is the plan for
+a change that touches nothing. A change's lanes also run every unit the
+change touches, and the lane script's own dry run is the one that includes
+those:
+
+```
+deno run -A tasks/ci-lane.ts --lane 3 --dry-run --base <ref>
+```
 
 The count is of this tree rather than of the manifest, because those are
 different numbers and the plan beneath it is over the first. A manifest is
@@ -93,10 +125,14 @@ puts one of those past the bound is its own time on top of the charge and
 the charge alone does not say which. The count beside the suite is of
 what it can still run, so the two never disagree about the same test.
 
-`--verify` compares the identity set the topology produces against what a
-recorded run actually executed, in both directions: identities a run
-produced that no suite claims, and units the topology enumerates that the
-run never recorded.
+`--verify` compares the units the topology enumerates against the
+identities this commit's manifest holds, in both directions. A unit the
+manifest holds nothing for is one every lane runs as unknown, and
+`--verify` fails on any. A manifest entry naming a unit the tree no longer
+enumerates is reported without failing, because a manifest is hours old
+and a unit deleted since it was published is expected to linger in it. A
+unit the configuration declares unavailable is passed over, since nothing
+runs it.
 
 ### How many lanes the run on the default branch uses
 
@@ -915,9 +951,9 @@ default branch runs it as many times as its share asks for and does not
 fail for it, so it goes on being measured while it is out of changes, and
 a green run of the default branch can carry a failure of one of these
 tests and still deploy. `explain <identity>` says of any test whether the
-newest manifest withholds it and how many runs it is given. The lanes are
-what carry this, so it describes what lands with them rather than what runs
-today, and the reasoning behind each part is in [the
+manifest this commit resolves withholds it and how many runs it is given.
+The lanes are what carry this, so it describes what lands with them rather
+than what runs today, and the reasoning behind each part is in [the
 plan](../plans/pull-request-test-selection.md#an-excluded-test-still-runs-on-main).
 
 A repository gate is a test like any other here. A gate introspects the
