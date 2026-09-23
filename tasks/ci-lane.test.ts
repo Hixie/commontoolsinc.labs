@@ -67,6 +67,7 @@ import {
 import {
   FULL_LANE_BOUND_SECONDS,
   FULL_LANE_BUDGET_SECONDS,
+  FULL_LANES_MAX,
   LANE_BUDGET_SECONDS,
   UNMEASURED_COST_SECONDS,
 } from "./test-selection/policy.ts";
@@ -700,6 +701,31 @@ describe("how many lanes the full run asks for", () => {
     });
     expect(lanes).toBeGreaterThan(suites.length);
     expect(lanes).toBe(Math.ceil((perLane + 40) * 2 / perLane));
+  });
+
+  it("takes no more lanes than FULL_LANES_MAX however many it needs", async () => {
+    // A lane per suite is the floor with nothing measured, and a tree with
+    // more suites than the cap would otherwise ask for a runner apiece.
+    const suites = Array.from(
+      { length: FULL_LANES_MAX + 10 },
+      (_, i) => suite({ id: `suite-${i}`, units: [`s${i}/one.test.ts`] }),
+    );
+    const error = console.error;
+    const said: string[] = [];
+    console.error = (line: string) => said.push(line);
+    let lanes: number;
+    try {
+      lanes = await fullLanes(options, {
+        topology: () => Promise.resolve(suites),
+        manifest: () => Promise.resolve({ absent: "the store is gone" }),
+      });
+    } finally {
+      console.error = error;
+    }
+    expect(lanes).toBe(FULL_LANES_MAX);
+    expect(said.join("\n")).toContain(
+      `needs ${FULL_LANES_MAX + 10} lanes and takes ${FULL_LANES_MAX}`,
+    );
   });
 
   it("charges a stand-in what the census charged it, not the dial", async () => {
