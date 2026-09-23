@@ -360,7 +360,7 @@ export function unitsForRun(batch: Batch, run: number): UnitRequest[] {
  */
 export function batchesOf(
   suites: readonly Suite[],
-  manifest: Manifest | undefined,
+  manifest: Manifest,
   selections: readonly Selection[],
 ): Batch[] {
   const bySuite = new Map<string, Suite>(
@@ -370,7 +370,7 @@ export function batchesOf(
     suites.map((suite) => [suite, new Set(suite.whole)]),
   );
   const inUnit = new Map<string, string[]>();
-  for (const entry of manifest?.entries ?? []) {
+  for (const entry of manifest.entries) {
     const key = `${entry.suite}\t${entry.unit}`;
     inUnit.set(key, [...inUnit.get(key) ?? [], entry.test.n]);
   }
@@ -432,9 +432,42 @@ export function batchesOf(
       (a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : 0)
     );
   }
-  return [...batches.values()].sort((a, b) =>
-    a.suite.id < b.suite.id ? -1 : a.suite.id > b.suite.id ? 1 : 0
-  );
+  // What a lane costs beyond its tests is fitted from what its batches
+  // were seen to take, and a lane that runs out of time is killed with
+  // its later batches unrun and unmeasured. So the order a lane takes
+  // its batches in decides which suites the cost model can ever learn,
+  // and a suite the model cannot price is one that makes lanes run out
+  // of time. Two keys answer that, in this order.
+  //
+  // A suite nothing has measured goes ahead of one something has,
+  // because it is the one worth measuring. And within each group the
+  // largest share of the lane goes first, because a lane that runs out
+  // of time should have spent it on the batch most worth knowing about
+  // and dropped the cheap ones. A share is read through `ownLoad`, which
+  // is what the packer charged the lane for the suite's tests, so a suite
+  // whose tests run slower than they were measured at, or run several
+  // times, is as large here as it was when the lane was filled.
+  //
+  // Both keys are a function of the plan, and the identifier settles a
+  // tie, so every attempt at a lane runs its batches in the same order
+  // whatever order the plan listed its selections in. A share is added
+  // up smallest load first, so that it comes to one number however its
+  // loads were listed, since floating-point addition rounds differently
+  // in a different order.
+  const keyed = [...batches.values()].map((batch) => ({
+    batch,
+    id: batch.suite.id,
+    measured: manifest.calibration.suites[batch.suite.id] === undefined ? 0 : 1,
+    seconds: selections
+      .filter(({ entry }) => entry.suite === batch.suite.id)
+      .map(({ entry, repeats }) => ownLoad(manifest, entry, repeats))
+      .toSorted((a, b) => a - b)
+      .reduce((sum, load) => sum + load, 0),
+  }));
+  return keyed.sort((a, b) =>
+    a.measured - b.measured || b.seconds - a.seconds ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  ).map(({ batch }) => batch);
 }
 
 /** What running one invocation came to. */

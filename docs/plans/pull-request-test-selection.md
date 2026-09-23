@@ -2886,10 +2886,11 @@ What the runner does, in order:
    and which manifest the plan came from.
 7. Set up the union of the capabilities the batches need, recording each
    one's duration.
-8. Run each batch execution with fresh spool and JUnit output paths,
-   recording what the batch spent and what its own tests took, and
-   continuing past a failure so that one failure does not hide later
-   batches or repeats.
+8. Run each batch execution, in the order [the next
+   section](#the-order-a-lane-runs-its-batches-in) gives, with fresh spool
+   and JUnit output paths, recording what the batch spent and what its
+   own tests took, and continuing past a failure so that one failure does
+   not hide later batches or repeats.
 9. Immediately after each execution, gather its direct records and
    described JUnit outputs into the lane spool through the shared gather
    function. Validate record surfaces and apply the suite's optional
@@ -2902,6 +2903,28 @@ What the runner does, in order:
     asked to run is never left out of it. [An excluded test still runs on
     `main`](#an-excluded-test-still-runs-on-main) says which failures
     those are and how the runner tells them apart.
+
+### The order a lane runs its batches in
+
+What a lane costs beyond its tests is fitted from the lane's own
+measurements, and [The cost model](#the-cost-model) says how. What that
+section leaves to here is the order a lane takes its batches in, which
+decides which suites the model can ever learn. A lane killed part way
+through is killed with its later batches unrun, so they record nothing,
+and a suite the model cannot price is one that makes lanes over-run.
+
+Two keys answer that. A suite nothing has measured goes ahead of one
+something has, because it is the one worth measuring. Within each group
+the largest share of the lane goes first, because a lane that is going to
+be cut short should have spent its time on the batch most worth knowing
+about and dropped the cheap ones. A share is what the packer charged the
+lane for the suite's tests, `ownLoad` summed over the suite's selections,
+so a suite running slower than it was measured at, or running its tests
+several times, is as large here as it was when the lane was filled.
+
+Both keys are a function of the plan, and the suite identifier settles a
+tie, so every attempt at a lane runs its batches in the same order
+whatever order the plan listed its selections in.
 
 ## The full run on `main`
 
