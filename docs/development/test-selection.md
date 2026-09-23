@@ -146,7 +146,7 @@ where the directory holds the lanes' uploaded coverage. It prints a row
 per set — the baseline, this run's count, the change, and the outcome —
 and stops with a non-zero status on a rise nothing accepted.
 
-Four things are worth knowing before reading a failure.
+Five things are worth knowing before reading a failure.
 
 - **Each set is on its own.** A member with two measured sets has two
   numbers, and neither pays the other down. Nor does the source group over
@@ -163,11 +163,18 @@ Four things are worth knowing before reading a failure.
   ordinary rules; it is the run-the-whole-set part that stops. A set some
   run measured anyway is still scored, so a pull request labelled
   `ci: full`, which measures every set, is gated whatever the cap says.
-- **A run with a failing test is reported rather than gated.** Coverage
-  measured through a failure says nothing about whether the change was
-  tested, and the failing test is what to fix. So is a set whose reports
+- **A run with a failing test reports rather than gates every set a lane
+  reported.** Coverage measured through a failure says nothing about
+  whether the change was tested, and the failing test is what to fix. So is a set whose reports
   name no line of its member: that is a conversion that produced
   nothing, not a set that covered nothing.
+- **A forced set that no lane reported fails**, in a run with a failing
+  test as in any other. The change was made to measure that set, and a
+  lane that stopped before writing its report, an upload that carried
+  nothing, and a download that found nothing all arrive at the gate
+  looking the same. The row says a rise cannot be ruled out. A set the
+  cap left unforced has nothing asking for it to be measured, so one no
+  run measured is reported rather than failed.
 
 Nothing about coverage fails a run on `main`. That run measures every set,
 which is where the baselines come from, and merges every report into the
