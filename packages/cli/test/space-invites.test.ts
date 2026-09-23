@@ -12,8 +12,10 @@ import { verifyFirstPartyHttpRequest } from "@commonfabric/runner/toolshed-http-
 /**
  * Runs `cf space invite` subcommands against a stubbed fabric service that
  * checks each request's signer and route and answers every operation. Each
- * run returns the JSON the command printed. Disposing it restores the stubs
- * and removes its state directory.
+ * run places the connection options directly after the subcommand's name, so
+ * that the words after them may end with `--` and an invitation ID, and
+ * returns the JSON the command printed. Disposing it restores the stubs and
+ * removes its state directory.
  */
 async function inviteCli(passphrase: string) {
   await using stack = new AsyncDisposableStack();
@@ -69,15 +71,16 @@ async function inviteCli(passphrase: string) {
     if (operation === "revoke") return Response.json({ revoked: true });
     return Response.json([]);
   }));
-  const run = async (...args: string[]) => {
+  const run = async (command: string, ...args: string[]) => {
     await buildSpaceInviteCommand().reset().throwErrors().parse([
-      ...args,
+      command,
       "--api-url",
       "https://fabric.example",
       "--space",
       signer.did(),
       "--identity",
       keyPath,
+      ...args,
     ]);
     return JSON.parse(outputs.at(-1)!);
   };
@@ -743,60 +746,30 @@ describe("space invite", () => {
   });
 
   it("sends an invitation ID beginning with `-` when it follows `--`", async () => {
-    const signer = await Identity.fromPassphrase("invite CLI dash IDs", {
-      implementation: "noble",
-    });
-    const directory = await Deno.makeTempDir();
-    const keyPath = `${directory}/identity.key`;
-    const codePath = `${directory}/invite.code`;
+    await using cli = await inviteCli("invite CLI dash IDs");
+    const { requests, run } = cli;
     const code = "A".repeat(43);
-    await Deno.writeFile(keyPath, signer.toPkcs8());
-    await Deno.writeTextFile(codePath, code);
-    const requests: { operation: string; body: Record<string, unknown> }[] = [];
-    using _output = stub(console, "log", () => {});
-    using _http = stub(globalThis, "fetch", async (input, init) => {
-      const request = new Request(input, init);
-      requests.push({
-        operation: new URL(request.url).pathname.split("/").at(-1)!,
-        body: await request.json(),
+    await Deno.writeTextFile(cli.codePath, code);
+    for (const inviteId of ["-" + "P".repeat(21), "--" + "Q".repeat(20)]) {
+      await run("redeem", "--code-file", cli.codePath, "--", inviteId);
+      expect(requests.at(-1)).toEqual({
+        operation: "redeem",
+        body: { inviteId, code },
       });
-      return Response.json({});
-    });
-    const run = (...args: string[]) =>
-      buildSpaceInviteCommand().reset().throwErrors().parse([
-        args[0]!,
-        "--api-url",
-        "https://fabric.example",
-        "--space",
-        signer.did(),
-        "--identity",
-        keyPath,
-        ...args.slice(1),
-      ]);
-    try {
-      for (const inviteId of ["-" + "P".repeat(21), "--" + "Q".repeat(20)]) {
-        await run("redeem", "--code-file", codePath, "--", inviteId);
-        expect(requests.at(-1)).toEqual({
-          operation: "redeem",
-          body: { inviteId, code },
-        });
-        await run("receipts", "--", inviteId);
-        expect(requests.at(-1)).toEqual({
-          operation: "receipts",
-          body: { inviteId },
-        });
-        await run("revoke", "--", inviteId);
-        expect(requests.at(-1)).toEqual({
-          operation: "revoke",
-          body: { inviteId },
-        });
-      }
-      await run("receipts", "--");
-      expect(requests.at(-1)).toEqual({ operation: "receipts", body: {} });
-      expect(requests).toHaveLength(7);
-    } finally {
-      await Deno.remove(directory, { recursive: true });
+      await run("receipts", "--", inviteId);
+      expect(requests.at(-1)).toEqual({
+        operation: "receipts",
+        body: { inviteId },
+      });
+      await run("revoke", "--", inviteId);
+      expect(requests.at(-1)).toEqual({
+        operation: "revoke",
+        body: { inviteId },
+      });
     }
+    await run("receipts", "--");
+    expect(requests.at(-1)).toEqual({ operation: "receipts", body: {} });
+    expect(requests).toHaveLength(7);
   });
 
   it("refuses an invitation ID named twice, followed by other words, or missing, before making a request", async () => {
