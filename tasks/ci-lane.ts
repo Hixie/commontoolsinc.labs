@@ -88,7 +88,7 @@ import type {
   UnschedulableEntry,
   WithheldReason,
 } from "./test-selection/manifest.ts";
-import { LANES } from "./test-selection/policy.ts";
+import { FULL_LANES_MAX, LANES } from "./test-selection/policy.ts";
 import { say } from "./step-summary.ts";
 import { writeLcovReport } from "./write-coverage-lcov.ts";
 import {
@@ -1283,7 +1283,8 @@ function packing(
 }
 
 /**
- * How many lanes the full run on `main` needs.
+ * How many lanes the full run on `main` takes: as many as it needs, up to
+ * `FULL_LANES_MAX`.
  *
  * This is the whole of what the job ahead of the full run decides, and an
  * integer is the whole of what it emits. The lanes then read the same
@@ -1296,6 +1297,21 @@ function packing(
  * there.
  */
 export async function fullLanes(
+  options: LaneOptions,
+  deps: LaneDeps,
+): Promise<number> {
+  const needed = await fullLanesNeeded(options, deps);
+  if (needed <= FULL_LANES_MAX) return needed;
+  console.error(
+    `ci-lane: the full run needs ${needed} lanes and takes ` +
+      `${FULL_LANES_MAX}, the most FULL_LANES_MAX allows, so a lane may run ` +
+      `past its budget`,
+  );
+  return FULL_LANES_MAX;
+}
+
+/** How many lanes the full run would take with no cap on them. */
+async function fullLanesNeeded(
   options: LaneOptions,
   deps: LaneDeps,
 ): Promise<number> {

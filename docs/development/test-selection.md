@@ -121,6 +121,14 @@ and what packing the stand-ins asks for — and says on the error stream
 that it did so, since a projection from costs nobody has measured would
 be arithmetic over an invented figure.
 
+Whichever way it gets its answer, it answers no more than
+`FULL_LANES_MAX`, so that one push's full run leaves runners for the
+changes waiting behind it. A run that needs more takes that many and says
+so on the error stream. Every test still runs when that happens. A test
+whose repeated runs fit in no lane runs fewer times, down to once, and a
+test that fits nowhere even once goes into the lane it leaves shortest,
+so the lanes run past their budget instead.
+
 ## The coverage gate
 
 A **measured set** is one suite's units over one workspace member's lines.
@@ -250,6 +258,7 @@ rather than a setting to fix.
 | `LANE_BUDGET_SECONDS` | 230 | seconds | derived | Nothing edits this. It is the bound less the prologue and the safety margin, so a budget that does not fit inside its own bound cannot be written down. |
 | `FULL_LANE_BOUND_SECONDS` | 600 | seconds | chosen | Up when the run on `main` uses more jobs than it needs; down when `main` takes too long to say something broke. |
 | `FULL_LANE_BUDGET_SECONDS` | 530 | seconds | derived | Nothing edits this. It is the full run's bound less the same prologue and safety margin a pull request's lane pays, since a lane of either run is the same job doing the same setup on the same runner. |
+| `FULL_LANES_MAX` | 30 | lanes | chosen | Up when the organization's runner limit rises; down when a push's full run crowds out the pull requests behind it. A full run needing more lanes than this takes this many, and a lane may then run past its budget. |
 | `FULL_RUN_LABEL` | ci: full | a label | chosen | Not a quantity. Change it only if the label collides with one the repository already uses for something else. |
 | `UNMEASURED_COST_SECONDS` | 1 | seconds | chosen | Up when a lane holding new tests runs long; down when it finishes early. It is reached for only by a suite with no measured unit at all, since a suite that has any charges an unmeasured one the larger of its units' mean and their ninetieth percentile. |
 | `VALUE_FLOOR` | 0.05 | score | chosen | Up when the cheap tail is not being swept up; down when it crowds out tests with a record of catching things. |

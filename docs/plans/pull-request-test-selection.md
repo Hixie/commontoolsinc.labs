@@ -2974,6 +2974,16 @@ suite whose measured units have all been renamed away carries what the
 units it lost cost onto every stand-in, and a count that assumed the bare
 figure would be out by that whole multiple.
 
+Whichever way the count is reached, it is capped at `FULL_LANES_MAX`,
+thirty lanes, which is half the sixty runners the organization has at
+once. Each lane is a runner, and an uncapped count grows with the corpus,
+so one push's full run could otherwise take the runners the pull requests
+behind it are waiting for. A run needing more lanes than the cap takes
+the cap and says so. Every test still runs. A test whose repeated runs
+fit in no lane runs fewer times, down to once, and a test that fits
+nowhere even once goes into the lane it leaves shortest, so the lanes
+run past their budget rather than leaving tests out.
+
 What comes out is a bound rather than a plan: the lanes still pack
 themselves, and one of them may hold several suites.
 
