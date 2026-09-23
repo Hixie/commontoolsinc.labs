@@ -5,13 +5,19 @@
  * it one and reads the HTML back.
  */
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import {
   type CiJobs,
   CI_JOBS_PATH,
   ciJobsPage,
   ciJobsResponse,
   type Job,
+  makeTableSortable,
 } from "./ci-jobs-page.ts";
 
 const MINUTE = 60_000;
@@ -367,4 +373,122 @@ Deno.test("ci jobs page: the response is the page as HTML", async () => {
   );
   assertStringIncludes(await response.text(), "<title>CI jobs</title>");
   assertEquals(CI_JOBS_PATH, "/ci");
+});
+
+// The parts of a table `makeTableSortable()` uses, over plain objects.
+// `ci-jobs-page.browser.test.ts` runs the same function against the page's own
+// markup in a browser.
+class FakeCell {
+  constructor(
+    readonly textContent: string,
+    readonly sortKey?: string,
+  ) {}
+
+  getAttribute(name: string): string | null {
+    return name === "data-sort" ? this.sortKey ?? null : null;
+  }
+}
+
+class FakeRow {
+  constructor(readonly name: string, readonly cells: FakeCell[]) {}
+}
+
+class FakeBody {
+  rows: FakeRow[] = [];
+
+  appendChild(row: FakeRow): FakeRow {
+    this.rows = [...this.rows.filter((other) => other !== row), row];
+    return row;
+  }
+}
+
+class FakeHeading {
+  sort = "none";
+  readonly #listeners: (() => void)[] = [];
+  readonly parentElement = {
+    setAttribute: (name: string, value: string) => {
+      if (name === "aria-sort") this.sort = value;
+    },
+  };
+
+  constructor(readonly column: number) {}
+
+  getAttribute(name: string): string | null {
+    return name === "data-column" ? String(this.column) : null;
+  }
+
+  addEventListener(_type: "click", listener: () => void): void {
+    this.#listeners.push(listener);
+  }
+
+  click(): void {
+    for (const listener of this.#listeners) listener();
+  }
+}
+
+// A table of jobs with a name column that sorts on its text and a duration
+// column that sorts on its key, in the order the page served them.
+function fakeTable(rows: [string, string][]) {
+  const body = new FakeBody();
+  body.rows = rows.map(([name, ms]) =>
+    new FakeRow(name, [new FakeCell(` ${name} `), new FakeCell("", ms)])
+  );
+  const headings = [new FakeHeading(0), new FakeHeading(1)];
+  makeTableSortable({
+    tBodies: [body],
+    querySelectorAll: (selectors: string) =>
+      selectors === "th button[data-column]" ? headings : [],
+  });
+  return { order: () => body.rows.map((row) => row.name), headings };
+}
+
+Deno.test("ci jobs sorting: a column of numbers sorts as numbers, up then down", () => {
+  const table = fakeTable([["b", "200"], ["a", "9"], ["c", "40"]]);
+  const [, duration] = table.headings;
+
+  duration.click();
+  // As text, "200" would come before "40" and "9".
+  assertEquals(table.order(), ["a", "c", "b"]);
+  assertEquals(duration.sort, "ascending");
+
+  duration.click();
+  assertEquals(table.order(), ["b", "c", "a"]);
+  assertEquals(duration.sort, "descending");
+});
+
+Deno.test("ci jobs sorting: a cell with no key sorts on its text", () => {
+  const table = fakeTable([["zed", "1"], ["amp", "2"], ["loom", "3"]]);
+  table.headings[0].click();
+  assertEquals(table.order(), ["amp", "loom", "zed"]);
+});
+
+Deno.test("ci jobs sorting: a new column starts ascending and clears the last", () => {
+  const table = fakeTable([["b", "2"], ["a", "1"]]);
+  const [name, duration] = table.headings;
+
+  name.click();
+  name.click();
+  assertEquals(name.sort, "descending");
+  duration.click();
+  assertEquals(duration.sort, "ascending");
+  assertEquals(name.sort, "none");
+  assertEquals(table.order(), ["a", "b"]);
+});
+
+Deno.test("ci jobs sorting: equal values keep the order the rows were served in", () => {
+  const table = fakeTable([["worst", "5"], ["middle", "5"], ["best", "1"]]);
+  table.headings[1].click();
+  assertEquals(table.order(), ["best", "worst", "middle"]);
+});
+
+Deno.test("ci jobs sorting: a table without a body is refused", () => {
+  assertThrows(
+    () =>
+      makeTableSortable<FakeRow>({
+        tBodies: [],
+        querySelectorAll: () => [],
+      }),
+    Error,
+    "a sortable table has a body",
+  );
 });

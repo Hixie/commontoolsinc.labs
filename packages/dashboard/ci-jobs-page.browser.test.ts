@@ -7,10 +7,10 @@
 
 import { assert, assertEquals } from "@std/assert";
 import {
-  attachTableSorting,
   type CiJobs,
   ciJobsPage,
   type Job,
+  makeTableSortable,
 } from "./ci-jobs-page.ts";
 
 const MINUTE = 60_000;
@@ -65,7 +65,9 @@ function arrange(): HTMLElement {
   const html = ciJobsPage(collected, NOW);
   fixture.innerHTML = html.slice(html.indexOf("<body>") + 6);
   document.body.append(fixture);
-  attachTableSorting();
+  makeTableSortable<HTMLTableRowElement>(
+    fixture.querySelector<HTMLTableElement>("table[data-sortable]")!,
+  );
   return fixture;
 }
 

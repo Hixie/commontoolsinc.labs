@@ -182,26 +182,58 @@ function jobHead(): string {
   }</tr></thead>`;
 }
 
+/** The parts of a table cell `makeTableSortable()` reads. */
+export interface SortableCell {
+  getAttribute(name: string): string | null;
+  readonly textContent: string | null;
+}
+
+/** The parts of a table row `makeTableSortable()` reads. */
+export interface SortableRow {
+  readonly cells: ArrayLike<SortableCell>;
+}
+
+/** The parts of a column heading's button `makeTableSortable()` uses. */
+export interface SortableHeading {
+  getAttribute(name: string): string | null;
+  readonly parentElement: {
+    setAttribute(name: string, value: string): void;
+  } | null;
+  addEventListener(type: "click", listener: () => void): void;
+}
+
+/** The parts of a table `makeTableSortable()` uses. */
+export interface SortableTable<Row extends SortableRow> {
+  readonly tBodies: ArrayLike<{
+    readonly rows: ArrayLike<Row>;
+    appendChild(row: Row): unknown;
+  }>;
+  querySelectorAll(selectors: string): ArrayLike<SortableHeading>;
+}
+
 /**
- * Makes the jobs table sortable by any of its columns, ascending on the first
- * click of a heading and descending on the next. Each sort starts from the
- * order the page was served in, so a column of equal values keeps the worst
- * first beneath it. Serialized into the page.
+ * Makes `table` sortable by any of its columns, ascending on the first click
+ * of a heading and descending on the next. A cell sorts on its `data-sort`,
+ * or on its text when it has none, as a number when both sides read as one.
+ * Each sort starts from the order the rows were in when this was called, so a
+ * column of equal values keeps that order beneath it. It reads only the table
+ * it is given, which the page hands it and a test can fake, and the page
+ * carries it serialized.
  */
-export function attachTableSorting(): void {
-  const table = document.querySelector<HTMLTableElement>("table[data-sortable]");
-  const body = table?.tBodies[0];
-  if (!table || !body) return;
+export function makeTableSortable<Row extends SortableRow>(
+  table: SortableTable<Row>,
+): void {
+  const body = table.tBodies[0];
+  if (body === undefined) throw new Error("a sortable table has a body");
   const served = Array.from(body.rows);
   const headings = Array.from(
-    table.querySelectorAll<HTMLButtonElement>("th button[data-column]"),
+    table.querySelectorAll("th button[data-column]"),
   );
   let sortedBy = -1;
   let descending = false;
 
-  const keyOf = (row: HTMLTableRowElement, column: number): string => {
+  const keyOf = (row: Row, column: number): string => {
     const cell = row.cells[column];
-    if (cell === undefined) return "";
     return cell.getAttribute("data-sort") ?? (cell.textContent ?? "").trim();
   };
 
@@ -271,7 +303,7 @@ ${STYLES}
   ${body}
 ${dashboardThemeToggle()}
 ${DASHBOARD_THEME_CLIENT}
-<script>(${attachTableSorting.toString()})();</script>
+<script>{const table = document.querySelector("table[data-sortable]"); if (table) (${makeTableSortable.toString()})(table);}</script>
 </body></html>`;
 }
 
