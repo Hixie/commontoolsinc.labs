@@ -1276,13 +1276,19 @@ The lane job's steps are fixed and do not vary with what the lane runs:
 3. Verify the lock file and install dependencies.
 4. Restore the binary cache.
 5. Run `deno run -A tasks/ci-lane.ts --lane N --of 5`.
-6. Ship test records.
+6. Upload what a failing lane left behind.
+7. Ship test records.
 
 Everything conditional happens inside step 5. That is what makes the
 workflow independent of the topology. The one cost is that a capability
 which genuinely needs a GitHub Action — and today only the binary cache
 does — has to be represented by a fixed step that runs unconditionally and
 cheaply.
+
+Step 6 is what a lane leaves behind for somebody to read. A lane that
+failed keeps its own working directory, where a server's log is, and that
+directory sits under the job's temporary directory so the upload can reach
+it; a lane that passed removes it.
 
 ## What the store gives us and what it is missing
 

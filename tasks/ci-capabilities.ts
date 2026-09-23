@@ -100,8 +100,9 @@ export interface OpenCapability {
   /**
    * Files it writes that say what it did, for a lane that failed to
    * report. A capability outside the test process is the half of a
-   * failure the test process cannot describe, and its work directory
-   * goes when the lane ends, so a log nobody names here is gone.
+   * failure the test process cannot describe, and outside a job its work
+   * directory goes when the lane ends, so there a log nobody names here
+   * is gone.
    */
   logs?: readonly string[];
 
