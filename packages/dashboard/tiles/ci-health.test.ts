@@ -684,6 +684,38 @@ Deno.test("ci: a fork's pull request from a branch named main does not crowd out
   );
 });
 
+Deno.test("ci: a workflow only pull requests start has no verdict and says so", async () => {
+  // Its only runs on the default branch's name are a fork's pull request's.
+  await withGitHub(
+    standingOrg(green, green, [{
+      name: "pond",
+      workflows: [{
+        name: "Preview deploy",
+        file: "preview.yml",
+        runs: [
+          { conclusion: "failure", event: "pull_request", minutesAgo: 30 },
+          { conclusion: "success", event: "pull_request_target", minutesAgo: 90 },
+        ],
+      }],
+    }]),
+    async () => {
+      const tile = createCiHealth();
+      const view = await tile.collect(ctx());
+      assertEquals(view.status, "good");
+      assertStringIncludes(view.aside ?? "", "2 jobs · 3 repos");
+
+      const page = await (await tile.routes![0].handler(
+        new Request("http://dashboard/ci"),
+        new URL("http://dashboard/ci"),
+      )).text();
+      assertStringIncludes(
+        page,
+        `Preview deploy</a></td><td class="measure">no completed run</td>`,
+      );
+    },
+  );
+});
+
 Deno.test("ci: runs a pull request review started are a pull request's too", async () => {
   await withGitHub(
     standingOrg(green, [
