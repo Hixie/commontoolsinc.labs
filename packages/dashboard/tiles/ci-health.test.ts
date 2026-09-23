@@ -642,6 +642,38 @@ Deno.test("ci: a verdict found far back is not read again on the next collection
   });
 });
 
+Deno.test("ci: a job that could not be read reads its runs afresh", async () => {
+  const runs: RunSpec[] = [
+    ...Array.from({ length: 25 }, (_, index): RunSpec => ({
+      conclusion: "skipped",
+      minutesAgo: (index + 2) * 60,
+    })),
+    { conclusion: "success", minutesAgo: 30 * 60 },
+  ];
+  const org = standingOrg(green, runs);
+  const loom = org.find((repo) => repo.name === LOOM_REPO.split("/")[1])!;
+  await withGitHub(org, async (wire) => {
+    const loomPages = () =>
+      wire.calls.filter((call) =>
+        call.startsWith(`/repos/${LOOM_REPO}/actions/workflows/`) &&
+        call.includes("/runs?")
+      ).length;
+    const tile = createCiHealth();
+    assertEquals((await tile.collect(ctx())).value, "passing");
+    assertEquals(loomPages(), 2);
+
+    loom.runsStatus = 503;
+    assertEquals((await tile.collect(ctx())).value, "1 unreadable");
+    assertEquals(loomPages(), 3);
+
+    // Nothing settled survives the failed read, so the pass is found again
+    // the way the first collection found it.
+    delete loom.runsStatus;
+    assertEquals((await tile.collect(ctx())).value, "passing");
+    assertEquals(loomPages(), 5);
+  });
+});
+
 Deno.test("ci: a failure run again and still going is no longer the verdict", async () => {
   // The pages reach the failure itself, and nothing before it decides.
   const runs: RunSpec[] = [
