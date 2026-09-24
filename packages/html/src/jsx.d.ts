@@ -2954,7 +2954,6 @@ interface CFChatElement extends CFHTMLElement {}
 interface CFMessageBeadsElement extends CFHTMLElement {}
 interface CFAttachmentsBarElement extends CFHTMLElement {}
 interface CFFragmentElement extends CFHTMLElement {}
-interface CFUpdaterElement extends CFHTMLElement {}
 interface CFGoogleOAuthElement extends CFHTMLElement {}
 interface CFOAuthElement extends CFHTMLElement {}
 interface CFCanvasElement extends CFHTMLElement {}
@@ -3079,11 +3078,6 @@ interface CFSecretViewerAttributes<T> extends CFHTMLAttributes<T> {
   "label"?: string;
   "value"?: string;
   "trailing-chars"?: number;
-}
-
-interface CFUpdaterAttributes<T> extends CFHTMLAttributes<T> {
-  "integration"?: string;
-  "$state"?: CellLike<any>;
 }
 
 interface CFPieceAttributes<T> extends CFHTMLAttributes<T> {
@@ -5271,10 +5265,6 @@ declare global {
       "cf-iframe": CFDOM.DetailedHTMLProps<
         CFIframeAttributes<CFIFrameElement>,
         CFIFrameElement
-      >;
-      "cf-updater": CFDOM.DetailedHTMLProps<
-        CFUpdaterAttributes<CFUpdaterElement>,
-        CFUpdaterElement
       >;
       "cf-google-oauth": CFDOM.DetailedHTMLProps<
         CFGoogleOAuthAttributes<CFGoogleOAuthElement>,

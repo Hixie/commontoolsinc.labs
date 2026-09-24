@@ -105,27 +105,12 @@ export async function loadPackageIntegrationSuites(
       unavailable: oppositeLane.enabled ? on.unavailable : [],
     });
   }
-  const backgroundPostureGate =
-    "packages/background-piece-service/integration/posture-gate.test.ts";
   const harnessPostureGate =
     "packages/cf-harness/integration/fabric-session-posture-gate.test.ts";
   const deployedTopology = fileSuite({
     id: "deployed-topology",
-    needs: ["deno", "toolshed", "bg-piece-service-binary"],
+    needs: ["deno", "toolshed"],
     parts: [
-      {
-        packageDir: "packages/background-piece-service",
-        flags: ["--no-check", "--allow-env", "--allow-run", "--allow-net"],
-        junit: {
-          kind: "integration",
-          scope: "background-piece-service",
-          filePrefix: "packages/background-piece-service",
-        },
-        files: (await integrationFiles(
-          root,
-          "packages/background-piece-service",
-        )).filter((file) => file === backgroundPostureGate),
-      },
       {
         packageDir: "packages/cf-harness",
         flags: ["--no-check", "-A"],

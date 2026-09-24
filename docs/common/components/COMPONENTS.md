@@ -207,7 +207,6 @@ cell means none confirmed — check the component source before assuming.
 | `cf-tool-call` | Expandable tool-call display | |
 | `cf-toolbar` | Horizontal toolbar for grouping controls | |
 | `cf-tools-chip` | Pill revealing a read-only tool list on hover/tap | `$tools` |
-| `cf-updater` | Button registering pieces for background updates | `$state` |
 | `cf-vgroup` | Vertical group with automatic gap management | |
 | `cf-voice-input` | Voice recording and transcription | `$transcription` |
 | `cf-vscroll` | Vertical scroll container (snap-to-bottom, fade edges) | |

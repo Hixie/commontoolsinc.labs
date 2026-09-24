@@ -162,7 +162,7 @@ Useful references:
 | -------------- | -------------- | ---------------- | --------------- |
 | `cf-autostart` | `cf-cell-link` | `cf-drag-source` | `cf-draggable`  |
 | `cf-drop-zone` | `cf-keybind`   | `cf-piece`       | `cf-piece-menu` |
-| `cf-render`    | `cf-toolbar`   | `cf-updater`     |                 |
+| `cf-render`    | `cf-toolbar`   |                  |                 |
 
 ### Retired
 
@@ -180,6 +180,7 @@ repeated here is a duplicate.
 | Element           | Retired in | Use instead   |
 | ----------------- | ---------- | ------------- |
 | `cf-cell-context` | #5132      | cf-piece-menu |
+| `cf-updater`      | 2026-09    | nothing       |
 
 ## 🔒 Security Constraints
 

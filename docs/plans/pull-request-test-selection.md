@@ -397,7 +397,7 @@ table is the migration's checklist.
 | `generated-patterns` | `Generated Patterns Integration Tests (1..2)` | — | `deno`, `compile-cache` |
 | `package-integration` | `Package Integration Tests (3 suites)` | — | `deno`, `toolshed-baked`, `browser` |
 | `package-integration-opposite` | the posture opposite the server-execution default | resolved arm variant | `deno`, `toolshed-baked-opposite`, `browser` |
-| `deployed-topology` | the background-service and cf-harness default-posture gates | — | `deno`, `toolshed`, `bg-piece-service-binary` |
+| `deployed-topology` | the cf-harness default-posture gate | — | `deno`, `toolshed` |
 | `cli-core` | `CLI Integration Tests (3 suites)` | — | `deno`, `toolshed`, `cf`, `jq` |
 | `cli-fuse` | the FUSE steps of the third CLI suite | — | `deno`, `toolshed`, `cf`, `fuse` |
 | `cli-deno` | the Deno-based CLI integration step | — | `deno`, `toolshed`, `cf` |
@@ -405,7 +405,7 @@ table is the migration's checklist.
 | `pattern-integration-opposite` | the posture opposite the server-execution default | resolved arm variant | `deno`, `toolshed-baked-opposite`, `browser`, `compile-cache` |
 | `pattern-reload` | `Pattern Reload Integration Tests` | — | `deno`, `local-dev-servers`, `browser` |
 | `pattern-unit` | `Pattern Unit Tests (1..4)` | — | `deno`, `cf`, `compile-cache` |
-| `binaries` | the compile inside `Build Binary (toolshed)` and the two beside it | — | `deno` |
+| `binaries` | the compiles inside `Build Binary (toolshed)` and `Build Binary (cf)` | — | `deno` |
 | `binaries-opposite` | the toolshed compile whose shell is opposite the server-execution default | resolved arm variant | `deno` |
 
 The server-execution suites now keep stable `default` and `opposite` roles.
@@ -438,7 +438,7 @@ mandatory. This gives removing a skip the same safe rollout behavior as
 adding a new test. The existing rule that the skip registry must be empty
 when server execution becomes the default remains unchanged.
 
-The build jobs (`Build Binary (toolshed)` and the three beside it) do not
+The build jobs (`Build Binary (toolshed)` and the two beside it) do not
 become suites for the reason they exist today. They are not tests; they
 are setup, and as setup they become capability providers.
 
@@ -1213,7 +1213,6 @@ batches.
 | `local-dev-servers` | The whole local dev stack, brought up by `deno task integration` on a chosen port offset | 15–20 seconds |
 | `toolshed-baked` | The same, from a compiled binary, whose baked shell a browser can drive | 42 seconds to build, or 17 to restore |
 | `toolshed-baked-opposite` | The same, from a binary whose shell carries the server-execution define opposite the default | 42 seconds to build, or 17 to restore |
-| `bg-piece-service-binary` | The compiled background service used by its deployed-topology gate | about 30 seconds to build, or under a second to restore |
 | `cf` | The `cf` command-line tool on the path | as above |
 | `compile-cache` | Restores a pattern compile byte cache | 3 seconds |
 
@@ -1230,7 +1229,7 @@ the Deno cache that the `deno` capability restores, so starting from
 source costs a few seconds. The full run on `main` keeps the
 compiled-binary path, because it needs the binary anyway for attestation
 and deployment. A suite that only talks to the server's API takes this
-one, which is why the CLI suites and the deployed-topology gates do.
+one, which is why the CLI suites and the deployed-topology gate do.
 
 **The baked capabilities cannot.** The browser shell is a bundle compiled
 into the binary, so a server run from source answers the API and serves no
