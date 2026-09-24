@@ -1193,9 +1193,8 @@ test by its own name.
 
 A change to such a member's source makes its unit mandatory only
 through the coverage gate. A member with a measured set is reached by
-changes under its own tree. At present those members are
-`packages/connectors/agents/debug-view` and `packages/dashboard`. The
-others have no measured set, because
+changes under its own tree. At present that member is
+`packages/dashboard`. The others have no measured set, because
 [the coverage gate excludes them](#the-coverage-gate). No diff names a
 directory, so those units reach a lane only on the score of their tests.
 At present those are `packages/identity`, `packages/patterns`, and the
@@ -1208,6 +1207,15 @@ point a single `deno test` at files, and also a dependency list that
 resolves to one, or the shard wrapper around one. It cannot point a task
 that joins commands with a shell operator such as `&&`, a task that
 names its own import map, or a test runner of the package's own.
+
+A lane runs a member that runs whole through the member's own task,
+with no record preload and no report path. A `deno test` that task
+starts records nothing there, unless a runner of the member's own
+writes records. The topology therefore refuses to load when it cannot
+point a member's task at files, unless `RUNS_WHOLE` in
+`tasks/test-topology/unit.ts` lists the member with the reason. It also
+refuses an entry there for a member whose task it can point at files,
+and an entry for a member the workspace does not hold.
 
 The shard wrapper, `tasks/run-sharded-test-files.ts`, is also how a
 member whose files need different flags stays splittable. Its `--serial`
