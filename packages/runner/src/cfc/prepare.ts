@@ -226,6 +226,16 @@ const isRuntimeMintedTemplate = (
   (entry.origin === "structure" || entry.origin === "derived") &&
   entry.path.includes("*");
 
+// The path whose writers a stamp's `TransformedBy` atom must agree with: the
+// stamp's own, or for a `*` template, its container's, since a write to any
+// slot changes what the template labels.
+const transformedByProbePath = (
+  entry: Pick<LabelMapEntry, "path" | "origin">,
+): readonly string[] =>
+  isRuntimeMintedTemplate(entry) && entry.path[entry.path.length - 1] === "*"
+    ? entry.path.slice(0, -1)
+    : entry.path;
+
 const labelForEntriesAtPath = (
   entries: readonly LabelMapEntry[],
   path: readonly string[],
@@ -5506,6 +5516,9 @@ const SYSTEM_STRING_ATOMS: ReadonlySet<string> = new Set(
   CFC_SYSTEM_STRING_ATOMS,
 );
 
+const isTransformedByAtom = (atom: unknown): boolean =>
+  isObjectOrArray(atom) && atom.type === CFC_ATOM_TYPE.TransformedBy;
+
 const isRuntimeMintedIntegrityAtom = (atom: unknown): boolean =>
   (isObjectOrArray(atom) && typeof atom.type === "string" &&
     RUNTIME_MINTED_INTEGRITY_ATOM_TYPES.has(atom.type)) ||
@@ -7172,6 +7185,11 @@ export function* prepareBoundaryCommitSteps(
   const refusalSources = (): readonly ConsumedAtomSource[] =>
     memoizedRefusalSources ??= collectConsumedLabel(tx).sources;
   const flowIntegrity = flowJoin.integrity;
+  // The join's derivation provenance alone, for the membership stamps below.
+  // `deriveFlowJoin` mints it only when every write of this transaction was
+  // authored under one identity, so each stamp carrying it names the one
+  // function that computed what it labels.
+  const flowTransformedBy = flowIntegrity.filter(isTransformedByAtom);
   const flowLabeledSpaces = flowJoin.labeledSpaces;
   const flowHasLabels = flowConfidentiality.length > 0 ||
     flowIntegrity.length > 0;
@@ -7310,6 +7328,17 @@ export function* prepareBoundaryCommitSteps(
           (entry.origin === "derived" || entry.origin === "link" ||
             entry.origin === "structure") &&
           writtenPrefixes.hasPrefixOf(entry.path)
+        ) ||
+        // A stamp naming the function that computed what it labels stops
+        // naming it once anything else writes at, above, or below its path
+        // (`carriedStampLabel`), so a write BELOW such a stamp admits the
+        // document too, even from a transaction that read nothing: without
+        // this a writer with an empty join could add content under another
+        // function's `TransformedBy`.
+        existingEntries.some((entry) =>
+          (entry.origin === "derived" || entry.origin === "structure") &&
+          entry.label.integrity?.some(isTransformedByAtom) === true &&
+          writtenPrefixes.overlaps(transformedByProbePath(entry))
         ) ||
         // Stage B healing, the template-ONLY arm (cubic P2 on the Stage B
         // PR): an envelope whose entries are ALL label-metadata templates
@@ -7867,6 +7896,40 @@ export function* prepareBoundaryCommitSteps(
         }
         return presentAtPath(flowWrittenValues?.get(writtenKey), rel);
       });
+    // A `TransformedBy` atom on a flow stamp names the function that computed
+    // what the stamp labels, and holds only while nothing else writes there.
+    // A write at, above, or below a carried stamp's path (for a `*` template,
+    // its container's) changes what the stamp labels, so the carried stamp
+    // keeps only the `TransformedBy` atoms this transaction's join carries as
+    // well: attribution meets across the writers of a path. Membership stamps
+    // survive a slot write that adds a key, which is what makes this
+    // necessary rather than merely tidy.
+    const carriedStampLabel = (
+      entry: LabelMapEntry,
+      entryPath: readonly string[],
+    ): IFCLabel => {
+      const integrity = entry.label.integrity;
+      if (
+        !flowPersist ||
+        (entry.origin !== "derived" && entry.origin !== "structure") ||
+        integrity === undefined || !integrity.some(isTransformedByAtom)
+      ) {
+        return entry.label;
+      }
+      if (
+        !flowWrittenPrefixes.overlaps(
+          transformedByProbePath({ origin: entry.origin, path: entryPath }),
+        )
+      ) {
+        return entry.label;
+      }
+      const kept = integrity.filter((atom) =>
+        !isTransformedByAtom(atom) ||
+        flowTransformedBy.some((minted) => deepEqual(minted, atom))
+      );
+      const { integrity: _dropped, ...rest } = entry.label;
+      return kept.length > 0 ? { ...rest, integrity: kept } : rest;
+    };
     for (const entry of existing?.labelMap.entries ?? []) {
       const entryPath = canonicalizeLogicalPath(entry.path);
       const key = pathKey(entryPath);
@@ -7912,7 +7975,7 @@ export function* prepareBoundaryCommitSteps(
         } else {
           persistedLabelEntries.push({
             path: entryPath,
-            label: cloneLabel(entry.label),
+            label: cloneLabel(carriedStampLabel(entry, entryPath)),
             ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
             observes: "shape",
           });
@@ -8008,8 +8071,9 @@ export function* prepareBoundaryCommitSteps(
         continue;
       }
       const schemaEntry = mergedSchemaEntrySchemas.get(key);
+      const carriedLabel = carriedStampLabel(entry, entryPath);
       if (
-        hasLabelValues(entry.label) ||
+        hasLabelValues(carriedLabel) ||
         (schemaEntry !== undefined && hasPersistedPolicyClaim(schemaEntry))
       ) {
         // Carry-forward of an untouched path preserves the entry's
@@ -8017,7 +8081,7 @@ export function* prepareBoundaryCommitSteps(
         // covering entries stay covering).
         persistedLabelEntries.push({
           path: entryPath,
-          label: cloneLabel(entry.label),
+          label: cloneLabel(carriedLabel),
           ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
           ...(entry.observes !== undefined ? { observes: entry.observes } : {}),
         });
@@ -8650,11 +8714,20 @@ export function* prepareBoundaryCommitSteps(
         // normative for it, so it carries the current J only, never the
         // pool. Labs-axis mapping note: the `observes` axis is read-op
         // shaped, so "enumerate" here approximates the spec's container-
-        // level `iterate.{order,count}` classes.
+        // level `iterate.{order,count}` classes. It carries J's
+        // confidentiality and, when the flow stage minted one, J's
+        // `TransformedBy`, so a reader of the node has the derivation
+        // evidence an exchange rule matches (`carriedStampLabel` withdraws
+        // it once another writer touches the container).
         if (flowHasLabels && flowConfidentiality.length > 0) {
           persistedLabelEntries.push(markFlowStampEntry({
             path,
-            label: { confidentiality: [...flowConfidentiality] },
+            label: {
+              confidentiality: [...flowConfidentiality],
+              ...(flowTransformedBy.length > 0
+                ? { integrity: [...flowTransformedBy] }
+                : {}),
+            },
             origin: "structure",
             observes: "enumerate",
           }));
@@ -8672,8 +8745,11 @@ export function* prepareBoundaryCommitSteps(
         //    was decided by it (inv-9) — while `shape`/`value` templates
         //    stay out of probes (readConsumesEntry), keeping blind
         //    pass-through clean of content taint. All three carry ONLY
-        //    the membership J (confidentiality-only, like every
-        //    structure stamp), never the container's content label.
+        //    the membership J's confidentiality, plus J's `TransformedBy`
+        //    when the flow stage minted one (like the enumerate stamp),
+        //    never the container's content label. They are minted only
+        //    when J has confidentiality: an integrity-only join has
+        //    nothing to release, so it leaves the container unstamped.
         // Same replace-from-criteria discipline as the enumerate stamp:
         // dropped + re-minted from the current J each reconcile, cleared
         // (never pooled — `poolsExistence` requires a class-less entry)
@@ -8705,7 +8781,12 @@ export function* prepareBoundaryCommitSteps(
           for (const observes of ["shape", "value", "followRef"] as const) {
             persistedLabelEntries.push(markFlowStampEntry({
               path: [...path, "*"],
-              label: { confidentiality: [...flowConfidentiality] },
+              label: {
+                confidentiality: [...flowConfidentiality],
+                ...(flowTransformedBy.length > 0
+                  ? { integrity: [...flowTransformedBy] }
+                  : {}),
+              },
               origin: "structure",
               observes,
             }));
