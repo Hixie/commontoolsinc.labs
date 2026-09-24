@@ -77,7 +77,10 @@ import {
   resolveExternalRootRefForStructure,
 } from "./cfc.ts";
 import { recordNewProtectedDefaults } from "./cfc/default-initialization.ts";
-import { recordReferencedArgumentFields } from "./cfc/reference-initialization.ts";
+import {
+  recordReferencedArgumentFields,
+  recordReplayedArgumentSlots,
+} from "./cfc/reference-initialization.ts";
 import { cfcSchemaWithInheritedDefs } from "./cfc/schema-refs.ts";
 import { findAndInlineDataUriLinks } from "./data-uri.ts";
 import type { EntityKind } from "./entity-kind.ts";
@@ -3139,6 +3142,7 @@ export class Runner {
     const stored = this.#runtime
       .getCellFromLink(argumentLink, undefined, tx)
       .getRaw({ meta: ignoreReadForScheduling });
+    recordReplayedArgumentSlots(tx, argumentLink, argument, stored);
     return foldStoredArgumentSlots(argument, stored);
   }
 
