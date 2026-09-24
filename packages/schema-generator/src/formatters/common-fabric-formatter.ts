@@ -1899,7 +1899,7 @@ export class CommonFabricFormatter implements TypeFormatter {
           ? aliasArgNodes.map((node, index) =>
             aliasArgs?.[index] ??
               (node
-                ? this.#resolveTypeNodeToType(node, context, parameterTypes)
+                ? this.#resolveTypeNodeToType(node, context)
                 : context.typeChecker.getUnknownType())
           )
           : (aliasArgs ?? []).filter((type): type is ts.Type =>
@@ -1985,15 +1985,7 @@ export class CommonFabricFormatter implements TypeFormatter {
   #resolveTypeNodeToType(
     typeNode: ts.TypeNode,
     context: GenerationContext,
-    parameterTypes: ParameterTypes,
   ): ts.Type {
-    const bound = boundParameterType(
-      typeNode,
-      context.typeChecker,
-      parameterTypes,
-    );
-    if (bound) return bound;
-
     const fromRegistry = context.typeRegistry?.get(typeNode);
     if (fromRegistry) {
       return fromRegistry;
@@ -2253,7 +2245,6 @@ export class CommonFabricFormatter implements TypeFormatter {
     const denoted = this.#resolveTypeNodeToType(
       reference,
       context,
-      NO_PARAMETER_TYPES,
     ) as TypeWithInternals;
     return denoted.aliasSymbol?.name === aliasName;
   }
@@ -2636,12 +2627,7 @@ export class CommonFabricFormatter implements TypeFormatter {
       return Array.isArray(alternatives) ? { anyOf: alternatives } : undefined;
     }
 
-    const objectFlags =
-      (type as { objectFlags?: ts.ObjectFlags }).objectFlags ??
-        0;
-    if (
-      checker.isTupleType(type) || (objectFlags & ts.ObjectFlags.Tuple) !== 0
-    ) {
+    if (checker.isTupleType(type)) {
       return checker.getTypeArguments(type as ts.TypeReference).map((
         element,
       ) => this.#extractLiteralLikeValue(element, undefined, context));
