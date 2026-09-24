@@ -85,6 +85,7 @@ import {
 import { deepEqual } from "@commonfabric/utils/deep-equal";
 
 import { type Cell, createCell, encodeSqliteParams } from "../cell.ts";
+import { snapshotQueryResult } from "../query-result-proxy.ts";
 import type { CfcConfClause } from "../cfc/clause.ts";
 import { createRef } from "../create-ref.ts";
 import { stripEntityUriScheme } from "../entity-kind.ts";
@@ -1107,6 +1108,17 @@ export function sqliteQuery(
     const clearanceSession = inputs.readClearance && scope === "session"
       ? runIdentity?.sessionId
       : undefined;
+    // Detached from the input view here, where the run reads them: the first
+    // two join the request hash, and both ceilings are judged again after the
+    // query returns, when the transaction that read them has finished. The
+    // row schema's is the typed alternative, `MaxConfidentiality<Row>`.
+    const reactOn = snapshotQueryResult(inputs.reactOn);
+    const declaredCeiling = snapshotQueryResult(inputs.maxConfidentiality);
+    const rowSchemaCeiling = snapshotQueryResult(
+      (inputs.rowSchema as {
+        ifc?: { maxConfidentiality?: CfcConfClause[] };
+      } | undefined)?.ifc?.maxConfidentiality,
+    );
     const hash = computeInputHashFromValue({
       databaseSpace,
       reader: crossSpace ? (actingReader ?? null) : null,
@@ -1116,13 +1128,13 @@ export function sqliteQuery(
       db,
       sql: inputs.sql,
       params: params ?? null,
-      reactOn: inputs.reactOn ?? null,
+      reactOn: reactOn ?? null,
       // Shared materializations include their shape-label contract in the
       // identity so a memo without that protection cannot stand as a hit.
       ...(scope !== "session" ? { sharedResultLabelVersion: 1 } : {}),
       // Phase 3 read-surface options join the request identity so changing
       // them re-issues the query (pre-existing queries re-hash once — benign).
-      maxConfidentiality: inputs.maxConfidentiality ?? null,
+      maxConfidentiality: declaredCeiling ?? null,
       onExceed: inputs.onExceed ?? null,
       readClearance: inputs.readClearance ?? null,
       // Phase 3.b: a cleared result depends on WHO is asking, so the acting
@@ -1521,11 +1533,8 @@ export function sqliteQuery(
             // spec, locates rule inputs by TRUE origin, evaluates the rule per
             // row, and decides fail/skip under the ceiling — every unresolvable
             // case refuses the query (fail closed), never under-labels.
-            const rowSchemaCeiling = (inputs.rowSchema as {
-              ifc?: { maxConfidentiality?: CfcConfClause[] };
-            } | undefined)?.ifc?.maxConfidentiality;
             if (
-              inputs.maxConfidentiality !== undefined &&
+              declaredCeiling !== undefined &&
               rowSchemaCeiling !== undefined
             ) {
               await failQuery(
@@ -1540,7 +1549,7 @@ export function sqliteQuery(
               owner: db.owner,
             };
             let ceiling: readonly CfcConfClause[] | undefined =
-              inputs.maxConfidentiality ?? rowSchemaCeiling;
+              declaredCeiling ?? rowSchemaCeiling;
             if (ceiling !== undefined) {
               const resolved = resolveCeilingPlaceholders(
                 ceiling,
