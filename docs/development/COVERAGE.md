@@ -1009,7 +1009,7 @@ gives every set the change reached one outcome, and says which:
 
 ## A combined report for IDEs
 
-The same `coverage-full-lane-*` artifacts feed a second consumer. On `main`,
+The same `coverage-lane-*` artifacts feed a second consumer. On `main`,
 the `attest-binaries` job downloads all of them, runs
 `tasks/combine-coverage-lcov.ts` to merge them into one LCOV file, and uploads
 that file to the build-artifacts bucket next to the release tarball. The point

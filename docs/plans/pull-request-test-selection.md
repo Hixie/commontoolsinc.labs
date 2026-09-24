@@ -2226,7 +2226,7 @@ to stop. That is the trade, stated plainly, and the second rule is the
 side of it this design takes.
 
 The second rule gives up more than whether the build is red. The build,
-attestation, coverage and deploy jobs depend on `full-tests`, so a full run
+attestation, coverage and deploy jobs depend on the lanes, so a full run
 that stays green ships. A test that is both too flaky for pull
 requests and genuinely broken therefore deploys, where its failure would
 otherwise have held the deploy.
@@ -2811,16 +2811,21 @@ direction for a system nothing should gate on.
 
 ## The lane job
 
-Nothing runs before the lanes. Each one resolves the manifest from the
-commit it has checked out, so five lanes reach the same answer without a
-job to tell them what it is:
+Nothing runs before a pull request's lanes. Each one resolves the manifest
+from the commit it has checked out, so five lanes reach the same answer
+without a job to tell them what it is. One job runs the lanes of both runs,
+so what a pull request's lanes do and what the default branch's do cannot
+come apart; the full run's `plan-full` job, below, is what tells the two
+apart, by running or not:
 
 ```yaml
-pr-tests:
-  name: "PR Tests (${{ matrix.lane }}/5)"
+lanes:
+  name: "Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.lanes || 5 }})"
+  needs: ["plan-full"]
   if: >-
-    github.event_name == 'pull_request' &&
-    !contains(github.event.pull_request.labels.*.name, 'ci: full')
+    ${{ !cancelled() && (needs.plan-full.result == 'success' ||
+    (needs.plan-full.result == 'skipped' &&
+    github.event_name == 'pull_request')) }}
   runs-on: ubuntu-latest
   timeout-minutes: *job-timeout
   env:
@@ -2831,7 +2836,7 @@ pr-tests:
   strategy:
     fail-fast: false
     matrix:
-      lane: [1, 2, 3, 4, 5]
+      lane: ${{ fromJSON(needs.plan-full.outputs.matrix || '[1,2,3,4,5]') }}
   steps:
     - name: 📥 Checkout repository
       uses: actions/checkout@v7
@@ -2849,8 +2854,9 @@ pr-tests:
       timeout-minutes: *work-timeout
       run: >-
         deno run -A tasks/ci-lane.ts
-        --lane ${{ matrix.lane }} --of 5
-        --base origin/${{ github.base_ref }}
+        --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.lanes || 5 }}
+        ${{ needs.plan-full.result == 'success' && '--full' ||
+        format('--base origin/{0}', github.base_ref) }}
     - name: 📋 Upload what a failing lane left behind
       if: ${{ failure() }}
       uses: actions/upload-artifact@v7
@@ -2862,8 +2868,8 @@ pr-tests:
       if: always()
       uses: ./.github/actions/test-records-ship
       with:
-        artifact: pr-lane-${{ matrix.lane }}
-        job: PR Tests (${{ matrix.lane }}/5)
+        artifact: lane-${{ matrix.lane }}
+        job: Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.lanes || 5 }})
 ```
 
 The full-depth checkout and the `origin/<base>` spelling are what the
@@ -3017,11 +3023,11 @@ holds its own lane over budget at every count, so a search reading the
 worst lane would stop at the first step and leave every other lane
 packed far tighter than the budget it was given.
 
-A `full-tests` job consumes the integer with `strategy.matrix:
-fromJSON(...)` and runs the same `tasks/ci-lane.ts` with `--full`. The
-build, attestation, coverage and deploy jobs keep their present shape
-and depend on `full-tests` in place of the long dependency lists they
-carry today.
+The lanes job consumes the integer with `strategy.matrix: fromJSON(...)`
+and runs `tasks/ci-lane.ts` with `--full` whenever `plan-full` ran. The
+build, attestation, coverage and deploy jobs keep their present shape and
+depend on the lanes in place of the long dependency lists they carry
+today.
 
 An integer is deliberately the whole of what passes from the planning job
 to the lanes. Each lane reads the same tree against the same manifest and
@@ -3096,8 +3102,8 @@ pull request.
 
 ### Running everything on a pull request
 
-Label a pull request `ci: full` and the same `plan-full` and `full-tests`
-jobs run on it, so opting out of selection runs exactly what `main` runs
+Label a pull request `ci: full` and `plan-full` runs on it, and the lanes
+job runs the full run it counts, so opting out of selection runs exactly what `main` runs
 rather than an approximation of it. A label rather than a phrase in the
 description, because a label can be added and removed without a push and
 re-runs pick it up.
@@ -3106,13 +3112,14 @@ re-runs pick it up.
 never both. Running both would contradict the five-job contract, and it
 would not be an opt-out at all — a pull request could still be blocked by
 the selection path it had just asked to be excused from, which is the
-opposite of what somebody reaching for the label wants. So `pr-tests`
-carries `if: !contains(...)` and the two full-run jobs carry the converse,
-and exactly one path runs.
+opposite of what somebody reaching for the label wants. So `plan-full`
+carries `if: ... || contains(...)`, and the lanes run the full run when it
+ran and the five selected lanes when a pull request skipped it, and exactly
+one path runs.
 
 The cost is that a labelled pull request stops exercising the selection
 path. That is acceptable because the label is rare, `main` exercises the
-lane runner continuously through `full-tests`, and `plan()` — the part
+lane runner continuously through the full run, and `plan()` — the part
 that differs between the two — is a pure function with its own tests and a
 `--dry-run` mode.
 
@@ -3121,11 +3128,11 @@ currently "fail unless every dependency succeeded", and skipped counts as
 not-succeeded. It becomes:
 
 - every dependency is `success` or `skipped`, **and**
-- at least one of `pr-tests` and `full-tests` is `success`.
+- the lanes are `success`.
 
-The second clause is not tidiness. Without it, a state in which both are
-skipped — a mislabelled pull request, a workflow-level condition that
-excludes both, a future edit that gets an `if:` wrong — reports a green
+The second clause is not tidiness. Without it, a state in which the lanes
+are skipped — a `plan-full` that failed, a workflow-level condition that
+excludes them, a future edit that gets an `if:` wrong — reports a green
 `Status` on a pull request that ran no tests at all. That is the one
 failure mode of this whole design that would be silent, so it is asserted
 directly rather than reasoned about.
@@ -3169,8 +3176,8 @@ which tests belong to which set.
 
 ### What moves to `main`, and what happens to coverage
 
-`Status` is a pull-request check and its `needs:` list becomes `pr-tests`
-and `full-tests`, with the two-clause rule above.
+`Status` is a pull-request check and its `needs:` list becomes the lanes,
+with the two-clause rule above.
 
 Repository-wide coverage measurement moves to the full run and stops
 gating; the gate that stays on pull requests is over [measured
@@ -3806,7 +3813,7 @@ is pinned to the commit's date. And if none of that settles it,
 | A fork pull request | Works unchanged. The manifest is world-readable, and the existing member gate decides whether the fork's records ship. |
 | A re-run of one failed lane | Runs the same set, because the manifest is resolved by the commit's date, which no attempt changes. |
 | A lane cannot read the date of the commit it is testing | The lane fails and says why, and so does the job counting the full run's lanes. Reading the date can fail in one lane and not the next, and no other moment is one the lanes are sure to share, so this fails for the reason an unreachable store does. |
-| Both `pr-tests` and `full-tests` skip | `Status` fails. Its second clause requires one of them to have succeeded, so a pull request that ran no tests can never report green. |
+| The lanes skip | `Status` fails. Its second clause requires them to have succeeded, so a pull request that ran no tests can never report green. |
 | A test too flaky for pull requests fails on `main` | The run stays green and the job summary names the failure and its identity. The records are scored as any others, so the failure feeds the share, the dashboard, and the deflake work queue. |
 | A batch on `main` does not account for every identity it was asked to run | The lane fails. Nothing has shown the failures it did record to be the whole of what went wrong, and missing evidence is read as a real failure. |
 | A test too flaky for pull requests genuinely regresses | `main` stays green and the change ships. The regression is found when somebody deflakes the test, or from the reporter's comment where every run failed at the commit and every run passed at its parent. That comment says a bad runner produces the same record. |
@@ -4044,8 +4051,8 @@ is only really proven by running, so it should carry `main` for a while
 before any pull request depends on it. That argument does not survive
 contact with the design, because the design already has the mechanism.
 
-A pull request labelled `ci: full` runs `plan-full` and `full-tests`, the
-same two jobs a push to `main` runs. So the branch can run exactly what
+A pull request labelled `ci: full` runs `plan-full` and the full run of the
+lanes it counts, the same jobs a push to `main` runs. So the branch can run exactly what
 `main` would run, against its own tree, as many times as it takes, before
 anything merges. That is the proof the extra pull request was there to
 buy, and it costs a label.
@@ -4226,7 +4233,7 @@ exercised on the branch on its own.
       JUnit paths, gathers it before any repeat, and combines all records
       into the unmarked lane spool. It also includes `--full`, `--dry-run`,
       and repeats.
-- [x] `deno.yml`: `plan-full` and `full-tests` on push, with the build,
+- [x] `deno.yml`: `plan-full` and the full lanes on push, with the build,
       attestation, coverage and deploy jobs repointed at them. The lane's
       coverage upload carries the whole of the lane's coverage directory
       rather than its `.lcov` files: a measured set the lane saw fail is
@@ -4254,9 +4261,9 @@ exercised on the branch on its own.
 - [x] The post-test checks wait on the lanes rather than on a list of
       test jobs. Each lane is a runner of its own and ships its own
       records, so a check reading the whole run still has to be a job
-      after all of them, but what it waits on is the two lane jobs,
-      `pr-tests` and `full-tests`, rather than a hand-kept copy of a
-      fifteen-job matrix that a new job could be left out of.
+      after all of them, but what it waits on is the one `lanes` job,
+      rather than a hand-kept copy of a fifteen-job matrix that a new job
+      could be left out of.
 - [x] The full run's treatment of a test too flaky for pull requests.
       The count is placed already: `tasks/test-selection/plan.ts` gives
       every mandatory identity the count `executionsFor` returns for its
@@ -4386,9 +4393,9 @@ exercised on the branch on its own.
 
 ### Part three — the pull-request path
 
-- [x] `deno.yml`: five `pr-tests` lanes replace every pull-request job;
-      `Status` depends on `pr-tests` and `full-tests`, with `skipped`
-      counting as success for the latter.
+- [x] `deno.yml`: five lanes replace every pull-request job, run by the
+      same `lanes` job as the full run; `Status` depends on the lanes, and
+      fails where they did not succeed.
 - [x] The `ci: full` label.
 - [x] `coverage-comment.yml` generalized into the reporter, with the
       first-failure attribution, the selected-or-not line, the coverage
@@ -4435,7 +4442,7 @@ exercised on the branch on its own.
       fails, and a change over the cap forces no set, with a line saying
       so, and still scores any set some run measured anyway.
 - [x] The gate's workflow half, which only the lanes can carry. Each
-      `pr-tests` lane uploads what is under its coverage directory as an
+      lane uploads what is under its coverage directory as an
       artifact, `Status` downloads all five into one directory, and
       `Status` runs `deno run -A tasks/coverage-gate.ts --base <merge
       base> --reports <that directory> --body <the pull request's
@@ -4446,11 +4453,11 @@ exercised on the branch on its own.
       baselines name, because it asks git whether the branch contains
       one; a checkout too shallow to answer reports every set as having
       no baseline, which turns the gate off without failing anything.
-- [x] The full run's half of the same, which only the lanes can carry. Each
-      `full-tests` lane uploads its coverage the same way, and the job that
-      writes the run's coverage measurements merges every report for the
-      repository-wide figure and reads each set's report for that set's
-      figure. Both come out of the same reports.
+- [x] The full run's half of the same, which only the lanes can carry.
+      Each lane of the full run uploads its coverage the same way, and the
+      job that writes the run's coverage measurements merges every report
+      for the repository-wide figure and reads each set's report for that
+      set's figure. Both come out of the same reports.
 - [x] That job, `Coverage Report`, writes its measurements into a spool
       named by `CF_TEST_RECORDS_DIR` and ships them from a push through
       `test-records-ship` with `artifact: coverage`, and uploads no

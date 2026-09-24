@@ -47,12 +47,12 @@ Configure merge protection to require `Status`. The GitHub web interface shows
 that check as `CI / Status`, joining the workflow's name to the job's name, but
 merge protection stores and matches the job's name on its own.
 
-`Status` needs `pr-tests` and `full-tests`, and exactly one of them runs: the
-five selected lanes, or the full run the `ci: full` label asks for. Its rule has
-two clauses. Every dependency is `success` or `skipped`, so the path that did
-not run does not fail it. And at least one of the two is `success`, so a pull
-request on which both were skipped — mislabelled, or excluded by an `if:`
-somebody got wrong — fails rather than reporting green over no tests at all.
+`Status` needs the `lanes` job, which runs either the five selected lanes or
+the full run the `ci: full` label asks for. Its rule has two clauses. Every
+dependency is `success` or `skipped`, so nothing that failed or was cancelled
+passes. And the lanes are `success`, so a pull request whose lanes were
+skipped — a `plan-full` that failed, or an `if:` somebody got wrong — fails
+rather than reporting green over no tests at all.
 
 A new test surface adds no job and changes nothing here. It is a suite under
 `tasks/test-topology/`, and the lanes pick it up.
@@ -240,8 +240,8 @@ uses this shape for the shared Deno dependency cache.
 
 ### The Pattern Compile Cache Key
 
-Both lane jobs in `.github/workflows/deno.yml` restore one pattern compile byte
-cache between them, at `COMPILE_CACHE_FILE` in `tasks/ci-capabilities.ts`, which
+The lanes job in `.github/workflows/deno.yml` restores one pattern compile byte
+cache for every lane, at `COMPILE_CACHE_FILE` in `tasks/ci-capabilities.ts`, which
 the `compile-cache` capability points the compiler at for whichever pattern
 suites a lane turns out to run. Its key carries the compiler-input fingerprint. The runtime's version axis is
 `cf/esm-compile/` followed by that same fingerprint, so a compiled document is
@@ -349,8 +349,10 @@ bound.
 
 ## The Lane Shape
 
-Both lane jobs run the same script and differ in two values: whether selection
-is on, and which lane of how many this one is.
+One job runs every lane of both runs, the same script with two values that
+differ: whether selection is on, and which lane of how many this one is.
+`plan-full` decides the first, by running or not: a run it counted is the full
+run, and a pull request it skipped is packed against its merge base.
 
     deno run -A tasks/ci-lane.ts --lane 3 --of 5 --base origin/main
     deno run -A tasks/ci-lane.ts --full --lane 1 --of 58

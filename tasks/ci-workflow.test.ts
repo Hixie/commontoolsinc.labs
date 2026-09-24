@@ -13,9 +13,6 @@ import {
   LANES,
 } from "./test-selection/policy.ts";
 
-/** The jobs that run a lane. */
-const LANE_JOBS = ["pr-tests", "full-tests"];
-
 /** The lane numbers a run of `count` lanes has, as the matrix lists them. */
 function range(count: number): number[] {
   return Array.from({ length: count }, (_, index) => index + 1);
@@ -291,9 +288,8 @@ Deno.test("a lane keeps what it needs to explain a failure", async () => {
   // leaves the reason in that server's log. Neither survives a lane that
   // cleans up after itself, so the lane keeps its working directory when it
   // fails and the job uploads that directory beside the dump.
-  const ci = await workflow("deno.yml");
-  for (const jobId of LANE_JOBS) {
-    const job = jobOf(ci, jobId);
+  const job = jobOf(await workflow("deno.yml"), "lanes");
+  {
     const enable = stepOf(job, "🔧 Enable native crash dumps").run ?? "";
     assertStringIncludes(enable, "ulimit -c unlimited");
     assertStringIncludes(
@@ -311,7 +307,7 @@ Deno.test("a lane keeps what it needs to explain a failure", async () => {
     assert(
       stepIndex(job, "🔧 Enable native crash dumps") <
         stepIndex(job, "🧪 Run the lane"),
-      `${jobId}: the crash pattern must be set before the lane runs`,
+      "the crash pattern must be set before the lane runs",
     );
   }
 });
@@ -320,14 +316,10 @@ Deno.test("Status fails a pull request that ran no tests", async () => {
   const ci = await workflow("deno.yml");
   const gate = jobOf(ci, "status");
 
-  // The two paths, because exactly one of them runs — the five selected
-  // lanes, or the full run the `ci: full` label asks for — and the store half
-  // of the drift guard, which judges the records whichever of them shipped.
-  assertEquals(needsOf(gate).sort(), [
-    "full-tests",
-    "pr-tests",
-    "test-topology-store-check",
-  ]);
+  // The lanes, whichever run they ran — the five selected lanes, or the
+  // full run the `ci: full` label asks for — and the store half of the drift
+  // guard, which judges the records they shipped.
+  assertEquals(needsOf(gate).sort(), ["lanes", "test-topology-store-check"]);
   assertEquals(ci.name, "CI");
   assertEquals(gate.name, "Status");
   assertEquals(
@@ -335,9 +327,9 @@ Deno.test("Status fails a pull request that ran no tests", async () => {
     "${{ always() && github.event_name == 'pull_request' }}",
   );
 
-  // Two clauses. The first lets the path that did not run be skipped. The
-  // second is what stops a pull request on which both were skipped —
-  // mislabelled, or excluded by an `if:` somebody got wrong — reporting
+  // Two clauses. The first fails on any job that failed or was cancelled.
+  // The second is what stops a pull request whose lanes were skipped — a
+  // `plan-full` that failed, or an `if:` somebody got wrong — reporting
   // green over no tests at all, which is the one failure of this design
   // that would otherwise be silent.
   const verify = stepOf(gate, "🔎 Verify pull request jobs");
@@ -347,11 +339,8 @@ Deno.test("Status fails a pull request that ran no tests", async () => {
     script,
     'select(.value.result != "success" and .value.result != "skipped")',
   );
-  assertStringIncludes(
-    script,
-    'select(.key == "pr-tests" or .key == "full-tests")',
-  );
-  assertStringIncludes(script, 'if [[ "$ran" -eq 0 ]]; then');
+  assertStringIncludes(script, "lanes=$(jq -r '.lanes.result'");
+  assertStringIncludes(script, 'if [[ "$lanes" != "success" ]]; then');
 
   // The gate is scored here because this is the only job that sees every
   // lane's coverage, and it works out which sets it covers for itself.
@@ -518,32 +507,21 @@ Deno.test("every lane uploads its coverage, and the joiners read it", async () =
   // one and the jobs that add them up have to name a pattern covering all
   // of them.
   const ci = await workflow("deno.yml");
-  const artifacts = new Map([
-    ["pr-tests", "coverage-pr-lane-${{ matrix.lane }}"],
-    ["full-tests", "coverage-full-lane-${{ matrix.lane }}"],
-  ]);
-  for (const [jobId, artifact] of artifacts) {
-    const upload = stepOf(
-      jobOf(ci, jobId),
-      "📤 Upload the lane's coverage reports",
-    );
-    assertEquals(upload.with?.name, artifact);
-    assertEquals(upload.if, "always()");
-    assertEquals(upload.with?.path, "coverage/lcov");
-  }
+  const upload = stepOf(
+    jobOf(ci, "lanes"),
+    "📤 Upload the lane's coverage reports",
+  );
+  assertEquals(upload.with?.name, "coverage-lane-${{ matrix.lane }}");
+  assertEquals(upload.if, "always()");
+  assertEquals(upload.with?.path, "coverage/lcov");
 
   // Every job that adds the reports up: the gate on a pull request, the
   // figures the default branch publishes, and the release report.
-  const joiners = new Map([
-    ["status", "coverage-*-lane-*"],
-    ["coverage-report", "coverage-full-lane-*"],
-    ["attest-binaries", "coverage-full-lane-*"],
-  ]);
-  for (const [jobId, pattern] of joiners) {
+  for (const jobId of ["status", "coverage-report", "attest-binaries"]) {
     assert(
       (jobOf(ci, jobId).steps ?? []).some((step) =>
         step.uses?.startsWith("actions/download-artifact@") &&
-        step.with?.pattern === pattern
+        step.with?.pattern === "coverage-lane-*"
       ),
       `${jobId} must download the lanes' coverage`,
     );
@@ -551,33 +529,47 @@ Deno.test("every lane uploads its coverage, and the joiners read it", async () =
 });
 
 Deno.test("the workflow spells the dials the packer reads", async () => {
-  // Three numbers and one string decide which of the two paths a pull
+  // Three numbers and one string decide which of the two runs a pull
   // request takes and how it divides. They live in
   // `tasks/test-selection/policy.ts`, and the workflow writes them out
   // because a GitHub expression cannot read a TypeScript constant. That
   // is the whole reason this test exists: without it a dial moves and
   // the workflow goes on spelling the old value.
   const ci = await workflow("deno.yml");
-  const pr = jobOf(ci, "pr-tests");
+  const lanes = jobOf(ci, "lanes");
 
+  // A pull request `plan-full` skipped runs `LANES` lanes, which is what the
+  // expressions give where it counted none.
+  const count = `\${{ needs.plan-full.outputs.lanes || ${LANES} }}`;
   assertEquals(
-    (pr.strategy?.matrix as { lane?: unknown })?.lane,
-    range(LANES),
+    (lanes.strategy?.matrix as { lane?: unknown })?.lane,
+    `\${{ fromJSON(needs.plan-full.outputs.matrix || '${
+      JSON.stringify(range(LANES))
+    }') }}`,
+  );
+  assertEquals(lanes.name, `Tests (\${{ matrix.lane }}/${count})`);
+  const run = stepOf(lanes, "🧪 Run the lane").run ?? "";
+  assertStringIncludes(run, `--lane \${{ matrix.lane }} --of ${count}`);
+
+  // The full run is the run `plan-full` counted, and any other run is a pull
+  // request measured against its base.
+  assertStringIncludes(
+    run,
+    "${{ needs.plan-full.result == 'success' && '--full' || " +
+      "format('--base origin/{0}', github.base_ref) }}",
   );
   assertStringIncludes(
-    stepOf(pr, "🧪 Run the lane").run ?? "",
-    `--lane \${{ matrix.lane }} --of ${LANES}`,
+    lanes.if ?? "",
+    "(needs.plan-full.result == 'skipped' && " +
+      "github.event_name == 'pull_request')",
   );
-  assertEquals(pr.name, `PR Tests (\${{ matrix.lane }}/${LANES})`);
 
-  // Exactly one of the two paths runs, and both `if:` conditions name
-  // the label by the same string the selection tooling does.
-  for (const jobId of ["plan-full", "pr-tests"]) {
-    assertStringIncludes(
-      jobOf(ci, jobId).if ?? "",
-      `contains(github.event.pull_request.labels.*.name, '${FULL_RUN_LABEL}')`,
-    );
-  }
+  // Which of the two a pull request takes, `plan-full` decides, naming the
+  // label by the same string the selection tooling does.
+  assertStringIncludes(
+    jobOf(ci, "plan-full").if ?? "",
+    `contains(github.event.pull_request.labels.*.name, '${FULL_RUN_LABEL}')`,
+  );
 
   // A run replays the payload it was created with, so a label reaches
   // the `if:` above only when a label change starts a run of its own.
@@ -618,15 +610,11 @@ Deno.test("a lane's checkout keeps no credential", async () => {
   // A lane runs whatever the change under test put in the tree, and a
   // checkout that persisted its token leaves it in `.git/config` for any
   // of that to read. Nothing in a lane talks to the remote.
-  const ci = await workflow("deno.yml");
-  for (const jobId of LANE_JOBS) {
-    assertEquals(
-      stepOf(jobOf(ci, jobId), "📥 Checkout repository").with
-        ?.["persist-credentials"],
-      false,
-      `${jobId} keeps a credential in its checkout`,
-    );
-  }
+  const lanes = jobOf(await workflow("deno.yml"), "lanes");
+  assertEquals(
+    stepOf(lanes, "📥 Checkout repository").with?.["persist-credentials"],
+    false,
+  );
 });
 
 Deno.test("a lane keeps binaries and compiled bytes under different keys", async () => {
@@ -637,56 +625,45 @@ Deno.test("a lane keeps binaries and compiled bytes under different keys", async
   // under the compiler fingerprint, so a stale entry is a miss rather than a
   // wrong answer, and seeding from an older entry is what lets a commit reuse
   // what the previous one compiled.
-  const ci = await workflow("deno.yml");
-  const caches = LANE_JOBS.map((jobId) => {
-    const job = jobOf(ci, jobId);
-    const binaries = stepOf(
-      job,
-      "♻️ Restore the binaries the lane built last time",
-    );
-    assert(binaries.uses?.startsWith("actions/cache@"));
-    assert(
-      binaries.with?.["restore-keys"] === undefined,
-      `${jobId}: the binary cache must not restore from a prefix`,
-    );
-    assertEquals(binaries.with?.path, BINARY_CACHE_DIR);
-    assertEquals(
-      binaries.with?.key,
-      "ci-lane-binaries-${{ steps.lane-cache-key.outputs.binaries }}",
-    );
-    const bytes = stepOf(
-      job,
-      "♻️ Restore the pattern bytes the lane compiled last time",
-    );
-    // The binary key is the digest of what the build reads, which
-    // `tasks/build-binaries.test.ts` holds `BINARY_SOURCES` to, rather than a
-    // list of globs here that a new kind of input could fall outside.
-    assertStringIncludes(
-      stepOf(job, "🧮 Resolve what the lane's caches are keyed on").run ?? "",
-      "tasks/binary-cache-key.ts",
-    );
-    return { binaries: binaries.with, bytes: bytes.with };
-  });
-  // The lanes cannot drift into caching against different sources.
-  for (const other of caches.slice(1)) assertEquals(other, caches[0]);
+  const lanes = jobOf(await workflow("deno.yml"), "lanes");
+  const binaries = stepOf(
+    lanes,
+    "♻️ Restore the binaries the lane built last time",
+  );
+  assert(binaries.uses?.startsWith("actions/cache@"));
+  assert(
+    binaries.with?.["restore-keys"] === undefined,
+    "the binary cache must not restore from a prefix",
+  );
+  assertEquals(binaries.with?.path, BINARY_CACHE_DIR);
+  assertEquals(
+    binaries.with?.key,
+    "ci-lane-binaries-${{ steps.lane-cache-key.outputs.binaries }}",
+  );
+  stepOf(lanes, "♻️ Restore the pattern bytes the lane compiled last time");
+  // The binary key is the digest of what the build reads, which
+  // `tasks/build-binaries.test.ts` holds `BINARY_SOURCES` to, rather than a
+  // list of globs here that a new kind of input could fall outside.
+  assertStringIncludes(
+    stepOf(lanes, "🧮 Resolve what the lane's caches are keyed on").run ?? "",
+    "tasks/binary-cache-key.ts",
+  );
 
   // Neither key calls `hashFiles()` itself. The cache action evaluates its key
   // again for the post-job save, after the lane has filled the checkout, and a
   // key over the whole workspace would walk all of it a second time; both are
   // resolved in a step before the lane runs. One entry per lane per commit
   // would outgrow the repository's cache, so no key names the lane either.
-  for (const jobId of LANE_JOBS) {
-    for (const step of jobOf(ci, jobId).steps ?? []) {
-      const key = String(step.with?.key ?? "");
-      assert(
-        !key.includes("hashFiles("),
-        `${jobId}: a lane cache key walks the checkout at its post-job save`,
-      );
-      assert(
-        !key.includes("matrix.lane"),
-        `${jobId}: one cache entry per lane per commit outgrows the cache`,
-      );
-    }
+  for (const step of lanes.steps ?? []) {
+    const key = String(step.with?.key ?? "");
+    assert(
+      !key.includes("hashFiles("),
+      "a lane cache key walks the checkout at its post-job save",
+    );
+    assert(
+      !key.includes("matrix.lane"),
+      "one cache entry per lane per commit outgrows the cache",
+    );
   }
 });
 
@@ -1152,7 +1129,7 @@ Deno.test("every test-records artifact name is store-safe and unique", async () 
   }
   // The count pins the search itself: zero found steps would mean the
   // extraction broke, not that the repository stopped shipping records.
-  assert(shipSteps >= 2, `only ${shipSteps} ship steps found`);
+  assert(shipSteps > 0, "no ship step found");
 });
 
 Deno.test("the lanes ship records and the workflow knows no suite", async () => {
@@ -1162,20 +1139,20 @@ Deno.test("the lanes ship records and the workflow knows no suite", async () => 
   // variant could not represent it; the lane runner gathers each batch's
   // records as it finishes and applies that suite's own variant there.
   const ci = await workflow("deno.yml");
-  for (const jobId of LANE_JOBS) {
-    const job = jobOf(ci, jobId);
+  const lanes = jobOf(ci, "lanes");
+  assert(
+    typeof lanes.env?.CF_TEST_RECORDS_DIR === "string",
+    "the lanes run tests without a spool directory",
+  );
+  const ship = stepOf(lanes, "📤 Ship test records");
+  assertEquals(ship.if, "always()");
+  // The job a record names is the one the lane ran in.
+  assertEquals(ship.with?.job, lanes.name);
+  for (const input of ["variant", "junit", "shard"]) {
     assert(
-      typeof job.env?.CF_TEST_RECORDS_DIR === "string",
-      `${jobId}: runs tests without a spool directory`,
+      ship.with?.[input] === undefined,
+      `the ship step names a ${input}`,
     );
-    const ship = stepOf(job, "📤 Ship test records");
-    assertEquals(ship.if, "always()");
-    for (const input of ["variant", "junit", "shard"]) {
-      assert(
-        ship.with?.[input] === undefined,
-        `${jobId}: the ship step names a ${input}`,
-      );
-    }
   }
   assert(
     !names(ci, "--junit-path="),
@@ -1256,10 +1233,10 @@ Deno.test("the run in tomorrow's order runs the full lanes and ships nothing", a
     ),
     "a called run does not run the full lanes",
   );
-  assert(
-    ci.jobs["pr-tests"].if?.startsWith(
-      "github.event_name == 'pull_request' &&",
-    ),
+  assertStringIncludes(
+    ci.jobs.lanes.if ?? "",
+    "(needs.plan-full.result == 'skipped' && " +
+      "github.event_name == 'pull_request')",
     "a called run runs the selected lanes",
   );
 
@@ -1323,11 +1300,10 @@ Deno.test("the store half of the drift guard reads every lane's records", async 
 
   // An identity is claimed by the suite that would run it, so a record
   // artifact this job does not see is a surface it cannot hold the topology
-  // to. It therefore waits for every job that ships records — the lane
-  // jobs and nothing else — and downloads them by the prefix the ship step
-  // names them under.
-  // A job shipping the run's coverage measurements alone ships no test's
-  // record, so its artifact holds nothing to hold the topology to.
+  // to. It therefore waits for every job that ships records — the lanes and
+  // nothing else — and downloads them by the prefix the ship step names them
+  // under. A job shipping the run's coverage measurements alone ships no
+  // test's record, so its artifact holds nothing to hold the topology to.
   const shippers = Object.entries(ci.jobs)
     .filter(([, candidate]) =>
       (candidate.steps ?? []).some((step) =>
@@ -1336,7 +1312,7 @@ Deno.test("the store half of the drift guard reads every lane's records", async 
       )
     )
     .map(([id]) => id);
-  assertEquals(shippers.sort(), [...LANE_JOBS].sort());
+  assertEquals(shippers, ["lanes"]);
   assertEquals(needsOf(job).sort(), shippers);
   assert(
     (job.steps ?? []).some((step) => step.with?.pattern === "test-records-*"),

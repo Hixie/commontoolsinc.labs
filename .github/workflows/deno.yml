@@ -93,17 +93,20 @@ env:
 # wedged step normally reaches its bound first; the job bound remains the final
 # limit when several sequential steps take unusually long.
 # tasks/ci-workflow.test.ts holds every work step here to that shape, and
-# refuses a bound written as anything but an alias.
+# refuses a bound that is not one of the `*_TIMEOUT_MINUTES` declared above.
 #
 # The deploy jobs at the end carry no bound. Each hands the work to a script
 # that lives elsewhere, and how long that takes is not this workflow's to say.
 jobs:
   # ---------------------------------------------------------------------------
-  # The full run. A push to main runs every test the topology holds, and a pull
-  # request labelled "ci: full" runs the same two jobs against its own tree, so
-  # opting out of selection runs exactly what main runs rather than an
-  # approximation of it. How many lanes that takes depends on how much work the
-  # tree holds, which is why one job works the number out first.
+  # The lanes. One job runs every lane of every run, so what a pull request's
+  # lanes do and what the default branch's do cannot come apart. Two runs share
+  # it. A push to main runs every test the topology holds, and so does a pull
+  # request labelled "ci: full", so opting out of selection runs exactly what
+  # main runs rather than an approximation of it; how many lanes that takes
+  # depends on how much work the tree holds, which is why `plan-full` works the
+  # number out first. Any other pull request skips that job and runs the five
+  # lanes selection packs against the merge base.
   # ---------------------------------------------------------------------------
   plan-full:
     name: "Plan Full Run"
@@ -146,9 +149,15 @@ jobs:
           printf 'matrix=%s\n' "$(seq "$lanes" | jq -sc .)" >> "$GITHUB_OUTPUT"
           printf 'The full run takes %s lanes.\n' "$lanes" >> "$GITHUB_STEP_SUMMARY"
 
-  full-tests:
-    name: "Full Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.lanes }})"
+  lanes:
+    name: "Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.lanes || 5 }})"
+    # A run `plan-full` counted is the full run; a pull request it skipped runs
+    # the five selected lanes.
     needs: ["plan-full"]
+    if: >-
+      ${{ !cancelled() && (needs.plan-full.result == 'success' ||
+      (needs.plan-full.result == 'skipped' &&
+      github.event_name == 'pull_request')) }}
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     env:
@@ -158,12 +167,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(needs.plan-full.outputs.matrix) }}
+        lane: ${{ fromJSON(needs.plan-full.outputs.matrix || '[1,2,3,4,5]') }}
     steps:
-      # Full depth, so the gates that read the revision a change is measured
-      # against have it, and so the suites that replay a recorded vintage do.
-      # Nothing in a lane talks to the remote, so the checkout keeps no
-      # credential for anything a lane runs to find.
+      # Full depth, so a pull request's lanes can diff against the merge base,
+      # the gates that read the revision a change is measured against have it,
+      # and the suites that replay a recorded vintage do. Nothing in a lane
+      # talks to the remote, so the checkout keeps no credential for anything
+      # a lane runs to find.
       - name: 📥 Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -219,7 +229,7 @@ jobs:
 
       - name: ♻️ Restore the binaries the lane built last time
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with: &lane-binary-cache
+        with:
           path: .ci-cache/binaries
           key: ci-lane-binaries-${{ steps.lane-cache-key.outputs.binaries }}
 
@@ -230,7 +240,7 @@ jobs:
       # drops them, so a commit seeds from the newest entry its compiler wrote.
       - name: ♻️ Restore the pattern bytes the lane compiled last time
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with: &lane-compile-cache
+        with:
           path: .ci-cache/compile/lane.json
           key: >-
             cc-lane-${{ steps.compile-cache-key.outputs.fingerprint }}-${{
@@ -255,9 +265,13 @@ jobs:
           TEST_RECORDS_BUCKET: ${{ vars.TEST_RECORDS_BUCKET }}
           TEST_RECORDS_PREFIX: ${{ vars.TEST_RECORDS_PREFIX }}
           TEST_SELECTION_PREFIX: ${{ vars.TEST_SELECTION_PREFIX }}
+        # The full run packs every test the tree holds; a pull request's run
+        # selects from what the change reaches, measured against its base.
         run: >-
-          deno run -A tasks/ci-lane.ts --full
-          --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.lanes }}
+          deno run -A tasks/ci-lane.ts
+          --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.lanes || 5 }}
+          ${{ needs.plan-full.result == 'success' && '--full' ||
+          format('--base origin/{0}', github.base_ref) }}
 
       # What a failing lane left behind: a server's log, a restored binary's
       # output, and a native crash dump. The lane keeps its own working
@@ -277,7 +291,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-full-lane-${{ matrix.lane }}
+          name: coverage-lane-${{ matrix.lane }}
           path: coverage/lcov
           retention-days: 90
           # A lane that ran nothing measurable writes no report, which is an
@@ -288,133 +302,8 @@ jobs:
         if: always()
         uses: ./.github/actions/test-records-ship
         with:
-          artifact: full-lane-${{ matrix.lane }}
-          job: Full Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.lanes }})
-
-  # ---------------------------------------------------------------------------
-  # The pull-request run. Five lanes, and nothing else, unless the pull request
-  # carries the "ci: full" label — in which case the two jobs above run instead
-  # and these do not. One or the other, never both: running both would mean a
-  # pull request could still be blocked by the selection path it had just asked
-  # to be excused from.
-  # ---------------------------------------------------------------------------
-  pr-tests:
-    name: "PR Tests (${{ matrix.lane }}/5)"
-    if: >-
-      github.event_name == 'pull_request' &&
-      !contains(github.event.pull_request.labels.*.name, 'ci: full')
-    runs-on: ubuntu-latest
-    timeout-minutes: *job-timeout
-    env:
-      CF_TEST_RECORDS_DIR: ${{ github.workspace }}/test-records-spool
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        lane: [1, 2, 3, 4, 5]
-    steps:
-      # Full depth and the origin/<base> spelling are what it takes to diff
-      # against the merge base.
-      - name: 📥 Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: 🦕 Setup Deno
-        uses: ./.github/actions/deno-setup
-
-      - name: 🔍 Verify lock file & install dependencies
-        uses: ./.github/actions/deno-install
-
-      # What the two caches are keyed on, fixed before the lane writes
-      # anything. The cache action evaluates its key again for its post-job
-      # save, and a `hashFiles()` written into the key would walk the checkout
-      # a second time after the lane had filled it; "Cache Keys And Post-Job
-      # Saves" in docs/development/CI_PERFORMANCE.md has the reason.
-      - name: 🧮 Resolve what the lane's caches are keyed on
-        id: lane-cache-key
-        env:
-          PATTERN_SOURCES: >-
-            ${{ hashFiles('packages/patterns/**/*.ts',
-            'packages/patterns/**/*.tsx', 'packages/generated-patterns/**/*.ts',
-            'packages/connectors/**/*.ts', 'packages/connectors/**/*.tsx') }}
-        run: |
-          set -euo pipefail
-          binaries=$(deno run --allow-read --allow-run=git tasks/binary-cache-key.ts)
-          printf 'binaries=%s\n' "$binaries" >> "$GITHUB_OUTPUT"
-          printf 'patterns=%s\n' "$PATTERN_SOURCES" >> "$GITHUB_OUTPUT"
-
-      - name: 🧮 Resolve the compiler fingerprint
-        id: compile-cache-key
-        uses: ./.github/actions/compile-cache-key
-
-      - name: ♻️ Restore the binaries the lane built last time
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with: *lane-binary-cache
-
-      - name: ♻️ Restore the pattern bytes the lane compiled last time
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with: *lane-compile-cache
-
-      # `deno lint` has crashed natively here before, and a stack from the
-      # dump is what says where. The pattern is a property of the machine
-      # rather than of any one suite, so it is set for whatever the lane
-      # turns out to run.
-      - name: 🔧 Enable native crash dumps
-        shell: bash
-        run: |
-          ulimit -c unlimited
-          sudo sysctl -w kernel.core_pattern="$GITHUB_WORKSPACE/deno-core.%p"
-
-      - name: 🧪 Run the lane
-        timeout-minutes: *work-timeout
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TEST_RECORDS_BUCKET: ${{ vars.TEST_RECORDS_BUCKET }}
-          TEST_RECORDS_PREFIX: ${{ vars.TEST_RECORDS_PREFIX }}
-          TEST_SELECTION_PREFIX: ${{ vars.TEST_SELECTION_PREFIX }}
-        run: >-
-          deno run -A tasks/ci-lane.ts
-          --lane ${{ matrix.lane }} --of 5
-          --base origin/${{ github.base_ref }}
-
-      # What a failing lane left behind: a server's log, a restored binary's
-      # output, and a native crash dump. The lane keeps its own working
-      # directory when it fails, and removes it when it passes.
-      - name: 📋 Upload what a failing lane left behind
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lane-failure-${{ github.job }}-${{ matrix.lane }}-a${{ github.run_attempt }}
-          path: |
-            deno-core.*
-            ${{ runner.temp }}/ci-lane-*
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: 📤 Upload the lane's coverage reports
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-pr-lane-${{ matrix.lane }}
-          path: coverage/lcov
-          retention-days: 90
-          if-no-files-found: ignore
-
-      # The ship step carries neither a variant nor a JUnit specification,
-      # which is the last piece of per-suite knowledge to leave this
-      # workflow. A lane may hold default and non-default batches at once, so
-      # a job-wide variant could not represent it; the lane runner gathers
-      # each batch's records as it finishes and applies the suite's own
-      # variant there.
-      - name: 📤 Ship test records
-        if: always()
-        uses: ./.github/actions/test-records-ship
-        with:
-          artifact: pr-lane-${{ matrix.lane }}
-          job: PR Tests (${{ matrix.lane }}/5)
+          artifact: lane-${{ matrix.lane }}
+          job: Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.lanes || 5 }})
 
   # ---------------------------------------------------------------------------
   # The binaries a release is made of. The lanes compile each of these as a
@@ -531,7 +420,7 @@ jobs:
   coverage-report:
     name: "Coverage Report"
     if: github.event_name == 'push'
-    needs: ["full-tests"]
+    needs: ["lanes"]
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     permissions:
@@ -553,7 +442,7 @@ jobs:
       - name: 📥 Download the lanes' coverage reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: coverage-full-lane-*
+          pattern: coverage-lane-*
           path: coverage-artifacts
           merge-multiple: false
           skip-decompress: false
@@ -591,11 +480,10 @@ jobs:
   #
   # It runs on a pull request as well as on the default branch, because the
   # change that introduces this drift is the change to a suite, a runner, or a
-  # test's name, and that change has a run of its own. Exactly one of the two
-  # lane jobs runs, so the other is always skipped, and `!cancelled()` is what
-  # keeps a skipped dependency from skipping this job with it. A lane that
-  # failed still shipped its records, and they are as good a test of the
-  # topology as a passing lane's.
+  # test's name, and that change has a run of its own. `!cancelled()` is what
+  # keeps a failed lane from skipping this job: a lane that failed still
+  # shipped its records, and they are as good a test of the topology as a
+  # passing lane's.
   test-topology-store-check:
     name: "Test Topology Store Check"
     if: >-
@@ -603,9 +491,7 @@ jobs:
       (github.event_name == 'push' && github.ref_name == 'main'))
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
-    needs:
-      - pr-tests
-      - full-tests
+    needs: ["lanes"]
     permissions:
       contents: read
       actions: read
@@ -642,8 +528,7 @@ jobs:
     name: "Status"
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs:
-      - pr-tests
-      - full-tests
+      - lanes
       - test-topology-store-check
     permissions:
       contents: read
@@ -670,15 +555,15 @@ jobs:
       - name: 📥 Download the lanes' coverage reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: coverage-*-lane-*
+          pattern: coverage-lane-*
           path: coverage-artifacts
           merge-multiple: false
 
       # Two clauses rather than one. "Every dependency succeeded or skipped"
       # on its own reports green on a pull request that ran no tests at all —
-      # a mislabelled pull request, or an `if:` that excludes both paths —
-      # and that is the one failure of this design that would otherwise be
-      # silent, so it is asserted directly.
+      # a `plan-full` that failed, or an `if:` somebody got wrong, skips the
+      # lanes — and that is the one failure of this design that would
+      # otherwise be silent, so it is asserted directly.
       - name: 🔎 Verify pull request jobs
         timeout-minutes: *work-timeout
         env:
@@ -695,15 +580,9 @@ jobs:
             exit 1
           fi
 
-          ran=$(jq -r '
-            [to_entries[]
-             | select(.key == "pr-tests" or .key == "full-tests")
-             | select(.value.result == "success")]
-            | length
-          ' <<< "$JOB_RESULTS")
-
-          if [[ "$ran" -eq 0 ]]; then
-            printf 'Neither pr-tests nor full-tests ran this pull request.\n'
+          lanes=$(jq -r '.lanes.result' <<< "$JOB_RESULTS")
+          if [[ "$lanes" != "success" ]]; then
+            printf 'The lanes did not run this pull request: %s.\n' "$lanes"
             exit 1
           fi
 
@@ -760,7 +639,7 @@ jobs:
     # the lane names each such failure instead.
     needs:
       [
-        "full-tests",
+        "lanes",
         "build-toolshed",
         "build-cf",
       ]
@@ -798,7 +677,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: coverage-full-lane-*
+          pattern: coverage-lane-*
           path: coverage-artifacts
 
       - name: 🧬 Combine coverage LCOV
@@ -978,7 +857,7 @@ jobs:
   deploy-shell-staging:
     name: "Deploy Shell to Staging"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: ["full-tests"]
+    needs: ["lanes"]
     runs-on: ubuntu-latest
     environment: ci
     steps:

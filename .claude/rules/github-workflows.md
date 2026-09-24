@@ -70,8 +70,8 @@ fingerprint first, in a setup step that uses the
 call instead puts a second description of `COMPILE_FINGERPRINT_INPUTS` in this
 file, and the two drift. A lane points the compiler at `COMPILE_CACHE_FILE` in
 `tasks/ci-capabilities.ts` through its `compile-cache` capability rather than
-naming the file here, so both lane jobs resolve the fingerprint whatever they
-turn out to run.
+naming the file here, so the lanes job resolves the fingerprint whatever its
+lanes turn out to run.
 
 The binaries a lane builds sit beside those bytes and want the opposite key. A
 capability uses a binary it finds without asking what it was built from, so
@@ -87,8 +87,10 @@ Compile Cache Key" in `docs/development/CI_PERFORMANCE.md` has the rest.
 
 ## Adding a test surface is not a workflow edit
 
-A pull request runs five `pr-tests` lanes and a push runs one `full-tests` lane
-per share of the corpus, and both run the same script. Which tests each of them
+One `lanes` job runs every lane: five on a pull request, and one per share of
+the corpus on a push or a pull request labelled `ci: full`, all running the
+same script. It is one job rather than one per run so that what a pull
+request's lanes do and what the default branch's do cannot come apart. Which tests each of them
 runs comes from `tasks/test-topology.ts` and the manifest, so a new test
 surface is a suite under `tasks/test-topology/` and never a job here. `deno task
 check-test-topology` fails on a test file no suite accounts for, and on a step
@@ -102,10 +104,10 @@ arm, a skip list — and fails on any of them.
 
 ## A workflow that runs tests ships test records
 
-The two lane jobs set `CF_TEST_RECORDS_DIR` to a workspace spool and end with a
+The lanes job sets `CF_TEST_RECORDS_DIR` to a workspace spool and ends with a
 `📤 Ship test records` step using the `./.github/actions/test-records-ship`
 composite action, `if: always()`, with the job's display name and its lane
-number in `artifact:`. Neither carries a `variant:` or a `junit:` input: a lane
+number in `artifact:`. It carries no `variant:` or `junit:` input: a lane
 may hold default and non-default batches at once, so a job-wide variant could
 not represent it, and the lane runner gathers each batch's records as it
 finishes and applies that suite's own variant there. The contract is
