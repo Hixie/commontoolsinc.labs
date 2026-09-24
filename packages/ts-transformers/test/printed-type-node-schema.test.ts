@@ -6,6 +6,7 @@ import { COMMONFABRIC_TYPES } from "./commonfabric-test-types.ts";
 import {
   callSchemas,
   callsNamed,
+  collect,
   literalToValue,
   parseModule,
   patternSchemas,
@@ -181,6 +182,81 @@ export default pattern<{ n: number }>(({ n }) => ({
   });
 
   describe("a type the checker will not print", () => {
+    for (
+      const [item, itemSchema] of [
+        ["string", { type: "string" }],
+        ["unknown", { type: "unknown" }],
+        ["Writable<{ title: string }>", {
+          type: "object",
+          properties: { title: { type: "string" } },
+          required: ["title"],
+          asCell: ["cell"],
+        }],
+      ] as const
+    ) {
+      for (
+        const resource of [
+          `Default<${item}[], []>`,
+          `${item}[] | Default<[]>`,
+        ]
+      ) {
+        it(`injects the resource schema for a contextual wish of \`${resource}\``, async () => {
+          const output = await transformSource(
+            `import { type Default, type Writable, wish, type WishState } from "commonfabric";
+export default function contextualWish() {
+  const contextual: WishState<${resource}> = wish({ query: "#items" });
+  return contextual;
+}`,
+            { types: COMMONFABRIC_TYPES, typeCheck: true },
+          );
+          const expected = { type: "array", items: itemSchema, default: [] };
+
+          expect(callSchemas(parseModule(output), "wish")).toEqual([expected]);
+        });
+      }
+    }
+
+    for (
+      const resource of ["Default<string[], []>", "string[] | Default<[]>"]
+    ) {
+      it(`injects the contextual \`${resource}\` schema on \`Cell.for()\``, async () => {
+        const output = await transformSource(
+          `import { Cell, type Default, type Writable } from "commonfabric";
+export default function contextualCell() {
+  const cell: Writable<${resource}> = Cell.for("items");
+  return cell;
+}`,
+          { types: COMMONFABRIC_TYPES, typeCheck: true },
+        );
+
+        expect(callSchemas(parseModule(output), "asSchema")).toEqual([{
+          type: "array",
+          items: { type: "string" },
+          default: [],
+        }]);
+      });
+
+      it(`injects the contextual \`${resource}\` schema and user scope on \`new Writable()\``, async () => {
+        const output = await transformSource(
+          `import { type Default, type PerUser, Writable } from "commonfabric";
+export default function contextualCell() {
+  const cell: PerUser<Writable<${resource}>> = new Writable();
+  return cell;
+}`,
+          { types: COMMONFABRIC_TYPES, typeCheck: true },
+        );
+        const [cell] = collect(parseModule(output), ts.isNewExpression);
+
+        expect(cell!.arguments).toHaveLength(2);
+        expect(literalToValue(cell!.arguments![1]!)).toEqual({
+          type: "array",
+          items: { type: "string" },
+          default: [],
+          scope: "user",
+        });
+      });
+    }
+
     it("reads an array of cells with an empty default by its type", async () => {
       const [, result] = await liftSchemas(
         `${IMPORTS}interface Item { title: string; attachments: Writable<any>[] | Default<[]>; }

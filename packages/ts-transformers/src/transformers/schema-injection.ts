@@ -35,6 +35,7 @@ import {
   namesValueBinding,
   type PreservedBindingType,
   reportUnknownReactiveType,
+  typeToTypeNodeWithRegistry,
 } from "../ast/type-building.ts";
 import {
   type CapabilityParamSummary,
@@ -876,13 +877,20 @@ function typeToInjectableSchemaTypeNode(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
   factory: ts.NodeFactory,
+  typeRegistry: TypeRegistry | undefined,
   state: CrossStageState | undefined,
 ): ts.TypeNode | undefined {
   if (!type) return undefined;
   if (isUnresolvedSchemaType(type)) {
     return createUnknownSchemaTypeNode(factory);
   }
-  return typeToSchemaTypeNode(type, checker, sourceFile, state);
+  // `printedFrom` retains the type behind the placeholder when the checker
+  // cannot print its expanded brands, so schema generation reads that type.
+  return typeToTypeNodeWithRegistry(
+    type,
+    { checker, factory, sourceFile, state },
+    typeRegistry,
+  );
 }
 
 function normalizeSchemaInjectionTypeNode(
@@ -1165,6 +1173,7 @@ function resolveInjectableSchemaType(
       checker,
       sourceFile,
       factory,
+      typeRegistry,
       state,
     ),
     type: inferredType,
