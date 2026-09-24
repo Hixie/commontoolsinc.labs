@@ -38,9 +38,10 @@ somebody stopped. A step that runs past the bound on the step fails, and the
 job fails with it.
 
 Both aliases point at YAML anchors declared in the `env:` block at the top of
-the file, which is where the minutes themselves are written. Add a work step
-and you add the alias, not a number; a job that needs its own bound adds a pair
-of anchors there.
+the file, as `WORK_TIMEOUT_MINUTES` and `JOB_TIMEOUT_MINUTES`, which is where
+the minutes themselves are written. Add a work step and you add the alias, not a
+number; a job that needs its own bound adds a pair of `*_TIMEOUT_MINUTES`
+anchors there.
 
 That bound is a backstop and not a schedule, which is what keeps it at one pair
 for the whole file. The lanes are the job with a schedule of their own: each is
@@ -53,10 +54,11 @@ as nobody's fault, where a failed step names itself.
 
 The deploy jobs are the exception and carry no bound, because a deploy's
 duration is set by a script in another repository. `tasks/ci-workflow.test.ts`
-names those and holds every other job to the shape: it fails when a bound is
-missing, when it is written as a number rather than an alias, when a step's
-anchor is fewer than ten minutes below its job's, or when the work anchor drops
-to within a lane's packed bound of that bound.
+names those and holds every other job to the shape, reading the parsed
+workflow: it fails when a bound is missing, when it is not one of the
+`*_TIMEOUT_MINUTES` values the `env:` block declares, when a step's bound is
+fewer than ten minutes below its job's, or when the work bound drops to within a
+lane's packed bound of that bound.
 
 ## A compile cache is keyed on a resolved fingerprint, never on `hashFiles`
 
