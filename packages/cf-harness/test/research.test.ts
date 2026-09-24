@@ -1978,7 +1978,7 @@ describe("research", () => {
       });
     });
 
-    it("carries exact reads when final JSON is malformed", async () => {
+    it("carries exact reads when final JSON stays malformed after its re-ask", async () => {
       const corpus = corpusWith([{
         path: "docs/api.md",
         heading: "Contract",
@@ -1992,6 +1992,7 @@ describe("research", () => {
             input: { sectionId: "section-0" },
           }]),
         () => assistant("not json"),
+        () => assistant("still not json"),
       ]);
 
       let failure: HarnessResearchError | undefined;
@@ -2010,6 +2011,11 @@ describe("research", () => {
       expect(failure.name).toBe("HarnessResearchError");
       expect(Object.keys(failure)).toEqual([]);
       expect(failure?.message).toContain("not valid JSON");
+      expect(model.requests).toHaveLength(3);
+      expect(model.requests[2].tools).toEqual([]);
+      expect(model.requests[2].transcript.at(-1)?.content).toContain(
+        "JSON repair turn",
+      );
       expect(failure?.record.sourceReads).toHaveLength(1);
       expect(
         failure?.record.messages.filter((message) => message.role === "tool"),
