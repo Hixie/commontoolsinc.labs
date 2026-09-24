@@ -86,7 +86,7 @@ lines belong in the files inside. The same rename applies to every variant.
   non-interactive shells, a harness nothing here knows — puts the variable
   in whatever starts the agent.
 - `CF_TEST_SKIP_LIST` — a file naming the tests this invocation is not to
-  run, keyed by registering file and by name. The registration preload
+  run, keyed by test file and by name. The registration preload
   reads it and registers a listed test as ignored rather than dropping it,
   so a skipped test appears in the report as skipped instead of
   disappearing. An identity the file does not name runs, so a test added
@@ -351,7 +351,7 @@ spells that flag; Deno resolves `--preload` as a path rather than through
 the import map, so it must be absolute and no caller writes it out.
 
 The preload does two things, and it only installs itself when it has one
-of them to do: it captures the file each test was registered from and
+of them to do: it captures the test file each test belongs to and
 leaves the map in the spool, and it applies `CF_TEST_SKIP_LIST`. Wrapping
 `Deno.test` costs a JUnit report the file attribution it carries on its
 own, so a process with nothing to skip and no spool it may write leaves
@@ -417,13 +417,20 @@ What a class name reaches is the test file that registered the test
 itself. A module of ours that registers on a file's behalf — a fixture
 runner handed a directory of cases, a harness that replaces `Deno.test`
 to give each test a clock — is the nearest frame below the runner, so
-the class names it instead. Such a module goes in two places: it calls
-`registerFrameworkModule(import.meta.url)`, so the preload's map names
-the file that asked, and its path tail goes in
+the class names it instead. Such a module's path tail goes in
 `MACHINERY_MODULE_SUFFIXES`, so ingestion declines the class name rather
-than recording the module as every test's file. Missing from the first,
-it takes the map; missing from the second, it takes the report. A
-surface that registers this way and cannot write a map records no file.
+than recording the module as every test's file, and takes the file from
+the preload's map. A surface that registers this way and cannot write a
+map records no file.
+
+The map needs nothing from such a module, or from any other helper that
+registers tests. Deno runs each test file in a realm of its own with
+that file as `Deno.mainModule`, and the preload names every test the
+process registers after it, whichever module made the call. So, in a
+run that takes the preload, a file that registers its cases through a
+shared module is the file its records carry and the file its skip list
+is keyed by, which is the path the command named and the one a topology
+suite knows as its unit.
 
 A harness with per-result callbacks
 appends records through `FragmentWriter` (see the hooks in

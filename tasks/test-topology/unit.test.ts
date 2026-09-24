@@ -59,7 +59,7 @@ async function workspace(
       2,
     ),
   );
-  // The preload names a registering file relative to the directory holding
+  // The preload names a test file relative to the directory holding
   // `.git`. Without one, no registration is attributed to a file.
   await Deno.mkdir(`${root}/.git`, { recursive: true });
   for (const [member, contents] of Object.entries(members)) {

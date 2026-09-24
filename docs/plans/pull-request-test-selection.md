@@ -690,7 +690,7 @@ disappear.
 Four properties come from intercepting at registration rather than on the
 command line. The list is a file named by an environment variable, so
 nothing is bounded by argument length. Names match exactly, so nothing
-needs escaping. The list is keyed by registering file and name together,
+needs escaping. The list is keyed by test file and name together,
 because the same test name occurs in more than one file and the preload
 already computes the file for its attribution work. And no test file
 changes at all: a suite that already passes `--preload` takes a second
@@ -985,8 +985,8 @@ Letting each test file call `Deno.test` itself was measured and
 rejected. A case's class name follows the lexical call site, so a helper
 may compute `ignore` and may even build the whole `TestDefinition` while
 the report still names the test file; that would free the file
-attribution and retire the name map, the spool, the stack read and the
-container case with it. It costs a line in each of 2,241 test files, and
+attribution and retire the name map, the spool and the container case
+with it. It costs a line in each of 2,241 test files, and
 a file missing that line runs no tests and reports none. Trading a
 silent green run of nothing, in the system whose whole purpose is to
 notice, against the deletion of machinery that works and has caused none
@@ -1003,13 +1003,12 @@ and to decide per test whether to wrap at all. The fixture runner does
 not replace it, but stands between the file and the registrar lexically,
 which costs the same class name and puts it on the same list.
 
-Five things a registrar of ours can offer are the whole of what those
+Four things a registrar of ours can offer are the whole of what those
 three do. A callback told of each leaf as it registers, with its file
 and its identity. A predicate consulted at registration, so that a
 listed leaf registers as ignored. Options carried from a `describe` or
-an `it` through to the test. A wrapper a suite installs once and the
-registrar runs around every leaf's body. And a way for a helper that
-builds tests to say which file it builds them for.
+an `it` through to the test. And a wrapper a suite installs once and the
+registrar runs around every leaf's body.
 
 That holds only while the registrar is the only caller of `Deno.test`,
 which it is not today: 553 test files call it directly, at 7,327 sites.
@@ -1023,18 +1022,16 @@ lint rule of the kind the tree already carries for self-imports holds
 the invariant afterwards.
 
 What goes with the replacements is the machinery for seeing around them,
-which is two registries of the modules in the way, kept in step by hand.
+which is a registry of the modules in the way, kept by hand.
 `MACHINERY_MODULE_SUFFIXES` is an array of path tails that ingestion
-reads to refuse a class name naming machinery rather than a test file.
-`registerFrameworkModule` is a function each such module calls on
-itself, adding its URL to a set the stack walk reads to step past its
-frames. A module that stands in the way has to appear in both, and one
-registrar leaves neither anything to name.
+reads to refuse a class name naming machinery rather than a test file,
+and one registrar leaves it nothing to name.
 
-Three readers of the call stack become one with them, and that one can
-raise `Error.stackTraceLimit` around its own capture and take the
-repository root from `Deno.cwd()` or its own `import.meta.url` rather
-than climbing to a `.git` directory.
+The file itself needs none of this. Deno runs each test file in a realm
+of its own with that file as `Deno.mainModule`, and that is where the
+preload takes a test's file from, so a test a helper module registers
+belongs to the file that imported the helper, and the path is the one
+the command named and the skip list is keyed by.
 
 The name map stays, because the file has to reach the process that
 writes the record and that is not the process that knows it. A record's
@@ -1068,21 +1065,18 @@ that feeds them. Everything else stays as it is, that being the name
 map, the spool, the preload's wrapper for a bare `Deno.test`, the JUnit
 ingestion and the skip list.
 
-Two things this does not reach are worth naming so they are not mistaken
-for solved. A run killed at its bound writes no JUnit report at all, so
+One thing this does not reach is worth naming so it is not mistaken for
+solved. A run killed at its bound writes no JUnit report at all, so
 every case it had already passed is lost, which the specification's
 claim that a killed run's records are worth reading does not currently
-hold for. And `Error.stackTraceLimit` is 10, which eight wrapper frames
-would exhaust; fourteen nested `describe` levels do not, because the
-innermost frame that is not machinery is the test file whatever the
-nesting, so this is a hazard rather than a live fault.
+hold for.
 
 Not measured: `it.only`, parallel execution, a step inside a leaf, and
 what a `beforeAll` that throws should do to the rest of its group.
 
 ### The work this adds
 
-- [x] The preload reads a skip list keyed by registering file and name,
+- [x] The preload reads a skip list keyed by test file and name,
       and registers a listed bare `Deno.test` as ignored rather than
       dropping it.
 - [x] `@commonfabric/test-support` gains a `describe` and `it` that
