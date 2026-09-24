@@ -125,6 +125,7 @@ import {
   containsCfcFieldCommitment,
   transformCfcLabelForCrossSpacePersist,
 } from "./label-representation.ts";
+import { mergeCfcLabelViews, rebaseCfcLabelView } from "./label-view-core.ts";
 import { cfcLabelViewFromMetadata } from "./label-view-state.ts";
 import {
   CFC_SCHEMA_MIGRATION_INCOMPATIBLE_REASON,
@@ -210,14 +211,6 @@ const INTERNAL_VERIFIER_META = stableInternalVerifierRead;
 const LINK_SOURCE_SCHEMA_META = {
   ...internalVerifierRead,
 };
-
-const labelAtPath = (
-  metadata: CfcMetadata | undefined,
-  path: readonly string[],
-): IFCLabel | undefined =>
-  metadata === undefined
-    ? undefined
-    : labelForEntriesAtPath(metadata.labelMap.entries, path);
 
 // A runtime-minted `*`-path class template (template-population §3.1): the
 // membership/slot twins minted beside the container-anchored structure
@@ -5902,31 +5895,22 @@ function bindLinkCurrentPrincipalClauses<Clause>(
   return bound;
 }
 
-// `sourceMetadata` is returned alongside the derived label so the persist
-// loop can re-derive the source's sub-path entries from the same stored
-// state without a second store read (inv-12 Stage 0, see the loop).
+/** Derives the link's root label and its authoritative source view. */
 const derivePersistedLinkLabel = (
   tx: IExtendedStorageTransaction,
   input: LinkWritePolicyInput,
   candidateSchemas: ReadonlyMap<string, JSONSchema>,
   authoringIdentity: ImplementationIdentity | undefined,
-  metadataResolver?: VerifierMetadataResolver,
-): { label?: IFCLabel; reason?: string; sourceMetadata?: CfcMetadata } => {
-  metadataResolver?.refresh();
-  const sourceMetadata = metadataResolver === undefined
-    ? storedMetadataFor(
-      tx,
-      input.source.space,
-      input.source.id as URI,
-      input.source.scope,
-      "application/json",
-    )
-    : metadataResolver.read(
-      input.source.space,
-      input.source.id as URI,
-      input.source.scope,
-      "application/json",
-    );
+  metadataResolver: VerifierMetadataResolver,
+  pendingSourceView?: CfcLabelView,
+): { label?: IFCLabel; reason?: string; sourceView?: CfcLabelView } => {
+  metadataResolver.refresh();
+  const sourceMetadata = metadataResolver.read(
+    input.source.space,
+    input.source.id as URI,
+    input.source.scope,
+    "application/json",
+  );
   if (sourceMetadata !== undefined) {
     try {
       assertStoredPrincipalConfidentialityBound(
@@ -5935,7 +5919,6 @@ const derivePersistedLinkLabel = (
       );
     } catch (error) {
       return {
-        sourceMetadata,
         reason: error instanceof Error ? error.message : String(error),
       };
     }
@@ -6035,7 +6018,8 @@ const derivePersistedLinkLabel = (
       false;
   if (
     sourceMetadata === undefined && pendingSourceSchema === undefined &&
-    !hasLabelValues(linkSchemaLabel) && !hasCarriedLabel
+    !hasLabelValues(linkSchemaLabel) && !hasCarriedLabel &&
+    pendingSourceView === undefined
   ) {
     // Name the SOURCE document, which is the one carrying no metadata, and
     // the target location the link was being written into.
@@ -6069,25 +6053,26 @@ const derivePersistedLinkLabel = (
   }
   if (
     sourceMetadata === undefined && pendingSourceSchema === undefined &&
-    !hasLabelValues(linkSchemaLabel) && hasCarriedLabel
+    !hasLabelValues(linkSchemaLabel) && hasCarriedLabel &&
+    pendingSourceView === undefined
   ) {
     return {};
   }
-  const withMetadata = sourceMetadata === undefined ? {} : { sourceMetadata };
-  const sourceLabel = mergeLabels(
-    sourceMetadata === undefined
-      ? undefined
-      : (metadataResolver === undefined
-        ? labelAtPath(
-          sourceMetadata,
-          canonicalizeLogicalPath(input.source.path),
-        )
-        : metadataResolver.label(
-          sourceMetadata,
-          canonicalizeLogicalPath(input.source.path),
-        )) ?? {},
-    pendingSourceLabel,
+  const storedSourceView = metadataResolver.view(
+    sourceMetadata,
+    input.source.path,
   );
+  const sourceView = pendingSourceView === undefined
+    ? storedSourceView
+    : mergeCfcLabelViews([storedSourceView, pendingSourceView]);
+  const sourceLabel = joinLabels([
+    sourceMetadata === undefined ? undefined : metadataResolver.label(
+      sourceMetadata,
+      canonicalizeLogicalPath(input.source.path),
+    ) ?? {},
+    pendingSourceLabel,
+    metadataResolver.cover(pendingSourceView, [], undefined),
+  ]);
   // The source/link-schema integrity is author-influenceable (a link value can
   // carry a forged link schema or label view). Gate runtime-minted evidence
   // atoms out of it unless a trusted builtin authored the link write, THEN add
@@ -6123,7 +6108,380 @@ const derivePersistedLinkLabel = (
       [linkReferenceIntegrity(input)],
     ),
   };
-  return { label, ...withMetadata };
+  return { label, sourceView };
+};
+
+/**
+ * Collects the labels a link write persists, relative to its receiving slot.
+ * Every hop gates evidence and joins carried views with authoritative labels.
+ */
+const persistedLinkEntries = (
+  tx: IExtendedStorageTransaction,
+  input: LinkWritePolicyInput,
+  result: ReturnType<typeof derivePersistedLinkLabel>,
+  linkIdentity: ImplementationIdentity | undefined,
+  metadataResolver: VerifierMetadataResolver,
+): { entries: CfcLabelView["entries"]; reasons: string[] } => {
+  const entries: CfcLabelView["entries"] = [];
+  const reasons: string[] = [];
+  if (result.label !== undefined && hasLabelValues(result.label)) {
+    entries.push({
+      path: [],
+      label: result.label,
+    });
+  }
+  const pushGatedLinkEntry = (entry: {
+    path: readonly string[];
+    label: IFCLabel;
+  }) => {
+    const gated = gateRuntimeMintedIntegrity(
+      cloneLabel(entry.label),
+      linkIdentity,
+    );
+    if (!hasLabelValues(gated)) {
+      return;
+    }
+    entries.push({
+      path: canonicalizeLogicalPath(entry.path),
+      label: gated,
+    });
+  };
+  const rederivedView = result.sourceView;
+  for (const entry of rederivedView?.entries ?? []) {
+    pushGatedLinkEntry(entry);
+  }
+  // A carried child view must include its authoritative cover: a more
+  // specific entry shadows its ancestor during longest-prefix reads.
+  const authoritativeCoverFor = (
+    entryPath: readonly string[],
+  ): IFCLabel | undefined => {
+    tx.noteCfcPreparationWork?.("authoritativeCoverCalls");
+    return metadataResolver.cover(
+      rederivedView,
+      entryPath,
+      result.label !== undefined && hasLabelValues(result.label)
+        ? result.label
+        : undefined,
+    );
+  };
+  for (const entry of input.cfcLabelView?.entries ?? []) {
+    const gated = gateRuntimeMintedIntegrity(
+      cloneLabel(entry.label),
+      linkIdentity,
+    );
+    if (!hasLabelValues(gated)) {
+      continue;
+    }
+    const entryPath = canonicalizeLogicalPath(entry.path);
+    const cover = authoritativeCoverFor(entryPath);
+    const bound = bindLinkCurrentPrincipalClauses(
+      gated.confidentiality ?? [],
+      cover?.confidentiality ?? [],
+    );
+    if (bound === undefined) {
+      reasons.push(verdictReason(
+        "Link CurrentPrincipal confidentiality requires a concrete stored reader",
+      ));
+      continue;
+    }
+    gated.confidentiality = [...bound];
+    entries.push({
+      path: entryPath,
+      label: cover !== undefined ? mergeLabels(cover, gated) : gated,
+    });
+  }
+  return { entries, reasons };
+};
+
+/** Result of resolving a link write through its pending reference sources. */
+type DerivedLink = {
+  /** Integrity and confidentiality at the receiving slot. */
+  label?: IFCLabel;
+
+  /** Labels relative to the receiving slot, including descendant paths. */
+  entries: CfcLabelView["entries"];
+
+  /** Refusals from any hop in the reference chain. */
+  reasons: string[];
+};
+
+/** Resolves recorded links through the references staged into their sources. */
+type LinkLabelDeriver = {
+  /** Derives the labels a recorded link persists at its receiving slot. */
+  persisted: (input: LinkWritePolicyInput) => DerivedLink;
+
+  /**
+   * Derives the label a recorded link carries at `relativePath` below its
+   * receiving slot, or `undefined` when the link itself, or its source's label
+   * at that path, cannot be derived.
+   */
+  labelAt: (
+    input: LinkWritePolicyInput,
+    relativePath: readonly string[],
+  ) => IFCLabel | undefined;
+};
+
+/**
+ * Resolves staged source references from transaction evidence, independently of
+ * which document's metadata has been persisted by preparation. A reference at
+ * or above a link's source path supplies the label there; one below it supplies
+ * the labels beneath it. Object back-references have a finite label view;
+ * pointer chains that never reach an object or scalar refuse derivation.
+ */
+const createLinkLabelDeriver = (
+  tx: IExtendedStorageTransaction,
+  candidates: ReadonlyMap<string, JSONSchema>,
+  linkWrites: ReadonlyMap<string, readonly LinkWritePolicyInput[]>,
+  identityForInput: (
+    input: WritePolicyInput,
+  ) => ImplementationIdentity | undefined,
+  metadataResolver: VerifierMetadataResolver,
+): LinkLabelDeriver => {
+  /** A finite projection and the source values waiting for it to resolve. */
+  type RequestedPath = {
+    /** Remaining path below the current source. */
+    path: readonly string[];
+
+    /** Links whose own source resolution depends on this projection. */
+    sources: ReadonlySet<LinkWritePolicyInput>;
+  };
+
+  const requestPath = (
+    path: readonly string[],
+    sources: ReadonlySet<LinkWritePolicyInput> = new Set(),
+  ): RequestedPath => ({ path, sources });
+
+  /** The pointer chain and object expansion for one source-label walk. */
+  type Walk = {
+    /** References since the last descent into a concrete object. */
+    aliases: ReadonlySet<LinkWritePolicyInput>;
+
+    /** References whose held children this branch has already expanded. */
+    expanded: ReadonlySet<LinkWritePolicyInput>;
+
+    /** Finite paths needed by a source projection, floor, or carried view. */
+    requested: readonly RequestedPath[];
+  };
+
+  const emptyWalk = (): Walk => ({
+    aliases: new Set(),
+    expanded: new Set(),
+    requested: [],
+  });
+
+  // The labels the references staged into the source document bring to the
+  // source path, or the refusals of the first one that cannot be derived.
+  const pendingSourceView = (
+    input: LinkWritePolicyInput,
+    walk: Walk,
+  ): { view?: CfcLabelView; reasons: string[] } => {
+    const views: (CfcLabelView | undefined)[] = [];
+    const sourcePath = canonicalizeLogicalPath(input.source.path);
+    for (const upstream of linkWrites.get(targetKey(input.source)) ?? []) {
+      const upstreamPath = canonicalizeLogicalPath(upstream.target.path);
+      const covers = concretePathHasPrefix(sourcePath, upstreamPath);
+      if (
+        (!covers && !concretePathHasPrefix(upstreamPath, sourcePath)) ||
+        !pathHoldsStagedReference(tx, upstream.target, upstreamPath)
+      ) continue;
+      const final = parseLink(
+        tx.readValueOrThrow({
+          ...upstream.target,
+          id: upstream.target.id as URI,
+          path: [...upstreamPath],
+        }, { meta: INTERNAL_VERIFIER_META }),
+        {
+          ...upstream.target,
+          id: upstream.target.id as URI,
+          path: [...upstreamPath],
+        },
+      );
+      if (
+        final === undefined ||
+        targetKey(final) !== targetKey(upstream.source) ||
+        !arraysEqual(final.path, upstream.source.path)
+      ) continue;
+      const relative = sourcePath.slice(upstreamPath.length);
+      const prefix = upstreamPath.slice(sourcePath.length);
+      const requested = covers
+        ? [
+          requestPath(relative, walk.aliases),
+          ...walk.requested.map((request) => ({
+            ...request,
+            path: [...relative, ...request.path],
+          })),
+        ]
+        : walk.requested.filter(({ path }) => pathPatternsOverlap(prefix, path))
+          .map((request) => ({
+            ...request,
+            path: request.path.slice(prefix.length),
+          }));
+      // Held references may lead back to an object already expanded. Follow
+      // that edge only as far as an explicitly requested path needs it; an
+      // actual read crosses the stored pointer and consumes its own labels.
+      if (!covers && walk.expanded.has(upstream) && requested.length === 0) {
+        continue;
+      }
+      const resolved = derive(upstream, {
+        aliases: covers ? walk.aliases : new Set(),
+        expanded: walk.expanded,
+        requested,
+      });
+      if (resolved.reasons.length > 0) return { reasons: resolved.reasons };
+      // A downstream hop sees the representation the upstream hop persists,
+      // including protected fields when it crosses a space boundary.
+      const entries =
+        tx.getCfcState().labelMetadataProtectionMode === "enforce" &&
+          upstream.source.space !== upstream.target.space
+          ? resolved.entries.map((entry) => ({
+            ...entry,
+            label: transformCfcLabelForCrossSpacePersist(entry.label),
+          }))
+          : resolved.entries;
+      // Pending entries persist as `origin: "link"`, which stored link
+      // metadata exposes with the `followRef` observation class.
+      const linked: CfcLabelView["entries"] = entries.map((entry) => ({
+        ...entry,
+        observes: "followRef",
+      }));
+      if (!covers) {
+        // A reference below the source path lands beneath it, and leaves the
+        // label at the source path itself alone.
+        views.push({
+          version: 1,
+          entries: linked.map((entry) => ({
+            ...entry,
+            path: [...prefix, ...entry.path],
+          })),
+        });
+        continue;
+      }
+      // A reference covering the source path supplies its root by longest
+      // prefix, and its entries below the source path rebased onto it.
+      const label = metadataResolver.cover(
+        { version: 1, entries },
+        relative,
+        undefined,
+      );
+      views.push(rebaseCfcLabelView({ version: 1, entries: linked }, relative));
+      if (label !== undefined) {
+        views.push({ version: 1, entries: [{ path: [], label }] });
+      }
+    }
+    return { view: mergeCfcLabelViews(views), reasons: [] };
+  };
+
+  const derive = (input: LinkWritePolicyInput, walk: Walk): DerivedLink => {
+    const requested = [
+      ...walk.requested,
+      ...(walk.expanded.has(input)
+        ? []
+        : input.cfcLabelView?.entries.map((entry) =>
+          requestPath(canonicalizeLogicalPath(entry.path))
+        ) ?? []),
+    ];
+    // Resolving a source through an ancestor link may require a projection
+    // back into that same source. It is a pointer loop if the source is still
+    // waiting for that projection, even when its path grows on each hop.
+    if (
+      walk.aliases.has(input) ||
+      requested.some(({ sources }) => sources.has(input))
+    ) {
+      return {
+        entries: [],
+        reasons: [
+          verdictReason("cyclic staged reference in link label derivation"),
+        ],
+      };
+    }
+    const pending = pendingSourceView(input, {
+      aliases: new Set([...walk.aliases, input]),
+      expanded: new Set([...walk.expanded, input]),
+      requested,
+    });
+    if (pending.reasons.length > 0) {
+      return { entries: [], reasons: pending.reasons };
+    }
+    const identity = identityForInput(input);
+    const result = derivePersistedLinkLabel(
+      tx,
+      input,
+      candidates,
+      identity,
+      metadataResolver,
+      pending.view,
+    );
+    if (result.reason !== undefined) {
+      return { entries: [], reasons: [result.reason] };
+    }
+    // A back-edge supplies only the finite projection its caller requested.
+    // Its complete carried view is checked at the first occurrence of this
+    // link, where all of that view's authoritative paths are expanded.
+    const carriedInput = walk.expanded.has(input) && input.cfcLabelView
+      ? {
+        ...input,
+        cfcLabelView: {
+          ...input.cfcLabelView,
+          entries: input.cfcLabelView.entries.filter((entry) =>
+            walk.requested.some(({ path }) =>
+              pathPatternsOverlap(canonicalizeLogicalPath(entry.path), path)
+            )
+          ),
+        },
+      }
+      : input;
+    const derived = persistedLinkEntries(
+      tx,
+      carriedInput,
+      result,
+      identity,
+      metadataResolver,
+    );
+    return {
+      ...derived,
+      label: derived.reasons.length === 0 ? result.label : undefined,
+    };
+  };
+
+  const persisted = (input: LinkWritePolicyInput): DerivedLink =>
+    derive(input, emptyWalk());
+
+  // The label below the receiving slot is the source's own label at the
+  // matching path, credited only when the link itself derives. The carried
+  // view is relative to the receiving slot, so `persisted` checks it against
+  // the source path it was written for, never against the nested one.
+  const labelAt = (
+    input: LinkWritePolicyInput,
+    relativePath: readonly string[],
+  ): IFCLabel | undefined => {
+    if (
+      derive(input, { ...emptyWalk(), requested: [requestPath(relativePath)] })
+        .reasons.length > 0
+    ) return undefined;
+    const nested: LinkWritePolicyInput = {
+      ...input,
+      source: {
+        ...input.source,
+        path: [...canonicalizeLogicalPath(input.source.path), ...relativePath],
+      },
+      target: {
+        ...input.target,
+        path: [...canonicalizeLogicalPath(input.target.path), ...relativePath],
+      },
+    };
+    const pending = pendingSourceView(nested, emptyWalk());
+    if (pending.reasons.length > 0) return undefined;
+    return derivePersistedLinkLabel(
+      tx,
+      nested,
+      candidates,
+      identityForInput(input),
+      metadataResolver,
+      pending.view,
+    ).label;
+  };
+
+  return { persisted, labelAt };
 };
 
 const cloneLabel = (label: IFCLabel): IFCLabel => ({
@@ -7097,11 +7455,8 @@ const verifyWriteFloor = (
     identityForPath: (
       path: readonly string[],
     ) => ImplementationIdentity | undefined;
-    identityForInput: (
-      input: WritePolicyInput,
-    ) => ImplementationIdentity | undefined;
     linkWriteInputs: readonly LinkWritePolicyInput[];
-    candidateSchemas: ReadonlyMap<string, JSONSchema>;
+    linkLabels: LinkLabelDeriver;
     flowIntegrity: readonly CfcAtom[];
   },
 ): string[] => {
@@ -7187,13 +7542,8 @@ const verifyWriteFloor = (
     // when plain data was written (crediting the flow meet when available).
     const contributions: (readonly CfcAtom[])[] = [];
     for (const input of linksHere) {
-      const derived = derivePersistedLinkLabel(
-        tx,
-        input,
-        ctx.candidateSchemas,
-        ctx.identityForInput(input),
-      );
-      // An underivable link (`reason` set, `label` undefined) contributes empty
+      const derived = ctx.linkLabels.persisted(input);
+      // An underivable link (`reasons` set, `label` undefined) contributes empty
       // integrity — it fails the floor, fail-closed, alongside the persist
       // loop's own missing-source reason (both reject).
       contributions.push(derived.label?.integrity ?? []);
@@ -7205,23 +7555,9 @@ const verifyWriteFloor = (
       // nested value passes; an unendorsed one fails, fail-closed).
       const linkPath = canonicalizeLogicalPath(input.target.path);
       const relative = entry.path.slice(linkPath.length);
-      const derived = derivePersistedLinkLabel(
-        tx,
-        {
-          ...input,
-          source: {
-            ...input.source,
-            path: [
-              ...canonicalizeLogicalPath(input.source.path),
-              ...relative,
-            ],
-          },
-          target: { ...input.target, path: entry.path },
-        },
-        ctx.candidateSchemas,
-        ctx.identityForInput(input),
+      contributions.push(
+        ctx.linkLabels.labelAt(input, relative)?.integrity ?? [],
       );
-      contributions.push(derived.label?.integrity ?? []);
     }
     const written = writeValueForTarget(tx, { ...target, path: entry.path });
     // A value contribution exists when plain data lands at/under the floor
@@ -7576,6 +7912,13 @@ export function* prepareBoundaryCommitSteps(
     }
   }
   const metadataResolver = new VerifierMetadataResolver(tx);
+  const linkLabels = createLinkLabelDeriver(
+    tx,
+    candidates,
+    linkWrites,
+    identityForInput,
+    metadataResolver,
+  );
   for (const key of targetKeys) {
     yield;
     const candidateSchema = candidates.get(key);
@@ -7786,9 +8129,8 @@ export function* prepareBoundaryCommitSteps(
       const floorFailures = verifyWriteFloor(tx, verificationSchema, target, {
         identityForPath: (path) =>
           identityForSchemaPath(writeAuthorIdentities.get(key), path),
-        identityForInput,
         linkWriteInputs,
-        candidateSchemas: candidates,
+        linkLabels,
         // Only PERSISTED flow integrity may credit the floor: `observe` mode
         // computes the join for diagnostics but stores nothing on the value, so
         // crediting it would let a plain write pass a floor with integrity that
@@ -8283,133 +8625,16 @@ export function* prepareBoundaryCommitSteps(
       }
     }
     for (const input of linkWriteInputs) {
-      const linkIdentity = identityForInput(input);
-      // Inv-12 Stage 1: link-origin entries are cross-space when the link
-      // SOURCE lives in another space (see the predicate comment above).
-      const markLinkEntry = (entry: LabelMapEntry): LabelMapEntry => {
-        if (input.source.space !== space) crossSpaceEligible?.add(entry);
-        return entry;
-      };
-      const result = derivePersistedLinkLabel(
-        tx,
-        input,
-        candidates,
-        linkIdentity,
-        metadataResolver,
-      );
-      if (result.reason !== undefined) {
-        reasons.push(result.reason);
-        continue;
-      }
-      if (result.label !== undefined && hasLabelValues(result.label)) {
-        persistedLabelEntries.push(markLinkEntry({
-          path: canonicalizeLogicalPath(input.target.path),
-          label: result.label,
+      const result = linkLabels.persisted(input);
+      reasons.push(...result.reasons);
+      for (const entry of result.entries) {
+        const persisted: LabelMapEntry = {
+          path: [...canonicalizeLogicalPath(input.target.path), ...entry.path],
+          label: entry.label,
           origin: "link",
-        }));
-      }
-      const targetPath = canonicalizeLogicalPath(input.target.path);
-      // Inv-12 Stage 0 (SC-25 prerequisite): persist link-origin labels from
-      // the worker-authoritative source — the source doc's STORED label map,
-      // re-derived under the link source path — independent of the carried
-      // view. The carried `cfcLabelView` round-trips through the main thread
-      // (CellHandle refs) and is author-influenceable, so a tampered /
-      // redacted / incomplete view must not be able to WEAKEN what the
-      // stored metadata provides: entries re-derived here persist outright;
-      // the view loop below can only add. (`derivePersistedLinkLabel` above
-      // covers the label AT the source path; this covers the source's
-      // sub-path entries, which previously rode only the view.) Same
-      // evidence-mint gate as the carried entries (audit S4): a link write
-      // may not re-mint runtime evidence at the target without builtin
-      // authorship.
-      // The emptiness check runs on the GATED label (cubic review on this
-      // PR): the mint gate can strip an integrity-only entry down to
-      // nothing, and pushing an empty origin:"link" entry at a more-specific
-      // path would SHADOW an ancestor link entry's confidentiality under the
-      // per-component longest-prefix read resolution — an under-labeling.
-      const pushGatedLinkEntry = (entry: {
-        path: readonly string[];
-        label: IFCLabel;
-      }) => {
-        const gated = gateRuntimeMintedIntegrity(
-          cloneLabel(entry.label),
-          linkIdentity,
-        );
-        if (!hasLabelValues(gated)) {
-          return;
-        }
-        persistedLabelEntries.push(markLinkEntry({
-          path: [
-            ...targetPath,
-            ...canonicalizeLogicalPath(entry.path),
-          ],
-          label: gated,
-          origin: "link",
-        }));
-      };
-      const rederivedView = metadataResolver.view(
-        result.sourceMetadata,
-        input.source.path,
-      );
-      for (const entry of rederivedView?.entries ?? []) {
-        pushGatedLinkEntry(entry);
-      }
-      // The carried label view is author-influenceable; gate runtime-minted
-      // evidence atoms unless a builtin authored the link write (audit S4
-      // review).
-      //
-      // "Can only add" must hold under LONGEST-PREFIX shadowing too (cubic
-      // P1 on the Stage 1 PR): within the link component a more-specific
-      // entry REPLACES its ancestor for reads at/below it, so a crafted
-      // carried entry at a sub-path the authoritative state does not cover
-      // would swap the ancestor's confidentiality for the view's — a
-      // weakening through the very loop meant to be additive. Each carried
-      // entry therefore JOINS the label of the most-specific AUTHORITATIVE
-      // entry covering its path (the source-path label from
-      // `derivePersistedLinkLabel`, or the nearest re-derived-view
-      // ancestor-or-equal), so what it shadows rides along and the entry is
-      // at least as restrictive as the resolution it displaces. Both halves
-      // join: confidentiality is the leak the shadow would open; integrity
-      // at the covered path (e.g. the LinkReference provenance) would
-      // otherwise silently drop out of sub-path reads.
-      const authoritativeCoverFor = (
-        entryPath: readonly string[],
-      ): IFCLabel | undefined => {
-        tx.noteCfcPreparationWork?.("authoritativeCoverCalls");
-        return metadataResolver.cover(
-          rederivedView,
-          entryPath,
-          result.label !== undefined && hasLabelValues(result.label)
-            ? result.label
-            : undefined,
-        );
-      };
-      for (const entry of input.cfcLabelView?.entries ?? []) {
-        const gated = gateRuntimeMintedIntegrity(
-          cloneLabel(entry.label),
-          linkIdentity,
-        );
-        if (!hasLabelValues(gated)) {
-          continue;
-        }
-        const entryPath = canonicalizeLogicalPath(entry.path);
-        const cover = authoritativeCoverFor(entryPath);
-        const bound = bindLinkCurrentPrincipalClauses(
-          gated.confidentiality ?? [],
-          cover?.confidentiality ?? [],
-        );
-        if (bound === undefined) {
-          reasons.push(verdictReason(
-            "Link CurrentPrincipal confidentiality requires a concrete stored reader",
-          ));
-          continue;
-        }
-        gated.confidentiality = [...bound];
-        persistedLabelEntries.push(markLinkEntry({
-          path: [...targetPath, ...entryPath],
-          label: cover !== undefined ? mergeLabels(cover, gated) : gated,
-          origin: "link",
-        }));
+        };
+        if (input.source.space !== space) crossSpaceEligible?.add(persisted);
+        persistedLabelEntries.push(persisted);
       }
     }
 

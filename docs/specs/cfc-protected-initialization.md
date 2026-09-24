@@ -80,6 +80,23 @@ staged in the transaction. The link carries its source's label and the
 `LinkReference` a link write mints, so a reader reaching the entry through the
 link sees the entry's own authorship.
 
+When a link's source is a reference staged in the same transaction, or a value
+holding one, preparation derives that reference's labels through the recorded
+chain. A reference at or above the source path supplies the label there. One
+held below it supplies the labels at the matching paths beneath the link, and
+none at the link itself. This does not depend on staging order or on the
+references occupying different documents. Each hop retains the source's nested
+labels and applies the ordinary evidence and carried-label checks. An integrity
+floor uses those same derived labels, so the source's real authorship can meet
+it. A chain of pending references that never reaches a value refuses label
+derivation terminally. An object holding a reference back to itself or another
+object is valid. Preparation expands each held reference once per branch, then
+follows back-references only as far as a source path, floor, or carried view
+requires. This keeps the persisted view finite; reads beyond it follow the
+stored references and consume the labels at each hop. A carried view is checked
+in full at the link's first occurrence, and a repeated occurrence supplies the
+entries covering the requested paths.
+
 ## Setup replay over a stored argument
 
 A runtime that starts a piece it did not create replays the setup of the
