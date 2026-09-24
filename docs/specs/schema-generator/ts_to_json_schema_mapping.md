@@ -1035,9 +1035,19 @@ Mechanics:
   alias name, so an authored type named `AnyOf` is read as itself. A
   `PolicyOf` reached from a type alone, with no annotation that denotes it,
   has no binding to read: its brand is read as an ordinary object,
-  `{ __ct_cfc_policy_of__: undefined }`, not as a policy atom. Projection paths
-  encode as JSON
-  Pointers with `~0`/`~1` escaping (`encodeJsonPointerPath`).
+  `{ __ct_cfc_policy_of__: undefined }`, not as a policy atom. A label list the
+  extraction cannot read in full is reported as the `cfc-label:unread` warning
+  (`unread-label-diagnostics.ts`), naming the label: an argument that is not a
+  tuple, or an atom with anything unread in it, whether the atom itself, a
+  field of an object atom, or an alternative of an `AnyOf` clause. A union of
+  literals is one such thing, and that `PolicyOf` brand another. A UI
+  contract that writes no `requiredEventIntegrity` requires its trusted
+  pattern, and that list is checked too. The schema carries what it could not
+  read as no label, as an atom that serializes as `null` (an unread value, not
+  an authored `null`, which is a literal read like any other), or as a field
+  left out.
+  Projection paths encode as JSON Pointers with `~0`/`~1` escaping
+  (`encodeJsonPointerPath`).
 - `ifc` combines with the base schema's existing `ifc` one key at a time
   (`combineIfcLabels`, `src/ifc-labels.ts`); boolean schemas become
   `{ ifc }` / `{ not: true, ifc }`. Nested wrappers
