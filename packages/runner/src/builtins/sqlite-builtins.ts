@@ -723,7 +723,11 @@ export function sqliteDatabase(
       // monotone, so a re-derivation reading a weaker `tables` input cannot lower
       // a column's read label or widen its write ceiling (audit S8). First
       // creation (no prior) passes the declared tables through unchanged.
-      const prior = handle.withTx(tx).get() as SqliteDbRef | undefined;
+      // Detached once: its tables' ceilings are compared against the declared
+      // ones clause by clause, and a view would be read through at each.
+      const prior = snapshotQueryResult(handle.withTx(tx).get()) as
+        | SqliteDbRef
+        | undefined;
       const merged = growOnlyMergeDbTables(prior?.tables, options?.tables);
       // The db's owner: the principal creating this handle (CFC Phase 3 —
       // resolves the row rule's dbOwner(); a FIXED property of the db, not
