@@ -39,10 +39,17 @@ export interface SchemaHint {
 
 export type SchemaHints = WeakMap<ts.Node, SchemaHint>;
 
-/** A recoverable schema-generation problem at its authored node, if known. */
+/**
+ * A schema-generation problem at its authored node, if known. Generation goes
+ * on past either severity; an error says the schema it produced is not one to
+ * accept, as a write restriction it could not read is not.
+ */
 export interface SchemaGenerationDiagnostic {
-  readonly severity: "warning";
-  readonly type: "schema-default:unresolved" | "schema-type:unread";
+  readonly severity: "warning" | "error";
+  readonly type:
+    | "schema-default:unresolved"
+    | "schema-type:unread"
+    | "cfc-write-authorized-by:unread";
   readonly message: string;
   readonly node?: ts.Node;
 }
@@ -51,7 +58,10 @@ export interface SchemaGenerationDiagnostic {
 export interface SchemaGenerationOptions {
   readonly widenLiterals?: boolean;
 
-  /** Receives warnings; without a callback the generator logs them. */
+  /**
+   * Receives each diagnostic, a warning or an error; without a callback the
+   * generator logs it. An error says the schema generated is not one to accept.
+   */
   readonly onDiagnostic?: (diagnostic: SchemaGenerationDiagnostic) => void;
 
   /**

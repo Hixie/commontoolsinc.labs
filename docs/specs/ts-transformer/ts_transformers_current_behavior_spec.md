@@ -1047,6 +1047,22 @@ report these through the same collector (deduplicated via §2.2's
   to the local schema use, since the unread node is a print with no source
   position, and like the default warning collapses to one per source range. See the node-based analyzer's fallback in
   the schema-generator mapping spec and `test/unread-type-diagnostic.test.ts`.
+- **Error** `cfc-write-authorized-by:unread` (`schema-generator.ts`,
+  `writer-binding-diagnostics.ts`) — a `WriteAuthorizedBy` or
+  `TrustedActionWrite*` policy written through another alias whose writer
+  binding the schema generator cannot read: one passed through a parameter a
+  conditional alias checks, say, or a conditional alias with more than one
+  branch other than `never`. Its schema would carry no write restriction, so
+  compilation fails. It fails over stored source (`storedSource`) too: unlike
+  the authoring-shape gates, which that mode demotes to warnings, it guards a
+  write restriction, and a reload that cannot read one does not run without
+  it. A policy written directly is not reported:
+  the direct path (`toSchema<WriteAuthorizedBy<…>>()`, a cell constructor's
+  type argument) mints its claim here, and the validator above refuses a
+  binding that is not a direct `typeof`. A schema read from a type alone has
+  no reference and is not reported either. See §11 of the schema-generator mapping spec,
+  rule 8 of `cfc_authoring_contract.md`, and
+  `test/protected-cell-policy.test.ts`.
 - **Error** `pattern-context:receiver-method-call`
   (`pattern-body-reactive-root-lowering.ts:162`) — the pattern-body
   reactive-root seam could not admit a receiver-method call on a tracked
