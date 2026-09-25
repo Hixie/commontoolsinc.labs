@@ -46,6 +46,7 @@ import {
   markMeasuredFailures,
   measuredSetOfReport,
   parseLaneArgs,
+  PATTERN_COVERAGE_DIR,
   planOver,
   runBatch,
   runInvocation,
@@ -1217,6 +1218,7 @@ describe("running a lane's work", () => {
     );
     expect(given?.coverageDir).toBe("/cov/workspace-unit");
     expect([...(given?.measuredMembers ?? [])]).toEqual(["packages/bakery"]);
+    expect(given?.patternCoverageDir).toBeUndefined();
     await Deno.remove(workDir, { recursive: true });
   });
 
@@ -1246,10 +1248,11 @@ describe("running a lane's work", () => {
       workDir,
       undefined,
       {},
-      { dir: "/cov/workspace-unit" },
+      { dir: "/cov/workspace-unit", patternDir: "/cov/pattern/workspace-unit" },
     );
     expect(given?.coverageDir).toBe("/cov/workspace-unit");
     expect(given?.measuredMembers).toBeUndefined();
+    expect(given?.patternCoverageDir).toBe("/cov/pattern/workspace-unit");
     await Deno.remove(workDir, { recursive: true });
   });
 
@@ -3432,6 +3435,20 @@ describe("what a lane measures", () => {
     expect(coverage?.members).toBeUndefined();
     expect(coverage?.dir)
       .toBe(`/repo/coverage/${COVERAGE_PROFILE_DIR}/runner-unit`);
+    // The authored-pattern instrumentation writes its reports where the
+    // lane's upload carries them to the repository-wide figure.
+    expect(coverage?.patternDir)
+      .toBe(`/repo/coverage/${PATTERN_COVERAGE_DIR}/runner-unit`);
+  });
+
+  it("collects no authored-pattern coverage for a pull request", () => {
+    // Only the full run publishes the figure it would feed.
+    const coverage = batchCoverage(
+      options,
+      "workspace-unit",
+      gated("packages/bakery"),
+    );
+    expect(coverage?.patternDir).toBeUndefined();
   });
 
   it("puts coverage where the command line said", () => {

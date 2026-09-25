@@ -151,6 +151,14 @@ export const DEFAULT_COVERAGE_DIR = "coverage";
 /** Where a lane puts the profiles it collects, under its coverage directory. */
 export const COVERAGE_PROFILE_DIR = "raw";
 
+/**
+ * Where a lane puts the reports the authored-pattern instrumentation
+ * writes, under its coverage directory. They are LCOV already, so they sit
+ * among the reports rather than among the profiles, and outside the
+ * measured sets' layout, since no set is scored from them.
+ */
+export const PATTERN_COVERAGE_DIR = "lcov/pattern-runtime";
+
 /** Where a lane puts the reports it converts, under its coverage directory. */
 export const COVERAGE_REPORT_DIR = "lcov/sets";
 
@@ -570,6 +578,13 @@ export interface BatchCoverage {
    * runs, which is what the full run asks for.
    */
   members?: ReadonlySet<string>;
+
+  /**
+   * Where the authored-pattern instrumentation writes, for the full run
+   * alone. What it measures feeds the repository-wide figure, which only
+   * the full run publishes; no measured set is scored from it.
+   */
+  patternDir?: string;
 }
 
 /**
@@ -587,9 +602,10 @@ export function batchCoverage(
   gate: CoverageGateSelection,
 ): BatchCoverage | undefined {
   if (!measuresSuite(gate, suiteId, options.full)) return undefined;
-  const dir = path.join(coverageRoot(options), COVERAGE_PROFILE_DIR, suiteId);
+  const root = coverageRoot(options);
+  const dir = path.join(root, COVERAGE_PROFILE_DIR, suiteId);
   return options.full
-    ? { dir }
+    ? { dir, patternDir: path.join(root, PATTERN_COVERAGE_DIR, suiteId) }
     : { dir, members: measuredMembersOf(gate, suiteId) };
 }
 
@@ -776,6 +792,9 @@ export async function runBatch(
         ...(coverage.members === undefined
           ? {}
           : { measuredMembers: coverage.members }),
+        ...(coverage.patternDir === undefined
+          ? {}
+          : { patternCoverageDir: coverage.patternDir }),
       }),
     });
     for (const invocation of invocations) {

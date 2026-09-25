@@ -171,6 +171,7 @@ authenticate, and bring test servers and devices up before the real work:
 | 🚧 | guard that fails the build on a banned pattern |
 | 🩹 | check for unresolved merge-conflict markers |
 | ✅ | validate an artifact a previous step produced |
+| 🗺️ | plan which lanes a run takes |
 | 🧪 | run tests |
 | 🧩 | run integration tests |
 | 🔁 | replay captured fixtures under today's source |
