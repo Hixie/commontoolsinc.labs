@@ -234,27 +234,24 @@ describe("step-summary", () => {
       );
     });
 
+    it("returns a table inside a code fence as it was", () => {
+      const text = "```\n| a |\n| --- |\n| b |\n```\n| c |\n| --- |";
+      expect(drawTables(text)).toBe(
+        "```\n| a |\n| --- |\n| b |\n```\n┌───┐\n│ c │\n├───┤\n└───┘",
+      );
+    });
+
+    it("pads a cell by the columns its characters take, not their count", () => {
+      // A wide character takes two columns and a combining mark none.
+      expect(drawTables("| 日本 |\n| --- |\n| e\u0301 |")).toBe(
+        "┌──────┐\n│ 日本 │\n├──────┤\n│ e\u0301    │\n└──────┘",
+      );
+    });
+
     it("draws a row short of cells with the rest empty", () => {
       expect(drawTables("| a | b |\n| --- | --- |\n| c |")).toBe(
         "┌───┬───┐\n│ a │ b │\n├───┼───┤\n│ c │   │\n└───┴───┘",
       );
-    });
-  });
-
-  describe("say()", () => {
-    it("draws its tables in the log and keeps them Markdown in the summary", async () => {
-      const lines = ["| a |", "| --- |", "| b |"];
-      const logged: string[] = [];
-      const log = console.log;
-      console.log = (line: string) => logged.push(line);
-      let summary: string;
-      try {
-        summary = await withSummary(() => say(lines));
-      } finally {
-        console.log = log;
-      }
-      expect(summary).toBe("| a |\n| --- |\n| b |\n");
-      expect(logged).toEqual(["┌───┐\n│ a │\n├───┤\n│ b │\n└───┘\n"]);
     });
   });
 
@@ -352,6 +349,21 @@ describe("step-summary", () => {
   });
 
   describe("say()", () => {
+    it("draws its tables in the log and keeps them Markdown in the summary", async () => {
+      const lines = ["| a |", "| --- |", "| b |"];
+      const logged: string[] = [];
+      const log = console.log;
+      console.log = (line: string) => logged.push(line);
+      let summary: string;
+      try {
+        summary = await withSummary(() => say(lines));
+      } finally {
+        console.log = log;
+      }
+      expect(summary).toBe("| a |\n| --- |\n| b |\n");
+      expect(logged).toEqual(["┌───┐\n│ a │\n├───┤\n│ b │\n└───┘\n"]);
+    });
+
     it("writes the lines to the summary as well as to the output", async () => {
       const said: string[] = [];
       const log = console.log;

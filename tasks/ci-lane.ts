@@ -101,7 +101,11 @@ import type {
   UnschedulableEntry,
   WithheldReason,
 } from "./test-selection/manifest.ts";
-import { FULL_LANES_MAX, LANES } from "./test-selection/policy.ts";
+import {
+  FULL_LANES_MAX,
+  LANE_PROLOGUE_SECONDS,
+  LANES,
+} from "./test-selection/policy.ts";
 import { say } from "./step-summary.ts";
 import { duration } from "./test-selection/duration.ts";
 import { writeLcovReport } from "./write-coverage-lcov.ts";
@@ -1468,14 +1472,15 @@ export async function lanePlan(
  * `FULL_LANES_MAX`.
  *
  * This is the whole of what the job ahead of the full run decides, and an
- * integer is the whole of what it emits. The lanes then read the same
+ * integer is the whole of what it answers. The lanes then read the same
  * tree against the same manifest and take their own share, the way the
  * pull-request lanes do, so nothing about what runs passes through a job
  * output and there is no second packing to disagree with theirs.
  *
- * Notes about what the count rests on go to the error stream, because
- * this answers on the standard one and a job reads the answer from
- * there.
+ * Everything else goes to the error stream, because this answers on the
+ * standard one and a job reads the answer from there: notes about what
+ * the count rests on, and what each lane at that count is projected to
+ * take, which also goes to the job summary.
  */
 export async function fullLanes(
   options: LaneOptions,
@@ -1492,14 +1497,19 @@ export async function fullLanes(
         `run past its budget`,
     );
   }
-  const { seen, laid } = planOver({
+  const { laid } = planOver({
     suites,
     manifest,
     changed,
     full: options.full,
     lanes,
   });
-  describeFullLanes(laid, seen.manifest.calibration.prologue);
+  // Where the store gave no manifest, nothing was calibrated, and the
+  // prologue is the figure the lanes' budget was derived from.
+  describeFullLanes(
+    laid,
+    manifest?.calibration.prologue ?? LANE_PROLOGUE_SECONDS,
+  );
   return lanes;
 }
 

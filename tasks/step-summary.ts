@@ -8,6 +8,8 @@
  * inside the bound: what does not fit is left out and a line says so.
  */
 
+import { unicodeWidth } from "@std/cli/unicode-width";
+
 /** The largest summary GitHub accepts. */
 export const SUMMARY_LIMIT = 1024 * 1024;
 
@@ -84,13 +86,16 @@ export function say(
 /**
  * `text` with each Markdown table in it drawn in box-drawing characters,
  * and everything else as it was. A table is a row of cells between pipes,
- * a row of dashes under it, and the rows of cells after that.
+ * a row of dashes under it, and the rows of cells after that. What a code
+ * fence holds is quoted rather than rendered, so it stays as it was.
  */
 export function drawTables(text: string): string {
   const lines = text.split("\n");
   const drawn: string[] = [];
+  let fenced = false;
   for (let at = 0; at < lines.length;) {
-    if (isRow(lines[at]!) && isDelimiter(lines[at + 1])) {
+    if (/^\s*(```|~~~)/.test(lines[at]!)) fenced = !fenced;
+    if (!fenced && isRow(lines[at]!) && isDelimiter(lines[at + 1])) {
       const rows = [cellsOf(lines[at]!)];
       at += 2;
       while (at < lines.length && isRow(lines[at]!)) {
@@ -127,9 +132,9 @@ function cellsOf(row: string): string[] {
  * cells is drawn with the rest empty.
  */
 function box(rows: readonly string[][]): string[] {
-  // Counted in code points, which is what a monospaced log gives a column
-  // for every character these tables hold.
-  const width = (cell: string) => [...cell].length;
+  // In the columns a monospaced log gives each character: two for a wide
+  // one, and none for a mark combining with the one before it.
+  const width = unicodeWidth;
   const widths = Array.from(
     { length: Math.max(...rows.map((row) => row.length)) },
     (_, column) => Math.max(...rows.map((row) => width(row[column] ?? ""))),

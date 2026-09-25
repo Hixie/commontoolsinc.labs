@@ -83,6 +83,7 @@ import {
   FULL_LANE_BUDGET_SECONDS,
   FULL_LANES_MAX,
   LANE_BUDGET_SECONDS,
+  LANE_PROLOGUE_SECONDS,
   UNMEASURED_COST_SECONDS,
 } from "./test-selection/policy.ts";
 import { repositoryCommittedAt } from "./test-selection/testing.ts";
@@ -1164,6 +1165,53 @@ describe("how many lanes the full run asks for", () => {
     expect(held).toContain(`## The full run's ${lanes} lane(s)`);
     for (const row of expected) {
       expect(held).toContain(`| ${row.join(" | ")} |`);
+    }
+  });
+
+  it("charges each lane the policy's prologue where there is no manifest", async () => {
+    // Nothing was calibrated, so the calibration's prologue is zero; the
+    // lanes' budget was still derived from the policy's, which is what a
+    // job pays around its lane.
+    const deps = awkward();
+    const err: string[] = [];
+    const error = console.error;
+    console.error = (text: string) => err.push(text);
+    let lanes: number;
+    try {
+      lanes = await fullLanes(options, {
+        topology: deps.topology,
+        manifest: () =>
+          Promise.resolve({ absent: "the store holds no manifest" }),
+      });
+    } finally {
+      console.error = error;
+    }
+    const seen = pricedForRun(
+      census(deps.suites, undefined, new Set()),
+      deps.suites,
+      true,
+    );
+    expect(seen.manifest.calibration.prologue).toBe(0);
+    const laid = plan({
+      manifest: seen.manifest,
+      mandatory: seen.mandatory,
+      capabilities: capabilitiesBySuite(deps.suites),
+      wholeUnits: wholeUnits(deps.suites),
+      policy: "everything",
+      lanes,
+    });
+    const told = err.join("\n");
+    expect(told).toContain(
+      `takes about ${duration(LANE_PROLOGUE_SECONDS)} more`,
+    );
+    for (const lane of laid.lanes) {
+      expect(told).toMatch(
+        new RegExp(
+          `│ ${lane.lane} +│ ${lane.selections.length} +│ ` +
+            `${duration(lane.projectedSeconds)} +│ ` +
+            `${duration(lane.projectedSeconds + LANE_PROLOGUE_SECONDS)} +│`,
+        ),
+      );
     }
   });
 });
