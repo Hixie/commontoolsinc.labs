@@ -18,12 +18,16 @@
 export const LANES = 5;
 
 /**
- * The hard bound on a lane's work step. A lane job's own timeouts have to
- * be set against this, and no lane job exists yet to carry them.
+ * What a pull-request lane is packed to finish inside, setup included. The
+ * workflow's step and job timeouts sit above it and only stop a lane that
+ * hangs. They are not this bound.
  */
 export const LANE_BOUND_SECONDS = 300;
 
-/** Checkout, Deno, cache restore, ship, and job overhead. */
+/**
+ * Checkout, Deno, cache restore, ship, and job overhead. A chosen figure:
+ * nothing measures it.
+ */
 export const LANE_PROLOGUE_SECONDS = 40;
 
 /** Headroom for a slower-than-usual runner. */
@@ -38,10 +42,10 @@ export const LANE_BUDGET_SECONDS = LANE_BOUND_SECONDS -
   LANE_PROLOGUE_SECONDS - LANE_SAFETY_SECONDS;
 
 /**
- * The hard bound on a lane of the full run on `main`. Ten minutes: `main`
- * makes no promise about a first answer the way a pull request does, so
- * this is chosen for how many jobs the run should take rather than for
- * how long anybody waits.
+ * What a lane of the full run on `main` is packed to finish inside. Ten
+ * minutes: `main` makes no promise about a first answer the way a pull
+ * request does, so this is chosen for how many jobs the run should take
+ * rather than for how long anybody waits.
  */
 export const FULL_LANE_BOUND_SECONDS = 600;
 
@@ -329,7 +333,7 @@ const exclusions: readonly Exclusion[] = [
     member: "packages/generated-patterns",
     kind: "source",
     reason: "Its test task defines no tests. Its test files run in the " +
-      "generated-patterns integration job.",
+      "`generated-patterns` suite.",
   },
   {
     member: "packages/home-schemas",
@@ -340,7 +344,7 @@ const exclusions: readonly Exclusion[] = [
     member: "packages/patterns",
     kind: "source",
     reason: "Authored pattern code is measured by transformer " +
-      "instrumentation in the pattern unit and integration jobs. The " +
+      "instrumentation in the pattern unit and integration suites. The " +
       "package's own `deno test` ignores the pattern files deliberately.",
   },
   {
@@ -352,8 +356,8 @@ const exclusions: readonly Exclusion[] = [
     member: "packages/cli",
     kind: "source",
     reason: "The command line's real coverage comes from the integration " +
-      "script rather than from these tests, so gating on them would " +
-      "ratchet the wrong number.",
+      "script rather than from these tests, so a gate on them would fail " +
+      "a change whose lines only the integration script runs.",
   },
   {
     member: "packages/identity",
@@ -438,19 +442,18 @@ export const DIALS: readonly Dial[] = [
     setBy: "chosen",
     why:
       "Up when more should fit in a lane; down when five minutes is longer " +
-      "than anybody will wait for a first answer. The lane jobs that this " +
-      "bounds do not exist yet; when they do, their work-step and job " +
-      "timeouts in `deno.yml` have to move with it, and nothing checks " +
-      "that until they are written.",
+      "than anybody will wait for a first answer. It sets what a lane " +
+      "packs against, not the workflow's step timeout, which only stops " +
+      "a lane that hangs.",
   },
   {
     name: "LANE_PROLOGUE_SECONDS",
     value: LANE_PROLOGUE_SECONDS,
     unit: "seconds",
-    setBy: "measured",
-    why: "Never. The publisher overwrites it from the lanes' own timing " +
-      "records, and the checked-in figure is only what the first lane uses " +
-      "before any lane has reported one.",
+    setBy: "chosen",
+    why: "Up when checkout, setup, and cache restore take longer than this " +
+      "and eat into the safety margin; down when they take less. Nothing " +
+      "measures it.",
   },
   {
     name: "LANE_SAFETY_SECONDS",

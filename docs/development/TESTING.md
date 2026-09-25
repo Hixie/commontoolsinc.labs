@@ -222,11 +222,11 @@ summer and 03:00 in winter, early on a Pacific day either way. It asks
 calls the CI workflow at the head of `main` with that seed, which runs every CI
 test suite under it. When a test fails, the run fails. The run's checks on the
 commit are listed under "Tomorrow's order", apart from the checks of the
-commit's own run. The CI workflow skips its coverage and topology gates, and
-its attestation and deploy jobs, when another workflow calls it. The records
-relay follows the workflow, and its records carry the seed they ran under, so
-[test selection](test-selection.md) keeps them apart from the commit's own
-runs.
+commit's own run. When another workflow calls the CI workflow, it skips
+`Status`, which holds the coverage and topology checks. It also skips the build,
+attestation and deploy jobs. The records relay follows the workflow, and its
+records carry the seed they ran under, so [test selection](test-selection.md)
+keeps them apart from the commit's own runs.
 
 The order a run takes depends on the set of test files as well as the seed:
 `deno test --shuffle` and the runners this repository owns permute the whole
@@ -651,14 +651,14 @@ The inherited environment includes `DENO_COVERAGE_DIR`, so under coverage a
 child Deno writes coverage profiles of its own as it exits. A signal that
 reaches a child while it is exiting either loses its profiles or leaves one
 truncated, and one truncated profile makes `deno coverage` refuse every profile
-in the job, which then reports no coverage at all. So a test whose child is
-done, or is waiting only on input the test controls, ends it by closing that
-input and then awaits its `status` rather than sending it a signal. A test
-whose subject is a child killed while it runs is not in that position: the
-kill loses that child's coverage, but it cannot truncate a profile. `packages/memory/test/inbox-store.test.ts`
-ends its writer processes by closing their input, and
-`packages/memory/test/inbox-store-child-coverage.test.ts` fails when any of them
-loses its profile.
+of that suite and member, whose report then holds no coverage at all. So a test
+whose child is done, or is waiting only on input the test controls, ends it by
+closing that input and then awaits its `status` rather than sending it a signal.
+A test whose subject is a child killed while it runs is not in that position:
+the kill loses that child's coverage, but it cannot truncate a profile.
+`packages/memory/test/inbox-store.test.ts` ends its writer processes by closing
+their input, and `packages/memory/test/inbox-store-child-coverage.test.ts` fails
+when any of them loses its profile.
 
 ### Test Structure
 
@@ -899,9 +899,10 @@ files, and why `deno task check-local-program` refuses a
   wait machinery itself.
 - [COVERAGE.md](COVERAGE.md) — how CI measures coverage. It explains the two
   mechanisms (Deno's V8 coverage for runtime code, and transformer-based
-  coverage for authored patterns) and how both feed the coverage-debt gate.
-- [CI_PERFORMANCE.md](CI_PERFORMANCE.md) — the CI wall-time policy, and the
-  coverage-debt baseline and ratchet markers that gate a pull request.
+  coverage for authored patterns), how both feed the repository-wide trend, and
+  the measured-set gate that holds a pull request to its baseline.
+- [CI_PERFORMANCE.md](CI_PERFORMANCE.md) — the CI wall-time policy: the required
+  check, the dials that govern the lanes, and the step and job bounds.
 - [BENCHMARKS.md](BENCHMARKS.md) — how `*.bench.ts` files run in CI, how the
   team ops dashboard charts their trends, and the naming and stdout
   constraints a bench file must satisfy.

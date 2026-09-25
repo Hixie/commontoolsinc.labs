@@ -559,10 +559,11 @@ describe("the order a runner is handed its work in", () => {
 });
 
 describe("the order a lane runs its batches in", () => {
-  // A lane that runs out of time is killed with its later batches unrun
-  // and unmeasured, so the order decides which suites the cost model can
-  // learn. Each case turns on one ordering key, and its second assertion
-  // shows that key is what decides it.
+  // A lane that the step timeout or a cancellation stops part way
+  // through leaves its later batches unrun and unmeasured, so the order
+  // decides which suites the cost model can learn. Each case turns on one
+  // ordering key, and its second assertion shows that key is what decides
+  // it.
 
   /**
    * What each of one suite's identities costs, what the suite is
@@ -1001,7 +1002,7 @@ describe("how many lanes the full run asks for", () => {
     // what the units it lost cost onto every stand-in, so the units cost
     // far more than the bare unmeasured figure. A count that assumed the
     // figure would be out by that whole multiple, and each lane would
-    // run past the bound its job is killed at.
+    // run past the bound it is packed to finish inside.
     const units = Array.from({ length: 300 }, (_, i) => `new/u-${i}.test.ts`);
     const suites = [suite({ id: "pattern-integration", units })];
     const renamed = manifestOf(
@@ -1034,7 +1035,7 @@ describe("how many lanes the full run asks for", () => {
   it("takes the topology's shape when there is no manifest", async () => {
     // Nothing has a measured cost, so a projection from costs would be
     // arithmetic over an invented figure, and being wrong downward means
-    // every lane runs past the bound its job is killed at.
+    // every lane runs past the bound it is packed to finish inside.
     const suites = [
       suite({ id: "workspace-unit", units: ["a.test.ts", "b.test.ts"] }),
       suite({ id: "repo-gates", units: ["deno-fmt"] }),

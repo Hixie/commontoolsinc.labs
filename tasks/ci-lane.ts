@@ -454,11 +454,12 @@ export function batchesOf(
     );
   }
   // What a lane costs beyond its tests is fitted from what its batches
-  // were seen to take, and a lane that runs out of time is killed with
-  // its later batches unrun and unmeasured. So the order a lane takes
-  // its batches in decides which suites the cost model can ever learn,
-  // and a suite the model cannot price is one that makes lanes run out
-  // of time. Two keys answer that, in this order.
+  // were seen to take, and a lane that the step timeout or a
+  // cancellation stops part way through leaves its later batches unrun
+  // and unmeasured. So the order a lane takes its batches in decides
+  // which suites the cost model can ever learn, and a suite the model
+  // cannot price is one that makes lanes run past the bound they are
+  // packed to finish inside. Two keys answer that, in this order.
   //
   // A suite whose charge this run did not measure goes ahead of one
   // whose charge it did, because it is the one worth measuring. That is
@@ -628,9 +629,10 @@ export const COVERAGE_FAILURE_MARKER = "measured-through-a-failure.txt";
  *
  * A cold cache compiles every pattern from scratch, which runs compile
  * branches a warm run never reaches, so it moves the repository-wide
- * figure that the pattern suites contribute to. The record goes beside the
- * lane's reports, in the directory its coverage artifact holds, so that
- * whatever reads the figure can tell a cold run's from a warm one's.
+ * figure that the pattern suites contribute to. The record goes at the
+ * top of the lane's report directory, which its coverage artifact holds,
+ * so that whatever reads the figure can tell a cold run's from a warm
+ * one's.
  */
 export const COMPILE_CACHE_STATE_FILE = "compile-cache-state.txt";
 
@@ -1212,9 +1214,9 @@ export function describePlan(
     !unholdable.has(entry.suite)
   );
   if (expensive.length > 0) {
-    // A discretionary identity costing more than a lane's hard bound
-    // runs nowhere, because a lane holding it would be killed before it
-    // reported anything. Naming it is what turns that into something
+    // A discretionary identity costing more than the bound a lane is
+    // packed to finish inside runs nowhere, because no lane can hold it
+    // inside that bound. Naming it is what turns that into something
     // somebody can act on; the sixty-second rule is where such a test
     // gets split.
     lines.push("");
@@ -1479,8 +1481,8 @@ async function fullLanesNeeded(
     // arithmetic over a figure this invented, and the answer would be
     // wrong by whatever that figure is wrong by. It errs in the
     // direction that breaks a run, too: too few lanes means every one of
-    // them runs past the bound its job is killed at, where too many
-    // means some jobs finish early.
+    // them runs past the bound it is packed to finish inside, where too
+    // many means some jobs finish early.
     //
     // So a lane per suite with anything to run goes in as a floor. It
     // needs no number nobody measured, and it keeps the count growing as

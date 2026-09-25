@@ -81,11 +81,12 @@ decides to ship is declared instead, in `tasks/pattern-compat-accepted-breaks.ts
 
   The run prints every pair it forgave, and fails on one that no longer needs
   forgiving, so the list can only shrink. That audit is asked per pattern rather
-  than of the whole list, because the CI job always sets `PATTERN_COMPAT_SHARD`
-  — the shard that examined a pattern is the one that can judge its entries,
-  and the shards between them cover all of them. An entry whose pattern file
-  no longer exists keeps that pattern among the ones the gate divides between
-  its runs, and the run given the pattern fails on the entry.
+  than of the whole list, because CI divides the patterns among its lanes, each
+  lane passing the ones it runs with `--only` — the run that examined a pattern
+  is the one that can judge its entries, and the runs between them cover all of
+  them. A run given every pattern passes no `--only`. An entry whose pattern
+  file does not exist keeps that pattern among the ones the gate is given, and
+  the run given the pattern fails on the entry.
 
   Reaching for any of this is a decision to strand data on running pieces; a
   break that also strands state needs the Tier 2 entry below.

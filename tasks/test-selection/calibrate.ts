@@ -28,9 +28,10 @@
  * a factor of ten. Fitting against the expectation would put that error
  * in the intercept, where it is charged once per lane for as long as the
  * measurement is kept, long after the costs behind it were measured, and
- * a suite whose intercept passes the bound a lane is killed at places no
- * discretionary identity at all. The error a suite's cost model should
- * carry is the machine's, which is what the tests' own time leaves.
+ * a suite whose intercept passes the bound a lane is packed to finish
+ * inside places no discretionary identity at all. The error a suite's
+ * cost model should carry is the machine's, which is what the tests' own
+ * time leaves.
  *
  * What that costs is worth being plain about, because it is charged to
  * every lane rather than to the occasional bad window. The packer reads
@@ -45,8 +46,8 @@
  * that measures the machine rather than the manifest.
  *
  * Every figure here errs high. A cost model that under-estimates puts a
- * lane past the bound it is killed at, where one that over-estimates
- * leaves a lane finishing early.
+ * lane past the bound it is packed to finish inside, where one that
+ * over-estimates leaves a lane finishing early.
  *
  * One reading cannot manage it at both ends. A suite's fixed cost and
  * what one of its units costs are measured from batches of much the same
@@ -182,7 +183,7 @@ export function laneObservations(
  *
  * A batch is read only where all three of its measurements are present.
  * Two of them without the third say nothing a fit can use, and a lane
- * killed at its bound part way through a batch leaves exactly that — the
+ * stopped part way through a batch leaves exactly that — the
  * three are written together, so a batch that never finished contributes
  * none of them.
  *
@@ -375,8 +376,8 @@ function correctionOf(observations: readonly BatchObservation[]): number {
  * five units in one batch and six hundred in another, which is a gap
  * worth fitting over. So a threshold on that gap settles what a suite is
  * charged from the shape of the run it was measured in, and where it is
- * not met the suite is charged nothing a unit, which is the direction a
- * lane is killed in.
+ * not met the suite is charged nothing a unit, which is the direction
+ * that runs a lane past its bound.
  *
  * What a batch does say on its own is a rate: what it spent beyond its
  * own tests, over the units that spending opened. Whatever the batch paid

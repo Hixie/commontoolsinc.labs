@@ -829,7 +829,8 @@ export async function publish(
     // What a lane costs beyond the tests it runs, from what lanes have
     // spent. Without it the packer charges nothing for opening a
     // capability, starting a runner, or loading a module, and a lane
-    // packed to its budget runs past the bound it is killed at.
+    // packed to its budget runs past the bound it is packed to finish
+    // inside.
     calibration: calibrate(
       laneObservations(folded.aggregate.lanes ?? []),
     ),
@@ -985,17 +986,16 @@ function summarize(
       `capability setup(s), and ${measured} of those suite(s) have a ` +
       `cost with coverage on`,
   );
-  // A suite's own figures are what a lane is charged for holding the
-  // suite and for opening each of its units, so a model with no suite in
-  // it charges nothing for either and a lane packed to its budget runs
-  // past the bound it is killed at. A capability setup is measured from
-  // a lane's own records and is unaffected, and the prologue is a fixed
-  // dial rather than a measurement, so it is there either way; this
-  // names the suites rather than everything a lane is charged. Four
-  // things end here — no
-  // lane has run, none recorded what it measured, the fold declines the
-  // records of the ones that did, or the fold stopped reading a figure
-  // it used to read — and the empty map alone says none of them.
+  // A suite's own figures are what a lane is charged for holding the suite and
+  // for opening each of its units, so a model with no suite in it charges
+  // nothing for either and a lane packed to its budget runs past the bound it
+  // is packed to finish inside. A capability setup is measured from a lane's
+  // own records and is unaffected, and the prologue is a fixed dial rather than
+  // a measurement, so it is there either way; this names the suites rather than
+  // everything a lane is charged. Four things end here — no lane has run, none
+  // recorded what it measured, the fold declines the records of the ones that
+  // did, or the fold stopped reading a figure it used to read — and the empty
+  // map alone says none of them.
   if (suites === 0) {
     console.log(
       `test selection: no suite has a measured cost in the last ` +

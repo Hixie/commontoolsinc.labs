@@ -434,5 +434,5 @@ If semantic locators are not finding your element:
 
 - [TESTING.md](TESTING.md) — running the suites and the general unit and
   integration test structure.
-- [COVERAGE.md](COVERAGE.md) — how CI measures coverage and feeds the
-  coverage-debt gate.
+- [COVERAGE.md](COVERAGE.md) — how CI measures coverage. A member's browser
+  tests feed no measured set; only its Deno-only half does.

@@ -305,8 +305,8 @@ describe("calibrate", () => {
       // With one batch there is nothing to say about how much of what it
       // spent was the batch and how much was the units inside it.
       // Charging the units errs high for a lane packing more of them
-      // than that batch held, which is the direction a lane is killed
-      // in, and errs low for a lane packing fewer: a lane holding one
+      // than that batch held, which is the direction that runs a lane
+      // past its bound, and errs low for a lane packing fewer: a lane holding one
       // unit of this suite is charged 13 against the 52 the batch spent.
       expect(
         fitSuite([{
@@ -347,7 +347,7 @@ describe("calibrate", () => {
       // A lane packs by cost, so a suite's cheapest units can reach one
       // in numbers no batch anybody has measured ever held. Charging a
       // unit nothing leaves that lane paying a batch's fixed cost and
-      // nothing more, and the lane is killed at its bound. Ten times the
+      // nothing more, and the lane runs past its bound. Ten times the
       // largest batch measured, which is the sort of reach a suite of a
       // thousand units divided over lanes gives.
       const fitted = fitSuite(oneSize(0.5));
@@ -499,8 +499,9 @@ describe("calibrate", () => {
     it("charges a batch past the sizes it was fitted over what those sizes say a unit costs", () => {
       // Holding every observation from below says nothing about a batch
       // larger than all of them, which is the one the intercept cannot
-      // reach and the one a lane is killed for. What the figures have to
-      // cover there is the rate the batches themselves paid.
+      // reach and the one that runs a lane past its bound. What the
+      // figures have to cover there is the rate the batches themselves
+      // paid.
       const seen = oneSize(0.5);
       const fitted = fitSuite(seen);
       const held = Math.max(...seen.map((one) => one.units));

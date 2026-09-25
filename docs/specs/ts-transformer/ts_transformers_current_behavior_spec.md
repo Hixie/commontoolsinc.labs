@@ -3435,10 +3435,10 @@ end_of_record
 `<url-encoded relative test path>[--<participant>].pattern-coverage.lcov`
 file per test into the coverage directory (`patternCoverageOutputPath`;
 `packages/cli/lib/test-runner.ts`). Per `docs/development/COVERAGE.md`, those
-files feed the CI coverage-debt gate as the sole source of covered-line data
-for authored pattern files (currently only the `pattern-unit-test` job), and
-`DA` records exist only for lines the instrumentation could name — the
-denominator caveat documented there.
+files feed the repository-wide coverage figure as a source of covered-line data
+for authored pattern files (the `pattern-unit` suite), and `DA` records exist
+only for lines the instrumentation could name — the denominator caveat
+documented there.
 
 Test inventory for this stage: transformer unit suite
 `test/pattern-coverage-transformer.test.ts`; end-to-end line mapping and LCOV
