@@ -469,17 +469,18 @@ export function checkStore(
     return parts.length === 0 ? "" : `, ${parts.join(" ")}`;
   };
   /**
-   * Why a test's record may name no file. A suite of test files finds a
-   * record by its file, and the file comes from the name each file
-   * registers; two files in one run registering one name leave the name
-   * naming neither, which reads here as a test no suite runs.
+   * One way a test's record comes to name no file. A suite of test files
+   * finds a record by its file, and the file comes from the name each
+   * file registers; two files in one run registering one name leave the
+   * name naming neither, which reads here as a test no suite runs. A
+   * harness that recorded no file is another way, and the record alone
+   * cannot say which.
    */
   const fileless = (record: StoredIdentity): string =>
     record.file === undefined &&
       (record.test.k === "unit" || record.test.k === "integration")
       ? ". It names no file, which is what a test comes to when two " +
-        "files in one run register tests of its name: give one of them " +
-        "another name"
+        "files in one run register tests of its name, among other ways"
       : "";
   for (const record of records) {
     const key = testIdentityKey(record.test);

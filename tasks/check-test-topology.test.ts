@@ -238,7 +238,7 @@ describe("the store half of the drift guard", () => {
       'no suite claims the recorded identity ["unit","bakery","icing > ' +
       'sets"], recorded by test-records-test-3-a1. It names no file, which ' +
       "is what a test comes to when two files in one run register tests of " +
-      "its name: give one of them another name",
+      "its name, among other ways",
     ]);
   });
 

@@ -327,7 +327,11 @@ export interface ReadReport {
   /** Where each identity in it runs, by identity key. */
   surfaces: Map<string, Surface>;
 
-  /** Every passing duration, by identity key and then by day. */
+  /**
+   * Every passing duration a continuous-integration runner measured, by
+   * identity key and then by day. A workstation's are left out, since a
+   * cost predicts what a lane's runner will spend.
+   */
   durations: Map<string, Map<string, number[]>>;
 
   /** What the lanes in this object measured about themselves. */
