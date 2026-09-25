@@ -477,9 +477,11 @@ that set it:
 curl -fsS http://localhost:8000/api/health/stats | jq -e '.servingLoop != null'
 ```
 
-`servingLoop` is null on the OFF arm and an object on the ON arm, and this is
-the check CI's own posture-probe step makes against the server; the paragraph
-below covers the shell half, which that step asserts separately.
+`servingLoop` is null on the OFF arm and an object on the ON arm. A lane makes
+this check against every Toolshed server its capabilities start, through
+`verifyServerExecutionPosture()` in `tasks/server-execution-ci.ts`. That
+function also checks the shell half, the define baked into the shell, which
+`/api/meta` reports as `shellServerExecutionDefine`.
 
 The toolshed log records the same thing, but it accumulates NUL bytes, so
 `grep` can decide it is binary and print nothing rather than the line that is

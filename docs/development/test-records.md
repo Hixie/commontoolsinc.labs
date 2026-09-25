@@ -239,15 +239,18 @@ shipping twice collides on create and duplicates never come into being.
 
 In CI, jobs hold no record-store credential. A lane gathers each batch's records
 and JUnit reports into its spool as the batch finishes, marking each record with
-its suite's variant, and ends with a credential-free step that packs the spool
-into a `test-records-*` artifact. The Test Records Relay workflow — the only CI
-principal that can write to the store — composes each artifact's context from
-the trusted event payload and creates one object per artifact. Same-repository
-runs always ship. A fork run ships only when its actor is on the infra-managed
-team member list, which is what lets team members' personal-fork pull requests
-report while the store accepts nothing authored by anyone else; other fork runs
-still run their tests normally and ship no records. Re-running the relay, or
-dispatching it with a run id, re-ships idempotently.
+its suite's variant. Each suite declares its JUnit outputs in the topology, so
+the lane finds them itself, and its ship step names no JUnit files. The lane
+ends with that credential-free step, which packs the spool into a
+`test-records-tests-<lane>-a<attempt>` artifact. The Test Records Relay
+workflow — the only CI principal that can write to the store — composes each
+artifact's context from the trusted event payload and creates one object per
+artifact.
+Same-repository runs always ship. A fork run ships only when its actor is on the
+infra-managed team member list, which is what lets team members' personal-fork
+pull requests report while the store accepts nothing authored by anyone else;
+other fork runs still run their tests normally and ship no records. Re-running
+the relay, or dispatching it with a run id, re-ships idempotently.
 
 The shared `test-records-ship` action accepts an optional `variant` input and
 also reads the CI-only `CF_TEST_RECORDS_VARIANT` fallback. An explicit input

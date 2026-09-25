@@ -709,9 +709,8 @@ export const DIALS: readonly Dial[] = [
     unit: "seconds",
     setBy: "derived",
     why: "A tenth of a lane's budget, measured as the widest gap between " +
-      "the time two batches' own tests took. Down when a suite's real slope " +
-      "is going unbelieved for too long; up when a slope fitted inside a " +
-      "narrow range is being read far outside it.",
+      "the time two batches' own tests took. Nothing edits it: it moves " +
+      "only when the lane's budget does.",
   },
   {
     name: "MIN_CORRECTION_SAMPLES",

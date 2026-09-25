@@ -6,12 +6,13 @@ runs need changing, and which dial in `tasks/test-selection/policy.ts` to move.
 
 ## Current Posture
 
-CI runs every test through lanes. `.github/workflows/deno.yml` names no suite:
-each lane job runs `tasks/ci-lane.ts`, which reads the test topology, packs the
-work into lanes by what each test has cost before, and runs its own share. A
-pull request runs five lanes over a selection. A push to `main`, a pull request
-labelled `ci: full`, and the tomorrow's-order run run every test over as many
-lanes as the full run needs. [The test-selection
+CI runs every test through lanes. `.github/workflows/deno.yml` names no suite.
+Each job of its `tests` matrix is a lane and runs `tasks/ci-lane.ts`, which
+reads the test topology, packs the work into lanes by what each test has cost
+before, and runs its own share. A pull request runs five lanes over a
+selection. A push to `main`, a pull request labelled `ci: full`, and the
+tomorrow's-order run run every test over as many lanes as the full run needs.
+[The test-selection
 guide](test-selection.md#how-continuous-integration-runs-the-lanes) describes
 the jobs.
 
@@ -23,7 +24,7 @@ nothing edited. What governs a lane's wall time is a small set of dials in
 dial](test-selection.md#every-dial) lists with the reason to move each:
 
 - `LANES`, how many lanes a pull request takes.
-- `LANE_BOUND_SECONDS` and `LANE_SAFETY_SECONDS`, which with the measured
+- `LANE_BOUND_SECONDS` and `LANE_SAFETY_SECONDS`, which with the fixed
   prologue decide what a pull request's lane packs against.
 - `FULL_LANE_BOUND_SECONDS`, the same for a lane of the full run, which decides
   how many lanes the full run needs.
@@ -43,17 +44,16 @@ Configure merge protection to require `Status`. The GitHub web interface shows
 that check as `CI / Status`, joining the workflow's name to the job's name, but
 merge protection stores and matches the job's name on its own.
 
-`Status` runs on a pull request and on a push, after `pr-tests`, `plan-full` and
-`full-tests`. It runs after failed and skipped dependencies, and not on a
-cancelled run. It fails unless every dependency succeeded or was skipped. It
-also fails unless `pr-tests` or `full-tests` succeeded. Exactly one of those two
-runs, so a run where neither succeeded has not passed its tests. Its steps also
-hold the run's records to the topology and, on a pull request, hold the
-measured sets to their baselines; either can fail it. Do not require
-the lane jobs themselves. The full run's job names carry a lane count that
-changes from run to run, and the pull-request lanes do not run at all on a
-labelled pull request. A new kind of test is a suite in the
-topology rather than a job, so `Status`'s `needs` list does not grow.
+`Status` runs on a pull request and on a push, after `plan-full` and `tests`.
+It runs after failed and skipped dependencies, and not on a cancelled run. It
+fails unless every dependency succeeded or was skipped. It also fails unless
+`tests` succeeded, since a run whose lanes were skipped has not passed its
+tests. Its steps also hold the run's records to the topology and, on a pull
+request, hold the measured sets to their baselines; either can fail it. Do not
+require the lanes themselves. Each lane's name, `Tests (N/M)`, carries a lane
+count, and the full run's count changes from run to run. A new kind of test is
+a suite in the topology rather than a job, so `Status`'s `needs` list does not
+grow.
 
 Keep pull request path filters out of workflows that provide required checks.
 GitHub leaves a required check pending when a path filter prevents its workflow
@@ -116,9 +116,9 @@ job and step carries `started_at` and `completed_at`.
 The team ops dashboard's `/bench?view=ci` page provides repeated-run analysis
 for labs and loom. It reports overall workflow duration and individual job
 duration. Matrix jobs are grouped using the trailing-parenthesis base names from
-`scripts/ci-gantt.ts`, so the lanes of `PR Tests (N/5)` chart as one group and
-those of `Full Tests (N/M)` as another, with the slowest member of each group
-tracked across runs to expose persistent imbalance.
+`scripts/ci-gantt.ts`, so every lane, `Tests (N/M)`, charts in one `Tests`
+group, with the slowest lane tracked across runs to expose persistent
+imbalance.
 
 For a requested history window, the collector retains every successful main
 push build when there are at most 200. Larger sets are sorted chronologically
@@ -247,7 +247,7 @@ the first lane to save happened to build.
 ### The Pattern Compile Cache Key
 
 The lane jobs restore a pattern compile byte cache from `.ci-cache/compile` in
-one `actions/cache` step, keyed `cc-lane-<fingerprint>-<job>-<lane>-<hash>` with
+one `actions/cache` step, keyed `cc-lane-<fingerprint>-tests-<lane>-<hash>` with
 the restore prefix `cc-lane-<fingerprint>-`, where the hash is a `hashFiles()`
 over `packages/patterns` and `packages/generated-patterns`. The fingerprint is
 the compiler-input fingerprint. The runtime's version axis is `cf/esm-compile/`
@@ -348,6 +348,11 @@ a change forces a large measured set or the full run is capped at
 batches unrun and unmeasured, and its job log says how far its plan was
 projected past the budget. So moving either lane bound in `policy.ts` moves
 nothing in the workflow.
+
+A lane its step bound does stop loses little. The lane appends each batch's
+records to its spool as the batch ends, and the ship step runs whatever the lane
+step did. So a lane stopped by its step bound loses only the records of the
+batch it was running.
 
 The deploy jobs carry no bound at all. A deploy hands the work to a script that
 lives outside this repository, and a bound here would cancel a deploy this

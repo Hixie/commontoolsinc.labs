@@ -175,62 +175,69 @@ so the lanes run past their budget instead.
 `.github/workflows/deno.yml` runs every test through `tasks/ci-lane.ts` and
 names no suite. Adding a test, a kind of test, or a configuration of existing
 tests is a change to the topology, `tasks/test-topology.ts`, and never to the
-workflow. A run takes one of two paths.
+workflow. A run's lanes come from two jobs.
 
-- **`pr-tests`** runs on a pull request that does not carry the `ci: full`
-  label, as five jobs named `PR Tests (N/5)`. Each runs `deno run -A
-  tasks/ci-lane.ts --lane N --of 5 --base origin/<base>`, packs the same plan
-  from the manifest and the diff, and runs its own share of it.
-- **`plan-full` and `full-tests`** run on a push to the default branch, on a run
+- **`plan-full`** runs on a push to the default branch, on a run
   `.github/workflows/test-order-tomorrow.yml` calls, and on a pull request
-  labelled `ci: full`. `plan-full` runs `tasks/ci-lane.ts --full --lane-count`
-  and writes the count as its `of` output and the list of lane numbers from one
-  to that count as its `lanes` output. `full-tests` takes its matrix from
-  `lanes`, and each of its jobs, named `Full Tests (N/M)`, runs
-  `tasks/ci-lane.ts --full --lane N --of M`.
+  labelled `ci: full`. It runs `tasks/ci-lane.ts --full --lane-count`. It
+  writes the count as its `of` output, the list of lane numbers from one to
+  that count as its `lanes` output, and `--full` as its `args` output. On any
+  other pull request it is skipped at once.
+- **`tests`** runs every lane, once `plan-full` has succeeded or been skipped.
+  It takes its matrix from `lanes`, or `[1, 2, 3, 4, 5]` where `plan-full` was
+  skipped. Each of its jobs is named `Tests (N/M)`, where `M` is `of`, or 5
+  where `plan-full` was skipped. Each runs `deno run -A tasks/ci-lane.ts --lane
+  N --of M` with `plan-full`'s `args`, or with `--base origin/<base>` where
+  `plan-full` was skipped. A lane packs the same plan from the manifest and the
+  tree as every other lane of its run, and runs its own share of it.
 
-The label is `FULL_RUN_LABEL`, and it is how a pull request runs everything: the
-five lanes do not run, and the full run does. The workflow runs when a label is
-added to or removed from a pull request, so adding or removing `ci: full` starts
-a run that reads the labels the pull request then carries. Any other label
-starts one too. A re-run reads the labels of the event it repeats, so it does
-not see a label changed since.
+So a pull request's five lanes start without waiting, and a run of every test
+waits for the count. Whether a run runs every test is decided in one place,
+`plan-full`'s condition.
 
-The two lane jobs share one list of steps. Each checks out the whole history,
-installs Deno and the dependencies, restores its caches, runs the lane, and then
-uploads what it produced. Each of the two Toolshed binaries a lane can build,
-`toolshed-baked-default` and `toolshed-baked-opposite`, is cached under
-`.ci-cache/binaries/<name>` with an exact key, `lane-binary-<name>-<binary cache
-key>`, and no restore prefix, since a lane uses a binary it finds without asking
-what it was built from. The pattern compile byte cache is under
-`.ci-cache/compile`, keyed `cc-lane-<fingerprint>-<job>-<lane>-<hash of the
-pattern sources>` and restored from the prefix `cc-lane-<fingerprint>-`, so a
-lane can start from the cache another lane or an earlier commit left and saves a
-fresher one.
+The label is `ci: full`, the value of `FULL_RUN_LABEL` in
+`tasks/test-selection/policy.ts`, and `tasks/ci-workflow.test.ts` holds
+`deno.yml` to it. The label is how a pull request runs everything: `plan-full`
+runs, and the lanes run every test. The workflow runs when a label is added to
+or removed from a pull request, so adding or removing `ci: full` starts a run
+that reads the labels the pull request then carries. Any other label starts one
+too. A re-run reads the labels of the event it repeats, so it does not see a
+label changed since.
 
-A lane uploads three artifacts. `lane-failure-<job>-<lane>-a<attempt>`, where
+Each lane checks out the whole history, installs Deno and the dependencies,
+restores its caches, runs the lane, and then uploads what it produced. Each of
+the two Toolshed binaries a lane can build, `toolshed-baked-default` and
+`toolshed-baked-opposite`, is cached under `.ci-cache/binaries/<name>` with an
+exact key, `lane-binary-<name>-<binary cache key>`, and no restore prefix, since
+a lane uses a binary it finds without asking what it was built from. The pattern
+compile byte cache is under `.ci-cache/compile`, keyed
+`cc-lane-<fingerprint>-tests-<lane>-<hash of the pattern sources>` and restored
+from the prefix `cc-lane-<fingerprint>-`, so a lane can start from the cache
+another lane or an earlier commit left and saves a fresher one.
+
+A lane uploads three artifacts. `lane-failure-tests-<lane>-a<attempt>`, where
 the lane failed, holds the working directory it kept and the core of any process
 in the lane that crashed natively: the lane step runs with `ulimit -c unlimited`
-and puts cores under `$RUNNER_TEMP/ci-lane-cores`. `lane-coverage-<job>-<lane>`
+and puts cores under `$RUNNER_TEMP/ci-lane-cores`. `lane-coverage-tests-<lane>`
 holds `coverage/` without its raw profiles: each report at
 `lcov/sets/<suite>/<member>/coverage.lcov`, where a `/` in the member's path is
 written `__`, the file saying whether the compile cache was restored, and the
 markers beside the reports of measured sets the lane saw fail. In the full run
 it also holds the authored-pattern reports under
 `lcov/pattern-runtime/<suite>`.
-`test-records-<job>-<lane>-a<attempt>` holds its test records.
+`test-records-tests-<lane>-a<attempt>` holds its test records.
 
 The lane step is bounded at 30 minutes and its job at 40, the workflow's
-ordinary bounds. Those only stop a lane that hangs. The budget a
-lane packs against is derived from `LANE_BOUND_SECONDS` for a pull request and
-`FULL_LANE_BOUND_SECONDS` for the full run, and a lane whose mandatory work
-passes it runs long rather than being stopped with its later batches unrun, and
-its job log says how far its plan was projected past the budget.
+ordinary bounds. Those only stop a lane that hangs. The budget a lane packs
+against is derived from `LANE_BOUND_SECONDS` for a pull request and
+`FULL_LANE_BOUND_SECONDS` for the full run. Neither is a bound a lane is stopped
+at. A lane whose mandatory work passes its budget runs long rather than being
+stopped with its later batches unrun, and its job log says how far its plan was
+projected past the budget.
 
 **`Status`** is the job a pull request requires. It runs on a pull request and
-on a push once `pr-tests`, `plan-full` and `full-tests` have finished, whether
-they passed or failed, and not in a run that was cancelled. It reads what every
-lane uploaded:
+on a push once `plan-full` and `tests` have finished, whether they passed or
+failed, and not in a run that was cancelled. It reads what every lane uploaded:
 
 1. It holds the run's records to the topology: `deno task check-test-topology
    --commit "$GITHUB_SHA" --records test-records-artifacts`, which fails a
@@ -238,19 +245,20 @@ lane uploaded:
 2. On a pull request, it reads the pull request's description as it stands,
    through the API, runs [the coverage gate](#the-coverage-gate) over every
    lane's coverage reports, and uploads the comment the gate wants posted as the
-   `coverage-comment` artifact.
+   `coverage-comment` artifact. Where `tests` did not succeed, it passes the
+   gate `--tests-failed`, and the gate reports rather than gates.
 3. On a push, it measures the run's coverage with `tasks/coverage-report.ts`,
    and ships the measurements to the record store.
-4. It fails unless every job it waited for succeeded or was skipped, and one of
-   `pr-tests` and `full-tests` succeeded. A run in which neither path ran would
-   otherwise pass having run no test.
+4. It fails unless every job it waited for succeeded or was skipped, and
+   `tests` succeeded. A run whose lanes were skipped would otherwise pass having
+   run no test.
 
 A run the next day's test-order workflow calls runs no `Status`, since the
 commit's own run already covers it.
 
 On a push, the jobs that build the `toolshed` and `cf` binaries run beside the
-lanes. `attest-binaries` waits for both builds and for `full-tests`,
-`deploy-shell-staging` waits for `full-tests`, and `deploy-rapids` waits for
+lanes. `attest-binaries` waits for both builds and for `tests`,
+`deploy-shell-staging` waits for `tests`, and `deploy-rapids` waits for
 `attest-binaries`, so nothing is attested or deployed until every test has
 passed. A pull request builds nothing there: the `binaries` suites compile each
 binary as a test that it still compiles. The servers the full run's lanes start
@@ -288,8 +296,8 @@ pull request's description, where an acceptance is read from. `Status` reads the
 description through the API rather than from the event that started the run. A
 re-run repeats that event, so reading the description as it stands is what makes
 an acceptance written after the push count on a re-run. A description `Status`
-cannot read fails the step. `Status` passes `--tests-failed` when neither of the
-two lane jobs succeeded.
+cannot read fails the step. `Status` passes `--tests-failed` when `tests`, the
+job that runs the lanes, did not succeed.
 
 `--comment` writes the comment the pull request is to be left with, as
 `{prNumber, state, body}`: `state` is `regressed` where the gate failed and
@@ -454,7 +462,7 @@ rather than a setting to fix.
 | `FILL_VALUE_SHARE` | 0.6 | share of the run's budget | chosen | Up when expensive high-value tests are crowded out by cheap ones; down when a lane spends its budget on a few slow tests and runs little else. The three shares sum to one. |
 | `FILL_DENSITY_SHARE` | 0.25 | share of the run's budget | chosen | Up when more of the cheap tail should run; down when the tail is displacing tests with a record. |
 | `FILL_EXPLORATION_SHARE` | 0.15 | share of the run's budget | chosen | Up when the unselected corpus is going stale; down when lanes spend the share on tests that never find anything. |
-| `MIN_CORRECTION_SPAN_SECONDS` | 23 | seconds | derived | A tenth of a lane's budget, measured as the widest gap between the time two batches' own tests took. Down when a suite's real slope is going unbelieved for too long; up when a slope fitted inside a narrow range is being read far outside it. |
+| `MIN_CORRECTION_SPAN_SECONDS` | 23 | seconds | derived | A tenth of a lane's budget, measured as the widest gap between the time two batches' own tests took. Nothing edits it: it moves only when the lane's budget does. |
 | `MIN_CORRECTION_SAMPLES` | 3 | batches | chosen | Up when a slope is being fitted from too little and swinging about; down when a suite's real slope takes too long to be believed. |
 | `FLAKE_EXCLUSION_RATE` | 0.005 | share of runs | chosen | Up when fewer tests should be held back from pull requests; down when flakes are still blocking people. |
 | `FLAKE_MIN_EXECUTIONS` | 2 | runs of one item | chosen | What an item that has ever disagreed runs. Down to one when the cheapest evidence of intermittency is not worth a second execution; nowhere useful above two, since the line through the anchor covers everything flakier. |
@@ -1113,8 +1121,12 @@ EXCLUDED_FROM_COVERAGE_GATE.
 ```
 
 A set past `LOCAL_COVERAGE_MAX_SECONDS` makes every pull request that reaches it
-slower. Nothing is done about it automatically: which of the three to do is a
-decision about the repository.
+slower. What the line gives is the set's cost over the fewest lanes that hold
+it, counting what each of those lanes pays for the set's suites and
+capabilities. A set that no number of the run's lanes holds gets a line saying
+it costs "more with coverage on than the run's 5 lanes of 230s hold". Nothing
+is done about either automatically: which of the three to do is a decision
+about the repository.
 
 ```
 test selection: packages/donut is on EXCLUDED_FROM_COVERAGE_GATE for its
@@ -1129,9 +1141,14 @@ what should measure it, or that has none. An entry of kind `size`, and only such
 an entry, comes off once its tests fit the whole run, and the line says when
 they do, so that the entry comes off because somebody read a measurement. A
 set's units are packed across lanes like any other mandatory work, so what it
-has to fit is the run rather than one lane; a set spread over several lanes pays
-its suites' overheads and its capabilities' setup in each of them, and the line
-charges it that.
+has to fit is the run rather than one lane. A set spread over several lanes pays
+its suites' overheads and its capabilities' setup in each of them. It also pays
+each unit's overhead in every lane holding part of that unit, and a unit is
+split over no more lanes than it holds entries, so that overhead is paid at most
+once per entry. Each entry's own cost is multiplied by how many times it runs.
+The units a set's suite declares unavailable are not run, so they are not
+charged. The line charges a set or a member all of that over the fewest lanes
+that hold it.
 
 ```
 test selection: What 4 measured set(s) or exclusion-list entries cost
@@ -1315,20 +1332,23 @@ itself.
   every test in the missing part look new — which passed and failed at
   this one commit, across the repeats a lane runs, across lanes and across
   attempts.
-- **A test too flaky for a change that failed every one of its runs at
-  this commit and passed every one at the parent.** Those failures do not
-  fail the run, so the lane's job summary is the only other place they
-  appear, and nobody reads the summary of a run that passed. It says the
-  test is a known flaky one and that this run did not fail because of it, and
-  that one bad runner produces the same record, since every run of a test at a
-  commit shares a lane. It gives how many runs failed at the commit and passed
-  at the parent, and the store's flake counts for the test. Such a test is not
-  also listed as a first failure. Which failures a run excused is a fact about
-  that run: a lane excuses a flaky test's failure only where its batch accounted
-  for every identity it was asked to run, and a run that did not apply the rule
-  excused nothing. The lanes record each identity they excused, and the report
-  reads those records; the manifest supplies only the store's flake counts, and
-  a report that cannot read it gives the note without them.
+- **A test too flaky for a change that failed every one of its runs at this
+  commit and passed every one at the parent.** Those failures do not fail the
+  run, so the lane's job summary is the only other place they appear, and nobody
+  reads the summary of a run that passed. It says the test is a known flaky one
+  and that this run did not fail because of it, and that one bad runner produces
+  the same record, since every run of a test at a commit shares a lane. It gives
+  how many runs failed at the commit and passed at the parent, and the store's
+  flake counts for the test. Such a test is not also listed as a first failure.
+  Which failures a run excused is a fact about that run: a lane excuses a flaky
+  test's failure only where its batch accounted for every identity it was asked
+  to run, and a run that did not apply the rule excused nothing. The lanes
+  record each identity they excused, and the report reads those records one
+  artifact at a time. Each `test-records-<job>-a<attempt>` artifact holds one
+  job's attempt. An identity counts as excused only where every artifact that
+  failed it also excused it, since an attempt that failed it without excusing it
+  failed the run. The manifest supplies only the store's flake counts, and a
+  report that cannot read it gives the note without them.
 - **A rename that discarded history**, with the number of catches it
   would bring back and the line to append under
   `tasks/test-identity-aliases/`. Four things have to hold: the

@@ -2063,7 +2063,8 @@ Tasks:
       OFF baseline by construction (EXPERIMENTAL_OPTIONS.md). CI
       (testing.md §2) now uses stable `default` and `opposite` roles:
       default follows the constant with its shell define unset, and
-      opposite is the explicit inverse on `build-toolshed-opposite`.
+      opposite is the explicit inverse, which the `toolshed-baked-opposite`
+      capability serves and the `binaries-opposite` suite builds.
       Both postures are verified before each suite: `/api/meta` must match
       the resolved role and `/api/health/stats.servingLoop` must be present
       exactly on the ON arm. Deno-side test clients declare the posture from
@@ -2182,10 +2183,10 @@ Success criteria:
       been EMPTY across all four suites since #6528, and the flip PR
       swaps the lane roles: the DEFAULT lanes ARE the ON arm and run the
       full suite carrying that empty list. What stays untrue is
-      ON-ONLY — the explicit-`false` OFF regression-guard lanes are the
-      soak's rollback lever and run beside them by design. They retire
-      with the post-soak removal PR, which is when this box can be
-      ticked.)
+      ON-ONLY — the `*-opposite` suites, the explicit-`false` OFF
+      regression guard, are the soak's rollback lever and run beside them
+      by design. They retire with the post-soak removal PR, which is when
+      this box can be ticked.)
 - [ ] Cross-user propagation beats the client-computed baseline on the
       byte-identical workloads (the §1 "faster, not tolerably slower"
       requirement). (NOT ticked — UNMEASURED: the measurement leg is

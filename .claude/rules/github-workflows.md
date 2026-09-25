@@ -46,18 +46,19 @@ a deploy's duration is set by a script in another repository.
 it fails when a bound is missing, when it is written as a number rather than an
 alias, or when a step's anchor is fewer than ten minutes below its job's.
 
-The lane jobs take the same two aliases, and neither is a lane's budget. A lane
-packs its work against a budget `tasks/test-selection/policy.ts` derives from
-`LANE_BOUND_SECONDS` or `FULL_LANE_BOUND_SECONDS`. The step bound only stops a
-lane that hangs. A lane whose mandatory work passes its budget runs long and
-says by how much in its job log, rather than being stopped with its later
-batches unrun. Changing a lane bound in `policy.ts` changes no timeout in
-`deno.yml`.
+The `tests` job takes the same two aliases: 30 minutes for the lane step and 40
+for its job. Neither is a lane's budget. A lane packs its work against a budget
+`tasks/test-selection/policy.ts` derives from `LANE_BOUND_SECONDS` or
+`FULL_LANE_BOUND_SECONDS`. Those are what a lane is packed to finish inside, not
+bounds it is stopped at. The step bound only stops a lane that hangs. A lane
+whose mandatory work passes its budget runs long and says by how much in its
+job log, rather than being stopped with its later batches unrun. Changing a lane
+bound in `policy.ts` changes no timeout in `deno.yml`.
 
 ## A compile cache is keyed on a resolved fingerprint, not on the compiler's inputs listed in `hashFiles`
 
-The lane jobs keep the pattern compile byte cache under `.ci-cache/compile`.
-They resolve the compiler-input fingerprint first, in a setup step that uses the
+The `tests` job keeps the pattern compile byte cache under `.ci-cache/compile`.
+It resolves the compiler-input fingerprint first, in a setup step that uses the
 `./.github/actions/compile-cache-key` composite action under the step id
 `compile-cache-key`, and key that directory's `actions/cache` entry, and its
 restore prefix, on that step's `fingerprint` output. Enumerating the compiler's
@@ -78,12 +79,12 @@ Pattern Compile Cache Key" in `docs/development/CI_PERFORMANCE.md` has the rest.
 
 `deno.yml` names no test. Every test, and every repository gate a lane can run,
 is a suite of the test topology, `tasks/test-topology.ts` and the modules under
-`tasks/test-topology/`, and the lane jobs run them through `tasks/ci-lane.ts`.
-Adding a test, a kind of test, or a configuration of existing tests is a change
-to the topology and never a new job or step here. The wiring recipe is "Covering
-a new test surface" in `docs/development/test-records.md`, and the jobs are
-described in "How continuous integration runs the lanes" in
-`docs/development/test-selection.md`.
+`tasks/test-topology/`, and the `tests` job runs them through
+`tasks/ci-lane.ts`. Adding a test, a kind of test, or a configuration of
+existing tests is a change to the topology and never a new job or step here. The
+wiring recipe is "Covering a new test surface" in
+`docs/development/test-records.md`, and the jobs are described in "How
+continuous integration runs the lanes" in `docs/development/test-selection.md`.
 
 The lanes ship the records. Each lane gathers and marks its batches' records
 itself and ends with a `📤 Ship test records` step using the
@@ -116,13 +117,14 @@ comparing against a base ref is not this: `check-baselines-append-only` and
 `check-test-aliases` each resolve a merge base, and both run in a lane and
 record.
 
-A `run-recorded` wrapper belongs on a command that is itself the check, and not
-on one whose own tests are the checks. That is a separate question from either
-exemption. A wrapper records the command under it and passes recording through,
-so a wrapped test command files a summary of the invocation beside whatever its
-tests record. The CFC Property Suite's test step runs `deno test` directly and
-unwrapped, since `workspace-unit` records those tests; it and the audit step
-leave that workflow taking no part in test records at all.
+Outside the workflows, `deno task run-recorded` belongs on a command that is
+itself the check, and not on one whose own tests are the checks. A gate that a
+suite of the topology runs is one such command, and so is a local `deno task`
+run of a check. A wrapper records the command under it and passes recording
+through, so a wrapped test command files a summary of the invocation beside
+whatever its tests record. The CFC Property Suite's test step runs `deno test`
+directly and unwrapped, since `workspace-unit` records those tests; it and the
+audit step leave that workflow taking no part in test records at all.
 
 ## Before changing how the lanes are sized
 

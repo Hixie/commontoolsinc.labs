@@ -24,7 +24,7 @@ for that suite and that workspace member. `pattern-unit` and `pattern-reload`
 build their own command lines and set it to one directory named for the suite.
 After the batch finishes, the lane converts each such directory into one LCOV
 report with `writeLcovReport()` from `tasks/write-coverage-lcov.ts`, and the
-lane job uploads its reports as the `lane-coverage-<job>-<lane>` artifact.
+lane job uploads its reports as the `lane-coverage-tests-<lane>` artifact.
 [Which suite collects which coverage](#which-suite-collects-which-coverage) says
 which batches a lane measures.
 
@@ -85,16 +85,17 @@ An empty report is not a failure by itself. `deno coverage` calls it an error
 when nothing survives its filters, which happens honestly whenever a profile set
 covers only test files, since those are excluded by design. With no repository
 file dropped, the script takes that emptiness at face value: it warns and exits
-zero. It also warns and exits zero when there was nothing to convert in the first
-place, which is what a batch whose tests never ran produces — the profile
-directory is absent, or holds only empty files. Any other `deno coverage`
-failure is an error.
+zero. It also warns and exits zero when it is given nothing to convert, because
+the profile directory it is named is absent or holds only empty files. Any other
+`deno coverage` failure is an error.
 
-Every one of those paths writes an output file, so every conversion a lane runs
-leaves a report, and the outcome is read from the conversion step rather than
-from a missing file. A batch that never ran leaves no profile directory, so the
-lane converts nothing for it and writes no report for it. What reads the report
-decides what an empty one means: the pull request coverage gate fails a measured
+Every one of those paths writes an output file, so the script always leaves a
+report, and its outcome is read from its exit status rather than from a missing
+file. A lane converts only the profile directories its batches wrote. A batch
+whose tests never ran writes no profile directory, so the lane converts nothing
+for it and writes no report for it. A profile directory that holds only empty
+files is converted, and its report is empty. What reads the reports decides what
+an absent or empty one means: the pull request coverage gate fails a measured
 set the change forced whose reports name no line of its member, as [Test
 selection](test-selection.md) describes.
 
@@ -288,15 +289,18 @@ into nothing this metric reads. A file a Deno test could load is not such a
 file. Where its member carries a measured set, the measured-set gate is what
 holds it to its tests.
 
-### A local run's coverage is whole only when every package passed
+### A local run under coverage runs every package
 
-`deno task test` stops handing packages to its workers as soon as one of them
-fails, lets the packages already running finish, and names the packages it never
-started. What a failing run measured is therefore whatever was in flight, and a
-package it never started has no record, which the metric reads as source no test
-loaded. Read a local run's coverage only when every package passed. A lane is
-not affected: it runs every unit it was given, and a failure in one batch does
-not stop the next.
+With `DENO_COVERAGE_DIR` set, `deno task test` runs every package even after
+one fails, and still exits non-zero. So its profile holds a record for every
+package, and the metric never reads a package as source no test loaded merely
+because the run stopped early. Without the variable, it stops handing packages
+to its workers as soon as one of them fails, lets the packages already running
+finish, and names the packages it never started. A run with a failing test is
+still short by whatever that test would have reached past the point it failed.
+So read a local run's figures as exact only when every package passed. A lane
+runs every unit it was given the same way, and a failure in one batch does not
+stop the next.
 
 ## Coverage must not depend on the execution environment
 

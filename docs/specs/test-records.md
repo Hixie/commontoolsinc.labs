@@ -462,12 +462,14 @@ always()`. JUnit XML becomes records as it is gathered: leaf cases become
 records, and container cases — one per describe level, with overlapping times —
 are dropped by a name-prefix rule.
 
-In `deno.yml` the recording jobs are the lanes. Each lane ships one artifact,
-`test-records-<job>-<lane>-a<attempt>`, and its shipping step names no variant
-and no JUnit specification. The lane runner (`tasks/ci-lane.ts`) gathers each
-batch's direct records and JUnit reports into the lane's spool as the batch
-finishes, marking each with its suite's variant, so a lane that ran default and
-non-default batches ships records the job-wide inputs could not have described.
+In `deno.yml` the recording jobs are the lanes of the `tests` job. Each lane
+ships one artifact, `test-records-tests-<lane>-a<attempt>`, and its shipping
+step names no variant and no JUnit specification. The lane runner
+(`tasks/ci-lane.ts`) gathers each batch's direct records and JUnit reports into
+the lane's spool as the batch finishes, marking each with its suite's variant.
+Each suite declares its JUnit outputs in the topology, so the lane knows where
+they are without the workflow saying. A lane that ran default and non-default
+batches therefore ships records the job-wide inputs could not have described.
 `Status` ships one more artifact, `test-records-coverage-a<attempt>`, holding
 only the coverage measurements `Status` writes, and only from a push. The
 artifact holds `records.ndjson` — always written, zero records or not — and

@@ -15,10 +15,10 @@ update does not throw — it leaves a piece that can no longer materialize.
 
 The two gates guard different halves of the same risk:
 
-| | Gate | CI job | What it proves |
+| | Gate | Test topology suite | What it proves |
 | --- | --- | --- | --- |
-| Tier 1 | `deno task pattern-compat` | Pattern Update Compatibility | The **contract** a pattern declares can still be applied over every contract it has declared before |
-| Tier 2 | `deno task pattern-vintage` | Pattern Update State and Baseline Integrity | A real **document** written by an older version is still readable, and its data survives |
+| Tier 1 | `deno task pattern-compat` | `pattern-compat` | The **contract** a pattern declares can still be applied over every contract it has declared before |
+| Tier 2 | `deno task pattern-vintage` | `pattern-vintage` | A real **document** written by an older version is still readable, and its data survives |
 
 Tier 1 is a statement about schemas. Tier 2 proves the stronger thing schemas
 cannot say. Neither subsumes the other: a contract can stay compatible while
@@ -33,11 +33,11 @@ over every contract recorded for it under `packages/patterns/baselines/`.
 There is no opt-in: a pattern is covered by existing.
 
 Baselines are **append-only**, enforced mechanically by
-`tasks/check-baselines-append-only.ts` in the Pattern Update State and Baseline
-Integrity job. An author-run `--update` that could remove a baseline could
-remove the very one that would have caught a break. A break the repository
-decides to ship is declared instead, in `tasks/pattern-compat-accepted-breaks.ts`
-— see the finding it answers below.
+`tasks/check-baselines-append-only.ts`, which the test topology's
+`repo-history-gates` suite runs. An author-run `--update` that could remove a
+baseline could remove the very one that would have caught a break. A break the
+repository decides to ship is declared instead, in
+`tasks/pattern-compat-accepted-breaks.ts` — see the finding it answers below.
 
 ### Findings and their remedies
 

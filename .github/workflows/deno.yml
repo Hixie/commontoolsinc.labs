@@ -505,9 +505,8 @@ jobs:
           path: ./dist/toolshed
           if-no-files-found: error
 
-  # The posture opposite the first-party default must be baked into its own
-  # browser shell. The stable role is resolved from the same constant as the
-  # product default, so changing that constant swaps the two CI arms together.
+  # The `cf` binary a push releases. Only the Toolshed binary embeds a
+  # shell, so this build has none of the endpoint checks that one makes.
   build-cf:
     name: "Build Binary (cf)"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -540,7 +539,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     # A release artifact must not outlive a failing test, the
-    # pattern-migration gates and the deployed-topology gate among them.
+    # `pattern-compat`, `pattern-vintage` and `deployed-topology` suites among
+    # them.
     # Production deploys consume this artifact without rerunning anything, so
     # this waits for the whole of the full run as well as for the builds.
     # The full run's servers are built by the lanes from the same sources and
