@@ -1546,7 +1546,10 @@ publisher computes:
   arrives in combine into the percentile of the whole. Only passing
   executions are measured: a failure ended where the failure was
   reached, and where a wait's safety net ended it, its duration is that
-  net's bound. A day records the set of cost rules that sealed it, or
+  net's bound. Only executions on continuous-integration runners are
+  measured, too: a workstation is another machine, faster or slower by
+  however it differs from a lane's runner, so its records count as
+  evidence about the test and not about its cost. A day records the set of cost rules that sealed it, or
   carries no record where it was sealed before any were kept, and a day
   an earlier set sealed answers only until the rules in force have
   sealed one for that test.

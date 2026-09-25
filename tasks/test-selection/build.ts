@@ -423,8 +423,11 @@ export function readReport(
       // A cost predicts what a lane will spend running this test again,
       // and only a passing execution measures that. A failure ended
       // where the failure was reached, and where a wait's safety net
-      // ended it, its duration is that net's bound.
-      if (record.outcome !== "pass") continue;
+      // ended it, its duration is that net's bound. And only a lane's
+      // runner measures what a lane will spend: a workstation is another
+      // machine, faster or slower by however it differs, so its record
+      // counts as evidence about the test and not about its cost.
+      if (record.outcome !== "pass" || where.place === "local") continue;
       let byDay = durations.get(key);
       if (byDay === undefined) {
         byDay = new Map();

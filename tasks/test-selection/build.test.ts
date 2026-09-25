@@ -313,6 +313,19 @@ describe("build", () => {
       expect(byDay.get("2026-08-20")).toEqual([10, 90]);
     });
 
+    it("keeps no duration from a workstation, and its observations all the same", () => {
+      // A lane's runner is the machine a cost predicts for; a workstation
+      // is faster or slower by however it differs from one.
+      const local = context({ env: "local", branch: "fix-writes" });
+      delete local.ci;
+      const read = readReport(
+        stored(LOCAL_NAME, local, [record({ durationMs: 10 })]),
+        NO_ALIASES,
+      );
+      expect(read.observations.map((seen) => seen.place)).toEqual(["local"]);
+      expect([...read.durations.keys()]).toEqual([]);
+    });
+
     it("keeps a failed execution as an observation all the same", () => {
       // Its duration is left out of the cost; the execution itself is
       // what the churn and flake terms are counted from.
