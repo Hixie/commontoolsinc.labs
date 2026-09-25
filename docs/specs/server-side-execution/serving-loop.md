@@ -183,21 +183,22 @@ parks idle, which is the tenure's own verdict that nothing is left to
 serve. A request racing a park is carried into the successor
 activation. Any other end of a tenure that received one — a refused or
 failed activation, a loop failure, a lease loss — hands the request
-back to the host, where the re-evaluation after a park (above) counts
-it and the successor captures it again. The captured warm demand is
-TENURE-scoped, and the request itself is a one-shot in-process signal,
-not a durable row — loss across a process crash in the
+back to the host. Where the re-evaluation after a park (above) follows,
+it counts the request, and the successor captures it again. A park on
+a rival's lease has no re-evaluation, so there the request waits for
+this process's next activation of the space. The captured warm demand
+is TENURE-scoped, and the request itself is a one-shot in-process
+signal, not a durable row — loss across a process crash in the
 staged-but-underived window is the OW46 silent-park observability
 family. Impl: `host.ts`'s `#endTenure`; pinned in
 `packages/runner/test/executor-warm-request.test.ts`. One deliberate
 side effect, stated: the warm notice rides `noteExecutorCommit`, whose
 dirtiness marking means a foreign provisioning batch's staged writes
 now also PUSH to any client session subscribed to those docs in the
-target space — previously those
-engine-direct commits produced no notice at all, so a subscribed client
-saw them only on its next own sync. Beneficial (staleness removed),
-never load-bearing: no client in the ruled flows subscribes to setup
-docs before activation.
+target space — previously those engine-direct commits produced no
+notice at all, so a subscribed client saw them only on its next own
+sync. Beneficial (staleness removed), never load-bearing: no client in
+the ruled flows subscribes to setup docs before activation.
 
 **Parking.** A park releases the lease and stops the loop. A park for a
 lost lease, a failed loop, a failed initialization or a closing host

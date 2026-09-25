@@ -885,11 +885,13 @@ export class SpaceServer implements TransactionSealDestination {
     { id: string; scopeKey: string }
   >();
 
-  /** The warm-marked notices behind `#warmDemandKeys`, in arrival order:
-   * each notice that captured a key the ones before it had not. The host
-   * hands them to a successor when this tenure ends without serving
-   * them. */
+  /** The warm-marked notices this tenure has received, in arrival order,
+   * less each one whose every key an earlier one names. The host hands
+   * them to a successor when this tenure ends without serving them. */
   readonly #warmNotices: AdmittedCommitNotice[] = [];
+
+  /** The keys `#warmNotices` names. */
+  readonly #warmNoticeKeys = new Set<string>();
 
   /**
    * Count of push-growth demand wakes, bumped once per
@@ -1288,8 +1290,8 @@ export class SpaceServer implements TransactionSealDestination {
     return this.#parked.promise;
   }
 
-  /** The warm-marked notices behind this tenure's warm demand, in arrival
-   * order; a notice whose every key an earlier one captured is omitted. */
+  /** The warm-marked notices this tenure has received, in arrival order,
+   * less each one whose every key an earlier one names. */
   get warmNotices(): readonly AdmittedCommitNotice[] {
     return this.#warmNotices;
   }
@@ -1808,6 +1810,7 @@ export class SpaceServer implements TransactionSealDestination {
       // runs a fresh demand pass over it (the same grace-coalesced
       // latch a session's watch change uses).
       let captured = false;
+      let named = false;
       for (const write of record.writes) {
         // The canonical key encoding (the registry's own), so warm keys
         // can never drift from client demand keys.
@@ -1816,11 +1819,16 @@ export class SpaceServer implements TransactionSealDestination {
           this.#warmDemandKeys.set(key, write);
           captured = true;
         }
+        // A lifecycle verb registers its staged keys as warm demand
+        // before its own warm notice names them, so what decides whether
+        // a notice is kept is the keys the kept notices name.
+        if (!this.#warmNoticeKeys.has(key)) {
+          this.#warmNoticeKeys.add(key);
+          named = true;
+        }
       }
-      if (captured) {
-        this.#warmNotices.push(record);
-        this.noteDemandChanged("warm");
-      }
+      if (named) this.#warmNotices.push(record);
+      if (captured) this.noteDemandChanged("warm");
     }
     this.#feed.push(record);
     if (

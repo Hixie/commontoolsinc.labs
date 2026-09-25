@@ -528,6 +528,45 @@ describe("executor-warm-request", () => {
     expect(warmCaptures()).toBe(4);
   });
 
+  it("re-activates a sessionless space for the documents a lifecycle verb staged, when its tenure parks `loop-failed` after the verb", async () => {
+    // The tenure takes the verb's staged documents as warm demand while
+    // the verb runs, before the verb's warm notice names them again. The
+    // verb's confirm step arms a failure for the cycle after its own.
+    host = newHost();
+    const { space: pSpace } = await newTarget("warm verb space");
+    await host.runLifecycleVerb(pSpace, {
+      name: "stage",
+      run: async (runtime) => {
+        const staged = runtime.getCell<{ staged: boolean }>(
+          pSpace,
+          "warm-verb-staged",
+          undefined,
+        );
+        const outcome = await runtime.editWithRetry((tx) => {
+          runtime.stampServerRun(tx, {
+            actionId: "test-verb/stage",
+            kind: "bookkeeping",
+          });
+          staged.withTx(tx).set({ staged: true });
+        });
+        expect(outcome.error).toBeUndefined();
+        return staged.getAsNormalizedFullLink().id;
+      },
+      demandRoots: (id) => [id],
+      confirm: () => {
+        failNextCycle = true;
+        return Promise.resolve();
+      },
+    });
+    const firstTenure = activations.entries.length;
+    await parks.matching((entry) =>
+      entry.space === pSpace && entry.reason === "loop-failed"
+    );
+
+    await activatedSince(pSpace, firstTenure);
+    expect(hasClientSession(pSpace)).toBe(false);
+  });
+
   it("does not carry a warm request past a tenure that took it and parked idle", async () => {
     // A later warm request activates the space again, and its tenure
     // captures that request alone.
