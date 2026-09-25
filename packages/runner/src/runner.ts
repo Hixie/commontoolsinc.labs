@@ -4343,6 +4343,11 @@ export class Runner {
     // pattern can only change via a fresh run(), not via the meta watcher).
     const KEYLESS = "\0keyless";
     let currentPatternKey: string | undefined;
+    // The key of the pattern whose nodes are live, in `currentPatternKey`'s
+    // terms, which a swap whose setup does not land steps the watcher back to.
+    let instantiatedPatternKey: string | undefined;
+    // The swap requested last; only it may step the watcher back.
+    let latestSwap: object | undefined;
     // The identity of the pattern whose nodes are LIVE right now — which can
     // differ from `currentPatternKey` (the pointer value last observed): a
     // parent-driven start instantiates its given pattern while the durable
@@ -4694,6 +4699,8 @@ export class Runner {
         newRef: { identity: string; symbol: string },
       ) => {
         const pattern = this.#resolveToPattern(loaded as Pattern);
+        const swap = {};
+        latestSwap = swap;
         // Whoever moved the pointer may have staged the incoming pattern in
         // the same transaction, which is how a transition makes staging and
         // the pointer succeed or fail together. Its completion marker says
@@ -4707,6 +4714,7 @@ export class Runner {
           cancelNodes?.();
           instantiatePattern(pattern);
           runningRef = newRef;
+          instantiatedPatternKey = patternIdentityKey(newRef);
           return;
         }
         const setupTx = this.#runtime.edit();
@@ -4730,6 +4738,20 @@ export class Runner {
           instantiatePattern(pattern);
           runningRef = newRef;
           runningPattern = pattern;
+          instantiatedPatternKey = patternIdentityKey(newRef);
+        };
+        // A swap whose setup does not land leaves the running pattern in
+        // place. Neither the watcher nor the result-pattern memo may go on
+        // naming the pattern that did not arrive, or a later request for it
+        // reads as no change and the swap never happens.
+        const keepRunningPattern = () => {
+          if (
+            latestSwap === swap &&
+            currentPatternKey === patternIdentityKey(newRef)
+          ) {
+            currentPatternKey = instantiatedPatternKey;
+          }
+          this.#evictResultPatternMemos(`${pieceLink.space}/${pieceLink.id}`);
         };
         if (!this.#runtime.sealDestinationInstalled) {
           // The OFF arm (and ON-arm client speculation): setup commits to
@@ -4755,6 +4777,7 @@ export class Runner {
               `Setup for swapped-in pattern ${newRef.identity}#${newRef.symbol} failed`,
               error,
             );
+            keepRunningPattern();
             return;
           }
           finishSwap();
@@ -4791,6 +4814,7 @@ export class Runner {
                 `Setup for swapped-in pattern ${newRef.identity}#${newRef.symbol} was refused at the seal`,
                 committed.error,
               );
+              keepRunningPattern();
               return;
             }
           } catch (error) {
@@ -4799,6 +4823,7 @@ export class Runner {
               `Setup for swapped-in pattern ${newRef.identity}#${newRef.symbol} failed`,
               error,
             );
+            keepRunningPattern();
             return;
           }
           const settlement = waveSettlementOf(setupTx);
@@ -4812,6 +4837,7 @@ export class Runner {
                   settled.error,
                 ],
               );
+              keepRunningPattern();
               return;
             }
           }
@@ -5237,6 +5263,7 @@ export class Runner {
     // Determine initial pattern
     if (givenPattern) {
       currentPatternKey = initialRef ? patternIdentityKey(initialRef) : KEYLESS;
+      instantiatedPatternKey = currentPatternKey;
       try {
         instantiateInitialPattern(givenPattern, initialRef, tx);
         // Real artifact refs only: setup mints and INDEXES a `keyless:`
@@ -5302,6 +5329,7 @@ export class Runner {
 
     // Sync path - instantiate immediately
     currentPatternKey = patternIdentityKey(initialRef);
+    instantiatedPatternKey = currentPatternKey;
     const initialPattern = this.#resolveToPattern(initialResolved);
     instantiateInitialPattern(initialPattern, initialRef, tx);
     runningRef = initialRef;
@@ -7144,11 +7172,21 @@ export class Runner {
     // The setup writes are staged in this transaction; the registration is
     // not, so a transaction that does not become durable would otherwise leave
     // a piece running over writes that never landed. A stale basis is the
-    // exception: the re-run that follows reuses what is already there.
+    // exception: the re-run that follows reuses what is already there. A wave
+    // withdrawing the transaction after accepting it releases the registration
+    // too, because the runs of its nodes are withdrawn with the transaction and
+    // a later setup of the same result starts nothing while it stands.
     if (installedCancel !== undefined) {
       const startedCancel = installedCancel;
-      tx.addCommitCallback((_settledTx, result) => {
-        if (!result.error) return;
+      tx.addCommitCallback((settledTx, result) => {
+        if (!result.error) {
+          const settlement = waveSettlementOf(settledTx) ??
+            waveSettlementOf(tx);
+          void settlement?.then(({ error }) => {
+            if (error) this.releaseChild(resultCell, startedCancel);
+          });
+          return;
+        }
         if (
           isConflictRejection(result.error) ||
           isStorageTransactionInconsistent(result.error)

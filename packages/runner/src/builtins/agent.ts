@@ -423,10 +423,20 @@ export function agent(
     const previousCallHash = state.previousCallHash;
     state.previousCallHash = hash;
     state.currentHash = hash;
-    tx.addCommitCallback((_committedTx, commitResult) => {
-      if (commitResult.error && state.previousCallHash === hash) {
+    // A request whose staging does not become durable is not in flight, so
+    // the next run stages it again. On a serving runtime that includes a
+    // staging the wave withdraws after accepting it.
+    const forgetRequest = () => {
+      if (state.previousCallHash === hash) {
         state.previousCallHash = previousCallHash;
       }
+    };
+    tx.addCommitCallback((committedTx, commitResult) => {
+      if (commitResult.error) return forgetRequest();
+      const settlement = waveSettlementOf(committedTx) ?? waveSettlementOf(tx);
+      void settlement?.then(({ error }) => {
+        if (error) forgetRequest();
+      });
     });
 
     fields.pending.set(true);
