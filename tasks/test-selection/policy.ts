@@ -670,10 +670,11 @@ export const DIALS: readonly Dial[] = [
     value: MIN_CORRECTION_SPAN_SECONDS,
     unit: "seconds",
     setBy: "derived",
-    why: "A tenth of a lane's budget, measured as the widest gap between " +
-      "the time two batches' own tests took. Down when a suite's real slope " +
-      "is going unbelieved for too long; up when a slope fitted inside a " +
-      "narrow range is being read far outside it.",
+    why: "Nothing edits this. It is a tenth of `LANE_BUDGET_SECONDS`, " +
+      "measured as the widest gap between the time two batches' own tests " +
+      "took, so it follows the lane bound. A suite's real slope going " +
+      "unbelieved for too long is a case for `MIN_CORRECTION_SAMPLES` " +
+      "instead.",
   },
   {
     name: "MIN_CORRECTION_SAMPLES",
