@@ -26,7 +26,8 @@ interface Run {
 /**
  * Runs the poster against a payload file holding `contents`, with GitHub
  * answering the comment listing with `existing` (or with `listingStatus`
- * where that is not 200) and recording every write.
+ * where that is not 200) and recording every write into `writes`, which a
+ * caller passes to read them from a run that throws.
  */
 async function run(
   contents: string | undefined,
@@ -34,12 +35,13 @@ async function run(
   listingStatus = 200,
   head = TESTED,
   tested: string | null = TESTED,
+  writes: Write[] = [],
 ): Promise<Run> {
   const dir = await Deno.makeTempDir({ prefix: "coverage-comment-test-" });
   const file = path.join(dir, "coverage-comment.json");
   if (contents !== undefined) await Deno.writeTextFile(file, contents);
 
-  const result: Run = { writes: [], logged: [], errors: [], warnings: [] };
+  const result: Run = { writes, logged: [], errors: [], warnings: [] };
   const originals = {
     fetch: globalThis.fetch,
     log: console.log,
@@ -76,7 +78,8 @@ async function run(
     );
   };
   Deno.env.set("COVERAGE_COMMENT_FILE", file);
-  if (tested !== null) Deno.env.set("HEAD_SHA", tested);
+  if (tested === null) Deno.env.delete("HEAD_SHA");
+  else Deno.env.set("HEAD_SHA", tested);
   try {
     await postCoverageComment();
   } finally {
@@ -123,16 +126,18 @@ describe("postCoverageComment()", () => {
     expect(errors.join("\n")).toContain("nothing is posted");
   });
 
-  it("posts nothing when it is not told which commit the run tested", async () => {
-    const { writes, errors } = await run(
-      JSON.stringify(regressed),
-      [],
-      200,
-      TESTED,
-      null,
-    );
+  it("throws, posting nothing, when it is not told which commit the run tested", async () => {
+    const writes: Write[] = [];
+    await expect(
+      run(JSON.stringify(regressed), [], 200, TESTED, null, writes),
+    ).rejects.toThrow("`HEAD_SHA` is required");
     expect(writes).toEqual([]);
-    expect(errors.join("\n")).toContain("HEAD_SHA is required");
+  });
+
+  it("throws on an empty `HEAD_SHA` even with no payload to post", async () => {
+    await expect(run(undefined, [], 200, TESTED, "")).rejects.toThrow(
+      "`HEAD_SHA` is required",
+    );
   });
 
   it("updates the marked comment in place", async () => {

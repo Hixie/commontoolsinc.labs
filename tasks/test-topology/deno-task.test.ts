@@ -6,6 +6,7 @@ import {
   parseTestTask,
   readBatchRunnerArguments,
   runnerPaths,
+  slashSeparated,
   taskEnvironment,
   testBatches,
   unmatchedGlobs,
@@ -498,6 +499,25 @@ describe("listing a member's test files", () => {
       parseTestTask("deno test test/*.test.ts")!,
     );
     expect(files).toEqual(["test/one.test.ts"]);
+  });
+});
+
+describe("writing a member-relative path with slashes", () => {
+  it("returns a Windows path slash-separated, which a manifest's glob matches", () => {
+    const file = slashSeparated("test\\slow\\one.test.ts", "\\");
+    expect(file).toBe("test/slow/one.test.ts");
+    expect(
+      testBatches(
+        { flags: ["--parallel"], serial: ["test/slow/**"], allAccess: [] },
+        [file],
+      ),
+    ).toEqual([{ flags: [], files: ["test/slow/one.test.ts"] }]);
+  });
+
+  it("returns a POSIX path holding a backslash unchanged", () => {
+    expect(slashSeparated("test/one\\two.test.ts", "/")).toBe(
+      "test/one\\two.test.ts",
+    );
   });
 });
 

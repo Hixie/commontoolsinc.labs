@@ -487,8 +487,11 @@ export function testConcurrency(
  * Runs every member of the workspace at `workspaceCwd`, and returns whether
  * every one of them passed.
  *
- * Workers stop taking new members once one fails, so a failing run leaves the
- * rest unstarted, and names them.
+ * Without `DENO_COVERAGE_DIR`, workers stop taking new members once one
+ * fails, so a failing run leaves the rest unstarted, and names them. With it,
+ * every member runs whatever fails, so the coverage profile holds a record
+ * for every member: the coverage-debt metric reads a member with no record as
+ * source no test loaded.
  */
 export async function runTests(
   workspaceCwd: string = Deno.cwd(),
@@ -541,10 +544,10 @@ export async function runTests(
 
   const results: PackageResult[] = [];
   let next = 0;
-  let failureSeen = false;
+  let stopped = false;
   const workerCount = Math.min(testConcurrency(), members.length);
   const workers = Array.from({ length: workerCount }, async () => {
-    while (!failureSeen && next < members.length) {
+    while (!stopped && next < members.length) {
       const memberPath = members[next++]!;
       const packageName = getPackageName(memberPath);
       console.log(`Testing ${packageName}...`);
@@ -577,7 +580,7 @@ export async function runTests(
         );
       }
       if (!result.result.success) {
-        failureSeen = true;
+        if (coverageRoot === undefined) stopped = true;
         reportPackageFailure(result);
       }
     }
@@ -588,7 +591,7 @@ export async function runTests(
     await Deno.remove(junitRoot, { recursive: true }).catch(() => {});
   }
   // Every member below `next` was handed to a worker; the members above it
-  // are the ones the stop after a failure left unstarted.
+  // are the ones a stop after a failure left unstarted.
   const unstarted = members.slice(next);
 
   const durationResults = [...results].sort((a, b) =>

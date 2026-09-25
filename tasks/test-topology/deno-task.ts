@@ -371,12 +371,12 @@ function matchesAny(
 }
 
 /**
- * Every test file a member's task runs, member-relative and sorted. The
- * task's own paths are expanded — a directory the way Deno walks one, a
- * glob the way Deno expands one — and then its `--ignore` globs and the
- * member's `exclude` are applied. An explicit path reaches `deno test`
- * without passing through either, which is why they are applied here
- * rather than left to the command line.
+ * Every test file a member's task runs, member-relative, slash-separated
+ * whatever the platform, and sorted. The task's own paths are expanded — a
+ * directory the way Deno walks one, a glob the way Deno expands one — and
+ * then its `--ignore` globs and the member's `exclude` are applied. An
+ * explicit path reaches `deno test` without passing through either, which is
+ * why they are applied here rather than left to the command line.
  */
 export async function memberTestFiles(
   memberDir: string,
@@ -417,9 +417,22 @@ export async function memberTestFiles(
   }
   const excludes = [...parsed.ignores, ...await memberExcludes(memberDir)];
   const relative = found
-    .map((file) => path.relative(memberDir, file))
+    .map((file) => slashSeparated(path.relative(memberDir, file)))
     .filter((file) => !matchesAny(file, excludes));
   return [...new Set(relative)].sort();
+}
+
+/**
+ * The path `relative`, written with the platform separator `separator`, as
+ * the slash-separated path a manifest's globs are written against. On a
+ * platform whose separator is a slash it is returned as it is, since a
+ * backslash there is part of a file name.
+ */
+export function slashSeparated(
+  relative: string,
+  separator: string = path.SEPARATOR,
+): string {
+  return relative.split(separator).join("/");
 }
 
 /** What a member's manifest says about running its tests. */

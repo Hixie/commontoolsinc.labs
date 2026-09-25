@@ -16,7 +16,9 @@
  * one, and posts nothing where there is not, since a pull request the gate
  * never failed has nothing to be told. An absent or invalid payload is
  * reported and skipped. Posting is best-effort: a failure to reach GitHub is
- * logged rather than thrown, so the workflow stays green.
+ * logged rather than thrown, so the workflow stays green. A missing
+ * `HEAD_SHA` is a misconfigured workflow rather than a failure of GitHub's,
+ * and fails the run.
  *
  * The payload was written by the pull request's own code, and this posts with
  * a write token, so the pull request it names is held to being the one whose
@@ -67,10 +69,18 @@ function payloadOf(raw: unknown): CoverageCommentPayload | undefined {
 
 /**
  * Reads the pending payload and posts or updates the pull request's coverage
- * comment accordingly. Never throws for a missing or invalid payload, or for
- * a failure to reach GitHub; each is logged instead.
+ * comment accordingly. Throws when `HEAD_SHA` is unset or empty, whatever the
+ * payload. Never throws for a missing or invalid payload, or for a failure to
+ * reach GitHub; each is logged instead.
  */
 export async function postCoverageComment(): Promise<void> {
+  const tested = Deno.env.get("HEAD_SHA");
+  if (tested === undefined || tested.length === 0) {
+    throw new Error(
+      "`HEAD_SHA` is required, to know which pull request to post to.",
+    );
+  }
+
   const file = Deno.env.get("COVERAGE_COMMENT_FILE") ?? COVERAGE_COMMENT_FILE;
 
   let raw: string;
@@ -90,14 +100,6 @@ export async function postCoverageComment(): Promise<void> {
   }
   if (payload === undefined) {
     console.error(`Invalid coverage comment payload in ${file}.`);
-    return;
-  }
-
-  const tested = Deno.env.get("HEAD_SHA");
-  if (tested === undefined || tested.length === 0) {
-    console.error(
-      "HEAD_SHA is required, to know which pull request to post to.",
-    );
     return;
   }
 

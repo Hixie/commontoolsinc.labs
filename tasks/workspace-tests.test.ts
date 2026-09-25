@@ -117,32 +117,48 @@ Deno.test("assertTaskTestsIncluded requires tasks in the root workspace", () => 
   );
 });
 
-// Run `fn` with TEST_CONCURRENCY set or cleared, then restore the caller's
-// value. This keeps each test independent of the ambient environment.
-async function withTestConcurrency<T>(
-  value: string | undefined,
+// Run `fn` with each variable in `values` set, or cleared where its value is
+// `undefined`, then restore the caller's values. This keeps each test
+// independent of the ambient environment, a coverage run's included.
+async function withEnv<T>(
+  values: Record<string, string | undefined>,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  const saved = Deno.env.get("TEST_CONCURRENCY");
-  if (value === undefined) {
-    Deno.env.delete("TEST_CONCURRENCY");
-  } else {
-    Deno.env.set("TEST_CONCURRENCY", value);
-  }
+  const saved = Object.keys(values).map((name) =>
+    [name, Deno.env.get(name)] as const
+  );
+  const apply = (name: string, value: string | undefined) => {
+    if (value === undefined) Deno.env.delete(name);
+    else Deno.env.set(name, value);
+  };
+  for (const [name, value] of Object.entries(values)) apply(name, value);
   try {
     return await fn();
   } finally {
-    if (saved === undefined) {
-      Deno.env.delete("TEST_CONCURRENCY");
-    } else {
-      Deno.env.set("TEST_CONCURRENCY", saved);
-    }
+    for (const [name, value] of saved) apply(name, value);
+  }
+}
+
+// Run `fn` with the console's errors captured rather than printed, and
+// return them alongside `fn`'s result.
+async function capturingErrors<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; errors: string[] }> {
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...values: unknown[]) => {
+    errors.push(values.map(String).join(" "));
+  };
+  try {
+    return { result: await fn(), errors };
+  } finally {
+    console.error = originalError;
   }
 }
 
 Deno.test("testConcurrency parses the override and defaults to half the cores", async () => {
   assertEquals(testConcurrency("3"), 3);
-  await withTestConcurrency(undefined, () => {
+  await withEnv({ TEST_CONCURRENCY: undefined }, () => {
     assertEquals(
       testConcurrency(),
       Math.max(2, Math.floor(navigator.hardwareConcurrency / 2)),
@@ -161,7 +177,7 @@ Deno.test("runTests drains every package with a concurrency limit of one", async
   const dir = await Deno.makeTempDir({ prefix: "ws-serialpool-" });
   try {
     await makeWorkspace(dir, ["a", "b", "c"]);
-    await withTestConcurrency("1", async () => {
+    await withEnv({ TEST_CONCURRENCY: "1" }, async () => {
       const passed = await runTests(dir);
       assertEquals(passed, true);
     });
@@ -171,34 +187,30 @@ Deno.test("runTests drains every package with a concurrency limit of one", async
   }
 });
 
-Deno.test("runTests reports a failure and stops scheduling packages", async () => {
+// A workspace of `a`, `b` and `c` whose first package fails.
+async function makeFailingWorkspace(dir: string): Promise<void> {
+  await makeWorkspace(dir, ["a", "b", "c"]);
+  await Deno.writeTextFile(
+    `${dir}/packages/a/deno.jsonc`,
+    JSON.stringify({
+      tasks: {
+        test:
+          "echo started > ran.txt && echo upstream package download failed >&2 && exit 1",
+      },
+    }),
+  );
+}
+
+Deno.test("runTests without a coverage directory reports a failure and stops scheduling packages", async () => {
   const dir = await Deno.makeTempDir({ prefix: "ws-fail-fast-" });
   try {
-    await makeWorkspace(dir, ["a", "b", "c"]);
-    await Deno.writeTextFile(
-      `${dir}/packages/a/deno.jsonc`,
-      JSON.stringify({
-        tasks: {
-          test:
-            "echo started > ran.txt && echo upstream package download failed >&2 && exit 1",
-        },
-      }),
-    );
-
-    const errors: string[] = [];
-    const originalError = console.error;
-    console.error = (...values: unknown[]) => {
-      errors.push(values.map(String).join(" "));
-    };
-    let passed: boolean;
-    try {
-      passed = await withTestConcurrency(
-        "1",
+    await makeFailingWorkspace(dir);
+    const { result: passed, errors } = await capturingErrors(() =>
+      withEnv(
+        { TEST_CONCURRENCY: "1", DENO_COVERAGE_DIR: undefined },
         () => runTests(dir),
-      );
-    } finally {
-      console.error = originalError;
-    }
+      )
+    );
 
     assertEquals(passed, false);
     assertEquals(await ranPackages(dir, ["a", "b", "c"]), ["a"]);
@@ -214,27 +226,16 @@ Deno.test("runTests reports a failure and stops scheduling packages", async () =
   }
 });
 
-Deno.test("runTests names the packages it never started", async () => {
+Deno.test("runTests without a coverage directory names the packages it never started", async () => {
   const dir = await Deno.makeTempDir({ prefix: "ws-unstarted-" });
   try {
-    await makeWorkspace(dir, ["a", "b", "c"]);
-    await Deno.writeTextFile(
-      `${dir}/packages/a/deno.jsonc`,
-      JSON.stringify({
-        tasks: { test: "echo started > ran.txt && exit 1" },
-      }),
+    await makeFailingWorkspace(dir);
+    const { errors } = await capturingErrors(() =>
+      withEnv(
+        { TEST_CONCURRENCY: "1", DENO_COVERAGE_DIR: undefined },
+        () => runTests(dir),
+      )
     );
-
-    const errors: string[] = [];
-    const originalError = console.error;
-    console.error = (...values: unknown[]) => {
-      errors.push(values.map(String).join(" "));
-    };
-    try {
-      await withTestConcurrency("1", () => runTests(dir));
-    } finally {
-      console.error = originalError;
-    }
 
     // `a` is the only package that started, so `b` and `c` are the ones the
     // run has nothing to say about.
@@ -245,6 +246,26 @@ Deno.test("runTests names the packages it never started", async () => {
       "- ./packages/b",
       "- ./packages/c",
     ]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runTests with a coverage directory runs every package after a failure and still fails", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "ws-coverage-" });
+  try {
+    await makeFailingWorkspace(dir);
+    const { result: passed, errors } = await capturingErrors(() =>
+      withEnv(
+        { TEST_CONCURRENCY: "1", DENO_COVERAGE_DIR: `${dir}/coverage` },
+        () => runTests(dir),
+      )
+    );
+
+    assertEquals(passed, false);
+    assertEquals(await ranPackages(dir, ["a", "b", "c"]), ["a", "b", "c"]);
+    assertEquals(errors.includes("One or more tests failed."), true);
+    assertEquals(errors.includes("Packages this run never started:"), false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -295,17 +316,9 @@ Deno.test("runTests reports a failure for a workspace with no members", async ()
   const dir = await Deno.makeTempDir({ prefix: "ws-empty-" });
   try {
     await makeWorkspace(dir, []);
-    const errors: string[] = [];
-    const originalError = console.error;
-    console.error = (...values: unknown[]) => {
-      errors.push(values.map(String).join(" "));
-    };
-    let passed: boolean;
-    try {
-      passed = await runTests(dir);
-    } finally {
-      console.error = originalError;
-    }
+    const { result: passed, errors } = await capturingErrors(() =>
+      runTests(dir)
+    );
     // A run that tested nothing is a misconfiguration, not a pass.
     assertEquals(passed, false);
     assertEquals(errors, ["No workspace packages to test."]);
