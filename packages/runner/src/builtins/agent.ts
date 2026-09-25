@@ -405,14 +405,15 @@ export function agent(
     };
 
     /**
-     * Records that this node hands the request off. A handoff whose
+     * Records that this node hands the request off, and returns the function
+     * that forgets it again. A handoff whose
      * transaction does not become durable is not in flight, so the next run
      * hands the request off again. On a serving runtime that includes a
      * transaction the wave withdraws after accepting it. Handing a request
      * off twice is harmless, since its record is found by its hash, created
      * once, and listed once.
      */
-    const takeHandoff = (): void => {
+    const takeHandoff = (): () => void => {
       state.previousCallHash = hash;
       const forgetRequest = () => {
         if (state.previousCallHash === hash) state.previousCallHash = undefined;
@@ -425,6 +426,7 @@ export function agent(
           if (error) forgetRequest();
         });
       });
+      return forgetRequest;
     };
 
     /**
@@ -561,9 +563,9 @@ export function agent(
         recordValue.state === "queued" && hash !== state.previousCallHash &&
         homeSpace !== undefined
       ) {
-        takeHandoff();
+        const forgetRequest = takeHandoff();
         // A request the release check refuses is not listed, and the result
-        // cell keeps following the record.
+        // cell keeps following the record. The node's next run tries again.
         enqueueSinkRequestPostCommitEffect(
           tx,
           AGENT_SINK,
@@ -575,7 +577,7 @@ export function agent(
               committedTx,
               (carriage) => listRecord(homeSpace, carriage),
             ),
-          { idempotencyKey: effectKey },
+          { idempotencyKey: effectKey, onReleaseRejected: forgetRequest },
         );
       }
       return;

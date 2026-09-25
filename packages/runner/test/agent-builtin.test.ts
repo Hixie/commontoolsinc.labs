@@ -716,6 +716,62 @@ describe("agent builtin", () => {
       expect(second.withTx().key("pending").get()).toBe(true);
     });
 
+    it("lists the record on a later run after the release check refused a listing", async () => {
+      setUp();
+      const id = "agent-listing-release-refused";
+      const first = runAgentPattern(id);
+      rejectEffectWrite([2, 3]);
+      await tx.commit();
+      const record = await waitForRecord(first);
+      const queue = agentQueueIndexCell(runtime, space);
+
+      // The release check compares the staged request with the policy input
+      // the committed transaction prepared. Handing the first listing effect
+      // a committed transaction that prepared none is how it is refused.
+      let refusals = 1;
+      const edit = runtime.edit.bind(runtime);
+      runtime.edit = ((...args: Parameters<typeof runtime.edit>) => {
+        const editTx = edit(...args);
+        const enqueue = editTx.enqueuePostCommitEffect.bind(editTx);
+        editTx.enqueuePostCommitEffect = (effect) =>
+          enqueue(
+            effect.kind !== "agent-list" || refusals-- <= 0 ? effect : {
+              ...effect,
+              flush: () =>
+                effect.flush(
+                  {
+                    getCfcState: () => ({
+                      writePolicyInputs: [],
+                      prepare: {
+                        status: "prepared",
+                        input: { writePolicyInputs: [] },
+                      },
+                    }),
+                  } as unknown as IExtendedStorageTransaction,
+                ),
+            },
+          );
+        return editTx;
+      }) as typeof runtime.edit;
+      const second = await restart(id, first);
+      expect(queue.key("entries").get()).toEqual([]);
+
+      // A change to the record runs the node again.
+      const cancelDemand = second.sink(() => {});
+      const touch = runtime.edit();
+      record.withTx(touch).key("stateSince").set("2026-09-25T00:00:01.000Z");
+      await touch.commit();
+      await runtime.settled();
+      cancelDemand();
+
+      expect(
+        (queue.key("entries").get() ?? []).map((entry) =>
+          entry.run.getAsNormalizedFullLink().id
+        ),
+      ).toEqual([record.getAsNormalizedFullLink().id]);
+      expect(second.withTx().key("error").get()).toBeUndefined();
+    });
+
     it("leaves the cell to a newer request staged while the refusal waited", async () => {
       setUp();
       const { pattern, agent } = commonfabric;

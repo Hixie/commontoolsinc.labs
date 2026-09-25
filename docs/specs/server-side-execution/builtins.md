@@ -176,7 +176,8 @@ that makes the same index write, and the same refusal when that write fails.
 The index write adds an entry only for a record not already listed, so a record
 that is listed is left as it is. That effect passes the same sink gate as the
 request's first staging. A release check that refuses it after commit leaves the
-record as it is and the result cell following it. The runner
+record as it is and the result cell following it, and the node's next run
+enqueues the effect again. The runner
 claims the record, runs the harness as the requester, and writes the terminal
 fields as an authored client. The builtin writes the record only to create it,
 or to end it while it is still `queued` and no index lists it, which is what
