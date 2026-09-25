@@ -1253,9 +1253,8 @@ other source. Those graphs start from each entry point and from each module
 in a path the compile embeds with `--include`, because `deno compile`
 follows the imports of both. The toolshed binary leaves out the files in
 the pattern trees that it never serves: the integration tests, the recorded
-compatibility baselines, every other `*.test.ts` file, and every iframe
-guest source. The modules only those files import are not embedded
-either.
+compatibility baselines, every other test file, and every iframe guest
+source. The modules only those files import are not embedded either.
 
 A binary is also made from the environment it is built in, because the
 shell bundle bakes environment variables in as compile-time defines. So a

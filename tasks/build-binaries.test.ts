@@ -241,7 +241,6 @@ Deno.test("the toolshed leaves out the pattern files it never serves", async () 
     const [patterns, connector] = config.patternPaths();
     const served = [
       join(patterns, "counter", "counter.tsx"),
-      join(patterns, "counter", "counter.test.tsx"),
       join(patterns, "iframe-game", "main.tsx"),
       join(patterns, "iframe-game", "contract.ts"),
       join(patterns, "notebook", "guest.ts"),
@@ -249,6 +248,7 @@ Deno.test("the toolshed leaves out the pattern files it never serves", async () 
     ];
     const unserved = [
       join(patterns, "counter", "counter.test.ts"),
+      join(patterns, "counter", "counter.test.tsx"),
       join(patterns, "iframe-game", "guest.ts"),
       join(patterns, "iframe-game", "editor", "guest.tsx"),
       join(patterns, "iframe-game", "interaction.browser.test.ts"),

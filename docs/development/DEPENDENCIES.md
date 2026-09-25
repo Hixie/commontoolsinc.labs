@@ -98,9 +98,9 @@ specifier computed at run time has to be named in `tasks/build-binaries.ts` with
 though it succeeds from source.
 
 The toolshed embeds the pattern trees so that it can serve them, which puts
-every module in them into its graph. It leaves out the files there that it
-never serves: the `integration/` and `baselines/` directories of
-`packages/patterns`, every `*.test.ts` file, and every iframe guest source,
+every module in them into its graph. It leaves out the files there that it never
+serves: the `integration/` and `baselines/` directories of `packages/patterns`,
+every test file (`*.test.ts` and `*.test.tsx`), and every iframe guest source,
 which the iframe wrapper generator has already bundled into each generated
 `main.tsx`. An npm import in a pattern tree belongs in one of those files.
 `tasks/build-binaries.test.ts` fails when any other module in a pattern tree
