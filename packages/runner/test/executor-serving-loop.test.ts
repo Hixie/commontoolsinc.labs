@@ -180,8 +180,12 @@ describe("stage F serving loop", () => {
         ? {}
         : { decorateWaveCommitSink }),
       onWaveCycle: cycles.record,
-      onActivationSettled: (activatedSpace, outcome) =>
-        activations.record({ space: activatedSpace, outcome }),
+      onActivationSettled: (activatedSpace, outcome) => {
+        activations.record({ space: activatedSpace, outcome });
+        if (activationObserverThrows) {
+          throw new Error("activation observer failure (test-injected)");
+        }
+      },
       onSpaceParked: (parkedSpace, reason) => {
         parks.record({ space: parkedSpace, reason });
         if (parkObserverThrows) {
@@ -198,6 +202,8 @@ describe("stage F serving loop", () => {
   let parks: ArrivalLog<{ space: string; reason: string }>;
   /** When set, the park report throws. */
   let parkObserverThrows = false;
+  /** When set, the activation report throws. */
+  let activationObserverThrows = false;
   /** How many of the next runtime builds reject before building anything. */
   let factoryFailures = 0;
   /** How many of the next opens of a space's engine reject. */
@@ -224,6 +230,7 @@ describe("stage F serving loop", () => {
     servingFetch = undefined;
     decorateWaveCommitSink = undefined;
     parkObserverThrows = false;
+    activationObserverThrows = false;
     factoryFailures = 0;
     engineOpenFailures = 0;
     cycles = new ArrivalLog();
@@ -2244,6 +2251,37 @@ describe("stage F serving loop", () => {
     );
     await parks.matching((entry) => entry.reason === "test-park-observer");
     expect(host.spaceServer(space)).toBeUndefined();
+  });
+
+  it("serves a space whose activation report throws, and recovers it from a failed activation all the same", async () => {
+    // The report is a test diagnostic. Here it throws on both of the
+    // activation's outcomes: the failure the host recovers from, and the
+    // activation that recovery starts, which goes on serving.
+    activationObserverThrows = true;
+    factoryFailures = 1;
+    host = newHost({ idleParkMs: 600_000 });
+    onServingRuntime = () => Promise.resolve();
+    openClient();
+    const input = clientRuntime.getCell<{ value: number }>(
+      space,
+      "activation-observer-throw-input",
+      undefined,
+    );
+    await input.sync();
+
+    await activated();
+    expect(activations.entries).toEqual([
+      { space, outcome: "failed" },
+      { space, outcome: "active" },
+    ]);
+    expect(host.spaceServer(space)?.active).toBe(true);
+
+    const engine = await server.engineForSpace(space);
+    const tx = clientRuntime.edit();
+    input.withTx(tx).set({ value: 1 });
+    expect((await tx.commit()).error).toBeUndefined();
+    const authoredSeq = Engine.serverSeq(engine);
+    await awaitAdmitted(server, () => readWatermarkSeq(engine) >= authoredSeq);
   });
 
   it("serves an effectful node behind request-hash memoization: miss fires ONCE via the outbox; recovery memo-hits; retries are input-driven (serving-loop.md §4–§6; T7.Q5, T10.Q4, OW7)", async () => {

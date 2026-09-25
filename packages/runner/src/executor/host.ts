@@ -536,9 +536,12 @@ export class ExecutorHost {
    * exists for. The buffer, drained at the successor's registration,
    * is what carries it: several warm notices in one park window share
    * ONE reactivation, and only a buffer merges them all (the #6191
-   * review's P1). A park during initialization completes before its
-   * activation unwinds, so the gate waits for any activation in flight
-   * rather than joining it. */
+   * review's P1). When the store cannot be read to look for undelivered
+   * events, the gate activates anyway: the activation opens the store
+   * itself, and if that fails too, the failure extends the backoff and
+   * brings the host back here. A park during initialization completes
+   * before its activation unwinds, so the gate waits for any activation
+   * in flight rather than joining it. */
   #reactivateAfterPark(space: MemorySpace, parking?: SpaceServer): void {
     void (async () => {
       await parking?.whenParked;
@@ -559,10 +562,9 @@ export class ExecutorHost {
         } catch (error) {
           logger.warn("reactivate-events-check-failed", () => [
             `space ${space}: undelivered-events check failed after park; ` +
-            "not reactivating on it",
+            "reactivating to check again",
             error,
           ]);
-          return;
         }
         // The engine read awaited: re-check the activation preconditions.
         if (this.#closed || this.#spaces.get(space)?.active) return;
@@ -743,10 +745,10 @@ export class ExecutorHost {
       if (!activated) {
         this.#spaces.delete(space);
         this.#rebufferConsumedWarm(space, consumedWarm);
-        this.#options.onActivationSettled?.(space, "refused");
+        this.#reportActivationSettled(space, "refused");
         return;
       }
-      this.#options.onActivationSettled?.(space, "active");
+      this.#reportActivationSettled(space, "active");
       if (this.#closed) {
         // close() ran while this activation was in flight (it awaits us,
         // but park() on a not-yet-active server is a no-op — so the
@@ -768,7 +770,26 @@ export class ExecutorHost {
         this.#reactivateAfterPark(space);
       }
       logger.error("activate-failed", `activation of ${space} failed`, error);
-      this.#options.onActivationSettled?.(space, "failed");
+      this.#reportActivationSettled(space, "failed");
+    }
+  }
+
+  /**
+   * Helper for `#activateInner()`, which reports how an activation attempt
+   * ended to the `onActivationSettled` observer. An observer that throws is
+   * logged, and ends neither the activation nor its recovery.
+   */
+  #reportActivationSettled(
+    space: MemorySpace,
+    outcome: "active" | "refused" | "failed",
+  ): void {
+    try {
+      this.#options.onActivationSettled?.(space, outcome);
+    } catch (error) {
+      logger.warn("activation-settled-observer-failed", () => [
+        `space ${space}: activation observer threw`,
+        error,
+      ]);
     }
   }
 
