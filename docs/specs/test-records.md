@@ -132,7 +132,10 @@ The registration preload is such a module, and it replaces what it takes:
 it writes a name-to-file map into the spool, and ingestion lays that over
 what the report says. The map holds each name `Deno.test` was called with
 and, for a file written with `describe` and `it`, the whole chain of each
-leaf. A hook a file declares outside every `describe` has no suite to
+leaf. Every name maps to the test file the process runs, which is
+`Deno.mainModule`, whichever module made the call: a file that registers
+its cases through a shared module is the file its records carry, and the
+file its skip list is keyed by. A hook a file declares outside every `describe` has no suite to
 hold it, so the bdd runner makes one named `global` and every suite that
 file goes on to run sits inside it; the chain each leaf is named by opens
 with that name. A suite title two files share says nothing about either
