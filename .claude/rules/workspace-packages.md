@@ -33,6 +33,17 @@ When the package has tests, that entry runs `tasks/run-member-tests.ts` over a
 packages, or a runner of the package's own; when it does not have them yet, it
 is `"echo 'No tests defined.'"`.
 
+A package whose tests include some that need a browser keeps them out of
+`deno-test`, in a `"browser-test"` entry of their own, and its `test` task
+names both: `packages/static/deno.jsonc` and `packages/ui/deno.jsonc` are the
+worked examples. The coverage gate reads `deno-test` as the package's
+Deno-only half, and the package's measured set holds that half's tests and
+never the browser ones, so a browser test added to `browser-test` leaves the
+package's gate as it was. A `test` task that joins `deno test` to the
+browser run with `&&` in one string gives the topology no files to point at.
+`tasks/test-topology/unit.ts` refuses to load such a member unless
+`RUNS_WHOLE` lists it with its reason.
+
 This is not a tidiness rule. The root test runner (`tasks/test.ts`) walks every
 workspace member and runs `deno task test` in each. A member with no `test`
 task falls through to the root workspace's task, which is the whole suite —
