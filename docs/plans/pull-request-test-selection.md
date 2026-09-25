@@ -891,8 +891,9 @@ each unit a lane opens.
 The packer changes shape because of it. An identity's cost now depends on
 whether its unit is already being invoked: the first identity chosen from
 a file pays the overhead and every later one pays only itself. So the
-density pass wants to sort by marginal cost rather than by cost, and
-choosing one test from a file makes its siblings cheaper to add. That is a
+density pass sorts by marginal cost rather than by cost: choosing one test
+from a file makes its siblings cheaper to add, and moves them up the
+ordering. That is a
 better model of the machine than per-file items ever were, and it falls
 out rather than being imposed.
 
@@ -1088,7 +1089,7 @@ what a `beforeAll` that throws should do to the rest of its group.
 - [x] `cost` and the packing passes key on identities, with
       `unitOverhead(suite)` fitted from the lane runner's records and
       charged for each unit a lane opens.
-- [ ] The density pass sorting by marginal cost, so that choosing one test
+- [x] The density pass sorting by marginal cost, so that choosing one test
       from a file moves its siblings up the ordering rather than leaving
       them where their own cost puts them.
 - [x] `command()` returns one invocation per file with its skip list, and
@@ -2422,12 +2423,19 @@ lanes times 230 seconds each, it fills in four passes.
    descending order of value, ignoring cost. This is what gets the
    expensive, genuinely broken integration test into the run.
 3. **Density, 25 percent.** Items in descending order of value divided by
-   cost. Because of the value floor, this pass sweeps up the cheap tail:
-   thousands of sub-second tests at a value-per-second that nothing
-   expensive can match.
+   what one run of the item would cost the lane it would go in: its own
+   corrected time, plus whichever of its suite's overhead, its unit's
+   overhead and its capabilities' setup that lane has not paid yet.
+   Taking an item lowers what its lane charges for everything sharing its
+   unit, its suite or a capability, so the order is worked out again as
+   the pass takes items rather than fixed when it starts, and the identity
+   key breaks a tie. Because of the value floor, this pass sweeps up the
+   cheap tail: thousands of sub-second tests at a value-per-second that
+   nothing expensive can match.
 4. **Exploration, 15 percent.** The draw described above.
 
-Passes 2 and 3 both account for the setup a choice would open. An item
+Passes 2 and 3 both account for the setup a choice would open, and pass 3
+orders by it as well. An item
 whose suite needs a capability no lane has opened is charged the
 capability's setup cost the first time it is picked, so a lone cheap test
 behind 40 seconds of setup correctly loses to 40 seconds of tests that

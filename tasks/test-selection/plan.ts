@@ -70,8 +70,9 @@ export interface LaneAssignment {
   /**
    * Seconds of work this lane is expected to take, setup included. It
    * stops at the lane budget, except for a lane holding a single identity
-   * costing more than that, which runs up to the hard bound, and for a
-   * mandatory set that fits in no lane, which `overBudgetSeconds` reports.
+   * costing more than that, which may run up to the bound a lane is
+   * packed to finish inside, and for a mandatory set that fits in no
+   * lane, which `overBudgetSeconds` reports.
    */
   projectedSeconds: number;
 
@@ -124,11 +125,12 @@ export interface Plan {
   /**
    * Discretionary identities no lane can hold. One costing more than a
    * lane's planned budget is given a lane to itself and allowed to run up
-   * to the hard bound; one costing more than the hard bound would only
-   * time its lane out, so it is reported instead, and the sixty-second
-   * rule is where such a test gets split. A mandatory identity is never
-   * here, however expensive: it is placed, and `overBudgetSeconds` is
-   * what says how far past its budget that put a lane.
+   * to the bound a lane is packed to finish inside; one costing more than
+   * that bound fits in no lane, so it is reported instead, and the
+   * sixty-second rule is where such a test gets split. A mandatory
+   * identity is never here, however expensive: it is placed, and
+   * `overBudgetSeconds` is what says how far past its budget that put a
+   * lane.
    */
   unschedulable: UnschedulableEntry[];
 
@@ -140,9 +142,9 @@ export interface Plan {
    * those alone pass what a lane holding two things may take, nothing
    * can share a lane with one of its identities, so the suite takes a
    * whole lane per identity it places and the lanes around it hold
-   * everything else. Where they pass the hard bound as well, no lane can
-   * hold it at all and every discretionary identity it has is in
-   * `unschedulable`.
+   * everything else. Where they pass the bound a lane is packed to finish
+   * inside as well, no lane can hold it at all and every discretionary
+   * identity it has is in `unschedulable`.
    *
    * Neither reading changes what the packer does; both are what makes it
    * answerable. A lane holding one test, and four lanes holding the rest
@@ -200,7 +202,10 @@ export interface PlanInput {
    */
   budgetSeconds?: number;
 
-  /** The hard bound on a lane's work step. Defaults to the policy's dial. */
+  /**
+   * The bound a lane is packed to finish inside. Defaults to the policy's
+   * dial.
+   */
   boundSeconds?: number;
 
   /**
@@ -488,11 +493,11 @@ interface Spot {
 
 /**
  * What a lane may hold. A lane running one identity once and nothing else
- * may go up to the hard bound, which is where an identity costing more
- * than a whole lane's budget runs: it cannot be split, so a lane to
- * itself is the only place it goes. A repeat can be split — dropping one
- * run of it is what `fill` does — so a lane repeating an identity stops
- * at the budget like any other.
+ * may go up to the bound a lane is packed to finish inside, which is
+ * where an identity costing more than a whole lane's budget runs: it
+ * cannot be split, so a lane to itself is the only place it goes. A
+ * repeat can be split — dropping one run of it is what `take` does — so a
+ * lane repeating an identity stops at the budget like any other.
  */
 function capacity(
   lane: Filling,
@@ -549,21 +554,44 @@ function spotsFor(
   return { fitting, shortest };
 }
 
+/**
+ * What placing one identity opened in its lane: whether the lane was not
+ * yet holding its suite, whether the lane had not yet opened its unit,
+ * and which of the capabilities its suite needs the lane had not set up.
+ * Each is charged once per lane, so what the lane charges for anything
+ * else sharing one of them falls.
+ */
+interface Opened {
+  lane: Filling;
+  suite: boolean;
+  unit: boolean;
+  capabilities: string[];
+}
+
 function place(
   input: PlanInput,
   spot: Spot,
   entry: ManifestEntry,
   reason: SelectionReason,
   repeats: number,
-): void {
+): Opened {
   const lane = spot.lane;
+  const opened: Opened = {
+    lane,
+    suite: !lane.suites.has(entry.suite),
+    unit: !lane.units.has(openedUnit(entry)),
+    capabilities: (input.capabilities.get(entry.suite) ?? []).filter(
+      (capability) => !lane.capabilities.has(capability),
+    ),
+  };
   lane.selections.push({ entry, reason, repeats });
   lane.load += spot.cost;
   lane.suites.add(entry.suite);
   lane.units.add(openedUnit(entry));
-  for (const capability of input.capabilities.get(entry.suite) ?? []) {
+  for (const capability of opened.capabilities) {
     lane.capabilities.add(capability);
   }
+  return opened;
 }
 
 /**
@@ -650,13 +678,13 @@ export function plan(input: PlanInput): Plan {
     }
   }
 
-  // An identity whose own measured time is past the hard bound shares a
-  // lane with nothing, so a discretionary one is reported rather than
-  // placed in a lane that would then be killed at its bound. A mandatory
-  // one is placed anyway: the change is not tested without it, and a lane
-  // running long says so, where dropping it leaves the run reporting a
-  // pass over a test that never ran. Its suite's correction is applied
-  // first, because that is what the time will actually be.
+  // An identity whose own measured time is past the bound a lane is
+  // packed to finish inside fits in no lane, so a discretionary one is
+  // reported rather than placed in a lane it would take past that bound.
+  // A mandatory one is placed anyway: the change is not tested without it,
+  // and a lane running long says so, where dropping it leaves the run
+  // reporting a pass over a test that never ran. Its suite's correction is
+  // applied first, because that is what the time will actually be.
   const unschedulable: UnschedulableEntry[] = [];
   // Per suite, the identities its own charge is the whole of what stops,
   // and how many of those no lane can hold. One held back for a reason of
@@ -681,7 +709,8 @@ export function plan(input: PlanInput): Plan {
     // What an empty lane would pay for it: its own corrected time plus
     // every overhead and setup that lane would open. Charging only the
     // test's own time would schedule an identity whose suite, unit, and
-    // capabilities together put the lane past the bound it is killed at.
+    // capabilities together put the lane past the bound it is packed to
+    // finish inside.
     const cost = loneCost(manifest, input, entry);
     if (cost <= bound) continue;
     // That whole figure is what is reported, so whoever reads it is told
@@ -817,35 +846,32 @@ export function plan(input: PlanInput): Plan {
   // that forced a great deal of work in does not then get a full budget
   // of discretionary tests on top of it.
   const left = Math.max(0, budget - mandatoryLoad);
-  const withRepeats = (entry: ManifestEntry): number => entry.repeats;
+  /** A discretionary pass stopping at `share` of what the mandatory left. */
+  const pass = (reason: SelectionReason, share: number): Pass => ({
+    input,
+    lanes,
+    taken,
+    reason,
+    ceiling: mandatoryLoad + left * share,
+    laneBudget,
+    bound,
+  });
 
   // Value first: descending score, ignoring cost.
   fill(
-    input,
-    lanes,
-    taken,
+    pass("value", FILL_VALUE_SHARE),
     remaining().sort((a, b) => b.score - a.score),
-    "value",
-    mandatoryLoad + left * FILL_VALUE_SHARE,
-    laneBudget,
-    bound,
-    withRepeats,
   );
 
-  // Density: descending value per second, which the value floor points at
-  // the cheap tail.
-  fill(
-    input,
-    lanes,
-    taken,
-    remaining().sort((a, b) =>
-      b.score / Math.max(b.cost, 1e-6) - a.score / Math.max(a.cost, 1e-6)
+  // Density: descending value per second of what each identity would cost
+  // the lane it went in, which the value floor points at the cheap tail.
+  // An identity the manifest carries twice is offered once, as the entry
+  // the mandatory pass would have placed.
+  fillDensest(
+    pass("density", FILL_VALUE_SHARE + FILL_DENSITY_SHARE),
+    remaining().filter((entry) =>
+      byKey.get(testIdentityKey(entry.test)) === entry
     ),
-    "density",
-    mandatoryLoad + left * (FILL_VALUE_SHARE + FILL_DENSITY_SHARE),
-    laneBudget,
-    bound,
-    withRepeats,
   );
 
   // Exploration: a draw over what the value ordering did not pick, so
@@ -867,16 +893,11 @@ export function plan(input: PlanInput): Plan {
   // of every day there is.
   drawn.sort((a, b) => (a.lastRun ?? "").localeCompare(b.lastRun ?? ""));
   fill(
-    input,
-    lanes,
-    taken,
+    pass(
+      "exploration",
+      FILL_VALUE_SHARE + FILL_DENSITY_SHARE + FILL_EXPLORATION_SHARE,
+    ),
     drawn,
-    "exploration",
-    mandatoryLoad +
-      left * (FILL_VALUE_SHARE + FILL_DENSITY_SHARE + FILL_EXPLORATION_SHARE),
-    laneBudget,
-    bound,
-    withRepeats,
   );
 
   return {
@@ -1081,6 +1102,21 @@ function laneLoad(lanes: readonly Filling[]): number {
   return lanes.reduce((total, lane) => total + lane.load, 0);
 }
 
+/** What one discretionary pass fills, and how far it may go. */
+interface Pass {
+  input: PlanInput;
+  lanes: Filling[];
+
+  /** Every identity any pass has placed, which no pass places again. */
+  taken: Set<string>;
+  reason: SelectionReason;
+
+  /** The load of the whole run at which this pass stops. */
+  ceiling: number;
+  laneBudget: number;
+  bound: number;
+}
+
 /**
  * Takes candidates in the order given, up to this pass's share of the
  * whole run's budget and no further. The share is of the whole rather
@@ -1088,30 +1124,213 @@ function laneLoad(lanes: readonly Filling[]): number {
  * the others carry the tail; what stops any one lane running long is the
  * lane's own capacity, which `spotsFor` applies.
  */
-function fill(
-  input: PlanInput,
-  lanes: Filling[],
-  taken: Set<string>,
-  candidates: readonly ManifestEntry[],
-  reason: SelectionReason,
-  ceiling: number,
-  laneBudget: number,
-  bound: number,
-  repeatsOf: (entry: ManifestEntry) => number,
-): void {
+function fill(pass: Pass, candidates: readonly ManifestEntry[]): void {
   for (const entry of candidates) {
-    const key = testIdentityKey(entry.test);
+    if (pass.taken.has(testIdentityKey(entry.test))) continue;
+    const once = oneRun(pass, entry);
+    if (once !== undefined) take(pass, entry, once);
+  }
+}
+
+/**
+ * The cheapest lane that can hold one run of this identity, where
+ * holding it there keeps the run inside the pass's ceiling.
+ */
+function oneRun(pass: Pass, entry: ManifestEntry): Spot | undefined {
+  const spot = spotsFor(
+    pass.input,
+    pass.lanes,
+    entry,
+    1,
+    pass.laneBudget,
+    pass.bound,
+  ).fitting;
+  return spot === undefined ||
+      laneLoad(pass.lanes) + spot.cost > pass.ceiling
+    ? undefined
+    : spot;
+}
+
+/**
+ * Places an identity one run of which fits at `once`, and says what that
+ * opened in its lane. An identity that would be repeated but no longer
+ * fits runs fewer times, down to once: one observation beats none.
+ */
+function take(pass: Pass, entry: ManifestEntry, once: Spot): Opened {
+  pass.taken.add(testIdentityKey(entry.test));
+  const spent = laneLoad(pass.lanes);
+  for (let repeats = entry.repeats; repeats > 1; repeats--) {
+    const spot = spotsFor(
+      pass.input,
+      pass.lanes,
+      entry,
+      repeats,
+      pass.laneBudget,
+      pass.bound,
+    ).fitting;
+    if (spot !== undefined && spent + spot.cost <= pass.ceiling) {
+      return place(pass.input, spot, entry, pass.reason, repeats);
+    }
+  }
+  return place(pass.input, once, entry, pass.reason, 1);
+}
+
+/** Value per second of an identity whose one run costs `cost`. */
+function density(entry: ManifestEntry, cost: number): number {
+  return entry.score / Math.max(cost, 1e-6);
+}
+
+/**
+ * Takes candidates in descending value per second of what one run of each
+ * would cost the lane it went in, with the identity key breaking a tie,
+ * and places each the way `fill` does.
+ *
+ * What an identity costs a lane falls once that lane has opened its unit,
+ * its suite, or a capability its suite needs, since each of those is
+ * charged once per lane. So choosing one test of a file moves the file's
+ * other tests up the ordering, and choosing the first test of a suite
+ * moves the rest of the suite. Nothing else raises a candidate's density:
+ * lanes and the run only fill up, which can only move it to a lane
+ * charging more or leave it nowhere to go.
+ *
+ * So each candidate waits in a queue at the density it was last offered
+ * at, which is never below its density now. A placement offers again,
+ * at the higher figure, every candidate whose cost in that lane it
+ * lowered. The candidate at the head of the queue is worked out afresh.
+ * Where its density has not changed, it is the densest there is, and it
+ * is taken. Where its density has fallen, it is offered again at what it
+ * is now. Where it fits nowhere, it waits for a placement to lower its
+ * cost.
+ *
+ * Each candidate is offered once to start with, again for each lane that
+ * opens its unit, its suite, or one of its capabilities, and again for
+ * each lane that fills too far to hold it. The work therefore grows with
+ * the candidates times the lanes, times the logarithm of the queue's
+ * length.
+ */
+function fillDensest(pass: Pass, candidates: readonly ManifestEntry[]): void {
+  const { input, taken } = pass;
+  const bySuite = groupBy(candidates, (entry) => entry.suite);
+  const byUnit = groupBy(candidates, openedUnit);
+  /** The suites among the candidates needing each capability. */
+  const needing = new Map<string, string[]>();
+  for (const suite of bySuite.keys()) {
+    for (const capability of input.capabilities.get(suite) ?? []) {
+      needing.set(capability, [...needing.get(capability) ?? [], suite]);
+    }
+  }
+
+  const queue = new Offers();
+  /** The density each waiting candidate was last offered at. */
+  const offered = new Map<string, number>();
+  const offer = (entry: ManifestEntry, key: string, at: number) => {
+    offered.set(key, at);
+    queue.push({ density: at, key, entry });
+  };
+
+  for (const entry of candidates) {
+    const once = oneRun(pass, entry);
+    if (once !== undefined) {
+      offer(entry, testIdentityKey(entry.test), density(entry, once.cost));
+    }
+  }
+
+  for (let head = queue.pop(); head !== undefined; head = queue.pop()) {
+    const { entry, key } = head;
     if (taken.has(key)) continue;
-    const spent = laneLoad(lanes);
-    // An identity that would be repeated but no longer fits runs fewer
-    // times, down to once: one observation beats none.
-    for (let repeats = repeatsOf(entry); repeats >= 1; repeats--) {
-      const spot = spotsFor(input, lanes, entry, repeats, laneBudget, bound)
-        .fitting;
-      if (spot === undefined || spent + spot.cost > ceiling) continue;
-      taken.add(key);
-      place(input, spot, entry, reason, repeats);
-      break;
+    const once = oneRun(pass, entry);
+    if (once === undefined) {
+      offered.delete(key);
+      continue;
+    }
+    if (density(entry, once.cost) !== head.density) {
+      offer(entry, key, density(entry, once.cost));
+      continue;
+    }
+    const opened = take(pass, entry, once);
+    const lowered = [
+      ...(opened.suite
+        ? bySuite.get(entry.suite)
+        : opened.unit
+        ? byUnit.get(openedUnit(entry))
+        : undefined) ?? [],
+      ...opened.capabilities.flatMap((capability) =>
+        (needing.get(capability) ?? []).flatMap((suite) =>
+          bySuite.get(suite) ?? []
+        )
+      ),
+    ];
+    for (const other of lowered) {
+      const otherKey = testIdentityKey(other.test);
+      if (taken.has(otherKey)) continue;
+      const cheapest = oneRun(pass, other);
+      if (
+        cheapest !== undefined &&
+        density(other, cheapest.cost) > (offered.get(otherKey) ?? -Infinity)
+      ) {
+        offer(other, otherKey, density(other, cheapest.cost));
+      }
+    }
+  }
+}
+
+function groupBy(
+  entries: readonly ManifestEntry[],
+  by: (entry: ManifestEntry) => string,
+): Map<string, ManifestEntry[]> {
+  const groups = new Map<string, ManifestEntry[]>();
+  for (const entry of entries) {
+    const group = groups.get(by(entry));
+    if (group === undefined) groups.set(by(entry), [entry]);
+    else group.push(entry);
+  }
+  return groups;
+}
+
+/** A candidate of the density pass, and the density it was offered at. */
+interface Offer {
+  density: number;
+  key: string;
+  entry: ManifestEntry;
+}
+
+/** Whether `a` leaves the density pass's queue ahead of `b`. */
+function ahead(a: Offer, b: Offer): boolean {
+  return a.density > b.density || (a.density === b.density && a.key < b.key);
+}
+
+/** The density pass's queue: a binary heap, densest first. */
+class Offers {
+  #heap: Offer[] = [];
+
+  push(offer: Offer): void {
+    const heap = this.#heap;
+    let at = heap.push(offer) - 1;
+    while (at > 0) {
+      const parent = (at - 1) >> 1;
+      if (!ahead(heap[at]!, heap[parent]!)) return;
+      [heap[at], heap[parent]] = [heap[parent]!, heap[at]!];
+      at = parent;
+    }
+  }
+
+  pop(): Offer | undefined {
+    const heap = this.#heap;
+    const head = heap[0];
+    const last = heap.pop();
+    if (last === undefined || heap.length === 0) return head;
+    heap[0] = last;
+    let at = 0;
+    for (;;) {
+      let first = at;
+      for (const child of [2 * at + 1, 2 * at + 2]) {
+        if (child < heap.length && ahead(heap[child]!, heap[first]!)) {
+          first = child;
+        }
+      }
+      if (first === at) return head;
+      [heap[at], heap[first]] = [heap[first]!, heap[at]!];
+      at = first;
     }
   }
 }
