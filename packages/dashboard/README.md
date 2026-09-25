@@ -196,7 +196,7 @@ content-based cache version from the dashboard package directory:
 ```bash
 cd packages/dashboard
 deno task regenerate-favicons
-deno task test-favicon-raster
+deno test --allow-all favicon-raster.test.ts regenerate-favicons.test.ts
 ```
 
 ## Add a tile

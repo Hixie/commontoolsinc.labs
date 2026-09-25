@@ -1191,14 +1191,13 @@ again in place of the merged choice. The merge exists only inside
 anything that matches a record against the manifest or a plan finds the
 test by its own name.
 
-A change to such a member's source makes its unit mandatory only
-through the coverage gate. A member with a measured set is reached by
-changes under its own tree. At present that member is
-`packages/dashboard`. The others have no measured set, because
-[the coverage gate excludes them](#the-coverage-gate). No diff names a
-directory, so those units reach a lane only on the score of their tests.
-At present those are `packages/identity`, `packages/patterns`, and the
-three browser halves.
+A change to such a member's source could make its unit mandatory only
+through the coverage gate, and none of these units has a measured set
+there: `packages/identity` because
+[the coverage gate excludes it](#the-coverage-gate), and the five
+browser halves because a measured set holds only a member's Deno-only
+half. No diff names a directory, so these units reach a lane only on the
+score of their tests.
 
 A workspace member stops running whole when the task holding its tests
 becomes one the topology can point at files. That task is its
@@ -1227,8 +1226,8 @@ group as a `deno test` of its own and merges their JUnit reports into
 the one path it was handed. A lane groups the files it selects the same
 way, with a report for each group. The topology refuses a `--serial` or
 `--all-access` pattern that names no test file, and so does the wrapper,
-which also refuses such an `--ignore`. `packages/cli` is the member that
-uses both options.
+which also refuses such an `--ignore`. `packages/cli` uses both options,
+and `packages/dashboard` uses `--all-access`.
 
 ## A case that fails only when its siblings do not run
 
