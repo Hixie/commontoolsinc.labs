@@ -180,7 +180,7 @@ repeated here is a duplicate.
 | Element           | Retired in | Use instead   |
 | ----------------- | ---------- | ------------- |
 | `cf-cell-context` | #5132      | cf-piece-menu |
-| `cf-updater`      | 2026-09    | nothing       |
+| `cf-updater`      | #8064      | nothing       |
 
 ## 🔒 Security Constraints
 
