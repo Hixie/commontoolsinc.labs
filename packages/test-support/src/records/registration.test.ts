@@ -1,6 +1,6 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 
 import {
   activeCapture,
@@ -12,6 +12,7 @@ import {
   NAME_MAP_SUFFIX,
   parseSkipList,
   readNameMaps,
+  repositoryPathOf,
   repositoryRootOf,
   runDirectory,
   runningFile,
@@ -59,6 +60,29 @@ describe("registration", () => {
           "packages/memory/test/space.test.ts".endsWith(tail)
         ),
       ).toBe(false);
+    });
+  });
+
+  describe("repositoryPathOf()", () => {
+    it("returns a file's path relative to the repository enclosing it", () => {
+      expect(repositoryPathOf(import.meta.url)).toBe(
+        "packages/test-support/src/records/registration.test.ts",
+      );
+    });
+
+    it("returns nothing for a file inside no repository", async () => {
+      const outside = await Deno.makeTempDir();
+      try {
+        const url = toFileUrl(join(outside, "a.test.ts")).href;
+        expect(repositoryPathOf(url)).toBeUndefined();
+      } finally {
+        await Deno.remove(outside, { recursive: true });
+      }
+    });
+
+    it("returns nothing for a URL that names no file", () => {
+      expect(repositoryPathOf("https://example.com/a.test.ts"))
+        .toBeUndefined();
     });
   });
 

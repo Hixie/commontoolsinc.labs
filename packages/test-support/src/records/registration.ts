@@ -135,6 +135,24 @@ export function repositoryRootOf(path: string): string | undefined {
   return repositoryRoot(dirname(resolve(path)));
 }
 
+/**
+ * The repository-relative path of the file a `file:` URL names. Undefined
+ * for a URL naming no file, for a file inside no repository, and where
+ * finding the repository is not permitted to read the filesystem.
+ */
+export function repositoryPathOf(url: string): string | undefined {
+  let path: string;
+  try {
+    path = fromFileUrl(url);
+  } catch {
+    return undefined;
+  }
+  const root = repositoryRootOf(path);
+  return root === undefined
+    ? undefined
+    : relative(root, path).replaceAll("\\", "/");
+}
+
 /** The test file this process runs, resolved once. */
 let runFile: string | undefined;
 let runFileResolved = false;
@@ -153,15 +171,7 @@ let runFileResolved = false;
 export function runningFile(): string | undefined {
   if (!runFileResolved) {
     runFileResolved = true;
-    try {
-      const path = fromFileUrl(Deno.mainModule);
-      const root = repositoryRootOf(path);
-      runFile = root === undefined
-        ? undefined
-        : relative(root, path).replaceAll("\\", "/");
-    } catch {
-      runFile = undefined;
-    }
+    runFile = repositoryPathOf(Deno.mainModule);
   }
   return runFile;
 }
