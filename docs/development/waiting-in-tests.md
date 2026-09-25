@@ -75,19 +75,20 @@ sized so only a multi-minute jump reaches it — except the stuck detector,
 which a competing ceiling keeps lower; its section explains. When an event
 boundary does exist, use it, and neither kind of exception arises.
 
-One bound sits between the two kinds, and is written down here because its
-cost is easy to understate. The browser load summary in
-`packages/patterns/integration/cfc-browser-helpers.ts` gives the worker a
-budget to answer the request for its statistics. Reading them is itself a
-request, and a request carries no deadline, so a worker that has stopped
-answering would hold the collection open for as long as the page lived. An
-early fire fails no test and corrupts nothing, but it does drop a real
-result: a worker that was slow rather than stopped loses the statistics it
-was about to return, and the summary reports the worker half as missing. That
-is the price of a collection that always returns, paid because the summary
-exists to explain a run already in trouble. The budget is a caller's option,
-so a case that wants the backstop exercised asks for a short one rather than
-waiting out the default.
+One bound sits between the two kinds, and is written down here because its cost
+is easy to understate. The browser load summary in
+`packages/patterns/integration/cfc-browser-helpers.ts` gives the worker a budget
+to answer the request for its statistics, and a failure report's page probe in
+`packages/integration/shell-page-probe.ts` gives the same read the same budget
+for the worker's logged warnings and errors. Reading them is itself a request,
+and a request carries no deadline, so a worker that has stopped answering would
+hold the collection open for as long as the page lived. An early fire fails no
+test and corrupts nothing, but it does drop a real result: a worker that was
+slow rather than stopped loses the statistics it was about to return, and the
+summary reports the worker half as missing. That is the price of a collection
+that always returns, paid because the summary exists to explain a run already in
+trouble. The budget is a caller's option in both, so a case that wants the
+backstop exercised asks for a short one rather than waiting out the default.
 
 One bound a browser test runs under is not the repository's to sort, and
 belongs in an audit of these for that reason: astral puts its own deadline on
@@ -127,7 +128,8 @@ Waits split into two groups with different primitives.
   being changed silently. A wait that runs out reports the page it ran out
   against: the predicate source and its arguments, the document URL and title,
   `x-root-view`, whether `globalThis.app` is present and the view it holds,
-  outstanding runtime requests, and a console tail. That report is
+  outstanding runtime requests, the runtime worker's logged warnings and
+  errors, and a console tail. That report is
   `waitForCondition`'s own message, so a helper that wraps the failure with a
   message of its own carries the report one level down, in the cause. Read the
   cause before adding a probe of your own; what it prints is usually the thing
@@ -1388,8 +1390,11 @@ the identity it was awaiting where one was given, the last state it managed to
 read, and what the page held at the moment it gave up: the document's URL,
 title, and HTTP status, whether the shell's `x-root-view` element is in it,
 whether `globalThis.app` is there and which view it holds, the requests its
-runtime has sent the worker and has no reply to, and the tail of
-console messages `Page.applyConsoleFormatter` retains in the page. The page half
+runtime has sent the worker and has no reply to, the messages that worker has
+logged at `warn` or `error` with how often, and the tail of console messages
+`Page.applyConsoleFormatter` retains in the page. Reading the worker's logs is
+a round trip the others do not need, so a worker that has stopped answering
+costs the report that one line, which says so, and nothing else. The page half
 of that is `readShellPageProbe` in
 `packages/integration/shell-page-probe.ts`; `describeStateWaitFailure` in
 `shell-utils.ts` assembles the whole block, and a test may call it directly to
