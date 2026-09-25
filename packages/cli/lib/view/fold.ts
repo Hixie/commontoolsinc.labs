@@ -279,13 +279,14 @@ function isTestSegment(segment: string): boolean {
 
 /** Whether a path names a test or test-support file: one under a test-ish
  * directory, or a basename like `x.test.ts`, `x.spec.js`, `x.test.d.ts`,
- * `x_test.go`, `x_spec.rb`, `x-fixtures.ts`, `x.stories.tsx`, `test_x.py`,
- * `test-helpers.ts`, `conftest.py`, or `x.golden`. The marker must precede
- * the final extension, so data about a test, such as `x.test.ts.jsonl`, does
- * not qualify. A `test-` prefix names tooling about tests as often as tests,
- * as in `test-runner.ts`, so only pytest's `test_*.py` and helper libraries
- * qualify by prefix. Likewise `_spec` also names specification documents, so
- * only RSpec's `*_spec.rb` qualifies by that suffix. */
+ * `x_test.go`, `x_spec.rb`, `x-fixture.ts`, `x-fixtures.ts`, `x.stories.tsx`,
+ * `test_x.py`, `test-helpers.ts`, `conftest.py`, or `x.golden`. The marker
+ * must precede the final extension, so data about a test, such as
+ * `x.test.ts.jsonl`, does not qualify. A `test-` prefix names tooling about
+ * tests as often as tests, as in `test-runner.ts`, so only pytest's
+ * `test_*.py` and helper libraries qualify by prefix. Likewise `_spec` also
+ * names specification documents, so only RSpec's `*_spec.rb` qualifies by that
+ * suffix. */
 export function isTestPath(path: string): boolean {
   const segs = path.split(/[\\/]/);
   const base = (segs.pop() ?? "").toLowerCase();

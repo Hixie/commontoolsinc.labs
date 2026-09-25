@@ -237,6 +237,7 @@ Deno.test("isTestPath: directories and basenames", () => {
       "types/api.test.d.ts",
       "spec/models/user_spec.rb",
       "packages/x/tile-layout-fixtures.ts",
+      "packages/x/login-fixture.ts",
       "pkg/test_parse.py",
       "goldens/OUTPUT.GOLDEN",
       "packages\\x\\integration\\helper.ts",
