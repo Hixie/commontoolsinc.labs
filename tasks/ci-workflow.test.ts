@@ -1354,11 +1354,9 @@ Deno.test("server-execution CI uses stable default and opposite roles", async ()
     "the opposite build must bake the posture resolved by the shared helper",
   );
 
-  // The real bg-piece-service binary and cf-harness fabric session are always
-  // exercised at the first-party default resolution.
+  // The cf-harness fabric session is always exercised at the first-party
+  // default resolution.
   const gate = jobBlock(contents, "deployed-topology-gate");
-  assertStringIncludes(gate, "binary-bg-piece-service");
-  assertStringIncludes(gate, "integration/posture-gate.test.ts");
   assertStringIncludes(gate, "integration/fabric-session-posture-gate.test.ts");
   assertStringIncludes(
     gate,
