@@ -200,6 +200,8 @@ describe("stage F serving loop", () => {
   let parkObserverThrows = false;
   /** How many of the next runtime builds reject before building anything. */
   let factoryFailures = 0;
+  /** How many of the next opens of a space's engine reject. */
+  let engineOpenFailures = 0;
   /** Each survived renewal blip the loop reports to the memory server.
    * The renew arm is timer-driven, so this is the only edge it has. */
   let reacquires: ArrivalLog<void>;
@@ -223,6 +225,7 @@ describe("stage F serving loop", () => {
     decorateWaveCommitSink = undefined;
     parkObserverThrows = false;
     factoryFailures = 0;
+    engineOpenFailures = 0;
     cycles = new ArrivalLog();
     activations = new ArrivalLog();
     parks = new ArrivalLog();
@@ -231,6 +234,12 @@ describe("stage F serving loop", () => {
     server.noteLeaseReacquired = (notice) => {
       reacquires.record();
       return noteLeaseReacquired(notice);
+    };
+    const engineForSpace = server.engineForSpace.bind(server);
+    server.engineForSpace = (openedSpace) => {
+      if (engineOpenFailures === 0) return engineForSpace(openedSpace);
+      engineOpenFailures -= 1;
+      return Promise.reject(new Error("induced engine open failure"));
     };
   });
 
@@ -1670,36 +1679,60 @@ describe("stage F serving loop", () => {
     await awaitAdmitted(server, () => readWatermarkSeq(engine) >= authoredSeq);
   });
 
-  it("re-activates a space whose activation failed while its client's session is still live, after the failure-park backoff (serving-loop.md §1)", async () => {
-    // As above, the session opens with a read, so the session-open
-    // activation that fails is the only trigger there is.
-    factoryFailures = 1;
-    host = newHost({ idleParkMs: 600_000 });
-    onServingRuntime = () => Promise.resolve();
-    openClient();
-    const input = clientRuntime.getCell<{ value: number }>(
-      space,
-      "activation-failure-recovery-input",
-      undefined,
-    );
-    await input.sync();
+  for (
+    const { failure, induce, expectedParks } of [
+      {
+        failure: "activation failed",
+        induce: () => {
+          factoryFailures = 1;
+        },
+        expectedParks: [{ space, reason: "activation-failed" }],
+      },
+      {
+        failure: "engine failed to open on activation",
+        induce: () => {
+          engineOpenFailures = 1;
+        },
+        // No tenure exists yet, so nothing parks.
+        expectedParks: [],
+      },
+    ]
+  ) {
+    it(`re-activates a space whose ${failure} while its client's session is still live, after the failure-park backoff (serving-loop.md §1)`, async () => {
+      // As above, the session opens with a read, so the session-open
+      // activation that fails is the only trigger there is.
+      induce();
+      host = newHost({ idleParkMs: 600_000 });
+      onServingRuntime = () => Promise.resolve();
+      openClient();
+      const input = clientRuntime.getCell<{ value: number }>(
+        space,
+        "activation-failure-recovery-input",
+        undefined,
+      );
+      await input.sync();
 
-    await activated();
-    expect(activations.entries).toEqual([
-      { space, outcome: "failed" },
-      { space, outcome: "active" },
-    ]);
-    expect(parks.entries).toEqual([{ space, reason: "activation-failed" }]);
-    expect(host.stats().reactivationBackoffs).toBe(1);
+      await activated();
+      expect(activations.entries).toEqual([
+        { space, outcome: "failed" },
+        { space, outcome: "active" },
+      ]);
+      expect(parks.entries).toEqual(expectedParks);
+      expect(host.stats().reactivationBackoffs).toBe(1);
+      expect(host.accessForTestingOnly.failureParkStreaks.get(space)).toBe(1);
 
-    // The successor serves: the client's first write is covered.
-    const engine = await server.engineForSpace(space);
-    const tx = clientRuntime.edit();
-    input.withTx(tx).set({ value: 1 });
-    expect((await tx.commit()).error).toBeUndefined();
-    const authoredSeq = Engine.serverSeq(engine);
-    await awaitAdmitted(server, () => readWatermarkSeq(engine) >= authoredSeq);
-  });
+      // The successor serves: the client's first write is covered.
+      const engine = await server.engineForSpace(space);
+      const tx = clientRuntime.edit();
+      input.withTx(tx).set({ value: 1 });
+      expect((await tx.commit()).error).toBeUndefined();
+      const authoredSeq = Engine.serverSeq(engine);
+      await awaitAdmitted(
+        server,
+        () => readWatermarkSeq(engine) >= authoredSeq,
+      );
+    });
+  }
 
   it("leaves a space parked on a rival's lease to the rival: no activation attempt of its own and no backoff, though the client's session is still live (serving-loop.md §1, §2)", async () => {
     host = newHost({ idleParkMs: 600_000, renewIntervalMs: 25 });
