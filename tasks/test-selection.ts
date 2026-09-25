@@ -21,6 +21,7 @@
  * such a lane does.
  */
 
+import { duration } from "./test-selection/duration.ts";
 import { join } from "@std/path";
 import {
   loadAliasResolver,
@@ -267,7 +268,7 @@ export function explainLines(
   const lines = [
     `${key}`,
     `  suite ${entry.suite}, in ${entry.unit}`,
-    `  score ${entry.score.toFixed(3)}, costing ${entry.cost.toFixed(3)}s`,
+    `  score ${entry.score.toFixed(3)}, costing ${duration(entry.cost)}`,
     `  ${entry.inputs.catches.toFixed(1)} weighted catches, across ` +
     `${entry.inputs.sources} sources`,
     entry.inputs.lastCatch === undefined
@@ -296,7 +297,7 @@ export function explainLines(
   if (verdict.unschedulable) {
     const seconds = verdict.loneSeconds ?? entry.cost;
     lines.push(
-      `  no lane can hold it: ${seconds.toFixed(1)}s is past the bound a ` +
+      `  no lane can hold it: ${duration(seconds)} is past the bound a ` +
         "lane runs under, so it is reported rather than scheduled. Splitting " +
         "it is the fix.",
     );
@@ -327,7 +328,7 @@ function laneLine(
   lane: { lane: number; selections: unknown[]; projectedSeconds: number },
 ): string {
   return `  lane ${lane.lane}: ${lane.selections.length} tests, ` +
-    `${lane.projectedSeconds.toFixed(1)}s of ${LANE_BUDGET_SECONDS}s`;
+    `${duration(lane.projectedSeconds)} of ${duration(LANE_BUDGET_SECONDS)}`;
 }
 
 /** What `plan --dry-run` prints, as lines. */
@@ -372,7 +373,7 @@ export function planLines(
   if (laid.overBudgetSeconds > 0) {
     lines.push(
       `the mandatory set alone puts a lane ` +
-        `${laid.overBudgetSeconds.toFixed(1)}s past its budget`,
+        `${duration(laid.overBudgetSeconds)} past its budget`,
     );
   }
   // A suite whose fixed charge alone is past a lane comes first, and its
@@ -385,10 +386,10 @@ export function planLines(
     if (unholdable.has(entry.suite)) continue;
     lines.push(
       `unschedulable: ${testIdentityKey(entry.test)} costs ` +
-        `${entry.cost.toFixed(1)}s, past a lane's whole budget`,
+        `${duration(entry.cost)}, past a lane's whole budget`,
     );
   }
-  lines.push(`${LANES} lanes, ${LANE_BUDGET_SECONDS}s of work each`);
+  lines.push(`${LANES} lanes, ${duration(LANE_BUDGET_SECONDS)} of work each`);
   return lines;
 }
 

@@ -103,6 +103,7 @@ import type {
 } from "./test-selection/manifest.ts";
 import { FULL_LANES_MAX, LANES } from "./test-selection/policy.ts";
 import { say } from "./step-summary.ts";
+import { duration } from "./test-selection/duration.ts";
 import { writeLcovReport } from "./write-coverage-lcov.ts";
 import {
   batchMeasurementName,
@@ -1208,10 +1209,10 @@ export function describePlan(
   // beside a lane that ran four times as long is told as much.
   const standing = standingOnStandIns(chosen.manifest, chosen.selections);
   lines.push(
-    `Projected: ${chosen.projectedSeconds.toFixed(0)}s of ${budget}s` +
+    `Projected: ${duration(chosen.projectedSeconds)} of ${duration(budget)}` +
       (standing.units === 0
         ? ""
-        : `, ${standing.seconds.toFixed(0)}s of it charged to ` +
+        : `, ${duration(standing.seconds)} of it charged to ` +
           `${standing.units} unit${standing.units === 1 ? "" : "s"} ` +
           `nothing has measured`),
   );
@@ -1224,7 +1225,7 @@ export function describePlan(
     const share = chosenFor(batch.suite.id, chosen.selections);
     lines.push(
       `| ${batch.suite.id} | ${batch.units.length} | ${share.identities} | ` +
-        `${share.seconds.toFixed(1)}s | ${batchRepeats(batch)} | ` +
+        `${duration(share.seconds)} | ${batchRepeats(batch)} | ` +
         `${share.why} |`,
     );
   }
@@ -1251,7 +1252,7 @@ export function describePlan(
     for (const entry of named) {
       lines.push(
         `- ${entry.suite}: ${testIdentityKey(entry.test)} costs ` +
-          `${entry.cost.toFixed(0)}s, more than a lane can hold`,
+          `${duration(entry.cost)}, more than a lane can hold`,
       );
     }
     if (rest.length > 0) lines.push(`- and ${rest.length} more`);
@@ -1480,24 +1481,65 @@ export async function fullLanes(
   options: LaneOptions,
   deps: LaneDeps,
 ): Promise<number> {
-  const needed = await fullLanesNeeded(options, deps);
-  if (needed <= FULL_LANES_MAX) return needed;
-  console.error(
-    `ci-lane: the full run needs ${needed} lanes and takes ` +
-      `${FULL_LANES_MAX}, the most FULL_LANES_MAX allows, so a lane may run ` +
-      `past its budget`,
+  const suites = await (deps.topology ?? loadTopology)(options.root);
+  const { manifest, changed } = await read(options, deps);
+  const needed = fullLanesNeeded(suites, manifest, changed, options.full);
+  const lanes = Math.min(needed, FULL_LANES_MAX);
+  if (needed > lanes) {
+    console.error(
+      `ci-lane: the full run needs ${needed} lanes and takes ` +
+        `${FULL_LANES_MAX}, the most FULL_LANES_MAX allows, so a lane may ` +
+        `run past its budget`,
+    );
+  }
+  const { seen, laid } = planOver({
+    suites,
+    manifest,
+    changed,
+    full: options.full,
+    lanes,
+  });
+  describeFullLanes(laid, seen.manifest.calibration.prologue);
+  return lanes;
+}
+
+/**
+ * What each lane of the full run is projected to take, on the error
+ * stream and in the job summary, since the count is the whole of what
+ * this answers on the standard one. The lanes pack this same plan, so
+ * what a lane is projected to take here is what it projects for itself.
+ */
+export function describeFullLanes(laid: Plan, prologue: number): void {
+  const longest = Math.max(
+    0,
+    ...laid.lanes.map((lane) => lane.projectedSeconds),
   );
-  return FULL_LANES_MAX;
+  say([
+    `## The full run's ${laid.lanes.length} lane(s)`,
+    "",
+    `Each is packed against ${duration(laid.budgetSeconds)} of work, and ` +
+    `the job around it takes about ${duration(prologue)} more to set up ` +
+    `and ship. The longest is projected to take ` +
+    `${duration(longest + prologue)} in all.`,
+    "",
+    "| Lane | Tests | Projected work | Projected job |",
+    "| --- | --- | --- | --- |",
+    ...laid.lanes.map((lane) =>
+      `| ${lane.lane} | ${lane.selections.length} | ` +
+      `${duration(lane.projectedSeconds)} | ` +
+      `${duration(lane.projectedSeconds + prologue)} |`
+    ),
+  ], console.error);
 }
 
 /** How many lanes the full run would take with no cap on them. */
-async function fullLanesNeeded(
-  options: LaneOptions,
-  deps: LaneDeps,
-): Promise<number> {
-  const suites = await (deps.topology ?? loadTopology)(options.root);
-  const { manifest, changed } = await read(options, deps);
-  const seen = pricedOver({ suites, manifest, changed, full: options.full });
+function fullLanesNeeded(
+  suites: readonly Suite[],
+  manifest: Manifest | undefined,
+  changed: ReadonlySet<string>,
+  full: boolean,
+): number {
+  const seen = pricedOver({ suites, manifest, changed, full });
   if (seen.unmeasured === seen.manifest.entries.length) {
     // Nothing at all has a measured cost, so a cost model here would be
     // arithmetic over a figure this invented, and the answer would be
@@ -1587,8 +1629,8 @@ export async function runLane(
       `ci-lane: running lane ${options.lane} of ${options.of} as described: ` +
         `${batches.length} batch(es) of ` +
         `${batches.map((batch) => batch.suite.id).join(", ") || "nothing"}, ` +
-        `projected at ${mine.projectedSeconds.toFixed(0)}s of ` +
-        `${laid.budgetSeconds}s, ` +
+        `projected at ${duration(mine.projectedSeconds)} of ` +
+        `${duration(laid.budgetSeconds)}, ` +
         (fetched.absent === undefined
           ? `against ${fetched.objectName}`
           : `unselected: ${fetched.absent}`),
@@ -1599,8 +1641,8 @@ export async function runLane(
     if (laid.overBudgetSeconds > 0) {
       console.log(
         `ci-lane: the mandatory set puts a lane ` +
-          `${laid.overBudgetSeconds.toFixed(0)} seconds past the ` +
-          `${laid.budgetSeconds}-second budget`,
+          `${duration(laid.overBudgetSeconds)} past its ` +
+          `${duration(laid.budgetSeconds)} budget`,
       );
     }
     describePlan(

@@ -9,6 +9,7 @@
  * than trusting what a lane reported.
  */
 
+import { duration } from "./duration.ts";
 import {
   coverageMemberDirectory,
   type MeasuredSet,
@@ -341,11 +342,13 @@ export function measuredCostLines(
     }
     const costs = held === undefined
       ? `more with coverage on than the run's ${LANES} lanes of ` +
-        `${LANE_BUDGET_SECONDS}s hold`
-      : `${held.seconds.toFixed(1)}s with coverage on`;
+        `${duration(LANE_BUDGET_SECONDS)} hold`
+      : `${duration(held.seconds)} with coverage on`;
     lines.push(
       `${measuredSetName(ref)} costs ${costs}, past ` +
-        `LOCAL_COVERAGE_MAX_SECONDS of ${LOCAL_COVERAGE_MAX_SECONDS}s. ` +
+        `LOCAL_COVERAGE_MAX_SECONDS of ${
+          duration(LOCAL_COVERAGE_MAX_SECONDS)
+        }. ` +
         `Its member's tests could be split, the run could carry the cost, ` +
         `or the member could go on EXCLUDED_FROM_COVERAGE_GATE.`,
     );
@@ -370,9 +373,9 @@ export function measuredCostLines(
     if (held === undefined) continue;
     lines.push(
       `${member} is on EXCLUDED_FROM_COVERAGE_GATE for its size, and its ` +
-        `tests now cost ${held.seconds.toFixed(1)}s with coverage on ` +
+        `tests now cost ${duration(held.seconds)} with coverage on ` +
         `across ${held.lanes} lane(s), inside the run's ${LANES} lanes of ` +
-        `${LANE_BUDGET_SECONDS}s, so its line can come off.`,
+        `${duration(LANE_BUDGET_SECONDS)}, so its line can come off.`,
     );
   }
   if (unjudged > 0) {

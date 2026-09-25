@@ -150,7 +150,11 @@ starts. So one job asks:
 deno run -A tasks/ci-lane.ts --full --lane-count
 ```
 
-and it answers with an integer and nothing else. The lanes then read the
+and it answers with an integer and nothing else on its standard output.
+On its error stream and in the job summary it also gives what each lane of
+that count is projected to take, both its work and the whole job with the
+prologue. It packs those lanes the way the lanes will pack themselves, so
+the table is what each lane projects for itself. The lanes then read the
 same tree against the same manifest and work out their own shares, the
 way a change's lanes do. What travels through job outputs is only the
 lane count and the `--full` that tells each lane to run everything, never
@@ -1124,7 +1128,7 @@ asks for one. The publisher prefixes each line with `test selection: `.
 resolves, without the prefix.
 
 ```
-test selection: workspace-unit/packages/glaze costs 41.3s with coverage
+test selection: workspace-unit/packages/glaze costs 41s with coverage
 on, past LOCAL_COVERAGE_MAX_SECONDS of 30s. Its member's tests could be
 split, the run could carry the cost, or the member could go on
 EXCLUDED_FROM_COVERAGE_GATE.
@@ -1134,14 +1138,14 @@ A set past `LOCAL_COVERAGE_MAX_SECONDS` makes every pull request that reaches it
 slower. What the line gives is the set's cost over the fewest lanes that hold
 it, counting what each of those lanes pays for the set's suites and
 capabilities. A set that no number of the run's lanes holds gets a line saying
-it costs "more with coverage on than the run's 5 lanes of 230s hold". Nothing
+it costs "more with coverage on than the run's 5 lanes of 3m50s hold". Nothing
 is done about either automatically: which of the three to do is a decision
 about the repository.
 
 ```
 test selection: packages/donut is on EXCLUDED_FROM_COVERAGE_GATE for its
-size, and its tests now cost 812.0s with coverage on across 4 lane(s),
-inside the run's 5 lanes of 230s, so its line can come off.
+size, and its tests now cost 13m32s with coverage on across 4 lane(s),
+inside the run's 5 lanes of 3m50s, so its line can come off.
 ```
 
 Each entry on `EXCLUDED_FROM_COVERAGE_GATE` carries a kind in

@@ -86,6 +86,7 @@ import {
   UNMEASURED_COST_SECONDS,
 } from "./test-selection/policy.ts";
 import { repositoryCommittedAt } from "./test-selection/testing.ts";
+import { duration } from "./test-selection/duration.ts";
 
 /**
  * The repository, found from this file rather than from the process's
@@ -1089,6 +1090,82 @@ describe("how many lanes the full run asks for", () => {
     expect(status).toBe(0);
     expect(lines).toEqual(["1"]);
   });
+
+  it("says what each lane it asks for is projected to take, off the answer", async () => {
+    // The integer is read by the job ahead of the full run, so the table
+    // goes to the error stream and the summary. Its figures are the ones
+    // the lanes will project for themselves, so the plan here is packed
+    // the way a lane packs it, at the count the answer gives.
+    const deps = awkward();
+    const summary = await Deno.makeTempFile({ prefix: "summary-" });
+    const previous = Deno.env.get("GITHUB_STEP_SUMMARY");
+    Deno.env.set("GITHUB_STEP_SUMMARY", summary);
+    const out: string[] = [];
+    const err: string[] = [];
+    const log = console.log;
+    const error = console.error;
+    console.log = (line: string) => out.push(line);
+    console.error = (line: string) => err.push(line);
+    let status: number;
+    try {
+      status = await main(["--full", "--lane-count"], REPOSITORY, deps);
+    } finally {
+      console.log = log;
+      console.error = error;
+      if (previous === undefined) Deno.env.delete("GITHUB_STEP_SUMMARY");
+      else Deno.env.set("GITHUB_STEP_SUMMARY", previous);
+    }
+    const held = await Deno.readTextFile(summary);
+    await Deno.remove(summary);
+    expect(status).toBe(0);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/^\d+$/);
+    const lanes = Number(out[0]);
+
+    const seen = pricedForRun(
+      census(deps.suites, (await deps.manifest()).manifest, new Set()),
+      deps.suites,
+      true,
+    );
+    const laid = plan({
+      manifest: seen.manifest,
+      mandatory: seen.mandatory,
+      capabilities: capabilitiesBySuite(deps.suites),
+      wholeUnits: wholeUnits(deps.suites),
+      policy: "everything",
+      lanes,
+    });
+    const prologue = seen.manifest.calibration.prologue;
+    // Without a prologue the two columns would agree, and a table that
+    // left it out would pass.
+    expect(prologue).toBeGreaterThan(0);
+    expect(laid.lanes).toHaveLength(lanes);
+    const expected = laid.lanes.map((lane) => [
+      String(lane.lane),
+      String(lane.selections.length),
+      duration(lane.projectedSeconds),
+      duration(lane.projectedSeconds + prologue),
+    ]);
+
+    const drawn = err.join("\n").split("\n")
+      .filter((line) => line.startsWith("│"))
+      .map((line) => line.split("│").slice(1, -1).map((cell) => cell.trim()));
+    expect(drawn).toEqual([
+      ["Lane", "Tests", "Projected work", "Projected job"],
+      ...expected,
+    ]);
+    const longest = Math.max(...laid.lanes.map((l) => l.projectedSeconds));
+    const told = err.join("\n");
+    expect(told).toContain(`## The full run's ${lanes} lane(s)`);
+    expect(told).toContain(
+      `The longest is projected to take ${duration(longest + prologue)}`,
+    );
+    // The summary renders Markdown, so it holds the table undrawn.
+    expect(held).toContain(`## The full run's ${lanes} lane(s)`);
+    for (const row of expected) {
+      expect(held).toContain(`| ${row.join(" | ")} |`);
+    }
+  });
 });
 
 describe("what the two runs agree about", () => {
@@ -1400,7 +1477,7 @@ describe("running a lane's work", () => {
       console.log = log;
     }
     const printed = lines.join("\n");
-    expect(printed).toContain("workspace-unit costs 705.0s before it runs");
+    expect(printed).toContain("workspace-unit costs 11m45s before it runs");
     expect(printed).toContain("21889 tests");
     expect(printed).not.toContain("glaze > sets");
     // A suite a lane can hold still names the test that cannot fit in it.
@@ -1475,8 +1552,8 @@ describe("running a lane's work", () => {
       console.log = log;
     }
     const printed = lines.join("\n");
-    expect(printed).toContain("Projected: 96s");
-    expect(printed).toContain("3.0s");
+    expect(printed).toContain("Projected: 1m36s");
+    expect(printed).toContain("│ 3s ");
     expect(printed).toContain("value 1");
     // Every cost in this lane was measured, so the projection stands on
     // nothing but measurements and the line says only what it comes to.
@@ -1553,7 +1630,7 @@ describe("running a lane's work", () => {
         { entry: unmeasured("knead", [25]), reason: "unknown", repeats: 1 },
       ], 1),
     ).toBe(
-      "Projected: 96s of 230s, 85s of it charged to 2 units " +
+      "Projected: 1m36s of 3m50s, 1m25s of it charged to 2 units " +
         "nothing has measured",
     );
   });
@@ -1566,7 +1643,7 @@ describe("running a lane's work", () => {
     expect(projectionLine([
       { entry: unmeasured("proof", [40]), reason: "unknown", repeats: 2 },
     ], 0.25)).toBe(
-      "Projected: 96s of 230s, 20s of it charged to 1 unit " +
+      "Projected: 1m36s of 3m50s, 20s of it charged to 1 unit " +
         "nothing has measured",
     );
   });
@@ -1738,12 +1815,12 @@ describe("planning a lane without running it", () => {
 
   it("names a plan described already in one line, with its projection", async () => {
     const described = await printed({ described: true });
-    const projected = /Projected: (\d+)s of (\d+)s/.exec(await printed({}));
+    const projected = /Projected: (\S+) of ([^\s,]+)/.exec(await printed({}));
     expect(projected).not.toBeNull();
     expect(described).toContain("ci-lane: running lane 2 of 5 as described: ");
     expect(described).toContain("workspace-unit");
     expect(described).toContain(
-      `projected at ${projected![1]}s of ${projected![2]}s, unselected: `,
+      `projected at ${projected![1]} of ${projected![2]}, unselected: `,
     );
     expect(described).not.toContain("Lane 2 of 5");
     expect(described).not.toContain("| Suite |");
@@ -1781,7 +1858,7 @@ describe("planning a lane without running it", () => {
     // measured against the full run's own budget rather than a pull
     // request's.
     expect(printed).toContain("workspace-unit");
-    expect(printed).toContain(`of ${FULL_LANE_BUDGET_SECONDS}s`);
+    expect(printed).toContain(`of ${duration(FULL_LANE_BUDGET_SECONDS)}`);
     expect(FULL_LANE_BUDGET_SECONDS).toBeLessThan(FULL_LANE_BOUND_SECONDS);
   });
 });
@@ -2081,7 +2158,7 @@ describe("the lane's own housekeeping", () => {
     const named = held.split("\n").filter((line) => line.startsWith("- work"));
     expect(named).toHaveLength(10);
     expect(named[0]).toContain("test 24");
-    expect(named[0]).toContain("924s");
+    expect(named[0]).toContain("15m24s");
     expect(named.at(-1)).toContain("test 15");
     expect(held).toContain("- and 15 more");
     await Deno.remove(summary);
@@ -2706,7 +2783,7 @@ describe("what a lane records about itself", () => {
     } finally {
       console.log = log;
     }
-    expect(lines.join("\n")).toContain("past the");
+    expect(lines.join("\n")).toContain("past its");
   });
 });
 

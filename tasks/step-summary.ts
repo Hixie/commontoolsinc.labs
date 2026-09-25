@@ -69,10 +69,15 @@ export function appendSummary(text: string): void {
 /**
  * Says something both on the job's output and in its summary. The summary
  * renders Markdown and the log does not, so the log gets each table drawn.
+ * `log` is where the output goes, for a command whose standard output is
+ * an answer something else reads.
  */
-export function say(lines: readonly string[]): void {
+export function say(
+  lines: readonly string[],
+  log: (text: string) => void = console.log,
+): void {
   const text = `${lines.join("\n")}\n`;
-  console.log(drawTables(text));
+  log(drawTables(text));
   appendSummary(text);
 }
 

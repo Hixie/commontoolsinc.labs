@@ -34,6 +34,7 @@
  * direction for a system nothing should gate on.
  */
 
+import { duration } from "./test-selection/duration.ts";
 import { join } from "@std/path";
 import { ulid } from "@std/ulid";
 import {
@@ -1078,13 +1079,15 @@ function summarize(
     console.log(
       `test selection: lane ${lane.lane} would run ` +
         `${lane.selections.length} test(s) in ` +
-        `${lane.projectedSeconds.toFixed(1)}s of ${LANE_BUDGET_SECONDS}s`,
+        `${duration(lane.projectedSeconds)} of ${
+          duration(LANE_BUDGET_SECONDS)
+        }`,
     );
   }
   if (times.length > 0) {
     const spread = Math.max(...times) - Math.min(...times);
     console.log(
-      `test selection: ${LANES} lanes, spread ${spread.toFixed(1)}s`,
+      `test selection: ${LANES} lanes, spread ${duration(spread)}`,
     );
   }
   const selected = reference.lanes.reduce(
@@ -1099,7 +1102,7 @@ function summarize(
   const { named, rest } = costliestUnschedulable(reference.unschedulable);
   for (const entry of named) {
     console.log(
-      `test selection: unschedulable, ${entry.cost.toFixed(1)}s: ` +
+      `test selection: unschedulable, ${duration(entry.cost)}: ` +
         JSON.stringify(entry.test),
     );
   }

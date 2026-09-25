@@ -18,6 +18,7 @@ import {
   LOCAL_COVERAGE_MAX_SECONDS,
   LOCAL_COVERAGE_MAX_SETS,
 } from "./policy.ts";
+import { duration } from "./duration.ts";
 import { sampleEntry, sampleManifest } from "./testing.ts";
 import type { MeasuredSet, Suite } from "../test-topology/suite.ts";
 
@@ -351,7 +352,7 @@ describe("coverage", () => {
         );
         expect(lines).toHaveLength(1);
         expect(lines[0]).toContain(
-          "workspace-unit/packages/bakery costs 40.0s with coverage on",
+          "workspace-unit/packages/bakery costs 40s with coverage on",
         );
       });
 
@@ -410,8 +411,10 @@ describe("coverage", () => {
           // the lane pays first are not.
 
           expect(costing(20)).toEqual([
-            "workspace-unit/packages/cellar costs 35.0s with coverage on, " +
-            `past LOCAL_COVERAGE_MAX_SECONDS of ${LOCAL_COVERAGE_MAX_SECONDS}s. ` +
+            "workspace-unit/packages/cellar costs 35s with coverage on, " +
+            `past LOCAL_COVERAGE_MAX_SECONDS of ${
+              duration(LOCAL_COVERAGE_MAX_SECONDS)
+            }. ` +
             "Its member's tests could be split, the run could carry the " +
             "cost, or the member could go on EXCLUDED_FROM_COVERAGE_GATE.",
           ]);
@@ -421,7 +424,7 @@ describe("coverage", () => {
         it("counts the overhead and setup again in each lane it spreads over", () => {
           const tests = LANE_BUDGET_SECONDS * 1.5;
           expect(costing(tests / 2, tests / 2)[0]).toContain(
-            `costs ${(tests + 2 * 15).toFixed(1)}s with coverage on`,
+            `costs ${duration(tests + 2 * 15)} with coverage on`,
           );
         });
 
@@ -429,11 +432,13 @@ describe("coverage", () => {
           // Two lanes hold the total, but one test's runs all go in one lane.
           expect(costing(LANE_BUDGET_SECONDS)[0]).toContain(
             "workspace-unit/packages/cellar costs more with coverage on " +
-              `than the run's ${LANES} lanes of ${LANE_BUDGET_SECONDS}s hold`,
+              `than the run's ${LANES} lanes of ${
+                duration(LANE_BUDGET_SECONDS)
+              } hold`,
           );
           expect(costing(LANE_BUDGET_SECONDS / 2, LANE_BUDGET_SECONDS / 2)[0])
             .toContain(
-              `costs ${(LANE_BUDGET_SECONDS + 2 * 15).toFixed(1)}s with ` +
+              `costs ${duration(LANE_BUDGET_SECONDS + 2 * 15)} with ` +
                 "coverage on",
             );
         });
@@ -441,7 +446,9 @@ describe("coverage", () => {
         it("says so where the run's lanes cannot hold it", () => {
           expect(costing(LANE_BUDGET_SECONDS * LANES)[0]).toContain(
             "workspace-unit/packages/cellar costs more with coverage on " +
-              `than the run's ${LANES} lanes of ${LANE_BUDGET_SECONDS}s ` +
+              `than the run's ${LANES} lanes of ${
+                duration(LANE_BUDGET_SECONDS)
+              } ` +
               "hold, past LOCAL_COVERAGE_MAX_SECONDS",
           );
         });
@@ -486,9 +493,11 @@ describe("coverage", () => {
           expect(costing(room, room, room)).toEqual([
             `packages/runner is on EXCLUDED_FROM_COVERAGE_GATE for its ` +
             `size, and its tests now cost ${
-              (room * 3 + 3 * 30).toFixed(1)
-            }s with coverage on across 3 lane(s), inside the run's ` +
-            `${LANES} lanes of ${LANE_BUDGET_SECONDS}s, so its line can ` +
+              duration(room * 3 + 3 * 30)
+            } with coverage on across 3 lane(s), inside the run's ` +
+            `${LANES} lanes of ${
+              duration(LANE_BUDGET_SECONDS)
+            }, so its line can ` +
             `come off.`,
           ]);
         });
@@ -532,9 +541,11 @@ describe("coverage", () => {
           expect(lines).toEqual([
             `packages/runner is on EXCLUDED_FROM_COVERAGE_GATE for its ` +
             `size, and its tests now cost ${
-              (2 * half + 2 * 30 + 2 * unitOverhead).toFixed(1)
-            }s with coverage on across 2 lane(s), inside the run's ` +
-            `${LANES} lanes of ${LANE_BUDGET_SECONDS}s, so its line can ` +
+              duration(2 * half + 2 * 30 + 2 * unitOverhead)
+            } with coverage on across 2 lane(s), inside the run's ` +
+            `${LANES} lanes of ${
+              duration(LANE_BUDGET_SECONDS)
+            }, so its line can ` +
             `come off.`,
           ]);
         });
@@ -565,8 +576,8 @@ describe("coverage", () => {
           );
           expect(lines[0]).toContain(
             `now cost ${
-              (2 * each + 2 * 30 + 2 * unitOverhead).toFixed(1)
-            }s with coverage on across 2 lane(s)`,
+              duration(2 * each + 2 * 30 + 2 * unitOverhead)
+            } with coverage on across 2 lane(s)`,
           );
         });
 

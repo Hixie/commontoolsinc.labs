@@ -1871,7 +1871,7 @@ describe("publish() reporting what measured sets cost", () => {
       )
     );
     expect(said).toContain(
-      "test selection: workspace-unit/packages/memory costs 52.0s with " +
+      "test selection: workspace-unit/packages/memory costs 52s with " +
         "coverage on, past LOCAL_COVERAGE_MAX_SECONDS",
     );
   });
@@ -1931,7 +1931,7 @@ describe("publish() reporting what no lane can hold", () => {
     const line = said.find((said) => said.includes("unschedulable"));
     expect(line).toBeDefined();
     expect(line).toContain("space > writes");
-    expect(line).toContain("400.0s");
+    expect(line).toContain("6m40s");
   });
 
   it("names the costliest few and counts the rest", async () => {

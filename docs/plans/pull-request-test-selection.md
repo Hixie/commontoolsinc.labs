@@ -3092,7 +3092,10 @@ the manifest and raises the lane count while that reduces the total by which the
 lanes are over the full run's budget. The total rather than the worst lane: one
 test costing more than a whole lane holds its own lane over budget at every
 count, so a search reading the worst lane would stop at the first step and leave
-every other lane packed far tighter than the budget it was given.
+every other lane packed far tighter than the budget it was given. It then packs
+the run into that many lanes, the way the lanes will, and prints each lane's
+projected work and job time to its error stream and the job summary, so the
+step's log says how long the run should take before any lane starts.
 
 The step writes the integer as the output `of`, and beside it the list `[1, …,
 of]` as the output `lanes`. The job also outputs `--full` as `args`. The

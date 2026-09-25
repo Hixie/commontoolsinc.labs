@@ -28,6 +28,7 @@ import type {
   UnschedulableEntry,
 } from "./manifest.ts";
 import { value } from "./score.ts";
+import { duration } from "./duration.ts";
 
 /** Why one identity is in the run. */
 export type SelectionReason =
@@ -995,7 +996,7 @@ export function crowdingLine(suite: CrowdingSuite): string {
   // The count is of what the sentence is about: every discretionary
   // identity where none of them ran, and the ones a lane can still hold
   // where the rest are past the bound by their own time as well.
-  return `${suite.suite} costs ${suite.fixed.toFixed(1)}s before it runs ` +
+  return `${suite.suite} costs ${duration(suite.fixed)} before it runs ` +
     `anything, so ` +
     (unholdable(suite)
       ? `no lane holds it and none of its ${suite.identities} tests ran`

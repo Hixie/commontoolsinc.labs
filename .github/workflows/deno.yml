@@ -122,7 +122,6 @@ jobs:
           lanes=$(jq -cn --argjson of "$of" '[range(1; $of + 1)]')
           echo "of=$of" >> "$GITHUB_OUTPUT"
           echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
-          echo "The full run takes $of lanes." >> "$GITHUB_STEP_SUMMARY"
 
   tests:
     name: "Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.of || 5 }})"
