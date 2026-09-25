@@ -1,6 +1,7 @@
 /**
  * The `commonfabric` module the pattern source-coverage harness runs patterns
- * against. See `pattern-source-coverage.test.ts` for the harness itself: it runs
+ * against. See `test/source-coverage/pattern-source-coverage.test.ts` for the
+ * harness itself: it runs
  * changed pattern modules as plain code under Deno's V8 coverage, deliberately
  * without the transformer + sandbox + runtime, and its generated import map
  * points `commonfabric` at this file.
@@ -22,12 +23,9 @@
  *   coverage credit for the paths the pattern runtime exercises.
  *
  * Anything a pattern imports from `commonfabric` must be exported here, or that
- * pattern fails to load in the child (not caught by `deno check`).
- *
- * Not a test despite the name: the `.test.ts` suffix is what gets this file
- * type-checked, via the patterns test task's `.test.ts` file glob (the child
- * runs it under `--no-check`, and nothing else imports it from a checked
- * module).
+ * pattern fails to load in the child (not caught by `deno check`). The child
+ * runs this file under `--no-check`, so `deno task check`, which lists
+ * `packages/patterns/tools`, is what type-checks it.
  */
 
 //
