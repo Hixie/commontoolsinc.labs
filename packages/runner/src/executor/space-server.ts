@@ -1269,6 +1269,11 @@ export class SpaceServer implements TransactionSealDestination {
           operations,
           scopeKeyByOpIndex,
         ),
+      // A lapse the renewal drivers have not reached yet shows first as the
+      // memory server refusing a derived commit (serving-loop.md §2).
+      onHomeRefused: () => {
+        this.#confirmLease(engine);
+      },
     });
     this.#sink = this.#options.decorateWaveCommitSink?.(sink, space) ?? sink;
     // The effect channel (stage G, serving-loop.md §4–§5). Phase 6
@@ -2887,15 +2892,25 @@ export class SpaceServer implements TransactionSealDestination {
       if (!engine.database.open) return undefined;
       if (
         !scopeKeyApplicableTo(address.scopeKey, own) &&
-        liveExecutionLeaseHolder(engine, this.#options.space) !== this.#holder
-      ) {
-        this.#renew();
-        if (
-          liveExecutionLeaseHolder(engine, this.#options.space) !== this.#holder
-        ) return undefined;
-      }
+        !this.#confirmLease(engine)
+      ) return undefined;
       return read(address);
     };
+  }
+
+  /**
+   * Whether the space's lease row names this holder live. A row that does
+   * not runs the renew arm, which ends the tenure and then reacquires or
+   * parks, and the row is read again after it. A closed engine confirms
+   * nothing.
+   */
+  #confirmLease(engine: Engine.Engine): boolean {
+    if (!engine.database.open) return false;
+    const holds = () =>
+      liveExecutionLeaseHolder(engine, this.#options.space) === this.#holder;
+    if (holds()) return true;
+    this.#renew();
+    return holds();
   }
 
   /** The mid-wave renew (stage C tuning T3): called from the serving
