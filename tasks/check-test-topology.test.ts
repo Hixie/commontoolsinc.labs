@@ -222,6 +222,26 @@ describe("the store half of the drift guard", () => {
     ]);
   });
 
+  it("says a test naming no file may share its name with another", () => {
+    // Two files in one run registering one name leave its records naming
+    // neither file, and a suite of files cannot then find it.
+    const findings = checkStore([bakery], [{
+      test: { k: "unit", s: "bakery", n: "icing > sets" },
+      commit: HERE,
+      from: "test-records-test-3-a1",
+    }], HERE);
+    expect(
+      findings.filter((finding) => finding.fails).map((finding) =>
+        finding.message
+      ),
+    ).toEqual([
+      'no suite claims the recorded identity ["unit","bakery","icing > ' +
+      'sets"], recorded by test-records-test-3-a1. It names no file, which ' +
+      "is what a test comes to when two files in one run register tests of " +
+      "its name: give one of them another name",
+    ]);
+  });
+
   it("says what it knows when a failing identity names less", () => {
     // A record read from a path given directly carries no artifact, and
     // one a suite locates by name carries no file. The finding says
