@@ -1,20 +1,22 @@
 /**
  * The `case "$SECTION"` table at the end of integration/integration.sh decides
- * which steps a run executes. CI dispatches three of its arms, one per leg of
- * the cli-integration-test matrix, and a run with no section argument
- * dispatches `all`.
+ * which steps a run executes. The `cli-core` suite in
+ * tasks/test-topology/cli.ts makes each arm that runs one step that step's
+ * unit, and a lane dispatches the units it is given, one arm at a time. A run
+ * with no section argument dispatches `all`.
  *
- * A step no CI arm reaches runs nowhere: it is maintained and it passes when
- * someone runs it by hand, and no run of the repository reports on it. `wish`
- * was in that state, reachable only from `all`, while test/wish.test.ts
- * described the session-backed read as covered by the integration lane. These
- * hold the table to reaching every step from both directions, and hold each
- * recorded step name to naming a function the script actually defines.
+ * A step no single-step arm reaches runs nowhere: it is maintained and it
+ * passes when someone runs it by hand, and no run of the repository reports on
+ * it. `wish` was in that state, reachable only from `all`, while
+ * test/wish.test.ts described the session-backed read as covered by the
+ * integration lane. These hold the table to reaching every step from both
+ * directions, and hold each recorded step name to naming a function the script
+ * actually defines.
  *
- * What they read is the text of the table and of the matrix, so they see which
- * steps are dispatched and nothing about what a step does once it runs. They
- * also say nothing about the arms CI does not dispatch: `piece-basics` and the
- * one-step arms are local conveniences, free to hold any subset.
+ * What they read is the text of the table, so they see which steps are
+ * dispatched and nothing about what a step does once it runs. They say
+ * nothing about the group arms either: `piece-basics` and the other arms that
+ * run several steps are local conveniences, free to hold any subset.
  */
 
 import { describe, it } from "@std/testing/bdd";

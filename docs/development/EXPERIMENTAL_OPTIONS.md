@@ -416,8 +416,8 @@ server](#clients-that-are-not-built-alongside-their-server).
   unset, while `opposite` explicitly selects the inverse and bakes that same
   value into its toolshed shell. Therefore changing the default is exactly:
   `SERVER_EXECUTION_DEFAULT_ENABLED`, the summary cell above, a dated status
-  entry here, and a delta in the plan's live coordination block; workflow
-  job topology, probes, skip placement, coverage ownership, test record
+  entry here, and a delta in the plan's live coordination block; the test
+  topology's suites, probes, skip placement, coverage ownership, test record
   variants, and every other document follow automatically.
   Single-process harnesses do not
   read the constant: a bare `new Runtime` and the `patternTest` /
@@ -440,20 +440,21 @@ server](#clients-that-are-not-built-alongside-their-server).
   posture as a deployed entry point does and host a serving server when it
   is ON, so they follow the default and the CI role; the rest of the
   integration coverage is whichever CI role resolves ON. In CI (testing.md §2), `default`
-  follows the constant and `opposite` is its explicit inverse; both are
-  probed through the shared role
-  resolver; the opposite lane uses `build-toolshed-opposite`, whose shell
-  define is baked from the resolved inverse. The
-  `deployed-topology-gate` job exercises cf-harness's fabric session at
-  the default resolution, and the CLI lanes probe the server their `cf`
-  adopts its posture from —
-  with ON-arm skips and OFF-arm authored coverage following the resolved arm.
+  follows the constant and `opposite` is its explicit inverse; every
+  toolshed a lane starts is probed against its role through the shared role
+  resolver, and the `-opposite` suites run against the
+  `toolshed-baked-opposite` binary, whose shell define is baked from the
+  resolved inverse (`tasks/ci-capabilities.ts`). The `deployed-topology`
+  suite exercises cf-harness's fabric session at the default resolution,
+  and the CLI suites run against a probed toolshed their `cf` adopts its
+  posture from — with ON-arm skips and OFF-arm authored coverage following
+  the resolved arm.
   Skips are only through `tasks/server-execution-on-skips.ts`, printed loudly
   (EMPTY at the flip, its stated precondition). End
   state: after a soak on main at the ON default, the flag retires and the
   OFF code path is removed — a separate post-soak
-  PR (the plan's Phase 7 task 2; it also removes the opposite guard lanes and
-  `build-toolshed-opposite`).
+  PR (the plan's Phase 7 task 2; it also removes the `-opposite` suites and
+  the `toolshed-baked-opposite` capability).
 - **Status on 2026-09-11 (the served source update).** Under ON,
   `setsrc` runs on the space's serving runtime as well, and `cf piece
   setsrc` requests it: the update's setup transaction commits directly to
@@ -535,8 +536,8 @@ server](#clients-that-are-not-built-alongside-their-server).
   actually serves (with the documented two-deriver interim). Stage G
   (effects + outbox) remains.
 - **Path to removal.** Soak on main at the ON default; then the post-soak PR
-  retires the flag, removes the OFF path (and the opposite regression-guard
-  lanes + `build-toolshed-opposite`), and closes out this entry.
+  retires the flag, removes the OFF path (and the `-opposite` suites + the
+  `toolshed-baked-opposite` capability), and closes out this entry.
 
 ---
 

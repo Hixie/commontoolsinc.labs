@@ -1,20 +1,22 @@
 /**
  * The `case "$SECTION"` table at the end of integration/fuse-exec.sh chooses
- * which phases a run executes, and each phase records as its own test. CI
- * dispatches the table through `CF_FUSE_INTEGRATION_SECTION` on the FUSE step
- * of the cli-integration-test job, and a run with no section dispatches `all`.
+ * which phases a run executes, and each phase records as its own test. The
+ * `cli-fuse` suite in tasks/test-topology/cli.ts makes each section besides
+ * `all` a unit, and a lane dispatches it through `CF_FUSE_INTEGRATION_SECTION`.
+ * A run with no section dispatches `all`.
  *
  * The script brings up one FUSE mount and one daemon and then works through a
  * piece on it, so a phase that reached for what a phase in another section
  * left behind would pass under `all` and fail whenever a lane ran its section
  * alone. These hold the table to the properties that make a section
- * schedulable: every phase is reachable, from `all` and from what CI
- * dispatches; the prelude every section depends on runs whichever section was
- * asked for; and the orderings the script's phases depend on survive.
+ * schedulable: every phase is reachable, from `all` and from a section a lane
+ * can be pointed at; the prelude every section depends on runs whichever
+ * section was asked for; and the orderings the script's phases depend on
+ * survive.
  *
- * What they read is the text of the table, of the phase functions, and of the
- * workflow. Whether a section really stands alone is settled by running it,
- * which only CI can do.
+ * What they read is the text of the table and of the phase functions. Whether
+ * a section really stands alone is settled by running it, which only CI can
+ * do.
  */
 
 import { describe, it } from "@std/testing/bdd";

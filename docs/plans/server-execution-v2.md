@@ -2166,10 +2166,11 @@ Tasks:
       the flip: BUILT 2026-08-21 (the register's OW31 row).
 - [ ] Retire the flag; OFF path removed; `EXPERIMENTAL_OPTIONS.md` entry
       closed out — **SPLIT OUT: the post-soak removal PR** (named here as
-      the flip's follow-up; it also removes the OFF regression-guard CI
-      lanes and the opposite-built binary job —
-      `build-toolshed-opposite` — while the `deployed-topology-gate` job
-      STAYS: it gates the surviving default posture, not the OFF path).
+      the flip's follow-up; it also removes the OFF regression-guard
+      `-opposite` suites of the test topology and the opposite-built
+      binary — the `toolshed-baked-opposite` capability — while the
+      `deployed-topology` suite STAYS: it gates the surviving default
+      posture, not the OFF path).
 - [ ] Archive this plan to `docs/history/plans/` per the lifecycle
       (close-out, after the soak and the removal PR).
 

@@ -3351,10 +3351,10 @@ deno task test
 ```
 
 `integration/` holds one file, `fabric-session-posture-gate.test.ts`, and the
-"Deployed Topology Posture Gates" job in `.github/workflows/deno.yml` names it
-directly against a toolshed it starts. There is no package task for it: the gate
-needs a serving deployment, so `API_URL` is what admits it, and every case is
-skipped without one. That file's own header carries a local invocation.
+`deployed-topology` suite in `tasks/test-topology/package-integration.ts` names
+it directly against a toolshed its lane starts. There is no package task for it:
+the gate needs a serving deployment, so `API_URL` is what admits it, and every
+case is skipped without one. That file's own header carries a local invocation.
 
 On Linux, Docker/runsc runs default to the host UID/GID. On macOS, the default
 omits `--user` because Docker Desktop bind mounts may expose host files as

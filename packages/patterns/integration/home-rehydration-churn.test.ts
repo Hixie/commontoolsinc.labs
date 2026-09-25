@@ -26,8 +26,9 @@ const TRUSTED_PROFILE_CREATE_ACTION = "CreateProfile";
 // greppable.
 //
 // To pull the distribution from the most recent 100 CI runs (this test runs in
-// the "CI" / deno.yml `package-integration-test` job; PRs land on
-// commonfabric/labs — adjust -R for a fork). Requires the `gh` CLI:
+// the `pattern-integration` suite, in whichever lane of the "CI" / deno.yml
+// run it was packed into; PRs land on commonfabric/labs — adjust -R for a
+// fork). Requires the `gh` CLI:
 //
 //   gh run list -R commonfabric/labs --workflow deno.yml --limit 100 \
 //     --json databaseId --jq '.[].databaseId' \

@@ -705,11 +705,11 @@ run_mount() {
   ENTITY_DEEP_PROBE="${FUSE_DEEP_ENTITY_PROBE:-0}"
 
   # The deadline for every wait that fails the test (see wait_deadline_reached).
-  # The default overall bound matches the CI step's 'timeout' in
-  # .github/workflows/deno.yml, which sets FUSE_EXEC_OVERALL_TIMEOUT_SECONDS to keep
-  # the two in step; the waits give up a few minutes before it so error() can print
-  # the daemon's state before the step is cancelled. The floor guards a
-  # misconfigured tiny outer bound from making every wait fire at once.
+  # FUSE_EXEC_OVERALL_TIMEOUT_SECONDS is the bound a caller holds the whole run
+  # to, and the waits give up five minutes before it so error() can print the
+  # daemon's state before the caller stops the run. A lane sets no such bound, so
+  # the default gives the waits three minutes. The floor guards a misconfigured
+  # tiny outer bound from making every wait fire at once.
   OVERALL_TIMEOUT_SECONDS="${FUSE_EXEC_OVERALL_TIMEOUT_SECONDS:-480}"
   WAIT_BUDGET_SECONDS=$((OVERALL_TIMEOUT_SECONDS - 300))
   [ "$WAIT_BUDGET_SECONDS" -ge 30 ] || WAIT_BUDGET_SECONDS=$((OVERALL_TIMEOUT_SECONDS / 2 + 1))
