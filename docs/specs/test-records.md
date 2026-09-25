@@ -237,6 +237,18 @@ by its name.
 A batch that ended badly is written as a failure, and a test in it
 failing is enough to end it badly.
 
+The job that scores a run's coverage writes what the run's tests covered
+the same way, and it is a check no lane can be asked to run, since it
+reads what every lane produced. Each figure is a record named
+`ci-lane coverage group <group>` or `ci-lane coverage set <suite>/<member>`
+whose `durationMs` holds a count of uncovered lines, and a run whose
+pattern compile cache was not restored also carries
+`ci-lane coverage cold`. The job ships them only from a push, under the
+artifact name `coverage` (`COVERAGE_ARTIFACT`), so that a reader finds a
+day's figures by listing for the objects the relay names after it.
+`coverageRecords` and `coverageFiguresOf` in
+`@commonfabric/test-support/records` write and read them.
+
 A consumer that builds anything per test excludes them first: pass
 rates, durations, a run's verdict per test, the sixty-second list, and
 the scores a pull request selects from. `isLaneMeasurement` in
