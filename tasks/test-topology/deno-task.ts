@@ -12,11 +12,11 @@
  * Only the simple shape is read: leading `NAME=value` assignments, then
  * `deno test`, then flags and paths. A task carrying a shell
  * metacharacter or naming its own import map is not this shape, and the
- * member it belongs to is one unit that runs whole. The sharded runner, the one
+ * member it belongs to is one unit that runs whole. The group runner, the one
  * wrapper the workspace puts around `deno test`, is read as the `deno test` it
- * runs. Each member behind it therefore becomes one unit per test file. The
- * runner can also name files that need flags of their own, and
- * {@link testBatches} is how both it and a lane split files by those flags.
+ * runs, so a member behind it becomes one unit per test file too. The runner
+ * exists to name files that need flags of their own, and {@link testBatches}
+ * is how both it and a lane split files by those flags.
  */
 
 import * as path from "@std/path";
@@ -39,14 +39,14 @@ export interface ParsedTestTask {
 
   /**
    * Globs naming the files that cannot run beside another test file in one
-   * process, from every `--serial` the sharded runner takes. Empty for a
+   * process, from every `--serial` the group runner takes. Empty for a
    * plain `deno test`.
    */
   serial: string[];
 
   /**
    * Globs naming the files that need every permission, from every
-   * `--all-access` the sharded runner takes. Empty for a plain
+   * `--all-access` the group runner takes. Empty for a plain
    * `deno test`.
    */
   allAccess: string[];
@@ -84,8 +84,8 @@ const SHUFFLE_SUBSTITUTION = /\s*--shuffle=\$\(deno task -q test-seed\)/g;
 /** `NAME=value` in front of the command. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
-/** The wrapper a member runs when its files are split across shards. */
-const SHARDED_RUNNER = "run-sharded-test-files.ts";
+/** The wrapper a member runs when some of its files need flags of their own. */
+const GROUP_RUNNER = "run-test-groups.ts";
 
 /**
  * Strips shell quoting from a task's argument.
@@ -119,44 +119,27 @@ function globList(value: string): string[] {
   return value.split(",").filter((glob) => glob.length > 0);
 }
 
-/** The arguments the sharded runner takes, apart. */
-export interface ShardedRunnerArguments {
-  /** The environment variable naming the shard this job runs. */
-  shardVariable: string;
-
-  /** The name of the weighting profile the runner shards by. */
-  profile: string;
-
-  /**
-   * What the runner runs over, as a task naming it would: the directory
-   * or glob it walks, the files it leaves out, the files that need flags
-   * of their own, and the flags for `deno test`. The environment is
-   * empty, because the runner's arguments set none.
-   */
-  test: ParsedTestTask;
-}
-
 /**
- * The sharded runner's arguments, apart, or undefined where they are not
- * the runner's shape.
+ * The group runner's arguments, as the task they describe, or undefined
+ * where they are not the runner's shape. The environment is empty, because
+ * the runner's arguments set none.
  *
- * The runner takes the variable naming this job's shard, a weighting
- * profile, the directory or glob to walk, any number of `--serial=GLOBS`
- * and `--all-access=GLOBS` options, a `--` separator, and then the flags
- * for the `deno test` it runs. Each option takes a comma-separated list.
- * An `--ignore=GLOBS` among the flags is taken out of them and applied
- * to the walk, as it is for a task that runs `deno test` itself.
+ * The runner takes the directory or glob to walk, any number of
+ * `--serial=GLOBS` and `--all-access=GLOBS` options, a `--` separator, and
+ * then the flags for the `deno test` it runs. Each option takes a
+ * comma-separated list. An `--ignore=GLOBS` among the flags is taken out of
+ * them and applied to the walk, as it is for a task that runs `deno test`
+ * itself.
  */
-export function readShardedRunnerArguments(
+export function readGroupRunnerArguments(
   args: readonly string[],
-): ShardedRunnerArguments | undefined {
-  const [shardVariable, profile, root, ...rest] = args;
+): ParsedTestTask | undefined {
+  const [root, ...rest] = args;
   const separator = rest.indexOf("--");
   // A second `--` would make every word after it, the files the runner
   // appends included, an argument to the test modules rather than to
   // `deno test`.
   if (
-    shardVariable === undefined || profile === undefined ||
     root === undefined || separator < 0 ||
     rest.indexOf("--", separator + 1) >= 0
   ) {
@@ -186,35 +169,29 @@ export function readShardedRunnerArguments(
       test.flags.push(flag);
     }
   }
-  return { shardVariable, profile, test };
+  return test;
 }
 
 /**
- * A `deno run` of the sharded runner, as the `deno test` it runs, or undefined
- * for any other `deno run`.
- *
- * A lane is pointed at files rather than at a shard, so it needs only what
- * {@link readShardedRunnerArguments} reads apart from the shard and the
- * profile. The words before the runner are the runner's own permissions, and
- * the tests do not run under them.
+ * A `deno run` of the group runner, as the `deno test` it runs, or undefined
+ * for any other `deno run`. The words before the runner are the runner's own
+ * permissions, and the tests do not run under them.
  *
  * A word after the separator that is not a flag makes this return undefined.
  * The runner appends its chosen files after those words, so a path there would
  * run alongside whatever a lane asked for.
  */
-function parseShardedRunner(
+function parseGroupRunner(
   env: Record<string, string>,
   words: readonly string[],
 ): ParsedTestTask | undefined {
   const runner = words.findIndex((word) => !word.startsWith("-"));
   if (runner < 0) return undefined;
-  if (path.basename(words[runner]!) !== SHARDED_RUNNER) return undefined;
-  const args = readShardedRunnerArguments(
-    words.slice(runner + 1).map(unquote),
-  );
-  if (args === undefined) return undefined;
-  if (args.test.flags.some((flag) => !flag.startsWith("-"))) return undefined;
-  return { ...args.test, env };
+  if (path.basename(words[runner]!) !== GROUP_RUNNER) return undefined;
+  const test = readGroupRunnerArguments(words.slice(runner + 1).map(unquote));
+  if (test === undefined) return undefined;
+  if (test.flags.some((flag) => !flag.startsWith("-"))) return undefined;
+  return { ...test, env };
 }
 
 /** One `deno test` over part of a member's test files. */
@@ -270,7 +247,7 @@ export function testBatches(
 /**
  * A member's test task as the pieces a subset run needs, or undefined for
  * a task this cannot read. That is a task that is neither a single `deno test`
- * nor a `deno run` of the sharded runner, a task carrying a shell
+ * nor a `deno run` of the group runner, a task carrying a shell
  * metacharacter, or a task naming its own import map. A task's import map
  * applies to every module of the invocation, including the preload, so a
  * specifier the preload needs has to be in it.
@@ -295,7 +272,7 @@ export function parseTestTask(
     env[assignment[1]!] = unquote(assignment[2]!);
   }
   if (words[index] === "deno" && words[index + 1] === "run") {
-    return parseShardedRunner(env, words.slice(index + 2));
+    return parseGroupRunner(env, words.slice(index + 2));
   }
   if (words[index] !== "deno" || words[index + 1] !== "test") return undefined;
   index += 2;

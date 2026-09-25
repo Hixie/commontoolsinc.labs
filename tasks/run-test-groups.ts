@@ -1,45 +1,31 @@
 #!/usr/bin/env -S deno run --allow-env --allow-read --allow-write --allow-run
 
 /**
- * Runs the share of a workspace member's test files that one shard holds.
+ * Runs a workspace member's test files as one `deno test` for each set of
+ * flags they need.
  *
- *     run-sharded-test-files.ts VARIABLE PROFILE ROOT [OPTION]... -- FLAGS...
+ *     run-test-groups.ts ROOT [OPTION]... -- FLAGS...
  *
- * `readShardedRunnerArguments()` in the test topology reads those arguments
- * for this runner and for a lane pointed at the same files, so the two agree
- * on which files the member has and which flags each of them runs under.
- * The files a `--serial` or `--all-access` option names run apart from the
- * rest, grouped by `testBatches()` there into one `deno test` for each set
- * of flags. Every glob those options and `--ignore` give has to match a
- * test file of the member, so that a renamed file is reported rather than
- * run under the wrong flags.
+ * A member whose files all run under the same flags needs none of this and
+ * runs `deno test` itself. This is for a member some of whose files cannot:
+ * the files a `--serial` or `--all-access` option names run apart from the
+ * rest, grouped by `testBatches()` in the test topology into one `deno test`
+ * for each set of flags. `readGroupRunnerArguments()` there reads these
+ * arguments for this runner and for a lane pointed at some of the same
+ * files, so the two agree on which files the member has and which flags
+ * each of them runs under. Every glob those options and `--ignore` give has
+ * to match a test file of the member, so that a renamed file is reported
+ * rather than run under the wrong flags.
  */
 
-import { parseShard, type Shard } from "./shard-utils.ts";
 import {
   memberTestFiles,
   type ParsedTestTask,
-  readShardedRunnerArguments,
+  readGroupRunnerArguments,
   type TestBatch,
   testBatches,
   unmatchedGlobs,
 } from "./test-topology/deno-task.ts";
-import {
-  AGENTS_HOST_TEST_WEIGHTS,
-  PIECE_TEST_WEIGHTS,
-  TASK_TEST_WEIGHTS,
-} from "./test-timing-weights.ts";
-import { assignWeightedShards } from "./weighted-shards.ts";
-
-const PROFILES = {
-  "agents-host": { weights: AGENTS_HOST_TEST_WEIGHTS, defaultWeight: 0.4 },
-  piece: { weights: PIECE_TEST_WEIGHTS, defaultWeight: 0.2 },
-  tasks: { weights: TASK_TEST_WEIGHTS, defaultWeight: 0.2 },
-  cli: { weights: {}, defaultWeight: 1 },
-  dashboard: { weights: {}, defaultWeight: 1 },
-} as const;
-
-type ProfileName = keyof typeof PROFILES;
 
 /**
  * Lists the test modules the runner's arguments name in the member at
@@ -60,29 +46,6 @@ export async function collectTestFiles(
 ): Promise<string[]> {
   return (await memberTestFiles(memberDir, task))
     .map((file) => file.replaceAll("\\", "/"));
-}
-
-/** Selects the files assigned to one weighted shard. */
-export function selectShardedTestFiles(
-  files: string[],
-  shard: Shard | undefined,
-  weights: Readonly<Record<string, number>>,
-  defaultWeight: number,
-): string[] {
-  if (!shard) return [...files].sort();
-  if (shard.total > files.length) {
-    throw new Error(
-      `Shard count ${shard.total} exceeds test file count ${files.length}.`,
-    );
-  }
-  const assignments = assignWeightedShards(
-    files.map((name) => ({
-      name,
-      weight: weights[name] ?? defaultWeight,
-    })),
-    shard.total,
-  );
-  return files.filter((name) => assignments.get(name) === shard.index).sort();
 }
 
 /** The flag that names where `deno test` writes its JUnit report. */
@@ -191,27 +154,23 @@ export async function runTestBatches(
 /**
  * Runs the runner over the member at `memberDir`, given its arguments, and
  * returns the exit code of the first `deno test` that failed, or zero when
- * none did. `shardOf` reads the environment variable the arguments name for
- * the shard, and a shard is taken only where it gives one.
+ * none did.
  *
  * Throws on arguments it cannot read, on a `--serial`, `--all-access` or
- * `--ignore` glob that names no test file, and on a shard holding no file.
+ * `--ignore` glob that names no test file, and on a member with no test
+ * file at all.
  */
-export async function runShardedTests(
+export async function runTestGroups(
   args: readonly string[],
   memberDir: string,
-  shardOf: (variable: string) => string | undefined = (variable) =>
-    Deno.env.get(variable),
 ): Promise<number> {
-  const read = readShardedRunnerArguments(args);
-  if (read === undefined || !(read.profile in PROFILES)) {
+  const test = readGroupRunnerArguments(args);
+  if (test === undefined) {
     throw new Error(
-      "Usage: run-sharded-test-files.ts VARIABLE PROFILE ROOT " +
-        "[--serial=GLOBS] [--all-access=GLOBS] -- TEST_FLAGS...",
+      "Usage: run-test-groups.ts ROOT [--serial=GLOBS] [--all-access=GLOBS] " +
+        "-- TEST_FLAGS...",
     );
   }
-  const profile = PROFILES[read.profile as ProfileName];
-  const { test } = read;
   const unmatched = await unmatchedGlobs(memberDir, test.paths, [
     ...test.serial,
     ...test.allAccess,
@@ -224,28 +183,13 @@ export async function runShardedTests(
       }.`,
     );
   }
-  const shardRaw = shardOf(read.shardVariable);
-  const shard = shardRaw ? parseShard(shardRaw) : undefined;
-  const files = selectShardedTestFiles(
-    await collectTestFiles(memberDir, test),
-    shard,
-    profile.weights,
-    profile.defaultWeight,
-  );
-  if (files.length === 0) {
-    throw new Error(
-      `No test files selected${shardRaw ? ` for ${shardRaw}` : ""}.`,
-    );
-  }
-
-  const label = shardRaw ? ` shard ${shardRaw}` : "";
-  console.log(`Running ${read.profile} test${label} files:`);
-  for (const file of files) console.log(`  ${file}`);
+  const files = (await collectTestFiles(memberDir, test)).sort();
+  if (files.length === 0) throw new Error("No test files found.");
   return await runTestBatches(testBatches(test, files), memberDir);
 }
 
 async function main(): Promise<void> {
-  const code = await runShardedTests(Deno.args, Deno.cwd());
+  const code = await runTestGroups(Deno.args, Deno.cwd());
   if (code !== 0) Deno.exit(code);
 }
 

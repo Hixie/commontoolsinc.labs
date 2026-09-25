@@ -141,17 +141,27 @@ export interface Capability {
 
 /**
  * What a lane keeps between runs, relative to the repository root. The
- * lane's workflow carries one fixed cache step covering this directory,
- * so everything a lane wants restored has to sit inside it, and it has
- * to outlive the lane: a directory the lane made for itself would be
- * empty on every run, and everything in it would be built again.
+ * lane's workflow restores each kind of thing kept here with a cache step
+ * of its own, whatever the lane turns out to open, so everything a lane
+ * wants restored has to sit at one of the paths below, and it has to
+ * outlive the lane: a directory the lane made for itself would be empty on
+ * every run, and everything in it would be built again.
  */
 export const CACHE_DIR = ".ci-cache";
 
-/** Where a built binary is kept, inside that directory. */
+/**
+ * Where a built binary is kept, inside that directory. Its cache entry is
+ * keyed exactly on the sources a binary is built from, because a binary
+ * found here is used without asking what it was built from.
+ */
 export const BINARY_CACHE_DIR = `${CACHE_DIR}/binaries`;
 
-/** Where the pattern compile byte cache is kept, inside that directory. */
+/**
+ * Where the pattern compile byte cache is kept, inside that directory. Its
+ * cache entry is keyed on the compiler fingerprint and may be seeded from an
+ * older one, because the runtime files each entry under that fingerprint and
+ * a stale entry is a miss rather than a wrong answer.
+ */
 export const COMPILE_CACHE_FILE = `${CACHE_DIR}/compile/lane.json`;
 
 /**

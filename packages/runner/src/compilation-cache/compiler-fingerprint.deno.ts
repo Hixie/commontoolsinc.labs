@@ -74,9 +74,9 @@ export const COMPILE_FINGERPRINT_INPUTS: readonly string[] = [
 /**
  * Render {@link COMPILE_FINGERPRINT_INPUTS} as path globs. A directory input
  * becomes a `<dir>/**` tree; a file input, which is one with a `.` in its last
- * path segment, is passed through. `tasks/compile-cache-state.ts` matches a
- * run's changed files against these to decide whether its compile cache went
- * cold, which is the same question the fingerprint answers by hashing them.
+ * path segment, is passed through. A test that builds a fake repository needs
+ * a file under every input, and these say where, so an input added here is
+ * one the fake repository gains without anybody listing it again.
  */
 export function compileFingerprintGlobs(
   inputs: readonly string[] = COMPILE_FINGERPRINT_INPUTS,

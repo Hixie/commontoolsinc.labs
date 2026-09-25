@@ -112,7 +112,7 @@ Deno.test("source inventory helpers group tracked files by package", () => {
     metricGroupFor("packages/runner/src/cell.ts"),
     "packages/runner",
   );
-  assertEquals(metricGroupFor("tasks/coverage-check.ts"), "tasks");
+  assertEquals(metricGroupFor("tasks/coverage-gate.ts"), "tasks");
 });
 
 Deno.test("collectSourceFiles excludes generated and dependency directories", async () => {

@@ -298,11 +298,11 @@ rather than a setting to fix.
 | Dial | Default | Units | Set by | Why you would move it, and which way |
 | --- | --- | --- | --- | --- |
 | `LANES` | 5 | lanes | chosen | Up when pull-request feedback is too thin and runner capacity allows more; down when the wave crowds other workflows off the shared runners. |
-| `LANE_BOUND_SECONDS` | 300 | seconds | chosen | Up when more should fit in a lane; down when five minutes is longer than anybody will wait for a first answer. The lane jobs that this bounds do not exist yet; when they do, their work-step and job timeouts in `deno.yml` have to move with it, and nothing checks that until they are written. |
+| `LANE_BOUND_SECONDS` | 300 | seconds | chosen | Up when more should fit in a lane; down when five minutes is longer than anybody will wait for a first answer. Nothing in `deno.yml` follows it: the `work-timeout` anchor there is a backstop set well above this, so a lane packed past its bound finishes late rather than being killed with its work thrown away. |
 | `LANE_PROLOGUE_SECONDS` | 40 | seconds | measured | Never. The publisher overwrites it from the lanes' own timing records, and the checked-in figure is only what the first lane uses before any lane has reported one. |
 | `LANE_SAFETY_SECONDS` | 30 | seconds | chosen | Up when lanes overrun their bound on slow runners; down when they finish early every time and the headroom is buying nothing. |
 | `LANE_BUDGET_SECONDS` | 230 | seconds | derived | Nothing edits this. It is the bound less the prologue and the safety margin, so a budget that does not fit inside its own bound cannot be written down. |
-| `FULL_LANE_BOUND_SECONDS` | 600 | seconds | chosen | Up when the run on `main` uses more jobs than it needs; down when `main` takes too long to say something broke. |
+| `FULL_LANE_BOUND_SECONDS` | 600 | seconds | chosen | Up when the run on `main` uses more jobs than it needs; down when `main` takes too long to say something broke. The `work-timeout` backstop in `deno.yml` sits well above this and does not move with it. |
 | `FULL_LANE_BUDGET_SECONDS` | 530 | seconds | derived | Nothing edits this. It is the full run's bound less the same prologue and safety margin a pull request's lane pays, since a lane of either run is the same job doing the same setup on the same runner. |
 | `FULL_LANES_MAX` | 30 | lanes | chosen | Up when the organization's runner limit rises; down when a push's full run crowds out the pull requests behind it. A full run needing more lanes than this takes this many, and a lane may then run past its budget. |
 | `FULL_RUN_LABEL` | ci: full | a label | chosen | Not a quantity. Change it only if the label collides with one the repository already uses for something else. |
@@ -1211,7 +1211,7 @@ A workspace member stops running whole when the task holding its tests
 becomes one the topology can point at files. That task is its
 `deno-test`, or its `test` if it defines no `deno-test`. The topology can
 point a single `deno test` at files, and also a dependency list that
-resolves to one, or the shard wrapper around one. It cannot point a task
+resolves to one, or the group runner around one. It cannot point a task
 that joins commands with a shell operator such as `&&`, a task that
 names its own import map, or a test runner of the package's own.
 
@@ -1224,16 +1224,16 @@ point a member's task at files, unless `RUNS_WHOLE` in
 refuses an entry there for a member whose task it can point at files,
 and an entry for a member the workspace does not hold.
 
-The shard wrapper, `tasks/run-sharded-test-files.ts`, is also how a
-member whose files need different flags stays splittable. Its `--serial`
+The group runner, `tasks/run-test-groups.ts`, is how a member whose
+files need different flags stays splittable. Its `--serial`
 option names files that cannot run beside another test file in one
 process, and those run in a `deno test` without `--parallel`, one file
 at a time. Its `--all-access` option names files that need every
-permission, and those run under `--allow-all`. The wrapper runs each
+permission, and those run under `--allow-all`. The runner runs each
 group as a `deno test` of its own and merges their JUnit reports into
 the one path it was handed. A lane groups the files it selects the same
 way, with a report for each group. The topology refuses a `--serial` or
-`--all-access` pattern that names no test file, and so does the wrapper,
+`--all-access` pattern that names no test file, and so does the runner,
 which also refuses such an `--ignore`. `packages/cli` uses both options,
 and `packages/dashboard` uses `--all-access`.
 
