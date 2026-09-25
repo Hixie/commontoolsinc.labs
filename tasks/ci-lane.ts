@@ -77,7 +77,6 @@ import {
   unholdableSuites,
 } from "./test-selection/plan.ts";
 import {
-  type Census,
   census,
   isStandIn,
   type PricedCensus,
@@ -102,6 +101,7 @@ import { say } from "./step-summary.ts";
 import { writeLcovReport } from "./write-coverage-lcov.ts";
 import {
   batchMeasurementName,
+  excusedMeasurementName,
   LANE_MEASUREMENT_PREFIX,
   LANE_MEASUREMENT_SURFACE,
 } from "./lane-measurement.ts";
@@ -1271,15 +1271,21 @@ export async function resolveManifest(
   return await deps.manifest({ at: manifestMoment(options) });
 }
 
-/** What reading this tree against its manifest came to. */
+/** The manifest this commit belongs to, and what the change touched. */
 interface Reading {
-  seen: PricedCensus;
+  /** The manifest, or nothing where the store holds none for the commit. */
+  manifest: Manifest | undefined;
+
+  /** The files the change touched, and none for the full run. */
+  changed: ReadonlySet<string>;
+
+  /** Which object the manifest was read from, or why there is none. */
   fetched: { objectName?: string; absent?: string };
 }
 
 /**
- * Resolves the manifest this commit belongs to and reads the working
- * tree against it.
+ * Resolves the manifest this commit belongs to and the files the change
+ * touched.
  *
  * Everything that plans anything starts here — a lane, and the job that
  * counts the full run's lanes — so the tree and the manifest are
@@ -1289,7 +1295,6 @@ interface Reading {
  */
 async function read(
   options: LaneOptions,
-  suites: readonly Suite[],
   deps: Pick<LaneDeps, "manifest">,
 ): Promise<Reading> {
   const manifest = await resolveManifest(options, deps);
@@ -1307,17 +1312,13 @@ async function read(
         "other lanes of this run packed from",
     );
   }
-  // A full run reads the manifest for what things cost and nothing else,
-  // and a run with no diff has touched nothing.
-  const changed = options.full
-    ? new Set<string>()
-    : await changedFiles(options.root, options.base);
   return {
-    seen: pricedForRun(
-      census(suites, manifest.manifest, changed),
-      suites,
-      options.full,
-    ),
+    manifest: manifest.manifest,
+    // A full run reads the manifest for what things cost and nothing
+    // else, and a run with no diff has touched nothing.
+    changed: options.full
+      ? new Set<string>()
+      : await changedFiles(options.root, options.base),
     fetched: {
       ...(manifest.objectName === undefined
         ? {}
@@ -1327,33 +1328,68 @@ async function read(
   };
 }
 
+/** What one run makes of a tree: the tree as it prices it, and packed. */
+export interface PlanOver {
+  /** The tree read against the manifest, priced the way the run prices it. */
+  seen: PricedCensus;
+
+  /** What the tree holds, packed into the run's lanes. */
+  laid: Plan;
+}
+
 /**
- * Packs what this tree holds into the lanes this run has.
+ * What a run packs a tree into, given the manifest it resolved, what its
+ * change touched, whether it is the full run, and how many lanes it has.
+ * Pure: the lanes of a run and anything describing what they did compute
+ * it here, so the two cannot come to different answers.
  *
- * The policy is the whole of what the two runs differ by here. Under
- * `everything` every identity is required, so the exclusions and the
- * value, density and exploration passes have nothing left to act on and
- * the packer behaves the same way for both.
+ * Whether the run is the full one is the whole of what the two runs
+ * differ by here. Under `everything` every identity is required, so the
+ * exclusions and the value, density and exploration passes have nothing
+ * left to act on and the packer behaves the same way for both.
  */
-function packing(
-  options: LaneOptions,
-  suites: readonly Suite[],
-  seen: Census,
-): Plan {
-  return plan({
-    manifest: seen.manifest,
-    mandatory: seen.mandatory,
-    capabilities: capabilitiesBySuite(suites),
-    wholeUnits: wholeUnits(suites),
-    lanes: options.of,
-    ...(options.full ? { policy: "everything" as const } : {}),
-  });
+export function planOver(input: {
+  suites: readonly Suite[];
+  manifest: Manifest | undefined;
+  changed: ReadonlySet<string>;
+  full: boolean;
+  lanes: number;
+}): PlanOver {
+  const seen = pricedOver(input);
+  return {
+    seen,
+    laid: plan({
+      manifest: seen.manifest,
+      mandatory: seen.mandatory,
+      capabilities: capabilitiesBySuite(input.suites),
+      wholeUnits: wholeUnits(input.suites),
+      lanes: input.lanes,
+      ...(input.full ? { policy: "everything" as const } : {}),
+    }),
+  };
+}
+
+/**
+ * Helper for `planOver` and the full run's lane count, which reads a
+ * tree against a manifest and prices it the way the run prices it.
+ */
+function pricedOver(input: {
+  suites: readonly Suite[];
+  manifest: Manifest | undefined;
+  changed: ReadonlySet<string>;
+  full: boolean;
+}): PricedCensus {
+  return pricedForRun(
+    census(input.suites, input.manifest, input.changed),
+    input.suites,
+    input.full,
+  );
 }
 
 /** What every lane of a run works out before taking its own share. */
-export interface LanePlan extends Reading {
-  /** What the tree holds, packed into the run's lanes. */
-  laid: Plan;
+export interface LanePlan extends PlanOver {
+  /** Which object the manifest was read from, or why there is none. */
+  fetched: Reading["fetched"];
 }
 
 /**
@@ -1370,8 +1406,17 @@ export async function lanePlan(
   suites: readonly Suite[],
   deps: Pick<LaneDeps, "manifest">,
 ): Promise<LanePlan> {
-  const reading = await read(options, suites, deps);
-  return { ...reading, laid: packing(options, suites, reading.seen) };
+  const { manifest, changed, fetched } = await read(options, deps);
+  return {
+    fetched,
+    ...planOver({
+      suites,
+      manifest,
+      changed,
+      full: options.full,
+      lanes: options.of,
+    }),
+  };
 }
 
 /**
@@ -1408,7 +1453,8 @@ async function fullLanesNeeded(
   deps: LaneDeps,
 ): Promise<number> {
   const suites = await (deps.topology ?? loadTopology)(options.root);
-  const { seen } = await read(options, suites, deps);
+  const { manifest, changed } = await read(options, deps);
+  const seen = pricedOver({ suites, manifest, changed, full: options.full });
   if (seen.unmeasured === seen.manifest.entries.length) {
     // Nothing at all has a measured cost, so a cost model here would be
     // arithmetic over a figure this invented, and the answer would be
@@ -1582,6 +1628,11 @@ export async function runLane(
   const nonGating = new Set(
     laid.nonGating.map((entry) => testIdentityKey(entry.test)),
   );
+  // Identities a batch excused, and identities a batch failed that could
+  // not excuse them. Only the first and not the second went without
+  // failing the run.
+  const excused = new Set<string>();
+  const unexcused = new Set<string>();
   try {
     for (const batch of batches) {
       // A failure never stops the lane: one failing batch would otherwise
@@ -1628,6 +1679,21 @@ export async function runLane(
       for (const unit of accounting.failedUnits) {
         failedUnits.add(`${batch.suite.id}\t${unit}`);
       }
+      for (const key of accounting.excused) {
+        (excusing ? excused : unexcused).add(key);
+      }
+    }
+    // Written once every batch has run, so that a batch that withdrew an
+    // excusal is heard before any is recorded, and a report of this run
+    // says what it did not fail for from what it did rather than from
+    // what the manifest would have it do.
+    if (spool !== undefined) {
+      spoolRecords(
+        spool,
+        [...excused].filter((key) => !unexcused.has(key)).sort().map((key) =>
+          measurementRecord(excusedMeasurementName(key), 0, true)
+        ),
+      );
     }
   } catch (error) {
     // A lane whose loop threw has failed, whatever the batches it got

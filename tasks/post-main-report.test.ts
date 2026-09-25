@@ -17,6 +17,7 @@ import type { TestRecord } from "@commonfabric/test-support/records";
 
 import type { ManifestFetch } from "./test-selection/store.ts";
 import type { RunOutcomes } from "./test-selection/report.ts";
+import { excusedMeasurementName } from "./lane-measurement.ts";
 import { buildZip } from "./zip-testing.ts";
 import {
   committedAt,
@@ -181,6 +182,30 @@ function tested(commit: string): RunContext {
   };
 }
 
+/** A record a lane wrote about itself, which says the run ran in lanes. */
+const laneMeasurement: TestRecord = {
+  line: "record",
+  test: { k: "gate", s: "ci", n: "ci-lane batch workspace-unit" },
+  outcome: "pass",
+  durationMs: 1,
+};
+
+/** The record a lane writes for a test whose failures it excused. */
+function excusing(name: string): TestRecord {
+  return {
+    line: "record",
+    test: {
+      k: "gate",
+      s: "ci",
+      n: excusedMeasurementName(
+        testIdentityKey({ k: "unit", s: "bakery", n: name }),
+      ),
+    },
+    outcome: "pass",
+    durationMs: 0,
+  };
+}
+
 const kneads = { k: "unit", s: "bakery", n: "kneads" };
 const proves = { k: "unit", s: "bakery", n: "proves" };
 
@@ -255,6 +280,16 @@ interface World {
 
   /** The suites the tree declares. */
   suites?: Suite[];
+
+  /**
+   * When the commit under report was made, as `git log` gives it; null
+   * for a git that refuses to say. Half past eight in the morning, two
+   * hours east of UTC, where a case does not say.
+   */
+  madeHere?: string | null;
+
+  /** Every moment a manifest was asked for at, which the case fills in. */
+  resolved?: string[];
 
   /**
    * What the pull request's own run recorded, as the store holds it, where
@@ -393,6 +428,13 @@ async function reporting(
   try {
     await main(dryRun, {
       git: (...args: string[]) => {
+        if (args.includes("--format=%cI")) {
+          return world.madeHere === null
+            ? Promise.reject(new Error("git log failed"))
+            : Promise.resolve(
+              `${world.madeHere ?? "2026-09-07T08:30:00+02:00"}\n`,
+            );
+        }
         if (args[0] === "log") return Promise.resolve(`${world.subject}\n`);
         if (args[0] === "rev-parse") {
           return Promise.resolve(`${"c".repeat(40)}\n`);
@@ -400,10 +442,12 @@ async function reporting(
         return Promise.resolve("packages/bakery/src/oven.ts\n");
       },
       topology: () => Promise.resolve(world.suites ?? []),
-      manifest: ({ at }) =>
-        Promise.resolve(
+      manifest: ({ at }) => {
+        world.resolved?.push(at);
+        return Promise.resolve(
           world.manifests?.[at] ?? { absent: "nothing published yet" },
-        ),
+        );
+      },
     });
   } finally {
     globalThis.fetch = original;
@@ -651,7 +695,8 @@ describe("post-main-report", () => {
       const outcomes = await fromStore([
         "labs/test-records/submissions/ci/v1/2026/09/07/run-5-Test.ndjson",
       ]);
-      expect(outcomes?.outcomes.get('["unit","bakery","kneads"]')).toBe("pass");
+      expect(outcomes?.outcomes.get('["unit","bakery","kneads"]'))
+        .toEqual({ passed: 1, failed: 0 });
     });
 
     it("names the commit every report of the run tested", async () => {
@@ -663,7 +708,8 @@ describe("post-main-report", () => {
         },
       );
       expect(stored?.commit).toBe("d".repeat(40));
-      expect(stored?.outcomes.get('["unit","bakery","kneads"]')).toBe("pass");
+      expect(stored?.outcomes.get('["unit","bakery","kneads"]'))
+        .toEqual({ passed: 2, failed: 0 });
     });
 
     it("names no commit where the reports name several", async () => {
@@ -942,7 +988,11 @@ describe("post-main-report", () => {
       const theirs = (fields: Partial<World> = {}): World =>
         world({
           suites,
-          theirRecords: [tested(merge), record("proves", "pass")],
+          theirRecords: [
+            tested(merge),
+            laneMeasurement,
+            record("proves", "pass"),
+          ],
           committed: {
             [merge]: "2026-09-07T05:30:00Z",
             ["b".repeat(40)]: "2026-09-07T05:00:00Z",
@@ -984,6 +1034,7 @@ describe("post-main-report", () => {
         const written = await reporting(theirs({
           theirRecords: [
             tested(merge),
+            laneMeasurement,
             record("proves", "pass"),
             tested("e".repeat(40)),
             record("proves", "pass"),
@@ -997,6 +1048,140 @@ describe("post-main-report", () => {
           "This pull request did not run it, and there is no manifest to " +
             "say why.",
         );
+      });
+
+      it("says the run did not run the test where that run did not run in lanes", async () => {
+        // A run of the jobs that ran every test in a fixed arrangement
+        // chose nothing, so no manifest says why it did not run a test.
+
+        const written = await reporting(theirs({
+          theirRecords: [tested(merge), record("proves", "pass")],
+        }));
+        expect(written[0]!.body).not.toContain("too flaky");
+        expect(written[0]!.body).toContain(
+          "This pull request did not run it, and there is no manifest to " +
+            "say why.",
+        );
+      });
+    });
+
+    describe("a test the run did not fail for", () => {
+      // The run under report ran in lanes, and a lane recorded excusing
+      // `kneads`, whose three runs failed here where its three runs at the
+      // parent passed. The manifest resolved at the moment the commit was
+      // made carries the store's counts for it.
+
+      /** The moment the commit under report was made, in UTC. */
+      const madeAt = "2026-09-07T06:30:00.000Z";
+
+      /** The run under report's records, with or without the excusal. */
+      const here = (excused: boolean): TestRecord[] => [
+        laneMeasurement,
+        ...(excused ? [excusing("kneads")] : []),
+        record("kneads", "fail"),
+        record("kneads", "fail"),
+        record("kneads", "fail"),
+        record("proves", "pass"),
+      ];
+
+      const laned = (fields: Partial<World> = {}): World =>
+        world({
+          records: {
+            1: here(true),
+            2: [
+              record("kneads", "pass"),
+              record("kneads", "pass"),
+              record("kneads", "pass"),
+              record("proves", "pass"),
+            ],
+          },
+          suites,
+          manifests: { [madeAt]: { manifest } },
+          ...fields,
+        });
+
+      it("reports it as a known flaky test the run was not failed by", async () => {
+        const written = await reporting(laned());
+        expect(written.length).toBe(1);
+        const body = written[0]!.body!;
+        expect(body).toContain("A known flaky test that failed every time");
+        expect(body).toContain(
+          "failed all 3 of its runs at this commit and passed all 3 of its " +
+            "runs at the commit before",
+        );
+        expect(body).toContain("disagree with itself 20 times in 20 runs");
+        expect(body).not.toContain("Failing for the first time");
+      });
+
+      it("reports a first failure where the run did not run in lanes", async () => {
+        // Excusing a failure is a lane's decision, so a run with no lane
+        // in it failed for everything that failed in it.
+
+        const written = await reporting(laned({
+          records: { ...laned().records, 1: here(false).slice(1) },
+        }));
+        expect(written[0]!.body).toContain("Failing for the first time");
+        expect(written[0]!.body).not.toContain("known flaky test");
+      });
+
+      it("reports a first failure where the lane recorded excusing nothing", async () => {
+        // A lane withdraws an excusal from a batch that did not account
+        // for everything it was asked to run, and fails the run for it,
+        // whatever the manifest holds back.
+
+        const written = await reporting(laned({
+          records: { ...laned().records, 1: here(false) },
+        }));
+        expect(written[0]!.body).toContain("Failing for the first time");
+        expect(written[0]!.body).not.toContain("known flaky test");
+      });
+
+      it("reads no manifest for the run where no note needs its counts", async () => {
+        const resolved: string[] = [];
+        await reporting(laned({
+          records: { ...laned().records, 1: here(false) },
+          resolved,
+        }));
+        expect(resolved).toEqual([]);
+        await reporting(laned({ resolved }));
+        expect(resolved).toEqual([madeAt]);
+      });
+
+      describe("posts the note without the store's counts", () => {
+        // The counts label the note, and nothing about the note rests on
+        // them, so a manifest that cannot be read costs the label alone.
+
+        /** What the run posts, which must be the note with no counts. */
+        async function uncounted(fields: Partial<World>): Promise<string> {
+          const written = await reporting(laned(fields));
+          const body = written[0]!.body!;
+          expect(body).toContain("A known flaky test that failed every time");
+          expect(body).not.toContain("disagree with itself");
+          return body;
+        }
+
+        it("where no manifest was published", async () => {
+          await uncounted({ manifests: {} });
+        });
+
+        it("where the store could not be asked", async () => {
+          await uncounted({
+            manifests: {
+              [madeAt]: {
+                absent: "the listing was refused",
+                unreachable: true,
+              },
+            },
+          });
+        });
+
+        it("where git will not say when the commit was made", async () => {
+          await uncounted({ madeHere: null });
+        });
+
+        it("where the commit carries no usable date", async () => {
+          await uncounted({ madeHere: "whenever" });
+        });
       });
     });
   });

@@ -13,6 +13,7 @@ import {
 } from "./calibrate.ts";
 import {
   batchMeasurementName,
+  excusedMeasurementName,
   LANE_MEASUREMENT_PREFIX,
   LANE_MEASUREMENT_SURFACE,
 } from "../lane-measurement.ts";
@@ -227,6 +228,28 @@ describe("calibrate", () => {
       }]);
       expect(seen.setup.size).toBe(0);
       expect(seen.batches).toEqual([]);
+    });
+
+    it("passes over a lane's record of a failure it excused", () => {
+      // That record names a test rather than a batch, and carries no
+      // figure, so read as a batch it would be fitted as a batch that
+      // cost nothing.
+
+      const seen = observationsOf([{
+        run: "a",
+        records: [
+          figure(excusedMeasurementName('["unit","bakery","glaze > sets"]'), 0),
+          ...batch("workspace-unit", 20, 30, 2),
+        ],
+      }]);
+      expect(seen.setup.size).toBe(0);
+      expect(seen.batches).toEqual([{
+        suite: "workspace-unit",
+        measured: false,
+        ran: 20,
+        spent: 30,
+        units: 2,
+      }]);
     });
 
     it("passes over a record that is not a lane measuring itself", () => {

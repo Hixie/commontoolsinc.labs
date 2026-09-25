@@ -34,6 +34,7 @@ import {
   serializeManifest,
 } from "./manifest.ts";
 import type { Suite } from "../test-topology/suite.ts";
+import { excusedMeasurementName } from "../lane-measurement.ts";
 import {
   COST_RULE,
   costSeconds,
@@ -364,6 +365,12 @@ describe("build", () => {
           }),
           record({
             test: { k: "gate", s: "ci", n: "ci-lane setup deno" },
+          }),
+          // A lane's record of excusing the test beside it names that
+          // test, and is not a run of it.
+          record({
+            test: { k: "gate", s: "ci", n: excusedMeasurementName(KEY) },
+            durationMs: 0,
           }),
         ]),
         NO_ALIASES,

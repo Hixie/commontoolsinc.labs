@@ -46,6 +46,7 @@ import {
   markMeasuredFailures,
   measuredSetOfReport,
   parseLaneArgs,
+  planOver,
   runBatch,
   runInvocation,
   runLane,
@@ -55,6 +56,7 @@ import {
 import {
   batchMeasurement,
   batchMeasurementName,
+  excusedMeasurement,
   MEASURED_BATCH_SUFFIX,
 } from "./lane-measurement.ts";
 import {
@@ -3096,6 +3098,17 @@ describe("what a lane does with the batches it was given", () => {
     )?.outcome;
   }
 
+  /** The identities the lane recorded excusing. */
+  function excusedIn(measured: readonly TestRecord[]): string[] {
+    return measured.flatMap((record) => {
+      const key = excusedMeasurement(record.test.n);
+      return key === undefined ? [] : [key];
+    });
+  }
+
+  /** The one identity the manifests here hold, as a canonical key. */
+  const glaze = testIdentityKey({ k: "unit", s: "bakery", n: "glaze > sets" });
+
   it("passes when every batch passed", async () => {
     const { ok, measured } = await run(recording(""));
     expect(ok).toBe(true);
@@ -3247,17 +3260,21 @@ describe("what a lane does with the batches it was given", () => {
     expect(ok).toBe(true);
     // And the batch still recorded what it saw.
     expect(batchOutcome(measured)).toBe("fail");
+    // And that it excused the failure, which is what a report of the run
+    // reads to say the run was not failed by it.
+    expect(excusedIn(measured)).toEqual([glaze]);
   });
 
   it("fails for that same failure on a pull request", async () => {
     // A pull request has no excused set at all: a test this flaky is
     // held back rather than run, so a failure reaching a lane here is
     // one nothing excuses.
-    const { ok } = await run(
+    const { ok, measured } = await run(
       recording("Deno.exit(1);", "fail"),
       { manifest: manifestOf([{ unit: UNIT }]) },
     );
     expect(ok).toBe(false);
+    expect(excusedIn(measured)).toEqual([]);
   });
 
   it("fails when one execution of a repeated unit died having run nothing", async () => {
@@ -3348,11 +3365,13 @@ describe("what a lane does with the batches it was given", () => {
       test: { k: "unit", s: "bakery", n: "glaze > cools" },
       flakeRate: 0,
     });
-    const { ok } = await run(
+    const { ok, measured } = await run(
       recording("Deno.exit(1);", "fail"),
       { full: true, manifest },
     );
     expect(ok).toBe(false);
+    // So nothing says the run did not fail for it.
+    expect(excusedIn(measured)).toEqual([]);
   });
 
   it("fails when a unit it was asked to run recorded nothing", async () => {
@@ -3528,6 +3547,51 @@ describe("what a lane measures", () => {
       // Each suite's overhead and its one test's ten seconds.
       expect(laid.lanes[0]!.projectedSeconds).toBe(30);
     });
+  });
+});
+
+describe("planOver()", () => {
+  const suites = [
+    suite({ id: "workspace-unit", units: ["packages/bakery/glaze.test.ts"] }),
+  ];
+
+  /** A manifest holding its one identity back as too flaky. */
+  function withholding(): Manifest {
+    const manifest = manifestOf([{ flakeRate: 0.9 }]);
+    manifest.withheld = [{
+      test: manifest.entries[0]!.test,
+      suite: "workspace-unit",
+      reason: "flaky",
+    }];
+    return manifest;
+  }
+
+  const over = (full: boolean, lanes: number) =>
+    planOver({
+      suites,
+      manifest: withholding(),
+      changed: new Set(),
+      full,
+      lanes,
+    });
+
+  it("packs into as many lanes as it is given", () => {
+    expect(over(false, 3).laid.lanes.length).toBe(3);
+    expect(over(false, 1).laid.lanes.length).toBe(1);
+  });
+
+  it("holds a flaky test back from a pull request, which excuses nothing", () => {
+    const { laid } = over(false, 5);
+    expect(laid.withheld.map((held) => held.test.n)).toEqual(["glaze > sets"]);
+    expect(laid.nonGating).toEqual([]);
+  });
+
+  it("runs a flaky test in the full run without failing for it", () => {
+    const { laid } = over(true, 5);
+    expect(laid.withheld).toEqual([]);
+    expect(laid.nonGating.map((held) => held.test.n)).toEqual([
+      "glaze > sets",
+    ]);
   });
 });
 
