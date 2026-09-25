@@ -332,6 +332,16 @@ processes* (deploy overlap, partition) it holds via the lease:
   `expiresAt` against its own clock, and an expired row matches NOBODY —
   a derived commit under an expired lease is rejected even before any
   successor acquires. Holder clocks never arbitrate liveness.
+- A refused derived commit can be the holder's first sign of a lapse:
+  neither renewal driver may come due until well after the TTL has run
+  out, for example when the host process was suspended. When the memory
+  server refuses a derived commit and the lease row no longer names the
+  holder live, the SpaceServer runs the renew arm at once, as the store
+  read-through does (§1 plane (a)). The tenure therefore ends at the
+  first refused commit. A wave refused this way aborts as a lease loss
+  and parks, as above. Impl: `space-server.ts` `#confirmLease`, called
+  from the wave sink's refusal hook; pinned in
+  `executor-serving-loop.test.ts`.
 
 FORBIDDEN: per-action leases, lease fencing tokens per commit, lease
 renewal via the commit stream, more than one lease shape.
