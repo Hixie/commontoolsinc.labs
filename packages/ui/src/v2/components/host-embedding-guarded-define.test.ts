@@ -28,7 +28,9 @@ describe("host embedding contract: guarded-define idiom", () => {
     it(`${tag} is import-safe (re-evaluating its module does not throw)`, async () => {
       const base = new URL(path, import.meta.url).href;
 
-      // First evaluation registers the tag.
+      // First evaluation registers the tag. For cf-render, that evaluation is
+      // the import at the top of the file, and this one is served from the
+      // module cache.
       await import(base);
       expect(customElements.get(tag)).toBeDefined();
 
