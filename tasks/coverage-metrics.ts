@@ -5,7 +5,6 @@ import { type LcovFileCoverage, parseLcovReports } from "./lcov.ts";
 import { readUnlaunchedMembers } from "./unlaunched-members.ts";
 import { normalizeLcovInstancePaths } from "./write-coverage-lcov.ts";
 
-export const COVERAGE_PROFILE_ARTIFACT_PREFIX = "coverage-profile-";
 export const COVERAGE_METRIC_PREFIX = "coverage-debt:";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);

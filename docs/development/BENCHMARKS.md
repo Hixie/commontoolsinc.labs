@@ -1387,8 +1387,9 @@ deno test --v8-flags=--max-old-space-size=4096 -A \
   ./integration/topics-read-budget-high-degree.test.ts
 ```
 
-Continuous integration runs the files in the Pattern Integration Tests job, each
-with a weight in `tasks/select-pattern-integration-files.ts`.
+Continuous integration runs the files as part of the `pattern-integration`
+suite, packed into lanes by what each of their tests has been measured to
+cost.
 
 To derive the limits again, run from the repository root:
 

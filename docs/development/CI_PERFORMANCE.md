@@ -93,27 +93,16 @@ Splitting or rebalancing a job is not a response any more. The packer decides
 what goes where, and `deno task test-selection plan --dry-run` says what it
 would decide before anything runs.
 
-## Pattern Integration Sharding
+## A File That Sweeps Many Cases
 
-`packages/patterns` shards its own integration task, and that is the one place
-sharding survives. A lane asks the suite for a set of files, so the shard
-variable is not what CI uses; what remains is the contract a file inside that
-package follows.
-
-Most integration test files are one file. Tests that sweep a pattern list divide
-their own cases with `PATTERN_INTEGRATION_SHARD`, and an unset variable selects
-every case, so the ordinary local command remains unsharded.
-
-`INTERNALLY_SHARDED_PATTERN_INTEGRATION_FILES` in
-`tasks/select-pattern-integration-files.ts` is the list of files that divide
-their cases that way. Those files select their cases through
-`packages/patterns/integration/pattern-integration-shard.ts`. The selector tests
-verify that every real integration file follows one of these two contracts.
-
-Use internal sharding for a single file with many independent, expensive cases.
-Add persistent outliers in the compile-all-patterns sweep to
-`COMPILE_ALL_PATTERN_SHARD_ASSIGNMENTS`. This moves the named case without
-changing the default positions of the other cases.
+The packer places tests, not files: a lane runs the tests it was given with the
+rest of their file registered as ignored, so the tests of one file can land in
+different lanes. A file that sweeps a pattern list with one `it()` per pattern
+is therefore divided across lanes one case at a time, with nothing to write
+down beyond the tests themselves. What that asks of the file is what every
+test file owes a lane: each case passes on its own, and each is named for
+what it covers rather than for its position, so that its measured cost follows
+it from run to run.
 
 ## Pulling Timing Data
 

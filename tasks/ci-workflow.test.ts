@@ -1233,11 +1233,7 @@ Deno.test("deno.yml names no test surface", async () => {
   for (
     const named of [
       "EXPERIMENTAL_SERVER_EXECUTION",
-      "server-execution-ci-command.ts",
       "server-execution-on-skips.ts",
-      "select-pattern-integration-files.ts",
-      "select-generated-pattern-files.ts",
-      "select-runner-test-files.ts",
       "TEST_SHARD",
       "TEST_DISABLED_PACKAGES",
       "deno task test",

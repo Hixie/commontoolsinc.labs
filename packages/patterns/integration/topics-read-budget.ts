@@ -23,9 +23,7 @@ import type { ReadBudgetVariantName } from "./topics-read-budget-variants.ts";
 
 /**
  * The probe cases the read budget gates, by group. Each group runs in a test
- * file of its own, `topics-read-budget-<group>.test.ts`, which is what keeps
- * each file within the share of a pattern integration job its weight in
- * `tasks/select-pattern-integration-files.ts` allows.
+ * file of its own, `topics-read-budget-<group>.test.ts`.
  */
 export const TOPICS_READ_BUDGET_GROUPS = {
   "small-and-threads": [

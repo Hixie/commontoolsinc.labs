@@ -783,47 +783,16 @@ of its top-level branches that `main` was reporting. The `📦 Cache Deno depend
 `.github/actions/deno-setup/action.yml` leaves the code cache out of what it
 saves, and `tasks/deno-setup-action.test.ts` holds it to that.
 
-### What the check says when the regression is not the pull request's
+### When the rise is not the pull request's
 
-The gate compares whole-group counts, so a flapping line fails whichever pull
-request is measured against a run that happened to cover it, however unrelated
-the diff. The check recognizes that case and says so: when a gated group is over
-its baseline and none of the lines the pull request added are uncovered, it
-reads the coverage reports of the `main` run its baseline came from and names
-every line this run leaves uncovered that the baseline run covered.
-
-The comment lists those lines file by file, gives the `ACCEPT_COVERAGE_DEBT`
-line that lets the pull request through, and carries a prompt for a fresh agent
-session to make the lines cover the same way every time. The author's pull
-request is not the place to fix them, and it is not held up waiting for someone
-to.
-
-The prompt says where the measurement came from, so a session picking it up can
-locate it instead of reconstructing it: the page of the workflow run that
-measured the lines, the base-branch commit that run merged the pull request
-into, and — for each affected group — the baseline run its count was held
-against and the commit that run measured. The commit named for the measuring
-run is the base-branch commit rather than the pull request head, because a
-`pull_request` run measures `refs/pull/<number>/merge`, and because the
-question the reader has is what has landed on `main` since. The prompt hands
-them the command that answers it, `git log <base commit>.. -- <file>`, and
-tells them to say so and stop if a line has since changed or been given a test.
-
-Anything the run context does not name is left out rather than guessed at. A
-run of the checker outside GitHub Actions names no run page and no commit, and
-its prompt falls back to asking the reader to check what has landed since the
-measurement was taken.
-
-The identity travels on the rows the gate builds. Each row already records the
-baseline it was held against; it also records the run that measured it and the
-base-branch commit that run merged, both of which the check has in hand when it
-scores the row. The comment reads them back out of the rows it is given.
-
-Only files the pull request left alone are compared. A file it changed has
-different content in the two checkouts, so the same line number means a
-different line in each report and no comparison is possible. When the baseline
-run's coverage artifacts cannot be read — expired, or the download failed — the
-check falls back to the ordinary regression comment.
+The gate compares a measured set's whole count with its baseline, so a line
+whose coverage varies from run to run fails whichever pull request is measured
+by a run that missed it, however unrelated the diff. The gate cannot tell that
+rise from one the pull request caused: its summary names the set, the two
+counts, and the `ACCEPT_COVERAGE_DEBT` line that lets the pull request through.
+Accepting the rise is the right answer for the pull request, and the line
+itself is a finding for the sections above, whose techniques make it cover the
+same way every time.
 
 ## Baselines and accepting debt
 

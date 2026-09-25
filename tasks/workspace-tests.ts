@@ -27,10 +27,6 @@ export function getPackageName(memberPath: string): string {
   return relativePath.replace(/^packages\//, "");
 }
 
-export function parseDisabledPackageList(raw: string | undefined): string[] {
-  return (raw ?? "").split(/[,\s]+/).filter((name) => name.length > 0);
-}
-
 export async function initializeDb(cwd: string = Deno.cwd()): Promise<boolean> {
   console.log("Initializing database dependencies...");
   const result = await new Deno.Command(Deno.execPath(), {
@@ -473,13 +469,7 @@ export async function junitCapableMembers(
   return capable;
 }
 
-// The identity scope of a unit: the package name with any internal slice
-// label stripped, so the records of "cli (3/10)" and "cli (7/10)" join.
-export function unitScope(packageName: string): string {
-  return packageName.replace(/ \(\d+\/\d+\)$/, "");
-}
-
-// A filename-safe slug for a unit's JUnit file, unique per slice.
+// A filename-safe slug for a unit's JUnit file, unique per member.
 export function unitSlug(packageName: string): string {
   return packageName.replaceAll("/", "__").replace(/[^A-Za-z0-9_.-]+/g, "-");
 }
@@ -610,7 +600,7 @@ export async function runTests(
           fragment,
           spoolDir,
           junitPath,
-          unitScope(unit.packageName),
+          unit.packageName,
           unit.memberPath,
         );
       }

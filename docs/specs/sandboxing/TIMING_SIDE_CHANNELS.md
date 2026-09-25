@@ -282,8 +282,8 @@ Landing order, smallest and safest first. Each is its own commit/PR.
       streams (so handler-context reads run under real dispatch too), and asserts
       no `TimeCapabilityError` escapes. Only a `TimeCapabilityError` fails a
       pattern; a pattern that cannot instantiate offline for an unrelated reason is
-      reported as skipped, not a finding. The file is auto-discovered by the CI
-      shard selector (`tasks/select-pattern-integration-files.ts` reads the
+      reported as skipped, not a finding. The file is auto-discovered by the
+      `pattern-integration` suite (`tasks/test-topology/patterns.ts` reads the
       `integration/` directory), so it runs in the normal pattern-integration CI.
       Result of the run: **0 unexpected violations**, with the games
       battleship/card-piles/scrabble among the clean set and `suggestion`,

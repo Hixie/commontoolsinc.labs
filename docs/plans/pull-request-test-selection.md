@@ -588,9 +588,9 @@ environment variables the packages' own runners read all go, and
 `tasks/run-sharded-test-files.ts` keeps only what it does besides
 sharding, as `tasks/run-test-groups.ts`: running the files that need flags
 of their own apart from the rest. `packages/runner` becomes the
-`runner-unit` suite like any other. `tasks/weighted-shards.ts` is the one
-piece that stays, because it is the packing algorithm rather than a table
-of guesses, and `packages/patterns` shards its own integration task with
+`runner-unit` suite like any other. `tasks/weighted-shards.ts` goes with
+the shard selectors that were its last callers: the lane packer has a
+filling of its own, which charges a suite's setup to the lane that opens
 it.
 
 The same thing happens one level up. The shard matrices in `deno.yml` —
@@ -2439,8 +2439,7 @@ beats none.
 ### Filling the lanes
 
 Once the set is chosen it is packed into five lanes by longest-processing-
-time scheduling, which is what `tasks/weighted-shards.ts` already
-implements and what the existing shard selectors already use. Batches are
+time scheduling. Batches are
 the units being packed and capability setup costs go in as the initial
 loads, so a lane that has already opened the Toolshed server is the
 cheapest place to put the next batch that needs it. That is the mechanism
@@ -4252,17 +4251,12 @@ exercised on the branch on its own.
       claimed separately and are not together. Turning it on cost nobody
       a blocked pull request, the half passing over the runs of both at
       the time it was wired.
-- [ ] Both post-test checks become steps of the one job that ships the
-      run's records. `Coverage Check` and `Test Topology Store Check` are
-      separate jobs because each reads what every test job produced and
-      there are fifteen of them, so each keeps a list of jobs to wait for
-      and pays a checkout, a Deno setup, an install and a download to read
-      a file. Once one job ships the whole run's records, neither needs a
-      runner of its own, and the two dependency lists go with them. What
-      makes that happen rather than being remembered is the
-      `one-post-test-job` tripwire: it holds that more than one job ships
-      records, so the change that makes one of them do it fails the build
-      and is handed the rest of the work.
+- [x] The post-test checks wait on the lanes rather than on a list of
+      test jobs. Each lane is a runner of its own and ships its own
+      records, so a check reading the whole run still has to be a job
+      after all of them, but what it waits on is the two lane jobs,
+      `pr-tests` and `full-tests`, rather than a hand-kept copy of a
+      fifteen-job matrix that a new job could be left out of.
 - [x] The full run's treatment of a test too flaky for pull requests.
       The count is placed already: `tasks/test-selection/plan.ts` gives
       every mandatory identity the count `executionsFor` returns for its
@@ -4316,12 +4310,11 @@ exercised on the branch on its own.
       `tasks/run-test-groups.ts`), `INTERNALLY_SHARDED_PACKAGES` and
       the shard environment variables the packages' own runners read, and
       `TEST_DISABLED_PACKAGES: runner` with the separate `Runner Tests`
-      matrix. `tasks/weighted-shards.ts` stays and the lane packer calls
-      it. Nothing may be balanced by a transcribed number afterwards, and
-      `check-test-topology` is what proves the items are all still there.
-      `tasks/weighted-shards.ts` stays because `packages/patterns` shards
-      its own integration task with it; the lane packer has its own
-      filling, which charges a suite's setup to the lane that opens it.
+      matrix. Nothing may be balanced by a transcribed number afterwards,
+      and `check-test-topology` is what proves the items are all still
+      there. `tasks/weighted-shards.ts` goes with the shard selectors that
+      called it; the lane packer has its own filling, which charges a
+      suite's setup to the lane that opens it.
 - [x] `packages/ui` and `packages/iframe-sandbox` split their one-string
       test tasks the way `packages/static` already writes the same split,
       so each keeps a measured set over its Deno-only half. The topology
