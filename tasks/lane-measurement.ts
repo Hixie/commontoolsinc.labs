@@ -18,6 +18,7 @@ import {
   isLaneMeasurement,
   LANE_MEASUREMENT_PREFIX,
   LANE_MEASUREMENT_SURFACE,
+  testIdentityKey,
   testIdentityOfKey,
 } from "@commonfabric/test-support/records";
 
@@ -125,6 +126,6 @@ export function excusedMeasurementName(key: string): string {
  */
 export function excusedMeasurement(name: string): string | undefined {
   if (!name.startsWith(EXCUSED_PREFIX)) return undefined;
-  const key = name.slice(EXCUSED_PREFIX.length);
-  return testIdentityOfKey(key) === undefined ? undefined : key;
+  const identity = testIdentityOfKey(name.slice(EXCUSED_PREFIX.length));
+  return identity === undefined ? undefined : testIdentityKey(identity);
 }

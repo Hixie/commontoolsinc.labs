@@ -98,6 +98,13 @@ describe("lane-measurement", () => {
       expect(excusedMeasurement(excusedMeasurementName(flaky))).toBe(flaky);
     });
 
+    it("returns the canonical key for a key written with other spacing", () => {
+      // Readers compare keys as strings, so an excusal written in any other
+      // spelling of the same identity has to come back canonical.
+      const spaced = JSON.stringify(JSON.parse(flaky), null, 1);
+      expect(excusedMeasurement(excusedMeasurementName(spaced))).toBe(flaky);
+    });
+
     it("returns `undefined` for an excused measurement naming no identity", () => {
       expect(excusedMeasurement(excusedMeasurementName("glaze > sets")))
         .toBeUndefined();
