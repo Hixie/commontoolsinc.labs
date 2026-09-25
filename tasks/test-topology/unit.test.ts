@@ -916,6 +916,18 @@ describe("a member whose tests a lane cannot hand a file list", () => {
     expect(suite.whole).toEqual([]);
   });
 
+  it("gives no unit to one whose task reaches no test file", async () => {
+    // Its task is one a lane can hand a file list, so nothing about it runs
+    // whole. A unit for it would run the task with no preload and no report
+    // path.
+
+    const root = await workspace(bakery("deno test -A test/missing.test.ts"));
+    const suite = workspaceUnit(await loadUnitSuites(root));
+    expect(suite.units).toEqual([]);
+    expect(suite.whole).toEqual([]);
+    expect(suite.measured).toBeUndefined();
+  });
+
   it("runs one whole where the list allows it", async () => {
     const root = await workspace(
       bakery("deno test -A --import-map ./test-map.json ."),

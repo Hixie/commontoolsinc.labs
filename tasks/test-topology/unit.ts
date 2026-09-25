@@ -237,7 +237,7 @@ function measuredSetOf(
   // than a tree of them, and `scripts` is outside coverage accounting.
   if (!memberPath.startsWith("packages/")) return undefined;
   if (EXCLUDED_FROM_COVERAGE_GATE.has(memberPath)) return undefined;
-  const units = member.files.length > 0
+  const units = member.run !== undefined
     ? member.files
     : member.denoHalf
     ? [memberPath]
@@ -270,7 +270,7 @@ function unitSuite(
   const whole: string[] = [];
   for (const member of members) {
     byScope.set(member.scope, member);
-    if (member.files.length > 0) {
+    if (member.run !== undefined) {
       for (const file of member.files) {
         units.push(file);
         byUnit.set(file, member);
@@ -321,7 +321,7 @@ function unitSuite(
       if (record.test.k === "browser" && member.browserTest) {
         return { level: "unit", unit: `${wholeUnit(member)}${BROWSER_SUFFIX}` };
       }
-      if (member.files.length === 0) {
+      if (member.run === undefined) {
         return member.denoHalf
           ? { level: "unit", unit: wholeUnit(member) }
           : undefined;
