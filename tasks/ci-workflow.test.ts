@@ -901,6 +901,76 @@ Deno.test("One commit publishes one set of release artifacts", async () => {
   }
 });
 
+Deno.test("a release subject whose attestation does not verify fails the job", async () => {
+  // The verification step's script runs here against a stand-in `gh` that
+  // lists the subjects it is asked about and fails on the one named by
+  // FAIL_SUBJECT, and a stand-in `jq` that prints what it reads.
+  const job = jobBlock(await workflow("deno.yml"), "attest-binaries");
+  const step = stepBlock(job, "🔎 Verify binary attestations");
+  // A step with no `shell` is run by GitHub as `bash -e {0}`.
+  assert(!/^ {8}shell:/m.test(step), "the step names its own shell");
+  const run = step.indexOf("\n        run: |\n");
+  assert(run >= 0, "the step's script not found");
+  const script = step.slice(run + "\n        run: |\n".length)
+    .split("\n").map((line) => line.slice(10)).join("\n")
+    .replaceAll(/\$\{\{.*?\}\}/g, "x");
+  // Each subject is attested under a name ending in the file name it is
+  // verified by.
+  const baseName = (path: string) =>
+    path.replaceAll(/\$\{\{.*?\}\}/g, "x").split("/").at(-1);
+  const attested = [...job.matchAll(/^ {10}subject-name: (.+)$/gm)]
+    .map((match) => baseName(match[1])).sort();
+
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${dir}/gh`,
+      '#!/bin/sh\necho "$3" >> subjects\n' +
+        '[ "$3" = "$FAIL_SUBJECT" ] && { echo "no attestation" >&2; exit 1; }\n' +
+        "echo '{\"verified\":true}'\n",
+      { mode: 0o755 },
+    );
+    await Deno.writeTextFile(`${dir}/jq`, "#!/bin/sh\nexec cat\n", {
+      mode: 0o755,
+    });
+    await Deno.writeTextFile(`${dir}/step.sh`, script);
+    const verify = async (failing: string) => {
+      await Deno.writeTextFile(`${dir}/subjects`, "");
+      const { code, stdout } = await new Deno.Command("bash", {
+        args: ["-e", "step.sh"],
+        cwd: dir,
+        env: { PATH: `${dir}:${Deno.env.get("PATH")}`, FAIL_SUBJECT: failing },
+        stderr: "null",
+      }).output();
+      return {
+        code,
+        stdout: new TextDecoder().decode(stdout),
+        subjects: (await Deno.readTextFile(`${dir}/subjects`)).split("\n")
+          .filter(Boolean),
+      };
+    };
+
+    const passing = await verify("");
+    assertEquals(passing.code, 0);
+    assertEquals(passing.subjects.map(baseName).sort(), attested);
+    assertEquals(
+      passing.stdout.match(
+        /^::group::.*\n\{"verified":true\}\n::endgroup::$/gm,
+      )?.length,
+      attested.length,
+      "each subject's details are not printed inside a log group",
+    );
+    for (const subject of passing.subjects) {
+      assert(
+        (await verify(subject)).code !== 0,
+        `a failed verification of ${subject} passes the step`,
+      );
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("Deploy steps call the bastion wrapper the way it accepts", async () => {
   // The bastion's /opt/cf/deploy.sh takes an environment name and a
   // 40-character commit SHA, and nothing else. Hand it a third argument, an

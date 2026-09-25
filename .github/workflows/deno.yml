@@ -2326,49 +2326,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Verify tarball attestation
-          echo "::group::Tarball attestation details"
-          gh attestation verify release/labs-${{ github.sha }}.tar.gz -R ${{ github.repository }} --format json | jq
-          echo "::endgroup::"
-          if [ $? -eq 0 ]; then
-            echo -e "\033[32m✓ Tarball attestation verified successfully\033[0m"
-          else
-            echo -e "\033[31m✗ Tarball attestation verification failed\033[0m"
-            exit 1
-          fi
-
-          # Verify toolshed binary attestation
-          echo "::group::toolshed attestation details"
-          gh attestation verify ./dist/toolshed -R ${{ github.repository }} --format json | jq
-          echo "::endgroup::"
-          if [ $? -eq 0 ]; then
-            echo -e "\033[32m✓ toolshed attestation verified successfully\033[0m"
-          else
-            echo -e "\033[31m✗ toolshed attestation verification failed\033[0m"
-            exit 1
-          fi
-
-          # Verify bg-piece-service binary attestation
-          echo "::group::bg-piece-service attestation details"
-          gh attestation verify ./dist/bg-piece-service -R ${{ github.repository }} --format json | jq
-          echo "::endgroup::"
-          if [ $? -eq 0 ]; then
-            echo -e "\033[32m✓ bg-piece-service attestation verified successfully\033[0m"
-          else
-            echo -e "\033[31m✗ bg-piece-service attestation verification failed\033[0m"
-            exit 1
-          fi
-
-          # Verify cf binary attestation
-          echo "::group::cf attestation details"
-          gh attestation verify ./dist/cf -R ${{ github.repository }} --format json | jq
-          echo "::endgroup::"
-          if [ $? -eq 0 ]; then
-            echo -e "\033[32m✓ cf attestation verified successfully\033[0m"
-          else
-            echo -e "\033[31m✗ cf attestation verification failed\033[0m"
-            exit 1
-          fi
+          # A subject whose attestation does not verify fails the step: the
+          # command substitution hands `bash -e` the exit status of `gh`.
+          for subject in release/labs-${{ github.sha }}.tar.gz ./dist/toolshed ./dist/bg-piece-service ./dist/cf; do
+            details=$(gh attestation verify "$subject" -R ${{ github.repository }} --format json)
+            echo "::group::$subject attestation details"
+            jq . <<< "$details"
+            echo "::endgroup::"
+            echo -e "\033[32m✓ $subject attestation verified successfully\033[0m"
+          done
 
       - name: 🔑 Authenticate to Google Cloud
         uses: google-github-actions/auth@3a3c4c57d294ef65efaaee4ff17b22fa88dd3c69 # v1.3.0
