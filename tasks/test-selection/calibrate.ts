@@ -42,12 +42,16 @@
  * lane is packed short of what it could hold, by whatever margin the
  * cost figures carry, and the headroom that keeps a lane inside its
  * bound is that padding rather than this intercept. Under-packing is the
- * direction every figure here errs in; it is the price of an intercept
- * that measures the machine rather than the manifest.
+ * direction every fit here errs in; it is the price of an intercept that
+ * measures the machine rather than the manifest.
  *
- * Every figure here errs high. A cost model that under-estimates puts a
- * lane past the bound it is packed to finish inside, where one that
- * over-estimates leaves a lane finishing early.
+ * Every fit here errs high. A cost model that under-estimates puts a lane
+ * past the bound it is packed to finish inside, where one that
+ * over-estimates leaves a lane finishing early. What a run is charged
+ * errs high too, with one exception: `pricedCalibration` charges a run
+ * with coverage on the fit without coverage for a suite no lane has yet
+ * run with coverage on, and that is short by whatever instrumenting the
+ * suite costs.
  *
  * One reading cannot manage it at both ends. A suite's fixed cost and
  * what one of its units costs are measured from batches of much the same

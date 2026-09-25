@@ -601,7 +601,8 @@ export async function dispatch(
     case "coverage": {
       // The one mode that reads a manifest and carries on without one:
       // which sets exist is a fact about the tree, and only the baseline
-      // each is measured against comes from a manifest.
+      // each is measured against and what the lanes have fitted running
+      // one costs come from a manifest.
       const manifest = await commitManifest(root, at, sources);
       const topology = await sources.topology(root);
       const sets = measuredSets(topology);

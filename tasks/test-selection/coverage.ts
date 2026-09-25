@@ -163,23 +163,32 @@ export function measuresSuite(
 }
 
 /**
- * What running some entries whole costs a run with coverage on, read from
- * what their suites' batches have cost with coverage on, in the two parts
- * a lane is charged them in.
+ * What running some entries costs a run with coverage on, read from what
+ * their suites' batches have cost with coverage on, in the parts a lane
+ * is charged them in.
  */
 export interface MeasuredCost {
   /** Each suite's overhead, which every lane holding it pays once. */
   overhead: number;
 
   /**
-   * Each entry's own cost through its suite's correction, and each
-   * unit's charge, which are paid once however the entries are spread.
+   * Each entry's own cost through its suite's correction, once for every
+   * time the entry runs, which is paid once however the entries are
+   * spread.
    */
   spread: number;
+
+  /**
+   * Each unit's overhead, and how many of the entries are in it. Every
+   * lane opening the unit pays its overhead, and all of one entry's runs
+   * go in one lane, so a unit is opened in at most as many lanes as it
+   * holds entries.
+   */
+  units: { overhead: number; entries: number }[];
 }
 
 /**
- * What running `entries` whole costs a run with coverage on.
+ * What running `entries` costs a run with coverage on.
  *
  * Undefined where a suite among them has no such figure, which is every
  * suite until a lane has run one of its batches with coverage on. What
@@ -194,36 +203,60 @@ export function measuredCost(
   for (const entry of entries) {
     bySuite.set(entry.suite, [...bySuite.get(entry.suite) ?? [], entry]);
   }
-  const cost = { overhead: 0, spread: 0 };
+  const cost: MeasuredCost = { overhead: 0, spread: 0, units: [] };
   for (const [suite, held] of bySuite) {
     const fitted = calibration.suitesWithCoverage?.[suite];
     if (fitted === undefined) return undefined;
-    const units = new Set(held.map((entry) => entry.unit)).size;
-    const tests = held.reduce((sum, entry) => sum + entry.cost, 0);
+    const units = new Map<string, number>();
+    for (const entry of held) {
+      units.set(entry.unit, (units.get(entry.unit) ?? 0) + 1);
+      cost.spread += fitted.correction * entry.cost * entry.repeats;
+    }
     cost.overhead += fitted.overhead;
-    cost.spread += fitted.correction * tests + fitted.unitOverhead * units;
+    for (const entries of units.values()) {
+      cost.units.push({ overhead: fitted.unitOverhead, entries });
+    }
   }
   return cost;
 }
 
 /**
- * How many of a run's lanes it takes to hold `cost`, where each lane
- * holding any of it also pays `setup` for the capabilities it needs, or
- * undefined where the run's lanes cannot hold it.
+ * The fewest of a run's lanes that hold `cost`, where each lane holding
+ * any of it also pays `setup` for the capabilities it needs, and what
+ * holding it in that many lanes charges; undefined where the run's lanes
+ * cannot hold it.
  *
- * Each lane pays the suites' overheads and the setup before running any
- * of it, so the question is whether what is left of the lanes' budgets
- * after those holds the rest. A lane's prologue is already outside its
- * budget.
+ * Spread over some number of lanes, it charges its spread once, its
+ * suites' overheads and the setup in every one of them, and each unit's
+ * overhead in as many of them as the unit can be split over. Those lanes
+ * hold it where that fits inside their budgets together. A lane's
+ * prologue is already outside its budget.
  */
 function lanesHolding(
   cost: MeasuredCost,
   setup: number,
-): number | undefined {
-  const room = LANE_BUDGET_SECONDS - cost.overhead - setup;
-  if (room <= 0) return undefined;
-  const lanes = Math.max(1, Math.ceil(cost.spread / room));
-  return lanes <= LANES ? lanes : undefined;
+): { lanes: number; seconds: number } | undefined {
+  for (let lanes = 1; lanes <= LANES; lanes++) {
+    const seconds = cost.spread + lanes * (cost.overhead + setup) +
+      cost.units.reduce(
+        (sum, unit) => sum + unit.overhead * Math.min(lanes, unit.entries),
+        0,
+      );
+    if (seconds <= lanes * LANE_BUDGET_SECONDS) return { lanes, seconds };
+  }
+  return undefined;
+}
+
+/** What setting up `capabilities` costs a lane, by `calibration`. */
+function setupCost(
+  calibration: Calibration,
+  capabilities: Iterable<string>,
+): number {
+  let seconds = 0;
+  for (const capability of new Set(capabilities)) {
+    seconds += calibration.setupCost[capability] ?? 0;
+  }
+  return seconds;
 }
 
 /**
@@ -236,8 +269,12 @@ function lanesHolding(
  * What a set has to fit is the whole run rather than one lane, since its
  * units are packed across lanes like any other mandatory work and the
  * totals meet again afterwards. A set spread over several lanes pays its
- * suites' overheads and its capabilities' setup in each of them, so that
- * is what it is charged.
+ * suites' overheads and its capabilities' setup in each of them, and
+ * each unit's overhead in each lane holding part of that unit. A set and
+ * a member alike are charged that over the fewest lanes holding them,
+ * with each unit split over as many of those lanes as its entries allow.
+ * The units a set's suite declares unavailable are not run, so they are
+ * not charged.
  *
  * Both read what the lanes have measured batches with coverage on to
  * cost, and until the lanes have run a suite that way nothing here can
@@ -267,25 +304,38 @@ export function measuredCostLines(
     }
     return undefined;
   };
+  const needs = new Map(suites.map((suite) => [suite.id, suite.needs]));
+  const unavailable = new Map(
+    suites.map((suite) => [suite.id, unavailableUnits(suite)]),
+  );
   for (const ref of measuredSets(suites)) {
-    const units = new Set(ref.set.units);
+    const units = new Set(
+      ref.set.units.filter((unit) => !unavailable.get(ref.suite)?.has(unit)),
+    );
     const cost = judged(
       manifest.entries.filter((entry) =>
         entry.suite === ref.suite && units.has(entry.unit)
       ),
     );
     if (cost === undefined) continue;
-    const seconds = cost.overhead + cost.spread;
-    if (seconds <= LOCAL_COVERAGE_MAX_SECONDS) continue;
+    const held = lanesHolding(
+      cost,
+      setupCost(manifest.calibration, needs.get(ref.suite) ?? []),
+    );
+    if (held !== undefined && held.seconds <= LOCAL_COVERAGE_MAX_SECONDS) {
+      continue;
+    }
+    const costs = held === undefined
+      ? `more with coverage on than the run's ${LANES} lanes of ` +
+        `${LANE_BUDGET_SECONDS}s hold`
+      : `${held.seconds.toFixed(1)}s with coverage on`;
     lines.push(
-      `${measuredSetName(ref)} costs ${seconds.toFixed(1)}s with coverage ` +
-        `on, past LOCAL_COVERAGE_MAX_SECONDS of ` +
-        `${LOCAL_COVERAGE_MAX_SECONDS}s. Its member's tests could be ` +
-        `split, the run could carry the cost, or the member could go on ` +
-        `EXCLUDED_FROM_COVERAGE_GATE.`,
+      `${measuredSetName(ref)} costs ${costs}, past ` +
+        `LOCAL_COVERAGE_MAX_SECONDS of ${LOCAL_COVERAGE_MAX_SECONDS}s. ` +
+        `Its member's tests could be split, the run could carry the cost, ` +
+        `or the member could go on EXCLUDED_FROM_COVERAGE_GATE.`,
     );
   }
-  const needs = new Map(suites.map((suite) => [suite.id, suite.needs]));
   for (const member of EXCLUDED_FROM_COVERAGE_GATE.keys()) {
     if (exclusionKind(member) !== "size") continue;
     // A member's Deno-only tests are the ones its unit suite records
@@ -296,21 +346,18 @@ export function measuredCostLines(
     );
     const cost = judged(entries);
     if (cost === undefined) continue;
-    const capabilities = new Set(
-      entries.flatMap((entry) => needs.get(entry.suite) ?? []),
+    const held = lanesHolding(
+      cost,
+      setupCost(
+        manifest.calibration,
+        entries.flatMap((entry) => needs.get(entry.suite) ?? []),
+      ),
     );
-    const setup = [...capabilities].reduce(
-      (sum, capability) =>
-        sum + (manifest.calibration.setupCost[capability] ?? 0),
-      0,
-    );
-    const lanes = lanesHolding(cost, setup);
-    if (lanes === undefined) continue;
-    const seconds = cost.spread + lanes * (cost.overhead + setup);
+    if (held === undefined) continue;
     lines.push(
       `${member} is on EXCLUDED_FROM_COVERAGE_GATE for its size, and its ` +
-        `tests now cost ${seconds.toFixed(1)}s with coverage on across ` +
-        `${lanes} lane(s), inside the run's ${LANES} lanes of ` +
+        `tests now cost ${held.seconds.toFixed(1)}s with coverage on ` +
+        `across ${held.lanes} lane(s), inside the run's ${LANES} lanes of ` +
         `${LANE_BUDGET_SECONDS}s, so its line can come off.`,
     );
   }

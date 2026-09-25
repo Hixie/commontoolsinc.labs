@@ -287,27 +287,45 @@ describe("coverage", () => {
     const suites = [suite("workspace-unit", [bakery, cellar])];
 
     describe("measuredCost()", () => {
+      /** A calibration whose coverage-on fit for `workspace-unit` is this. */
+      const fittedAs = (fit: typeof FREE): Calibration => ({
+        ...measuredFits(),
+        suitesWithCoverage: { "workspace-unit": fit },
+      });
+
       it("returns what the entries cost with coverage on", () => {
-        const calibration = measuredFits();
-        calibration.suites["workspace-unit"] = FREE;
-        calibration.suitesWithCoverage!["workspace-unit"] = {
+        // The overhead, twice the tests' twelve seconds, and the unit
+        // overhead of each of the two units, against how many of the
+        // entries each holds.
+        expect(measuredCost(
+          fittedAs({ overhead: 10, correction: 2, unitOverhead: 1 }),
+          [
+            entry("bakery", "packages/bakery/glaze.test.ts", 3),
+            entry("bakery", "packages/bakery/glaze.test.ts", 4),
+            entry("bakery", "packages/bakery/proof.test.ts", 5),
+          ],
+        )).toEqual({
           overhead: 10,
-          correction: 2,
-          unitOverhead: 1,
+          spread: 24,
+          units: [{ overhead: 1, entries: 2 }, { overhead: 1, entries: 1 }],
+        });
+      });
+
+      it("charges an entry once for every time it runs", () => {
+        const repeated = {
+          ...entry("bakery", "packages/bakery/glaze.test.ts", 3),
+          repeats: 4,
         };
-        // The overhead once, and apart from it twice the tests' twelve
-        // seconds and one for each of the two units they fill.
-        expect(measuredCost(calibration, [
-          entry("bakery", "packages/bakery/glaze.test.ts", 3),
-          entry("bakery", "packages/bakery/glaze.test.ts", 4),
-          entry("bakery", "packages/bakery/proof.test.ts", 5),
-        ])).toEqual({ overhead: 10, spread: 26 });
+        expect(
+          measuredCost(
+            fittedAs({ overhead: 0, correction: 2, unitOverhead: 0 }),
+            [repeated],
+          )?.spread,
+        ).toBe(24);
       });
 
       it("returns `undefined` where no lane has run a suite with coverage on", () => {
-        const calibration = measuredFits();
-        calibration.suites["workspace-unit"] = FREE;
-        expect(measuredCost(calibration, [
+        expect(measuredCost(measuredFits(), [
           entry("bakery", "packages/bakery/glaze.test.ts", 3),
         ])).toBeUndefined();
       });
@@ -334,6 +352,85 @@ describe("coverage", () => {
         expect(lines[0]).toContain(
           "workspace-unit/packages/bakery costs 40.0s with coverage on",
         );
+      });
+
+      it("leaves out the units the suite declares unavailable", () => {
+        // `proof.test.ts` does not run here, so the set costs only what
+        // `glaze.test.ts` does.
+
+        const lines = measuredCostLines(
+          sampleManifest({
+            calibration: measuredFits("workspace-unit"),
+            entries: [
+              entry("bakery", "packages/bakery/glaze.test.ts", 20),
+              entry("bakery", "packages/bakery/proof.test.ts", 20),
+            ],
+          }),
+          [
+            suite("workspace-unit", [bakery], [{
+              unit: "packages/bakery/proof.test.ts",
+              reason: "needs a display",
+            }]),
+          ],
+        );
+        expect(lines).toEqual([]);
+      });
+
+      describe("what a set is charged", () => {
+        /**
+         * A set of one suite, which opens a capability costing ten
+         * seconds, and whose batches with coverage on pay five before
+         * running anything: fifteen a lane before its tests.
+         */
+        const costing = (...costs: number[]) =>
+          measuredCostLines(
+            sampleManifest({
+              calibration: {
+                setupCost: { deno: 10 },
+                suites: {},
+                suitesWithCoverage: {
+                  "workspace-unit": {
+                    overhead: 5,
+                    correction: 1,
+                    unitOverhead: 0,
+                  },
+                },
+                prologue: 0,
+              },
+              entries: costs.map((cost) =>
+                entry("cellar", "packages/cellar/rack.test.ts", cost)
+              ),
+            }),
+            [{ ...suite("workspace-unit", [cellar]), needs: ["deno"] }],
+          );
+
+        it("counts the setup of the capabilities its suite needs", () => {
+          // Twenty seconds of tests are inside the limit, and the fifteen
+          // the lane pays first are not.
+
+          expect(costing(20)).toEqual([
+            "workspace-unit/packages/cellar costs 35.0s with coverage on, " +
+            `past LOCAL_COVERAGE_MAX_SECONDS of ${LOCAL_COVERAGE_MAX_SECONDS}s. ` +
+            "Its member's tests could be split, the run could carry the " +
+            "cost, or the member could go on EXCLUDED_FROM_COVERAGE_GATE.",
+          ]);
+          expect(costing(LOCAL_COVERAGE_MAX_SECONDS - 15)).toEqual([]);
+        });
+
+        it("counts the overhead and setup again in each lane it spreads over", () => {
+          const tests = LANE_BUDGET_SECONDS * 1.5;
+          expect(costing(tests / 2, tests / 2)[0]).toContain(
+            `costs ${(tests + 2 * 15).toFixed(1)}s with coverage on`,
+          );
+        });
+
+        it("says so where the run's lanes cannot hold it", () => {
+          expect(costing(LANE_BUDGET_SECONDS * LANES)[0]).toContain(
+            "workspace-unit/packages/cellar costs more with coverage on " +
+              `than the run's ${LANES} lanes of ${LANE_BUDGET_SECONDS}s ` +
+              "hold, past LOCAL_COVERAGE_MAX_SECONDS",
+          );
+        });
       });
 
       describe("a member excluded for its size", () => {
@@ -385,6 +482,71 @@ describe("coverage", () => {
           expect(costing(LANE_BUDGET_SECONDS * LANES - 30)).toEqual([]);
         });
 
+        it("counts a unit's overhead in each lane its entries are split over", () => {
+          // Two entries of one unit that no one lane holds together, so
+          // two lanes each open the unit.
+
+          const unitOverhead = 5;
+          const half = (LANE_BUDGET_SECONDS - 33) / 2;
+          const lines = measuredCostLines(
+            sampleManifest({
+              calibration: {
+                ...calibration(),
+                suitesWithCoverage: {
+                  "runner-unit": { overhead: 20, correction: 1, unitOverhead },
+                },
+              },
+              entries: [half, half].map((seconds, index) =>
+                sampleEntry(
+                  { k: "unit", s: "runner", n: `half ${index}` },
+                  {
+                    suite: "runner-unit",
+                    unit: "packages/runner/test/one.test.ts",
+                    cost: seconds,
+                  },
+                )
+              ),
+            }),
+            [runner],
+          );
+          expect(lines).toEqual([
+            `packages/runner is on EXCLUDED_FROM_COVERAGE_GATE for its ` +
+            `size, and its tests now cost ${
+              (2 * half + 2 * 30 + 2 * unitOverhead).toFixed(1)
+            }s with coverage on across 2 lane(s), inside the run's ` +
+            `${LANES} lanes of ${LANE_BUDGET_SECONDS}s, so its line can ` +
+            `come off.`,
+          ]);
+        });
+
+        it("counts a unit's overhead once where it holds one entry", () => {
+          const unitOverhead = 5;
+          const lines = measuredCostLines(
+            sampleManifest({
+              calibration: {
+                ...calibration(),
+                suitesWithCoverage: {
+                  "runner-unit": { overhead: 20, correction: 1, unitOverhead },
+                },
+              },
+              entries: [
+                entry(
+                  "runner",
+                  "packages/runner/test/one.test.ts",
+                  LANE_BUDGET_SECONDS - 33,
+                  "runner-unit",
+                ),
+              ],
+            }),
+            [runner],
+          );
+          expect(lines[0]).toContain(
+            `now cost ${
+              (LANE_BUDGET_SECONDS - 33 + 2 * 30 + unitOverhead).toFixed(1)
+            }s with coverage on across 2 lane(s)`,
+          );
+        });
+
         it("is not named where a lane's fixed charge leaves no room for its tests", () => {
           const lines = measuredCostLines(
             sampleManifest({
@@ -419,12 +581,9 @@ describe("coverage", () => {
       });
 
       it("says it cannot say what anything costs before a lane has run it with coverage on", () => {
-        const calibration = measuredFits();
-        calibration.suites["workspace-unit"] = FREE;
-        calibration.suites["runner-unit"] = FREE;
         const lines = measuredCostLines(
           sampleManifest({
-            calibration,
+            calibration: measuredFits(),
             entries: [
               entry("bakery", "packages/bakery/glaze.test.ts", 900),
               entry("cellar", "packages/cellar/rack.test.ts", 1),
