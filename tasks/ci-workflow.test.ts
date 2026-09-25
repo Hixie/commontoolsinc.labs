@@ -291,11 +291,17 @@ Deno.test("a lane keeps what it needs to explain a failure", async () => {
   const job = jobOf(await workflow("deno.yml"), "lanes");
   {
     const enable = stepOf(job, "🔧 Enable native crash dumps").run ?? "";
-    assertStringIncludes(enable, "ulimit -c unlimited");
     assertStringIncludes(
       enable,
       'sudo sysctl -w kernel.core_pattern="$GITHUB_WORKSPACE/deno-core.%p"',
     );
+
+    // The size limit is a property of the shell that raises it, and each
+    // step runs in a shell of its own, so the lane's step is the one that
+    // has to lift it.
+    const lane = (stepOf(job, "🧪 Run the lane").run ?? "").split("\n");
+    assertEquals(lane[0], "ulimit -c unlimited");
+    assert(lane[1].startsWith("deno run -A tasks/ci-lane.ts"));
 
     const upload = stepOf(job, "📋 Upload what a failing lane left behind");
     assertEquals(upload.if, "${{ failure() }}");

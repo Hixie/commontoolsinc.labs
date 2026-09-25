@@ -251,12 +251,11 @@ jobs:
       # `deno lint` has crashed natively here before, and a stack from the
       # dump is what says where. The pattern is a property of the machine
       # rather than of any one suite, so it is set for whatever the lane
-      # turns out to run.
+      # turns out to run. The size limit belongs to a shell, so the step
+      # that runs the lane lifts it.
       - name: 🔧 Enable native crash dumps
         shell: bash
-        run: |
-          ulimit -c unlimited
-          sudo sysctl -w kernel.core_pattern="$GITHUB_WORKSPACE/deno-core.%p"
+        run: sudo sysctl -w kernel.core_pattern="$GITHUB_WORKSPACE/deno-core.%p"
 
       - name: 🧪 Run the lane
         timeout-minutes: *work-timeout
@@ -267,11 +266,11 @@ jobs:
           TEST_SELECTION_PREFIX: ${{ vars.TEST_SELECTION_PREFIX }}
         # The full run packs every test the tree holds; a pull request's run
         # selects from what the change reaches, measured against its base.
-        run: >-
-          deno run -A tasks/ci-lane.ts
-          --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.lanes || 5 }}
-          ${{ needs.plan-full.result == 'success' && '--full' ||
-          format('--base origin/{0}', github.base_ref) }}
+        run: |
+          ulimit -c unlimited
+          deno run -A tasks/ci-lane.ts \
+            --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.lanes || 5 }} \
+            ${{ needs.plan-full.result == 'success' && '--full' || format('--base origin/{0}', github.base_ref) }}
 
       # What a failing lane left behind: a server's log, a restored binary's
       # output, and a native crash dump. The lane keeps its own working
