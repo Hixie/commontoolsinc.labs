@@ -6,6 +6,12 @@ import { commandWords } from "./ci-workflow.ts";
 import { phaseOf } from "./ci-step-phases.ts";
 import { BINARY_CACHE_DIR, COMPILE_CACHE_FILE } from "./ci-capabilities.ts";
 import {
+  COVERAGE_REPORT_DIR,
+  COVERAGE_REPORT_FILE,
+  DEFAULT_COVERAGE_DIR,
+  measuredSetOfReport,
+} from "./ci-lane.ts";
+import {
   FULL_LANE_BOUND_SECONDS,
   FULL_LANES_MAX,
   FULL_RUN_LABEL,
@@ -519,7 +525,26 @@ Deno.test("every lane uploads its coverage, and the joiners read it", async () =
   );
   assertEquals(upload.with?.name, "coverage-lane-${{ matrix.lane }}");
   assertEquals(upload.if, "always()");
-  assertEquals(upload.with?.path, "coverage/lcov");
+
+  // A report the lane writes, as a reader of the downloaded artifact finds
+  // it: the artifact holds what is under the uploaded directory, so that
+  // part of the report's path is gone, and the reader still has to place
+  // the report in its set.
+  const written = `${DEFAULT_COVERAGE_DIR}/${COVERAGE_REPORT_DIR}/` +
+    `workspace-unit/packages__bakery/${COVERAGE_REPORT_FILE}`;
+  const uploaded = String(upload.with?.path);
+  assert(
+    written.startsWith(`${uploaded}/`),
+    `the lane uploads ${uploaded}, which does not hold its reports`,
+  );
+  assertEquals(
+    measuredSetOfReport(
+      `coverage-artifacts/coverage-lane-1/${
+        written.slice(uploaded.length + 1)
+      }`,
+    ),
+    "workspace-unit/packages__bakery",
+  );
 
   // Every job that adds the reports up: the gate on a pull request, the
   // figures the default branch publishes, and the release report.

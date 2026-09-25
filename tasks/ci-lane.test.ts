@@ -3484,6 +3484,24 @@ describe("converting what a lane collected", () => {
       .toBe("suite/member");
   });
 
+  it("places a report the way a downloaded artifact holds it", () => {
+    // A lane uploads the directory above its reports, so the artifact
+    // keeps only the last segment of the layout. A reader that asked for
+    // the whole of it would find no report in any artifact, and score
+    // every set as unmeasured.
+    expect(
+      measuredSetOfReport(
+        "coverage-artifacts/coverage-lane-3/sets/workspace-unit/" +
+          "packages__bakery/coverage.lcov",
+      ),
+    ).toBe("workspace-unit/packages__bakery");
+  });
+
+  it("reads a suite named like the layout as the suite", () => {
+    expect(measuredSetOfReport("lane-1/sets/sets/packages__bakery/r.lcov"))
+      .toBe("sets/packages__bakery");
+  });
+
   it("marks a set whose unit the lane saw fail", async () => {
     // A run that excused a flaky failure stays green, so nothing
     // downstream would otherwise know the number is short by whatever

@@ -159,25 +159,19 @@ export const COVERAGE_REPORT_FILE = "coverage.lcov";
  * by the directory the lane wrote it in, or nothing where the file is not
  * inside that layout.
  *
- * The layout is matched whole rather than by its last segment, so that a
- * suite named after one of those segments cannot be read as the layout
- * itself. Whatever the file is — the report, or a marker written beside
- * it — this is the one answer to which set it belongs to, so a reader
- * cannot part company with the lane that wrote it.
+ * A lane uploads the directory above its reports, so what a reader finds
+ * in the artifact keeps only the last segment of `COVERAGE_REPORT_DIR`, and
+ * a file is placed by where it sits under that segment, counted back from
+ * the file: `sets/<suite>/<member>/<file>`. Counting from the file rather
+ * than searching for the segment means a suite that happens to share its
+ * name is read as the suite. Whatever the file is — the report, or a
+ * marker written beside it — this is the one answer to which set it
+ * belongs to, so a reader cannot part company with the lane that wrote it.
  */
 export function measuredSetOfReport(at: string): string | undefined {
-  const layout = COVERAGE_REPORT_DIR.split("/");
   const parts = at.replaceAll("\\", "/").split("/");
-  // The last occurrence rather than the first: a lane whose coverage
-  // directory itself lies under a path spelling the layout would
-  // otherwise be read from the wrong one, and every report under it
-  // dismissed.
-  const start = parts.findLastIndex((_, index) =>
-    parts.slice(index, index + layout.length).join("/") === COVERAGE_REPORT_DIR
-  );
-  if (start === -1) return undefined;
-  const rest = parts.slice(start + layout.length);
-  return rest.length === 3 ? `${rest[0]}/${rest[1]}` : undefined;
+  if (parts.at(-4) !== path.basename(COVERAGE_REPORT_DIR)) return undefined;
+  return `${parts.at(-3)}/${parts.at(-2)}`;
 }
 
 /** Where this lane's coverage goes, absolute. */
