@@ -91,9 +91,10 @@ the profile directory it is named is absent or holds only empty files. Any other
 
 Every one of those paths writes an output file, so the script always leaves a
 report, and its outcome is read from its exit status rather than from a missing
-file. A lane converts only the profile directories its batches wrote. A batch
-whose tests never ran writes no profile directory, so the lane converts nothing
-for it and writes no report for it. A profile directory that holds only empty
+file. A lane converts only the profile directories its batches wrote, so it
+never names the script an absent one. A batch whose tests never ran writes no
+profile directory, so the lane converts nothing for it and writes no report for
+it. A profile directory that holds only empty
 files is converted, and its report is empty. What reads the reports decides what
 an absent or empty one means: the pull request coverage gate fails a measured
 set the change forced whose reports name no line of its member, as [Test
