@@ -3,6 +3,8 @@ import { describe, it } from "@std/testing/bdd";
 
 import {
   coverageRecords,
+  RECORD_SCHEMA_VERSION,
+  type RunContext,
   sampleEntry,
   sampleManifest,
   testIdentityKey,
@@ -13,9 +15,11 @@ import { MAIN_REPORT_MARKER } from "./test-selection/report.ts";
 import type { Suite } from "./test-topology/suite.ts";
 import type { TestRecord } from "@commonfabric/test-support/records";
 
+import type { ManifestFetch } from "./test-selection/store.ts";
 import type { RunOutcomes } from "./test-selection/report.ts";
 import { buildZip } from "./zip-testing.ts";
 import {
+  committedAt,
   coverageOfRun,
   isReportable,
   main,
@@ -29,6 +33,7 @@ import {
   runAt,
   runGit,
   runPartitions,
+  type StoredRun,
   withdrawReport,
 } from "./post-main-report.ts";
 
@@ -148,6 +153,73 @@ function record(name: string, outcome: TestRecord["outcome"]): TestRecord {
   };
 }
 
+/**
+ * The context line a pull request's run writes ahead of its records,
+ * naming the merge it tested. The branch tip is `b` repeated.
+ */
+function tested(commit: string): RunContext {
+  return {
+    schema: RECORD_SCHEMA_VERSION,
+    line: "context",
+    reportId: "01J8Z3K4Q5R6S7T8V9W0X1Y2Z3",
+    repo: "commonfabric/labs",
+    commit,
+    dirty: false,
+    env: "ci",
+    ci: {
+      workflowRunId: "3",
+      runAttempt: 1,
+      workflow: "CI",
+      job: "Test",
+      headCommit: "b".repeat(40),
+      event: "pull_request",
+    },
+    os: "linux",
+    arch: "x86_64",
+    denoVersion: "2.5.0",
+    startedAt: "2026-09-07T05:40:00Z",
+  };
+}
+
+const kneads = { k: "unit", s: "bakery", n: "kneads" };
+const proves = { k: "unit", s: "bakery", n: "proves" };
+
+/** The one unit every test these cases name lives in. */
+const bakeryUnit = "packages/bakery/test/bakery.test.ts";
+
+/** A tree holding one suite of one unit, which is where these tests live. */
+const suites: Suite[] = [{
+  id: "workspace-unit",
+  recordSurfaces: [{ kind: "unit", scope: "bakery" }],
+  needs: ["deno"],
+  units: [bakeryUnit],
+  unavailable: [],
+  whole: [],
+  locate: () => undefined,
+  command: () => Promise.resolve([]),
+}];
+
+/** A manifest holding `kneads` back as too flaky to judge a change by. */
+const manifest = sampleManifest({
+  entries: [
+    sampleEntry(kneads, {
+      unit: bakeryUnit,
+      flakeRate: 0.5,
+      flakeEvidence: { flakes: 20, runs: 20 },
+      cost: 1,
+    }),
+    // No counts, as an entry from a manifest written before they were
+    // published has none.
+    sampleEntry(proves, {
+      unit: bakeryUnit,
+      flakeRate: 0.002,
+      cost: 1,
+      inputs: { catches: 3, sources: 2, churn: 0 },
+    }),
+  ],
+  withheld: [{ test: kneads, suite: "workspace-unit", reason: "flaky" }],
+});
+
 /** What one case says the world outside the reporter holds. */
 interface World {
   /** The run named in the event, and the run at the commit's parent. */
@@ -170,6 +242,25 @@ interface World {
 
   /** The run whose records artifact refuses to download. */
   unreadable?: number;
+
+  /**
+   * When each commit was made, by its hash, as the commits interface
+   * gives it; null for a commit that interface cannot find. A commit the
+   * case does not name was made at five in the morning.
+   */
+  committed?: Record<string, string | null>;
+
+  /** What the store gives for a manifest, by the moment it is asked at. */
+  manifests?: Record<string, ManifestFetch>;
+
+  /** The suites the tree declares. */
+  suites?: Suite[];
+
+  /**
+   * What the pull request's own run recorded, as the store holds it, where
+   * a case gives that run. It is run 3, at the pull request's head.
+   */
+  theirRecords?: readonly (TestRecord | RunContext)[];
 }
 
 /**
@@ -214,8 +305,15 @@ async function reporting(
     }
     if (url.includes("/actions/workflows/")) {
       const sha = new URL(url).searchParams.get("head_sha");
+      const theirs = world.theirRecords === undefined ? [] : [workflowRun({
+        id: 3,
+        head_sha: "b".repeat(40),
+        event: "pull_request",
+      })];
       return Response.json({
-        workflow_runs: world.runs.filter((run) => run.head_sha === sha),
+        workflow_runs: [...world.runs, ...theirs].filter((run) =>
+          run.head_sha === sha
+        ),
       });
     }
     if (url.endsWith("/zip")) {
@@ -258,8 +356,12 @@ async function reporting(
       return Response.json({ head: { sha: "b".repeat(40) } });
     }
     if (url.includes("/commits/")) {
+      const date = world.committed?.[url.slice(url.lastIndexOf("/") + 1)];
+      if (date === null) {
+        return new Response("no", { status: 404, statusText: "Not Found" });
+      }
       return Response.json({
-        commit: { committer: { date: "2026-09-07T05:00:00Z" } },
+        commit: { committer: { date: date ?? "2026-09-07T05:00:00Z" } },
       });
     }
     if (url.includes("/issues/") && url.includes("/comments")) {
@@ -271,9 +373,21 @@ async function reporting(
         })),
       );
     }
-    // The store, which these cases give nothing, so the pull request's
-    // own run reads as one nothing is known about.
-    return Response.json({ items: [] });
+    // The store, which holds the pull request's own run where a case
+    // gives one, and otherwise nothing, so that run reads as one nothing
+    // is known about.
+    if (url.includes("/storage/v1/")) {
+      return Response.json({
+        items: world.theirRecords === undefined || !url.includes("run-3-")
+          ? []
+          : [{ name: "labs/test-records/submissions/ci/v1/run-3-Test.ndjson" }],
+      });
+    }
+    return new Response(
+      (world.theirRecords ?? []).map((line) => JSON.stringify(line))
+        .join("\n") + "\n",
+      { status: 200 },
+    );
   }) as typeof fetch;
 
   try {
@@ -285,8 +399,11 @@ async function reporting(
         }
         return Promise.resolve("packages/bakery/src/oven.ts\n");
       },
-      topology: () => Promise.resolve([]),
-      manifest: () => Promise.resolve({ absent: "nothing published yet" }),
+      topology: () => Promise.resolve(world.suites ?? []),
+      manifest: ({ at }) =>
+        Promise.resolve(
+          world.manifests?.[at] ?? { absent: "nothing published yet" },
+        ),
     });
   } finally {
     globalThis.fetch = original;
@@ -440,39 +557,6 @@ describe("post-main-report", () => {
   });
 
   describe("manifestView()", () => {
-    const kneads = { k: "unit", s: "bakery", n: "kneads" };
-    const proves = { k: "unit", s: "bakery", n: "proves" };
-    const unit = "packages/bakery/test/bakery.test.ts";
-    const suites: Suite[] = [{
-      id: "workspace-unit",
-      recordSurfaces: [{ kind: "unit", scope: "bakery" }],
-      needs: ["deno"],
-      units: [unit],
-      unavailable: [],
-      whole: [],
-      locate: () => undefined,
-      command: () => Promise.resolve([]),
-    }];
-    const manifest = sampleManifest({
-      entries: [
-        sampleEntry(kneads, {
-          unit,
-          flakeRate: 0.5,
-          flakeEvidence: { flakes: 20, runs: 20 },
-          cost: 1,
-        }),
-        // No counts, as an entry from a manifest written before they
-        // were published has none.
-        sampleEntry(proves, {
-          unit,
-          flakeRate: 0.002,
-          cost: 1,
-          inputs: { catches: 3, sources: 2, churn: 0 },
-        }),
-      ],
-      withheld: [{ test: kneads, suite: "workspace-unit", reason: "flaky" }],
-    });
-
     it("reports what the packing reached and what was held back", () => {
       const view = manifestView(manifest, suites, new Set());
       expect(view.manifest).toBe(true);
@@ -496,7 +580,7 @@ describe("post-main-report", () => {
     it("carries the unit every entry lives in", () => {
       const view = manifestView(manifest, suites, new Set());
       expect(view.units.get(testIdentityKey(kneads)))
-        .toBe(`workspace-unit\t${unit}`);
+        .toBe(`workspace-unit\t${bakeryUnit}`);
     });
 
     // The tree decides what exists. A manifest naming a unit this tree no
@@ -529,10 +613,14 @@ describe("post-main-report", () => {
   });
 
   describe("outcomesFromStore()", () => {
-    /** Answers a store listing with these object names, each one record. */
+    /**
+     * Answers a store listing with these object names, each one record,
+     * under a context naming the commit given for it where one is.
+     */
     async function fromStore(
       names: readonly string[],
-    ): Promise<RunOutcomes | undefined> {
+      commits: Readonly<Record<string, string>> = {},
+    ): Promise<StoredRun | undefined> {
       const original = globalThis.fetch;
       globalThis.fetch = ((input: string | URL | Request) => {
         const url = typeof input === "string" ? input : input.toString();
@@ -541,9 +629,13 @@ describe("post-main-report", () => {
             Response.json({ items: names.map((name) => ({ name })) }),
           );
         }
+        const commit = commits[url.slice(url.lastIndexOf("/") + 1)];
         return Promise.resolve(
           new Response(
-            JSON.stringify(record("kneads", "pass")) + "\n",
+            [
+              ...(commit === undefined ? [] : [tested(commit)]),
+              record("kneads", "pass"),
+            ].map((line) => JSON.stringify(line)).join("\n") + "\n",
             { status: 200 },
           ),
         );
@@ -559,7 +651,31 @@ describe("post-main-report", () => {
       const outcomes = await fromStore([
         "labs/test-records/submissions/ci/v1/2026/09/07/run-5-Test.ndjson",
       ]);
-      expect(outcomes?.get('["unit","bakery","kneads"]')).toBe("pass");
+      expect(outcomes?.outcomes.get('["unit","bakery","kneads"]')).toBe("pass");
+    });
+
+    it("names the commit every report of the run tested", async () => {
+      const stored = await fromStore(
+        ["run-5-Test-1.ndjson", "run-5-Test-2.ndjson"],
+        {
+          "run-5-Test-1.ndjson": "d".repeat(40),
+          "run-5-Test-2.ndjson": "d".repeat(40),
+        },
+      );
+      expect(stored?.commit).toBe("d".repeat(40));
+      expect(stored?.outcomes.get('["unit","bakery","kneads"]')).toBe("pass");
+    });
+
+    it("names no commit where the reports name several", async () => {
+      const stored = await fromStore(
+        ["run-5-Test-1.ndjson", "run-5-Test-2.ndjson"],
+        {
+          "run-5-Test-1.ndjson": "d".repeat(40),
+          "run-5-Test-2.ndjson": "e".repeat(40),
+        },
+      );
+      expect(stored?.outcomes.size).toBe(1);
+      expect(stored?.commit).toBeUndefined();
     });
 
     // A run whose records never arrived is a run nothing is known about,
@@ -805,6 +921,84 @@ describe("post-main-report", () => {
       expect(written[0]!.body).toContain("from 900 to 1000");
       expect(written[0]!.body).toContain("`packages/bakery`: 10 to 40");
     });
+
+    it("says what the pull request's own run did where the store holds it", async () => {
+      const written = await reporting(world({
+        theirRecords: [record("kneads", "pass")],
+      }));
+      expect(written[0]!.body).toContain(
+        "This pull request ran it, and it passed there",
+      );
+    });
+
+    describe("the manifest the pull request's own run resolved", () => {
+      // The pull request's run tested the merge `d…`, made at half past
+      // five, and ran `proves` and not `kneads`. Its branch tip `b…` was
+      // made at five. The manifest holding `kneads` back was published
+      // between the two, so only the merge's moment finds it.
+
+      const merge = "d".repeat(40);
+
+      const theirs = (fields: Partial<World> = {}): World =>
+        world({
+          suites,
+          theirRecords: [tested(merge), record("proves", "pass")],
+          committed: {
+            [merge]: "2026-09-07T05:30:00Z",
+            ["b".repeat(40)]: "2026-09-07T05:00:00Z",
+          },
+          manifests: {
+            "2026-09-07T05:30:00.000Z": { manifest },
+          },
+          ...fields,
+        });
+
+      it("resolves it at the moment the merge that run tested was made", async () => {
+        const written = await reporting(theirs());
+        expect(written[0]!.body).toContain("too flaky to judge a change by");
+      });
+
+      it("never resolves it at the moment the branch tip was made", async () => {
+        const written = await reporting(theirs({
+          manifests: { "2026-09-07T05:00:00.000Z": { manifest } },
+        }));
+        expect(written[0]!.body).not.toContain("too flaky");
+        expect(written[0]!.body).toContain(
+          "This pull request did not run it, and there is no manifest to " +
+            "say why.",
+        );
+      });
+
+      it("says the run did not run the test where the merge's date cannot be read", async () => {
+        const written = await reporting(theirs({
+          committed: { [merge]: null },
+        }));
+        expect(written[0]!.body).not.toContain("too flaky");
+        expect(written[0]!.body).toContain(
+          "This pull request did not run it, and there is no manifest to " +
+            "say why.",
+        );
+      });
+
+      it("says the run did not run the test where its records name no one merge", async () => {
+        const written = await reporting(theirs({
+          theirRecords: [
+            tested(merge),
+            record("proves", "pass"),
+            tested("e".repeat(40)),
+            record("proves", "pass"),
+          ],
+          committed: {
+            [merge]: "2026-09-07T05:30:00Z",
+            ["e".repeat(40)]: "2026-09-07T05:30:00Z",
+          },
+        }));
+        expect(written[0]!.body).toContain(
+          "This pull request did not run it, and there is no manifest to " +
+            "say why.",
+        );
+      });
+    });
   });
 
   describe("pullRequestHead()", () => {
@@ -824,19 +1018,10 @@ describe("post-main-report", () => {
       }
     }
 
-    it("gives the branch tip and the moment it was committed", async () => {
+    it("gives the branch tip", async () => {
       expect(
-        await asking((url) =>
-          /\/pulls\/\d+$/.test(url)
-            ? Response.json({ head: { sha: "b".repeat(40) } })
-            : Response.json({
-              commit: { committer: { date: "2026-09-07T05:00:00Z" } },
-            })
-        ),
-      ).toEqual({
-        sha: "b".repeat(40),
-        at: "2026-09-07T05:00:00.000Z",
-      });
+        await asking(() => Response.json({ head: { sha: "b".repeat(40) } })),
+      ).toBe("b".repeat(40));
     });
 
     // A number in a commit subject may name an issue, and an issue takes
@@ -856,13 +1041,40 @@ describe("post-main-report", () => {
         ),
       ).toBeUndefined();
     });
+  });
+
+  describe("committedAt()", () => {
+    /** Answers the commit lookup however a case says. */
+    async function asking(answer: Response): Promise<string | undefined> {
+      const original = globalThis.fetch;
+      globalThis.fetch = (() => Promise.resolve(answer)) as typeof fetch;
+      try {
+        return await committedAt("d".repeat(40));
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+
+    it("gives the moment the commit was made, in UTC", async () => {
+      expect(
+        await asking(Response.json({
+          commit: { committer: { date: "2026-09-07T07:30:00+02:00" } },
+        })),
+      ).toBe("2026-09-07T05:30:00.000Z");
+    });
 
     it("gives nothing when the commit carries no usable date", async () => {
       expect(
-        await asking((url) =>
-          /\/pulls\/\d+$/.test(url)
-            ? Response.json({ head: { sha: "b".repeat(40) } })
-            : Response.json({ commit: { committer: { date: "whenever" } } })
+        await asking(Response.json({
+          commit: { committer: { date: "whenever" } },
+        })),
+      ).toBeUndefined();
+    });
+
+    it("gives nothing when the interface could not find the commit", async () => {
+      expect(
+        await asking(
+          new Response("no", { status: 422, statusText: "Unprocessable" }),
         ),
       ).toBeUndefined();
     });

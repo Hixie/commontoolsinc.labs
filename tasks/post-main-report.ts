@@ -29,6 +29,10 @@
  * produced. Reading the run's own artifacts would go around the gate and
  * put a fork's claims about which tests passed into a comment.
  *
+ * The manifest that explains why the pull request's run did not run a
+ * test is resolved at the moment the lanes of that run resolved it: when
+ * the commit the run tested was made.
+ *
  * Environment:
  *   GITHUB_TOKEN         - Required.
  *   GITHUB_EVENT_PATH    - The workflow_run payload naming the run.
@@ -218,26 +222,51 @@ export function runPartitions(run: WorkflowRun): string[] {
 }
 
 /**
- * What every test in one run did, from the store. Undefined where the
- * store holds nothing for it, because a run whose records never arrived
- * is a run nothing is known about, and reading it as a run that skipped
- * everything is what makes a test it ran look unrun.
+ * What every test in one run did, from the store, and the commit it did
+ * it at. Undefined where the store holds nothing for it, because a run
+ * whose records never arrived is a run nothing is known about, and
+ * reading it as a run that skipped everything is what makes a test it ran
+ * look unrun.
  */
 export async function outcomesFromStore(
   run: WorkflowRun,
-): Promise<RunOutcomes | undefined> {
+): Promise<StoredRun | undefined> {
   const bucket = storeBucket();
   const records: TestRecord[] = [];
+  const commits = new Set<string>();
   let objects = 0;
   for (const day of runPartitions(run)) {
     const prefix = `${ciSubmissionsPrefix()}/v${RECORD_SCHEMA_VERSION}/` +
       `${day}/run-${run.id}-`;
     for (const objectName of await listObjects({ bucket, prefix })) {
       objects++;
-      records.push(...(await readObject({ bucket, objectName })).records);
+      const object = await readObject({ bucket, objectName });
+      records.push(...object.records);
+      for (const report of object.reports) {
+        if (report.context !== undefined) commits.add(report.context.commit);
+      }
     }
   }
-  return objects === 0 ? undefined : outcomesOf(records);
+  if (objects === 0) return undefined;
+  const commit = commits.size === 1 ? [...commits][0] : undefined;
+  return {
+    outcomes: outcomesOf(records),
+    ...(commit === undefined ? {} : { commit }),
+  };
+}
+
+/** What one run recorded, as the store holds it. */
+export interface StoredRun {
+  outcomes: RunOutcomes;
+
+  /**
+   * The commit every report of the run names as the one its tests ran
+   * against. For a pull request's run that is the merge the
+   * continuous-integration provider built, not the branch tip. Absent
+   * where the reports name several, since none of them is then the commit
+   * the run tested.
+   */
+  commit?: string;
 }
 
 /**
@@ -338,7 +367,7 @@ export interface ReportDeps {
   topology?: () => Promise<Suite[]>;
 
   /** The manifest the store holds at a moment. */
-  manifest?: (at: string) => Promise<ManifestFetch>;
+  manifest?: (options: { at: string }) => Promise<ManifestFetch>;
 }
 
 /** Runs git in the checkout and returns what it printed. */
@@ -357,29 +386,22 @@ export async function runGit(...args: string[]): Promise<string> {
 }
 
 /**
- * The commit at the head of one pull request's branch, and the committer
- * date it carries.
- *
- * That date is the moment the manifest is resolved at, and it is the
- * branch tip's rather than the tip's merge with the default branch. The
- * tip is a commit somebody made, so its date is stable; the merge is
- * built by the continuous-integration provider and dated whenever it
- * last rebuilt it, which moves as the default branch moves.
+ * The commit at the head of one pull request's branch, which is what its
+ * runs are listed under.
  *
  * Undefined when the pull request cannot be read. The report is worth
  * more with a note saying its own run could not be read than it is worth
- * not being written, so this is the one place the reporter carries on
+ * not being written, so this is one place the reporter carries on
  * without an answer.
  */
 export async function pullRequestHead(
   pullRequest: number,
-): Promise<{ sha: string; at: string } | "absent" | undefined> {
-  let head: string;
+): Promise<string | "absent" | undefined> {
   try {
     const info = await githubGet<{ head: { sha: string } }>(
       `/repos/${REPO}/pulls/${pullRequest}`,
     );
-    head = info.head.sha;
+    return info.head.sha;
   } catch (error) {
     // A number in a commit subject may name an issue rather than a pull
     // request, and an issue takes comments just as a pull request does.
@@ -388,19 +410,51 @@ export async function pullRequestHead(
     console.warn(`  Warning: could not read PR #${pullRequest}: ${error}`);
     return undefined;
   }
+}
+
+/**
+ * The moment a commit was made, as its committer date in UTC, which is
+ * the moment the lanes testing that commit resolve their manifest at.
+ * Undefined where the commit or its date cannot be read.
+ */
+export async function committedAt(commit: string): Promise<string | undefined> {
   try {
-    const commit = await githubGet<{ commit: { committer: { date: string } } }>(
-      `/repos/${REPO}/commits/${head}`,
+    const found = await githubGet<{ commit: { committer: { date: string } } }>(
+      `/repos/${REPO}/commits/${commit}`,
     );
-    const at = Date.parse(commit.commit.committer.date);
-    if (Number.isNaN(at)) return undefined;
-    return { sha: head, at: new Date(at).toISOString() };
+    const at = Date.parse(found.commit.committer.date);
+    return Number.isNaN(at) ? undefined : new Date(at).toISOString();
   } catch (error) {
-    console.warn(
-      `  Warning: could not read PR #${pullRequest}'s head commit: ${error}`,
-    );
+    console.warn(`  Warning: could not read commit ${commit}: ${error}`);
     return undefined;
   }
+}
+
+/**
+ * The manifest a pull request's own run resolved, or why there is none
+ * to read.
+ *
+ * Its lanes resolved it at the moment the commit they tested was made,
+ * and the commit a pull request's run tests is the merge its records
+ * name, which is made later than the branch tip. A manifest published
+ * between the two is one those lanes read and the tip's moment misses, so
+ * the moment is that merge's. A run that names no one commit, or whose
+ * commit's date cannot be read, has no moment to stand behind, and no
+ * manifest is resolved for it: one resolved at any other moment would
+ * explain the run's selection from a manifest it may never have read.
+ */
+async function manifestOfTheirRun(
+  ran: StoredRun | undefined,
+  resolve: (options: { at: string }) => Promise<ManifestFetch>,
+): Promise<ManifestFetch> {
+  if (ran?.commit === undefined) {
+    return { absent: "the pull request's own run names no commit it tested" };
+  }
+  const at = await committedAt(ran.commit);
+  if (at === undefined) {
+    return { absent: `the date of ${ran.commit} could not be read` };
+  }
+  return await resolve({ at });
 }
 
 /**
@@ -584,14 +638,16 @@ export async function main(
   }
   let view: PullRequestView = unknownPullRequest();
   if (head !== undefined) {
-    const theirRun = await runAt(head.sha, "pull_request");
+    const theirRun = await runAt(head, "pull_request");
     const ran = theirRun === undefined
       ? undefined
       : await outcomesFromStore(theirRun);
-    const fetched = await (deps.manifest ?? ((at: string) =>
-      fetchManifest({ at })))(head.at);
+    const fetched = await manifestOfTheirRun(
+      ran,
+      deps.manifest ?? fetchManifest,
+    );
     if (fetched.manifest === undefined) {
-      console.log(`No manifest at ${head.at}: ${fetched.absent}`);
+      console.log(`No manifest for PR #${pullRequest}: ${fetched.absent}`);
     }
     view = {
       ...(fetched.manifest === undefined ? unknownPullRequest() : manifestView(
@@ -599,7 +655,7 @@ export async function main(
         await (deps.topology ?? loadTopology)(),
         changed,
       )),
-      ...(ran === undefined ? {} : { ran }),
+      ...(ran === undefined ? {} : { ran: ran.outcomes }),
     };
   }
 
