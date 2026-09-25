@@ -73,11 +73,18 @@ aborted a wave, is re-evaluated like any other, and its one activation
 attempt is refused. Every park other than an idle one or one on a
 rival's lease extends the space's failure-park backoff, which delays its
 next activation by base·2^(n−1) for the nth consecutive such park, up
-to a cap. An idle park or a committed wave clears the backoff. A space
-whose serving fails every time is therefore rebuilt at a widening
-interval rather than in a tight loop. Impl: `host.ts`'s park handler
-and `#reactivateAfterPark`; pinned in
-`packages/runner/test/executor-serving-loop.test.ts` and
+to a cap. An idle park or a committed wave clears the backoff. An
+activation that fails before anything parks, such as one whose store
+fails to open, counts as a failure park: it extends the backoff, and the
+host re-evaluates the criteria once that activation has finished. When
+the store cannot be read to look for undelivered events, the host
+activates the space anyway: the activation opens the store itself, and
+if that fails too, it counts as a failure park like any other. A
+space whose serving fails every time is therefore rebuilt at a widening
+interval rather than in a tight loop. Impl: `host.ts`'s park handler,
+the failure arm of `#activateInner`, and `#reactivateAfterPark`; pinned
+in `packages/runner/test/executor-serving-loop.test.ts`,
+`packages/runner/test/executor-events-down.test.ts`, and
 `packages/runner/test/executor/activation-lease.test.ts`.
 
 What activation LOADS (RULED 2026-08-02): there is NO piece-start

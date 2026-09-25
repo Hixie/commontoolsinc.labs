@@ -210,9 +210,10 @@ export class ExecutorHost {
   readonly #sinkLocalSeq = { value: 0 };
 
   /** Consecutive failure parks per space: every park except an idle one
-   * and one on a rival's lease. This backoff streak is cleared by an idle
-   * park or a successfully committed wave — real served progress, not
-   * merely a runtime that got built (every crash-loop tenure builds one). */
+   * and one on a rival's lease, and every activation that fails without
+   * parking. This backoff streak is cleared by an idle park or a
+   * successfully committed wave — real served progress, not merely a
+   * runtime that got built (every crash-loop tenure builds one). */
   readonly #failureParkStreaks = new Map<string, number>();
 
   /** Wakers for in-flight backoff sleeps — close() flushes them so a
@@ -265,6 +266,13 @@ export class ExecutorHost {
       },
     });
     registerServingLoopStatsProvider(() => this.stats());
+  }
+
+  /** The failure-park backoff streak of each space that has one. */
+  get accessForTestingOnly(): {
+    readonly failureParkStreaks: ReadonlyMap<string, number>;
+  } {
+    return { failureParkStreaks: this.#failureParkStreaks };
   }
 
   /** The §7 counters, live: static counts merged with per-space state
@@ -436,7 +444,7 @@ export class ExecutorHost {
           }
           buffered.push(notice);
         }
-        this.#reactivateAfterPark(existing, notice.space as MemorySpace);
+        this.#reactivateAfterPark(notice.space as MemorySpace, existing);
       }
       return;
     }
@@ -496,7 +504,7 @@ export class ExecutorHost {
       // A park in progress: re-activate once it completes (M5 — a
       // session opening against a mid-park space must not be stranded
       // until the next trigger).
-      this.#reactivateAfterPark(existing, space as MemorySpace);
+      this.#reactivateAfterPark(space as MemorySpace, existing);
       return;
     }
     // Activation on session open (serving-loop.md §1), gated on the
@@ -514,7 +522,8 @@ export class ExecutorHost {
     void this.#activate(space as MemorySpace, []);
   }
 
-  /** Chain a fresh activation behind a park in progress. Gated on the
+  /** Chain a fresh activation behind a park in progress (`parking`), or
+   * behind an activation that failed without parking. Gated on the
    * ACTIVE criteria again at fire time — the park may have been the
    * last session leaving. BOTH §1 criteria are consulted (verdict
    * blocker, 2026-08-12): live sessions OR undelivered events. An
@@ -527,11 +536,15 @@ export class ExecutorHost {
    * exists for. The buffer, drained at the successor's registration,
    * is what carries it: several warm notices in one park window share
    * ONE reactivation, and only a buffer merges them all (the #6191
-   * review's P1). A park during initialization completes before its
-   * activation unwinds, so the gate waits for any activation in flight
-   * rather than joining it. */
-  #reactivateAfterPark(parking: SpaceServer, space: MemorySpace): void {
-    void parking.whenParked.then(async () => {
+   * review's P1). When the store cannot be read to look for undelivered
+   * events, the gate activates anyway: the activation opens the store
+   * itself, and if that fails too, the failure extends the backoff and
+   * brings the host back here. A park during initialization completes
+   * before its activation unwinds, so the gate waits for any activation
+   * in flight rather than joining it. */
+  #reactivateAfterPark(space: MemorySpace, parking?: SpaceServer): void {
+    void (async () => {
+      await parking?.whenParked;
       await this.#activating.get(space)?.promise;
       if (this.#closed || this.#spaces.get(space)?.active) return;
       const warm = this.#pendingNotices.get(space)?.some((notice) =>
@@ -549,16 +562,15 @@ export class ExecutorHost {
         } catch (error) {
           logger.warn("reactivate-events-check-failed", () => [
             `space ${space}: undelivered-events check failed after park; ` +
-            "not reactivating on it",
+            "reactivating to check again",
             error,
           ]);
-          return;
         }
         // The engine read awaited: re-check the activation preconditions.
         if (this.#closed || this.#spaces.get(space)?.active) return;
       }
       void this.#activate(space, []);
-    });
+    })();
   }
 
   #activate(
@@ -608,6 +620,7 @@ export class ExecutorHost {
     // drained buffer appends at drain time): re-buffered by the failure
     // arms below — see #rebufferConsumedWarm. Collected from the start
     // so an early throw (the engine open) loses nothing either.
+    let parked = false;
     try {
       const engine = await this.#options.server.engineForSpace(space);
       // The sink's session key IS the DR1 holder, whose process-instance
@@ -645,6 +658,7 @@ export class ExecutorHost {
           }
           : {}),
         onParked: (reason) => {
+          parked = true;
           try {
             this.#options.onSpaceParked?.(space, reason);
           } catch (error) {
@@ -678,7 +692,7 @@ export class ExecutorHost {
           if (this.#spaces.get(space) === server) {
             this.#spaces.delete(space);
           }
-          if (!rivalHoldsLease) this.#reactivateAfterPark(server, space);
+          if (!rivalHoldsLease) this.#reactivateAfterPark(space, server);
           // No flag re-assert needed: the host's OWN enabler (claimed
           // at construction, shared refcount with Runtime enablers)
           // keeps the ambient flag on until close — a parked runtime's
@@ -731,10 +745,10 @@ export class ExecutorHost {
       if (!activated) {
         this.#spaces.delete(space);
         this.#rebufferConsumedWarm(space, consumedWarm);
-        this.#options.onActivationSettled?.(space, "refused");
+        this.#reportActivationSettled(space, "refused");
         return;
       }
-      this.#options.onActivationSettled?.(space, "active");
+      this.#reportActivationSettled(space, "active");
       if (this.#closed) {
         // close() ran while this activation was in flight (it awaits us,
         // but park() on a not-yet-active server is a no-op — so the
@@ -745,8 +759,37 @@ export class ExecutorHost {
     } catch (error) {
       this.#spaces.delete(space);
       this.#rebufferConsumedWarm(space, consumedWarm);
+      if (!parked) {
+        // A throw that no park preceded, such as the engine open's, never
+        // reaches the park handler, so we count it and re-evaluate the
+        // space here, as that handler does for a failure park.
+        this.#failureParkStreaks.set(
+          space,
+          (this.#failureParkStreaks.get(space) ?? 0) + 1,
+        );
+        this.#reactivateAfterPark(space);
+      }
       logger.error("activate-failed", `activation of ${space} failed`, error);
-      this.#options.onActivationSettled?.(space, "failed");
+      this.#reportActivationSettled(space, "failed");
+    }
+  }
+
+  /**
+   * Helper for `#activateInner()`, which reports how an activation attempt
+   * ended to the `onActivationSettled` observer. An observer that throws is
+   * logged, and ends neither the activation nor its recovery.
+   */
+  #reportActivationSettled(
+    space: MemorySpace,
+    outcome: "active" | "refused" | "failed",
+  ): void {
+    try {
+      this.#options.onActivationSettled?.(space, outcome);
+    } catch (error) {
+      logger.warn("activation-settled-observer-failed", () => [
+        `space ${space}: activation observer threw`,
+        error,
+      ]);
     }
   }
 
