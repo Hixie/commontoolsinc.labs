@@ -2,8 +2,8 @@
  * The package integration suites: the runner, the runtime client and the
  * shell, each driving a real Toolshed server, and the same three again in
  * the posture opposite the first-party default. The deployed-topology suite
- * owns the background service and cf-harness gates that exercise the default
- * production construction paths.
+ * owns the cf-harness gate that exercises the default production
+ * construction path.
  *
  * One runner does not imply one scope here. The three packages share a
  * command shape and a server, and each records under its own scope, so

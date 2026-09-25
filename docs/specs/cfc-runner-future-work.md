@@ -245,12 +245,13 @@ collaborative-doc model as a downgraded/future area. Ref: §14.4.8, §3.1.6.
 
 Not new machinery so much as turning the system on:
 
-- **Flow-labels `off` outside the shell → inv-9 partial.** The router-attack
+- **Flow-labels `off` outside the presets → inv-9 partial.** The router-attack
   flow-taint (§10's own worked example) is stamped where the shell runs
   ([`lib-shell/src/runtime.ts`](../../packages/lib-shell/src/runtime.ts) defaults
-  `cfcFlowLabels` to `persist`) and nowhere else: the `Runtime` default is `off`,
-  and toolshed passes no CFC options at all, so it inherits it. Move it through
-  `observe` to `persist`. `cfcTriggerReadGating` is `false` in every host on the
+  `cfcFlowLabels` to `persist`) and on toolshed, whose `productionServer`
+  preset pins it to `persist`. The bare `Runtime` default is `off`, so a host
+  that builds a `Runtime` without a preset runs without it. Move that default
+  through `observe` to `persist`. `cfcTriggerReadGating` is `false` in every host on the
   same footing — turning it on joins the §8.9.2 trigger reads to both
   enforcement gates, the sink-request ceiling and the
   `requiredIntegrity` input gate

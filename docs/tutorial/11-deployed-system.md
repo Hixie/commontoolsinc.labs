@@ -104,8 +104,8 @@ ran `cf piece link` long ago to feed the list into a dashboard piece.
    state; Alice's session is skipped as origin.
 5. **Remote update** (Ch. 8/11). Bob's worker integrates the upsert into
    his replica; the notification hits his trigger index; the same computeds
-   re-run on his machine; his DOM updates. The dashboard piece sees the same
-   change the same way.
+   re-run on his machine; his DOM updates. While a client is running the
+   dashboard piece, it sees the same change the same way.
 
 Total pattern-author code involved: one `$checked` binding and two
 `computed()` lines. Everything else — atomicity, conflict detection,

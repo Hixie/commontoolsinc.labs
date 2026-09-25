@@ -40,8 +40,8 @@ describe("CFUpdater (retired)", () => {
     const original = console.warn;
     console.warn = (...args: unknown[]) => lines.push(args.join(" "));
     try {
-      new CFUpdater().notifyRetiredUsage();
-      new CFUpdater().notifyRetiredUsage();
+      new CFUpdater().render();
+      new CFUpdater().render();
     } finally {
       console.warn = original;
     }

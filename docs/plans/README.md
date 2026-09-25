@@ -147,11 +147,11 @@ a record: archive it to `docs/history/plans/` following the procedure in
   intent listener, the ruled double-dispatch implementation, the
   acceptance and the owner ruling set); it archives beside the stage-C
   closeout when that build lands.
-- [Scheduled work in the server](scheduled-work-in-the-server.md) proposes the
-  simpler form the owner ruled bgUpdater would come back as: a pattern declares
-  the cadence it wants to wake on, and the space's own serving runtime honors
-  it, so background work needs no separate process anyone has to run and keep
-  online. Nothing wakes a piece on a timer with nobody watching, and the ruling
+- [Scheduled work in the server](scheduled-work-in-the-server.md) proposes a
+  simpler form for bgUpdater, which the owner ruled will come back later: a
+  pattern declares the cadence it wants to wake on, and the space's own
+  serving runtime honors it, so background work needs no separate process
+  anyone has to run and keep online. Nothing wakes a piece on a timer with nobody watching, and the ruling
   accepts that capability being absent in the meantime — nothing depends on
   it. Two separable parts: the capability, and compute accounting, which the
   capability does not depend on to function. The capability rests on a further

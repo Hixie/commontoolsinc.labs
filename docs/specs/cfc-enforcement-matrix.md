@@ -898,5 +898,5 @@ Grounded in the four implemented dials — `cfcEnforcementMode`
 SC-13 rollout constraint in `cfc-spec-changes.md` and the current host
 postures: shell
 ([lib-shell/src/runtime.ts](../../packages/lib-shell/src/runtime.ts):
-`enforce-strict` + flow `persist`); toolshed (no CFC options passed, so the
-`Runtime` defaults, `enforce-strict` + flow `persist`).
+`enforce-strict` + flow `persist`); toolshed (the `productionServer` preset's
+pins, `enforce-strict` + flow `persist`).
