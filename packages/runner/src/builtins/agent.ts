@@ -428,13 +428,21 @@ export function agent(
       }
     }
 
-    const previousCallHash = state.previousCallHash;
     state.previousCallHash = hash;
     state.currentHash = hash;
-    tx.addCommitCallback((_committedTx, commitResult) => {
-      if (commitResult.error && state.previousCallHash === hash) {
-        state.previousCallHash = previousCallHash;
-      }
+    // A request whose staging does not become durable is not in flight, so
+    // the next run stages it again. On a serving runtime that includes a
+    // staging the wave withdraws after accepting it. Staging a request twice
+    // is harmless, since its record is found by its hash and created once.
+    const forgetRequest = () => {
+      if (state.previousCallHash === hash) state.previousCallHash = undefined;
+    };
+    tx.addCommitCallback((committedTx, commitResult) => {
+      if (commitResult.error) return forgetRequest();
+      const settlement = waveSettlementOf(committedTx) ?? waveSettlementOf(tx);
+      void settlement?.then(({ error }) => {
+        if (error) forgetRequest();
+      });
     });
 
     fields.pending.set(true);
