@@ -102,6 +102,12 @@ import {
   prepareSnapshotShare,
   type SnapshotShareConsent,
 } from "@commonfabric/runner/cfc/share-snapshot";
+import {
+  commitCustodySeal,
+  CUSTODY_SEAL_GESTURE,
+  type CustodySealConsent,
+  prepareCustodySeal,
+} from "@commonfabric/runner/cfc/custody-seal";
 import { hashStringForEntityAddress } from "@commonfabric/runner/entity-kind";
 import {
   NameSchema,
@@ -164,6 +170,9 @@ import {
   type CellUnsubscribeRequest,
   type CfcLabelViewResponse,
   ClientNotificationType,
+  type CustodySealCommitRequest,
+  type CustodySealPrepareRequest,
+  type CustodySealPreview,
   type DetectNonIdempotentRequest,
   type DetectNonIdempotentResponse,
   type EnsureHomePatternRunningRequest,
@@ -511,6 +520,9 @@ export function browserWorkerParamsFromInitializationData(
     ...(data.cfcReadOnExceed !== undefined
       ? { cfcReadOnExceed: data.cfcReadOnExceed }
       : {}),
+    ...(data.cfcTrustConfig !== undefined
+      ? { cfcTrustConfig: data.cfcTrustConfig }
+      : {}),
     ...(data.trustSnapshot
       ? { trustSnapshotProvider: () => data.trustSnapshot }
       : {}),
@@ -754,11 +766,21 @@ export function securityContextFrom(
     cfcFlowLabels: data.cfcFlowLabels,
     cfcReadMaxConfidentiality: data.cfcReadMaxConfidentiality,
     cfcReadOnExceed: data.cfcReadOnExceed,
+    cfcTrustConfig: data.cfcTrustConfig,
     renderDeclassificationPolicy: data.renderDeclassificationPolicy,
     renderConfidentialityCeiling: data.renderConfidentialityCeiling,
     trustSnapshot: data.trustSnapshot,
   } satisfies EveryFieldOf<RuntimeSecurityContext>;
 }
+
+/** Builds the refusal for a detached client's or a disposed runtime's seal. */
+const custodySealingUnavailable = () =>
+  new Error("Custody sealing is unavailable");
+
+/** A prepared custody seal, held in the backend until its host confirms. */
+type PendingCustodySeal = {
+  consent: CustodySealConsent;
+};
 
 type RuntimeOperationTarget = {
   capability: IOperationStorageCapability;
@@ -822,7 +844,10 @@ export class RuntimeProcessor {
     { token: string; prepared: PreparedPieceSourceChange }
   >();
   #snapshotShares = new Map<string, SnapshotShareConsent>();
-  #snapshotShareDetachedClients = new WeakSet<WorkerClient>();
+  #custodySeals = new Map<string, PendingCustodySeal>();
+  /** One abort per commit in flight, aborted when its client detaches. */
+  #custodySealCommits = new Map<string, AbortController>();
+  #detachedClients = new WeakSet<WorkerClient>();
   #telemetry: RuntimeTelemetry;
 
   /**
@@ -1166,6 +1191,10 @@ export class RuntimeProcessor {
         this.#operationSessions.clear();
         this.#pieceSourceConfirmations.clear();
         this.#snapshotShares.clear();
+        this.#custodySeals.clear();
+        for (const commit of this.#custodySealCommits.values()) {
+          commit.abort(custodySealingUnavailable());
+        }
 
         // Clean up VDOM mounts
         for (const { reconciler, cancel } of this.#vdomMounts.values()) {
@@ -1235,9 +1264,15 @@ export class RuntimeProcessor {
    */
   disposeClient(client: WorkerClient): void {
     const prefix = clientKeyPrefix(client);
-    this.#snapshotShareDetachedClients.add(client);
+    this.#detachedClients.add(client);
     for (const key of this.#snapshotShares.keys()) {
       if (key.startsWith(prefix)) this.#snapshotShares.delete(key);
+    }
+    for (const key of this.#custodySeals.keys()) {
+      if (key.startsWith(prefix)) this.#custodySeals.delete(key);
+    }
+    for (const [key, commit] of this.#custodySealCommits) {
+      if (key.startsWith(prefix)) commit.abort(custodySealingUnavailable());
     }
 
     for (const [key, cancel] of [...this.#subscriptions]) {
@@ -1271,7 +1306,7 @@ export class RuntimeProcessor {
     }
   }
 
-  #snapshotShareCell(ref: CellRef): Cell<unknown> {
+  #hostSelectedCell(ref: CellRef): Cell<unknown> {
     // The host selects an address; stored policy owns its schema and label.
     return getCell(this.#runtime, {
       space: ref.space,
@@ -1888,23 +1923,23 @@ export class RuntimeProcessor {
     request: SnapshotSharePrepareRequest,
     client: WorkerClient = ownerClient,
   ): Promise<SnapshotSharePreview> {
-    if (this.#isDisposed || this.#snapshotShareDetachedClients.has(client)) {
+    if (this.#isDisposed || this.#detachedClients.has(client)) {
       throw new Error("Snapshot sharing is unavailable");
     }
-    const source = this.#snapshotShareCell(request.source);
+    const source = this.#hostSelectedCell(request.source);
     const audience = request.audience;
     if (
       !isObjectNotArray(audience) ||
       ("user" in audience) === ("space" in audience)
     ) throw new Error("Snapshot sharing requires one audience");
-    const audienceCell = this.#snapshotShareCell(
+    const audienceCell = this.#hostSelectedCell(
       "user" in audience ? audience.user : audience.space,
     );
     const appendBooksTo = request.appendBooksTo && {
-      recommended: this.#snapshotShareCell(
+      recommended: this.#hostSelectedCell(
         request.appendBooksTo.recommended,
       ),
-      received: this.#snapshotShareCell(request.appendBooksTo.received),
+      received: this.#hostSelectedCell(request.appendBooksTo.received),
     };
     await Promise.all([
       source.sync(),
@@ -1912,7 +1947,7 @@ export class RuntimeProcessor {
       appendBooksTo?.recommended.sync(),
       appendBooksTo?.received.sync(),
     ]);
-    if (this.#isDisposed || this.#snapshotShareDetachedClients.has(client)) {
+    if (this.#isDisposed || this.#detachedClients.has(client)) {
       throw new Error("Snapshot sharing is unavailable");
     }
     const prepared = prepareSnapshotShare(
@@ -1947,6 +1982,90 @@ export class RuntimeProcessor {
     markRendererTrustedEvent(event);
     const shared = await commitSnapshotShare(consent, event);
     return { cell: createCellRef(shared) };
+  }
+
+  /**
+   * Prepares a custody seal and keeps its consent in this backend while the
+   * host shows the preview. The seal reads the policy reference from the cell
+   * the host names, and the allowed sources from the settings cell the host
+   * names, only in the actor's home space. It reads both again inside the
+   * commit, so a value either cell holds that differs from the reviewed one
+   * refuses the seal as stale rather than sealing what was reviewed.
+   */
+  async handleCustodySealPrepare(
+    request: CustodySealPrepareRequest,
+    client: WorkerClient = ownerClient,
+  ): Promise<CustodySealPreview> {
+    const unavailable = () =>
+      this.#isDisposed || this.#detachedClients.has(client);
+    if (unavailable()) throw new Error("Custody sealing is unavailable");
+    const draft = this.#hostSelectedCell(request.draft);
+    const terms = this.#hostSelectedCell(request.terms);
+    const policy = this.#hostSelectedCell(request.policy);
+    const settings = this.#hostSelectedCell(request.allowedSources);
+    const prepared = await prepareCustodySeal(draft, { terms, policy }, {
+      allowedSources: settings,
+    });
+    if (unavailable()) throw new Error("Custody sealing is unavailable");
+    const id = crypto.randomUUID();
+    this.#custodySeals.set(clientScopedKey(client, id), {
+      consent: prepared.consent,
+    });
+    return {
+      id,
+      actor: prepared.actor as DID,
+      room: prepared.room as DID,
+      readers: prepared.readers.map((reader) => ({ ...reader })),
+      terms: prepared.terms,
+      instance: prepared.instance,
+      policy: prepared.policy,
+      sources: [...prepared.sources],
+      stance: prepared.stance,
+    };
+  }
+
+  /**
+   * Consumes one custody seal preview through the dedicated trusted host
+   * transport. The trusted gesture is built here, never taken from the
+   * request. The seal reads the actor's source policy again, and the
+   * transaction that writes the entry verifies that read, so a policy
+   * narrowed at any point before the entry commits refuses the seal. The
+   * commit is aborted if its client detaches before the entry's transaction
+   * is sent.
+   */
+  async handleCustodySealCommit(
+    request: CustodySealCommitRequest,
+    client: WorkerClient = ownerClient,
+  ): Promise<CellResponse> {
+    const key = clientScopedKey(client, request.id);
+    const pending = this.#custodySeals.get(key);
+    this.#custodySeals.delete(key);
+    // Detaching a client and disposing the processor both discard pending
+    // previews, so a preview found here belongs to a live client.
+    if (pending === undefined) {
+      throw new Error("Custody seal confirmation is unavailable");
+    }
+    const event = {
+      type: "click",
+      provenance: {
+        origin: "dom",
+        trusted: true,
+        ui: { pattern: CUSTODY_SEAL_GESTURE },
+      },
+    };
+    markRendererTrustedEvent(event);
+    // A client that detaches at any point before the entry's transaction is
+    // sent aborts the commit, so nothing is sealed for a client that is gone.
+    const commit = new AbortController();
+    this.#custodySealCommits.set(key, commit);
+    try {
+      const sealed = await commitCustodySeal(pending.consent, event, {
+        signal: commit.signal,
+      });
+      return { cell: createCellRef(sealed.receipt) };
+    } finally {
+      this.#custodySealCommits.delete(key);
+    }
   }
 
   handleCellGetCfcLabel(
@@ -3067,6 +3186,13 @@ export class RuntimeProcessor {
         return await this.handleSnapshotShareCommit(request, client);
       case RequestType.SnapshotShareCancel:
         this.#snapshotShares.delete(clientScopedKey(client, request.id));
+        return;
+      case RequestType.CustodySealPrepare:
+        return await this.handleCustodySealPrepare(request, client);
+      case RequestType.CustodySealCommit:
+        return await this.handleCustodySealCommit(request, client);
+      case RequestType.CustodySealCancel:
+        this.#custodySeals.delete(clientScopedKey(client, request.id));
         return;
       case RequestType.OperationQuery:
         return await this.handleOperationQuery(request, client);
