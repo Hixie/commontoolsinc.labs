@@ -432,7 +432,18 @@ function namedStep(job: Job, name: string): Step {
 }
 
 /** The jobs that lay out a pull request's lanes or the full run's. */
-const LANE_JOBS = ["pr-tests", "full-tests"] as const;
+const LANE_JOBS = ["tests"] as const;
+
+/**
+ * What one run of a step's script did: its exit code, what it wrote to
+ * `GITHUB_OUTPUT`, and what it wrote to its standard output and error.
+ */
+interface StepRun {
+  code: number;
+  output: string;
+  stdout: string;
+  stderr: string;
+}
 
 /**
  * Runs a step's script the way GitHub runs one with no `shell` of its own,
@@ -444,7 +455,7 @@ async function runStep(
   run: string,
   env: Record<string, string>,
   standIns: Record<string, string> = {},
-): Promise<{ code: number; output: string; stdout: string }> {
+): Promise<StepRun> {
   const dir = await Deno.makeTempDir({ prefix: "ci-workflow-step-" });
   try {
     for (const [command, body] of Object.entries(standIns)) {
@@ -457,7 +468,7 @@ async function runStep(
       run.replaceAll(/\$\{\{.*?\}\}/g, "x"),
     );
     await Deno.writeTextFile(`${dir}/output`, "");
-    const { code, stdout } = await new Deno.Command("bash", {
+    const { code, stdout, stderr } = await new Deno.Command("bash", {
       args: ["-e", "step.sh"],
       cwd: dir,
       env: {
@@ -466,70 +477,83 @@ async function runStep(
         GITHUB_STEP_SUMMARY: `${dir}/summary`,
         ...env,
       },
-      stderr: "null",
     }).output();
     return {
       code,
       output: await Deno.readTextFile(`${dir}/output`),
       stdout: new TextDecoder().decode(stdout),
+      stderr: new TextDecoder().decode(stderr),
     };
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 }
 
-Deno.test("a run takes exactly one of the two ways of running the tests", async () => {
-  // A pull request runs its lanes over a selection, and a pull request
-  // carrying the full-run label runs what a push to main runs instead. The
-  // two conditions are each other's negation, so exactly one path runs;
-  // Status asserts the same thing from the other side, over what did run.
+/** `message`, followed by what the script of `run` wrote to stderr. */
+function withStderr(message: string, run: StepRun): string {
+  return `${message}; the script's stderr:\n${run.stderr}`;
+}
+
+/** Asserts that the script of `run` exited with `code`. */
+function assertStepCode(run: StepRun, code: number, what: string): void {
+  assertEquals(run.code, code, withStderr(what, run));
+}
+
+/** Asserts that the script of `run` failed. */
+function assertStepFailed(run: StepRun, what: string): void {
+  assert(run.code !== 0, withStderr(what, run));
+}
+
+Deno.test("the lanes run every test when the full run is planned, and a selection otherwise", async () => {
+  // A pull request runs its lanes over a selection, and anything else,
+  // including a pull request carrying the full-run label, runs every test.
+  // `plan-full` is the one place that decides which: the lanes read its
+  // outputs, and fall back to a pull request's lanes where it was skipped.
   const ci = await parsedWorkflow("deno.yml");
-  const labelled =
-    `contains(github.event.pull_request.labels.*.name, '${FULL_RUN_LABEL}')`;
+  const plan = ci.jobs["plan-full"];
+  const tests = ci.jobs.tests;
   assertEquals(
-    ci.jobs["pr-tests"].if,
-    `github.event_name == 'pull_request' && !${labelled}`,
+    plan.if,
+    "github.event_name != 'pull_request' || " +
+      `contains(github.event.pull_request.labels.*.name, '${FULL_RUN_LABEL}')`,
   );
+  assertEquals(plan.outputs, {
+    of: "${{ steps.count.outputs.of }}",
+    lanes: "${{ steps.count.outputs.lanes }}",
+    args: "--full",
+  });
+  assertEquals(needsOf(tests), ["plan-full"]);
+  // A skipped plan is how a pull request's lanes start at once; a failed or
+  // cancelled one is a run that cannot know its lanes.
   assertEquals(
-    ci.jobs["plan-full"].if,
-    `github.event_name != 'pull_request' || ${labelled}`,
+    tests.if,
+    "!cancelled() && (needs.plan-full.result == 'success' || " +
+      "needs.plan-full.result == 'skipped')",
   );
-  assertEquals(ci.jobs["full-tests"].if, undefined);
-  assertEquals(needsOf(ci.jobs["full-tests"]), ["plan-full"]);
-  assertEquals(needsOf(ci.jobs["pr-tests"]), []);
+
+  // A pull request's lane count is the dial, written where the plan is
+  // skipped, and this holds it to the dial.
+  const selected = Array.from({ length: LANES }, (_, index) => index + 1);
+  const of = `\${{ needs.plan-full.outputs.of || ${LANES} }}`;
+  assertEquals(
+    tests.strategy?.matrix?.lane,
+    `\${{ fromJSON(needs.plan-full.outputs.lanes || '[${
+      selected.join(", ")
+    }]') }}`,
+  );
+  assertEquals(tests.name, `Tests (\${{ matrix.lane }}/${of})`);
+  assertEquals(tests.env?.LANE_JOB, `Tests (\${{ matrix.lane }}/${of})`);
+  assertEquals(
+    tests.env?.LANE_ARGS,
+    `--lane \${{ matrix.lane }} --of ${of} ` +
+      "${{ needs.plan-full.outputs.args || " +
+      "format('--base origin/{0}', github.base_ref) }}",
+  );
 });
 
-Deno.test("the lanes run the lane runner with the lane count policy names", async () => {
+Deno.test("a lane runs the lane runner and holds the token alone", async () => {
   const ci = await parsedWorkflow("deno.yml");
-  const pr = ci.jobs["pr-tests"];
-  const full = ci.jobs["full-tests"];
 
-  // A pull request's lane count is the dial. Nothing runs ahead of those
-  // lanes, so the workflow writes the count, and this holds it to the dial.
-  assertEquals(
-    pr.strategy?.matrix?.lane,
-    Array.from({ length: LANES }, (_, index) => index + 1),
-  );
-  assertEquals(pr.name, `PR Tests (\${{ matrix.lane }}/${LANES})`);
-  assertEquals(
-    pr.env?.LANE_ARGS,
-    `--lane \${{ matrix.lane }} --of ${LANES} ` +
-      "--base origin/${{ github.base_ref }}",
-  );
-
-  // The full run's count is what the planning job says, and it is the whole
-  // of what passes from that job to the lanes.
-  assertEquals(
-    full.strategy?.matrix?.lane,
-    "${{ fromJSON(needs.plan-full.outputs.lanes) }}",
-  );
-  assertEquals(
-    full.env?.LANE_ARGS,
-    "--full --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.of }}",
-  );
-
-  // One list of steps serves both, so the two paths cannot drift apart.
-  assertEquals(pr.steps, full.steps);
   for (const id of LANE_JOBS) {
     const job = ci.jobs[id];
     assertEquals(job.strategy?.["fail-fast"], false);
@@ -562,10 +586,6 @@ Deno.test("the lanes run the lane runner with the lane count policy names", asyn
 Deno.test("the full run's count reaches the lanes as a list of lanes", async () => {
   const plan = (await parsedWorkflow("deno.yml")).jobs["plan-full"];
   const count = namedStep(plan, "🗺️ Count the lanes the full run needs");
-  assertEquals(plan.outputs, {
-    of: "${{ steps.count.outputs.of }}",
-    lanes: "${{ steps.count.outputs.lanes }}",
-  });
   assertStringIncludes(
     count.run ?? "",
     "deno run -A tasks/ci-lane.ts --full --lane-count",
@@ -576,13 +596,17 @@ Deno.test("the full run's count reaches the lanes as a list of lanes", async () 
       deno: body,
     });
   const three = await answering("echo 3");
-  assertEquals(three.code, 0);
-  assertEquals(three.output, "of=3\nlanes=[1,2,3]\n");
+  assertStepCode(three, 0, "a count of three fails");
+  assertEquals(
+    three.output,
+    "of=3\nlanes=[1,2,3]\n",
+    withStderr("a count of three", three),
+  );
 
   // A planner that failed, or that answered with something other than a
   // count, fails the step rather than handing the lanes an empty matrix.
-  assert((await answering("exit 1")).code !== 0, "a failed count passes");
-  assert((await answering("echo three")).code !== 0, "a word passes");
+  assertStepFailed(await answering("exit 1"), "a failed count passes");
+  assertStepFailed(await answering("echo three"), "a word passes");
 });
 
 Deno.test("a lane keeps each binary under an exact key and its compile cache by compiler", async () => {
@@ -595,7 +619,7 @@ Deno.test("a lane keeps each binary under an exact key and its compile cache by 
   // fall back to another lane's, as long as the same compiler wrote it, and
   // its key moves with the pattern sources so that a fallback is saved
   // fresh.
-  const job = (await parsedWorkflow("deno.yml")).jobs["pr-tests"];
+  const job = (await parsedWorkflow("deno.yml")).jobs.tests;
   const steps = job.steps ?? [];
   const at = (id: string) => steps.findIndex((step) => step.id === id);
   const cacheOf = (path: string) => {
@@ -641,15 +665,15 @@ Deno.test("a lane keeps each binary under an exact key and its compile cache by 
   assertStringIncludes(resolve, "tasks/binary-cache-key.ts");
   const resolving = (body: string) => runStep(resolve, {}, { deno: body });
   const found = await resolving("echo abc123");
-  assertEquals(found.code, 0);
-  assertEquals(found.output, "key=abc123\n");
-  assert((await resolving("true")).code !== 0, "an empty key passes");
-  assert((await resolving("exit 1")).code !== 0, "a failed key passes");
+  assertStepCode(found, 0, "a key fails");
+  assertEquals(found.output, "key=abc123\n", withStderr("a key", found));
+  assertStepFailed(await resolving("true"), "an empty key passes");
+  assertStepFailed(await resolving("exit 1"), "a failed key passes");
 });
 
 Deno.test("a lane uploads what Status and a reader of a failure need", async () => {
   const ci = await parsedWorkflow("deno.yml");
-  const job = ci.jobs["pr-tests"];
+  const job = ci.jobs.tests;
 
   // The whole of what the lane converted, so a marker beside a report and
   // the compile cache's state travel with the reports, and the raw profiles
@@ -692,7 +716,7 @@ Deno.test("a lane uploads what Status and a reader of a failure need", async () 
   assertEquals(download.with?.["merge-multiple"], false);
   const arrived = [
     download.with?.path,
-    "lane-coverage-pr-tests-1",
+    "lane-coverage-tests-1",
     written.slice(root.length + 1),
   ].join("/");
   assertEquals(measuredSetOfReport(arrived), set);
@@ -782,56 +806,62 @@ Deno.test("nothing is released that the full run has not passed", async () => {
   const ci = await parsedWorkflow("deno.yml");
   for (const id of ["attest-binaries", "deploy-shell-staging"]) {
     assert(
-      needsOf(ci.jobs[id]).includes("full-tests"),
+      needsOf(ci.jobs[id]).includes("tests"),
       `${id} does not wait for the full run`,
     );
   }
   assertEquals(needsOf(ci.jobs["deploy-rapids"]), ["attest-binaries"]);
 });
 
-Deno.test("Status fails unless every job passed and one way of testing ran", async () => {
+Deno.test("Status fails unless every job passed and the lanes ran", async () => {
   const status = (await parsedWorkflow("deno.yml")).jobs.status;
   const verify = namedStep(status, "🔎 Verify the run's jobs");
   assertEquals(verify.if, "always()");
   assertEquals(verify.env?.JOB_RESULTS, "${{ toJSON(needs) }}");
-  const verdict = async (results: Record<string, string>) =>
-    (await runStep(verify.run ?? "", {
-      JOB_RESULTS: JSON.stringify(
-        Object.fromEntries(
-          Object.entries(results).map(([job, result]) => [job, { result }]),
+  const verdict = async (
+    results: Record<string, string>,
+    code: number,
+    what: string,
+  ) =>
+    assertStepCode(
+      await runStep(verify.run ?? "", {
+        JOB_RESULTS: JSON.stringify(
+          Object.fromEntries(
+            Object.entries(results).map(([job, result]) => [job, { result }]),
+          ),
         ),
-      ),
-    })).code;
+      }),
+      code,
+      what,
+    );
 
-  const selected = {
-    "pr-tests": "success",
-    "plan-full": "skipped",
-    "full-tests": "skipped",
-  };
-  const full = {
-    "pr-tests": "skipped",
-    "plan-full": "success",
-    "full-tests": "success",
-  };
-  assertEquals(await verdict(selected), 0);
-  assertEquals(await verdict(full), 0);
+  const selected = { "plan-full": "skipped", tests: "success" };
+  const full = { "plan-full": "success", tests: "success" };
+  await verdict(selected, 0, "a passing selected run fails");
+  await verdict(full, 0, "a passing full run fails");
 
   // A lane that failed, or was cancelled, fails the run.
-  assertEquals(await verdict({ ...selected, "pr-tests": "failure" }), 1);
-  assertEquals(await verdict({ ...full, "full-tests": "cancelled" }), 1);
-  assertEquals(
-    await verdict({ ...full, "plan-full": "failure", "full-tests": "skipped" }),
+  await verdict(
+    { ...selected, tests: "failure" },
     1,
+    "a failed lane passes",
   );
-  // Neither way of testing ran: every job skipped, which is a run that
-  // tested nothing and would otherwise pass.
-  assertEquals(
-    await verdict({
-      "pr-tests": "skipped",
-      "plan-full": "skipped",
-      "full-tests": "skipped",
-    }),
+  await verdict(
+    { ...full, tests: "cancelled" },
     1,
+    "a cancelled lane passes",
+  );
+  await verdict(
+    { ...full, "plan-full": "failure", tests: "skipped" },
+    1,
+    "a failed plan passes",
+  );
+  // The lanes skipped, which is a run that tested nothing and would
+  // otherwise pass.
+  await verdict(
+    { "plan-full": "skipped", tests: "skipped" },
+    1,
+    "a run that tested nothing passes",
   );
 });
 
@@ -855,12 +885,11 @@ Deno.test("Status holds a pull request's measured sets to their baselines", asyn
   // The description is read as it stands, so an acceptance written after
   // the push counts on a re-run. A run whose tests did not pass measured
   // coverage through the failure, so the gate is told, and reports rather
-  // than gates; either way of testing passing is a run whose tests passed.
-  const results = (pr: string, full: string) =>
+  // than gates.
+  const results = (plan: string, tests: string) =>
     JSON.stringify({
-      "pr-tests": { result: pr },
-      "plan-full": { result: full },
-      "full-tests": { result: full },
+      "plan-full": { result: plan },
+      tests: { result: tests },
     });
   const words = async (jobResults: string, gh = "echo '$DESCRIPTION'") =>
     await runStep(gate.run ?? "", {
@@ -874,8 +903,8 @@ Deno.test("Status holds a pull request's measured sets to their baselines", asyn
       gh: `[ "$2" = "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" ] || exit 9\n` +
         gh.replace("'$DESCRIPTION'", '"$DESCRIPTION"'),
     });
-  const passing = await words(results("success", "skipped"));
-  assertEquals(passing.code, 0);
+  const passing = await words(results("skipped", "success"));
+  assertStepCode(passing, 0, "a passing run's gate fails");
   assertEquals(passing.stdout.trim().split("\n"), [
     "run",
     "-A",
@@ -890,19 +919,23 @@ Deno.test("Status holds a pull request's measured sets to their baselines", asyn
     "coverage-comment.json",
     "--pr",
     "42",
-  ]);
+  ], withStderr("a passing run's gate", passing));
+  const full = await words(results("success", "success"));
   assertEquals(
-    (await words(results("skipped", "success"))).stdout,
+    full.stdout,
     passing.stdout,
+    withStderr("a full run's gate", full),
   );
+  const failed = await words(results("skipped", "failure"));
   assertEquals(
-    (await words(results("failure", "skipped"))).stdout.trim().split("\n"),
+    failed.stdout.trim().split("\n"),
     [...passing.stdout.trim().split("\n"), "--tests-failed"],
+    withStderr("a failed run's gate", failed),
   );
   // A description that cannot be read fails the step rather than gating
   // against an empty one.
-  assert(
-    (await words(results("success", "skipped"), "exit 1")).code !== 0,
+  assertStepFailed(
+    await words(results("skipped", "success"), "exit 1"),
     "an unread description passes",
   );
 
@@ -1201,38 +1234,32 @@ Deno.test("a release subject whose attestation does not verify fails the job", a
   const attested = [...job.matchAll(/^ {10}subject-name: (.+)$/gm)]
     .map((match) => baseName(match[1])).sort();
 
-  const dir = await Deno.makeTempDir();
+  const subjectsFile = await Deno.makeTempFile();
   try {
-    await Deno.writeTextFile(
-      `${dir}/gh`,
-      '#!/bin/sh\necho "$3" >> subjects\n' +
-        '[ "$3" = "$FAIL_SUBJECT" ] && { echo "no attestation" >&2; exit 1; }\n' +
-        "echo '{\"verified\":true}'\n",
-      { mode: 0o755 },
-    );
-    await Deno.writeTextFile(`${dir}/jq`, "#!/bin/sh\nexec cat\n", {
-      mode: 0o755,
-    });
-    await Deno.writeTextFile(`${dir}/step.sh`, script);
     const verify = async (failing: string) => {
-      await Deno.writeTextFile(`${dir}/subjects`, "");
-      const { code, stdout } = await new Deno.Command("bash", {
-        args: ["-e", "step.sh"],
-        cwd: dir,
-        env: { PATH: `${dir}:${Deno.env.get("PATH")}`, FAIL_SUBJECT: failing },
-        stderr: "null",
-      }).output();
-      return {
-        code,
-        stdout: new TextDecoder().decode(stdout),
-        subjects: (await Deno.readTextFile(`${dir}/subjects`)).split("\n")
-          .filter(Boolean),
-      };
+      await Deno.writeTextFile(subjectsFile, "");
+      const run = await runStep(
+        script,
+        { FAIL_SUBJECT: failing, SUBJECTS: subjectsFile },
+        {
+          gh: 'echo "$3" >> "$SUBJECTS"\n' +
+            '[ "$3" = "$FAIL_SUBJECT" ] && { echo "no attestation" >&2; exit 1; }\n' +
+            "echo '{\"verified\":true}'",
+          jq: "exec cat",
+        },
+      );
+      const subjects = (await Deno.readTextFile(subjectsFile)).split("\n")
+        .filter(Boolean);
+      return { ...run, subjects };
     };
 
     const passing = await verify("");
-    assertEquals(passing.code, 0);
-    assertEquals(passing.subjects.map(baseName).sort(), attested);
+    assertStepCode(passing, 0, "verifying every subject fails");
+    assertEquals(
+      passing.subjects.map(baseName).sort(),
+      attested,
+      withStderr("the verified subjects", passing),
+    );
     assertEquals(
       passing.stdout.match(
         /^::group::.*\n\{"verified":true\}\n::endgroup::$/gm,
@@ -1241,13 +1268,13 @@ Deno.test("a release subject whose attestation does not verify fails the job", a
       "each subject's details are not printed inside a log group",
     );
     for (const subject of passing.subjects) {
-      assert(
-        (await verify(subject)).code !== 0,
+      assertStepFailed(
+        await verify(subject),
         `a failed verification of ${subject} passes the step`,
       );
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(subjectsFile);
   }
 });
 

@@ -82,14 +82,56 @@ jobs:
   #
   # A pull request runs five lanes over a selection chosen from the record
   # store. A push to main, a called run, and a pull request labelled `ci: full`
-  # run every test instead, over as many lanes as the full run needs. Exactly
-  # one of the two paths runs.
+  # run every test instead, over as many lanes as `plan-full` counts.
   # ---------------------------------------------------------------------------
-  pr-tests:
-    name: "PR Tests (${{ matrix.lane }}/5)"
+  plan-full:
+    name: "Plan Full Run"
     if: >-
-      github.event_name == 'pull_request' &&
-      !contains(github.event.pull_request.labels.*.name, 'ci: full')
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'ci: full')
+    runs-on: ubuntu-latest
+    timeout-minutes: *job-timeout
+    permissions:
+      contents: read
+    # The lanes read these, and fall back to a pull request's five lanes over
+    # a selection where this job was skipped.
+    outputs:
+      of: ${{ steps.count.outputs.of }}
+      lanes: ${{ steps.count.outputs.lanes }}
+      args: --full
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🦕 Setup Deno
+        uses: ./.github/actions/deno-setup
+
+      - name: 🔍 Verify lock file & install dependencies
+        uses: ./.github/actions/deno-install
+
+      # A count is all of the plan that passes from here to the lanes. Each lane
+      # reads the same tree against the same manifest and packs the same plan
+      # for itself, so there is no second planner to disagree with the lanes.
+      - name: 🗺️ Count the lanes the full run needs
+        id: count
+        timeout-minutes: *work-timeout
+        run: |
+          of=$(deno run -A tasks/ci-lane.ts --full --lane-count)
+          lanes=$(jq -cn --argjson of "$of" '[range(1; $of + 1)]')
+          echo "of=$of" >> "$GITHUB_OUTPUT"
+          echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
+          echo "The full run takes $of lanes." >> "$GITHUB_STEP_SUMMARY"
+
+  tests:
+    name: "Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.of || 5 }})"
+    needs: plan-full
+    # A pull request skips `plan-full`, so its lanes start at once; a run of
+    # every test waits for the count.
+    if: >-
+      !cancelled() &&
+      (needs.plan-full.result == 'success' || needs.plan-full.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     permissions:
@@ -97,18 +139,17 @@ jobs:
     env:
       CF_TEST_RECORDS_DIR: ${{ github.workspace }}/test-records-spool
       LANE_ARGS: >-
-        --lane ${{ matrix.lane }} --of 5 --base origin/${{ github.base_ref }}
-      LANE_JOB: PR Tests (${{ matrix.lane }}/5)
+        --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.of || 5 }}
+        ${{ needs.plan-full.outputs.args ||
+        format('--base origin/{0}', github.base_ref) }}
+      LANE_JOB: Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.of || 5 }})
     strategy:
       fail-fast: false
       matrix:
         # Every lane of the run packs the same plan and takes its own share of
-        # it, so nothing runs ahead of the lanes to tell them what to do.
-        lane: [1, 2, 3, 4, 5]
-    # One list of steps serves both paths. What a lane does is decided by the
-    # arguments in the job's environment, and everything that varies with
-    # what the lane runs happens inside tasks/ci-lane.ts.
-    steps: &lane-steps
+        # it, so nothing tells a lane what to run beyond its number.
+        lane: ${{ fromJSON(needs.plan-full.outputs.lanes || '[1, 2, 3, 4, 5]') }}
+    steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # The diff behind a pull request is taken against the merge base, and
@@ -232,62 +273,6 @@ jobs:
           artifact: ${{ github.job }}-${{ matrix.lane }}
           job: ${{ env.LANE_JOB }}
 
-  plan-full:
-    name: "Plan Full Run"
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'ci: full')
-    runs-on: ubuntu-latest
-    timeout-minutes: *job-timeout
-    permissions:
-      contents: read
-    outputs:
-      of: ${{ steps.count.outputs.of }}
-      lanes: ${{ steps.count.outputs.lanes }}
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: 🦕 Setup Deno
-        uses: ./.github/actions/deno-setup
-
-      - name: 🔍 Verify lock file & install dependencies
-        uses: ./.github/actions/deno-install
-
-      # A count is the whole of what passes from here to the lanes. Each lane
-      # reads the same tree against the same manifest and packs the same plan
-      # for itself, so there is no second planner to disagree with the lanes.
-      - name: 🗺️ Count the lanes the full run needs
-        id: count
-        timeout-minutes: *work-timeout
-        run: |
-          of=$(deno run -A tasks/ci-lane.ts --full --lane-count)
-          lanes=$(jq -cn --argjson of "$of" '[range(1; $of + 1)]')
-          echo "of=$of" >> "$GITHUB_OUTPUT"
-          echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
-          echo "The full run takes $of lanes." >> "$GITHUB_STEP_SUMMARY"
-
-  full-tests:
-    name: "Full Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.of }})"
-    needs: plan-full
-    runs-on: ubuntu-latest
-    timeout-minutes: *job-timeout
-    permissions:
-      contents: read
-    env:
-      CF_TEST_RECORDS_DIR: ${{ github.workspace }}/test-records-spool
-      LANE_ARGS: >-
-        --full --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.of }}
-      LANE_JOB: >-
-        Full Tests (${{ matrix.lane }}/${{ needs.plan-full.outputs.of }})
-    strategy:
-      fail-fast: false
-      matrix:
-        lane: ${{ fromJSON(needs.plan-full.outputs.lanes) }}
-    steps: *lane-steps
-
   # ---------------------------------------------------------------------------
   # After the lanes. Status reads what every lane of the run produced, so it is
   # the one job that waits for them all, and the checks over the whole run's
@@ -300,9 +285,8 @@ jobs:
       !cancelled() &&
       (github.event_name == 'pull_request' || github.event_name == 'push')
     needs:
-      - pr-tests
       - plan-full
-      - full-tests
+      - tests
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
     # The coverage gate reads the pull request's description as it stands,
@@ -380,10 +364,7 @@ jobs:
           body=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""')
           args=(--base "origin/$BASE_REF" --reports lane-coverage
             --body "$body" --comment coverage-comment.json --pr "$PR_NUMBER")
-          passed=$(jq -r '
-            [.["pr-tests"].result, .["full-tests"].result] | index("success")
-          ' <<< "$JOB_RESULTS")
-          if [[ "$passed" == null ]]; then
+          if [[ "$(jq -r '.tests.result' <<< "$JOB_RESULTS")" != success ]]; then
             args+=(--tests-failed)
           fi
           deno run -A tasks/coverage-gate.ts "${args[@]}"
@@ -421,9 +402,9 @@ jobs:
           artifact: coverage
           job: Status
 
-      # Exactly one of the two paths runs. A state in which neither ran would
-      # otherwise pass having run no test at all, so that is asserted rather
-      # than left to the conditions on the lanes.
+      # Skipped is success for every job but the lanes: a run whose lanes
+      # were skipped would otherwise pass having run no test at all, so that
+      # is asserted rather than left to the conditions on the lanes.
       - name: 🔎 Verify the run's jobs
         if: always()
         timeout-minutes: *work-timeout
@@ -439,11 +420,8 @@ jobs:
             printf 'Unsuccessful jobs:\n%s\n' "$failures"
             exit 1
           fi
-          ran=$(jq -r '
-            [.["pr-tests"].result, .["full-tests"].result] | index("success")
-          ' <<< "$JOB_RESULTS")
-          if [[ "$ran" == null ]]; then
-            echo "Neither the pull-request lanes nor the full run ran."
+          if [[ "$(jq -r '.tests.result' <<< "$JOB_RESULTS")" != success ]]; then
+            echo "The lanes did not pass."
             exit 1
           fi
 
@@ -569,7 +547,7 @@ jobs:
     # the same build task, without the commit and the shell endpoints this
     # job's binaries carry; what these binaries add is checked by the steps
     # that build them.
-    needs: ["build-toolshed", "build-cf", "full-tests"]
+    needs: ["build-toolshed", "build-cf", "tests"]
     environment: ci
     permissions:
       id-token: write
@@ -785,7 +763,7 @@ jobs:
   deploy-shell-staging:
     name: "Deploy Shell to Staging"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: ["full-tests"]
+    needs: ["tests"]
     runs-on: ubuntu-latest
     environment: ci
     steps:
