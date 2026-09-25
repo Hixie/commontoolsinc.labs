@@ -72,6 +72,13 @@ type AgentNodeState = {
   previousCallHash?: string;
 
   /**
+   * The staging that set `previousCallHash`. Only that staging puts the
+   * previous hash back when it does not become durable, so a late verdict on
+   * an older staging leaves a newer staging of the same request in flight.
+   */
+  staging?: object;
+
+  /**
    * The hash of the request the node most recently staged. A settlement
    * arriving for an older request finds a different value here and leaves
    * the result cell to the newer one.
@@ -421,13 +428,15 @@ export function agent(
     }
 
     const previousCallHash = state.previousCallHash;
+    const staging = {};
     state.previousCallHash = hash;
+    state.staging = staging;
     state.currentHash = hash;
     // A request whose staging does not become durable is not in flight, so
     // the next run stages it again. On a serving runtime that includes a
     // staging the wave withdraws after accepting it.
     const forgetRequest = () => {
-      if (state.previousCallHash === hash) {
+      if (state.staging === staging && state.previousCallHash === hash) {
         state.previousCallHash = previousCallHash;
       }
     };

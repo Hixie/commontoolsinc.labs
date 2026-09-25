@@ -64,9 +64,11 @@ read a pending write the wave dropped, requeues an event, and withdraws
 everything sealed into it when it is abandoned. The commit callbacks have
 already run by then and never learn of it. A compensation therefore also
 follows the wave's verdict on the transaction, which `waveSettlementOf()` in
-`executor/wave.ts` returns, and treats a withdrawal as writes that did not land.
-State that is published only once a transaction is accepted waits for the same
-verdict.
+`executor/wave.ts` returns, and treats a withdrawal as writes that are not all
+in place. A withdrawal does not say which writes landed: a wave that drops some
+of a superseded derivation's documents commits the rest, and withdraws the
+transaction all the same. State that is published only once a transaction is
+accepted waits for the same verdict.
 
 External side effects belong in the post-commit outbox instead, which runs only
 after a successful commit.
