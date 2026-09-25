@@ -3009,6 +3009,7 @@ interface CFCustodySealElement extends CFHTMLElement {}
 interface CFBadgeElement extends CFHTMLElement {}
 interface CFChipElement extends CFHTMLElement {}
 interface CFEmptyStateElement extends CFHTMLElement {}
+interface CFHoverRevealElement extends CFHTMLElement {}
 interface CFProgressElement extends CFHTMLElement {}
 interface CFSkeletonElement extends CFHTMLElement {}
 interface CFSeparatorElement extends CFHTMLElement {}
@@ -4380,6 +4381,10 @@ interface CFEmptyStateAttributes<T> extends CFHTMLAttributes<T> {
   "message"?: string | CellLike<string>;
 }
 
+interface CFHoverRevealAttributes<T> extends CFHTMLAttributes<T> {
+  "revealed"?: boolean | CellLike<boolean>;
+}
+
 interface CFProgressAttributes<T> extends CFHTMLAttributes<T> {
   "value"?: number | CellLike<number>;
   "max"?: number | CellLike<number>;
@@ -5421,6 +5426,10 @@ declare global {
       "cf-empty-state": CFDOM.DetailedHTMLProps<
         CFEmptyStateAttributes<CFEmptyStateElement>,
         CFEmptyStateElement
+      >;
+      "cf-hover-reveal": CFDOM.DetailedHTMLProps<
+        CFHoverRevealAttributes<CFHoverRevealElement>,
+        CFHoverRevealElement
       >;
       "cf-tile": CFDOM.DetailedHTMLProps<
         CFTileAttributes<CFTileElement>,
