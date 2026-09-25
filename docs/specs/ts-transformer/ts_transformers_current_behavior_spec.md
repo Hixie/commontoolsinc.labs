@@ -3209,7 +3209,10 @@ The option is constructed end-to-end by the runner/CLI chain:
    `packages/integration/pattern-coverage.ts`, reads the same variable to turn
    the browser worker's collector on. The worker's runtime takes its collector
    through `RuntimeOptions.patternCoverage`, as `docs/development/COVERAGE.md`
-   describes. No other code reads the variable.
+   describes. Two pattern integration tests also read it, since they run a
+   pattern in the test process: `recommend-a-book.test.ts` builds a collector
+   of its own, and `agent-book-inputs.test.ts` hands the directory to
+   `runTestPattern`.
 2. The test runner builds one `PatternCoverageCollector` per test file and
    passes it as the `patternCoverage` harness option to
    `engine.compileAndEvaluateModules` (`packages/cli/lib/test-runner.ts`; the

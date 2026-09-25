@@ -152,8 +152,9 @@ deno run -A tasks/ci-lane.ts --full --lane-count
 
 and it answers with an integer and nothing else. The lanes then read the
 same tree against the same manifest and work out their own shares, the
-way a change's lanes do, so nothing about which tests run travels through
-a job output.
+way a change's lanes do. What travels through job outputs is only the
+lane count and the `--full` that tells each lane to run everything, never
+which lane runs which test.
 
 Run it yourself to see how many jobs the default branch would take. Where
 nothing in the tree has a measured cost it answers from the shape of the
@@ -1148,7 +1149,9 @@ split over no more lanes than it holds entries, so that overhead is paid at most
 once per entry. Each entry's own cost is multiplied by how many times it runs.
 The units a set's suite declares unavailable are not run, so they are not
 charged. The line charges a set or a member all of that over the fewest lanes
-that hold it.
+that hold it. All of one entry's runs go in one lane, so no number of lanes
+holds a set or a member with an entry that costs more than one lane holds,
+counting that lane's overheads and setup.
 
 ```
 test selection: What 4 measured set(s) or exclusion-list entries cost
@@ -1344,10 +1347,10 @@ itself.
   test's failure only where its batch accounted for every identity it was asked
   to run, and a run that did not apply the rule excused nothing. The lanes
   record each identity they excused, and the report reads those records one
-  artifact at a time. Each `test-records-<job>-a<attempt>` artifact holds one
-  job's attempt. An identity counts as excused only where every artifact that
-  failed it also excused it, since an attempt that failed it without excusing it
-  failed the run. The manifest supplies only the store's flake counts, and a
+  artifact at a time. Each `test-records-tests-<lane>-a<attempt>` artifact
+  holds one lane's attempt. An identity counts as excused only where every
+  artifact that failed it also excused it, since an attempt that failed it
+  without excusing it failed the run. The manifest supplies only the store's flake counts, and a
   report that cannot read it gives the note without them.
 - **A rename that discarded history**, with the number of catches it
   would bring back and the line to append under
