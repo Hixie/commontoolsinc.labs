@@ -136,11 +136,6 @@ const isStoredDay = (value: unknown): value is StoredDay => {
   return day.measured === undefined || isMeasurement(day.measured);
 };
 
-const sameDay = (a: StoredDay | undefined, b: StoredDay): boolean =>
-  a !== undefined && a.listed === b.listed &&
-  a.measured?.uncoveredLines === b.measured?.uncoveredLines &&
-  a.measured?.runId === b.measured?.runId;
-
 /** The UTC day an instant falls in, as `YYYY-MM-DD`. */
 export function utcDay(at: number): string {
   return new Date(at).toISOString().slice(0, 10);
@@ -227,7 +222,6 @@ export class CoverageDebtStore {
 
   /** Records what a day's runs measured, or that none of them did. */
   set(day: string, value: StoredDay): void {
-    if (sameDay(this.#days.get(day), value)) return;
     this.#days.set(day, value);
     this.#dirty = true;
   }

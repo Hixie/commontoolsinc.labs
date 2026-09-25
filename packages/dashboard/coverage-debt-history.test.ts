@@ -314,6 +314,34 @@ describe("coverage-debt-history", () => {
       expect(source.readNames.length).toBe(4);
     });
 
+    it("opens only the day's coverage uploads among what the listing names", async () => {
+      const run: CoverageRun = { day: "2026-09-02", runId: 71, lines: 78166 };
+      const stored = fakeCoverageStore([run]);
+      const read: string[] = [];
+      const history = await refreshCoverageDebt({
+        days: 1,
+        now: NOW,
+        source: {
+          list: () =>
+            Promise.resolve([
+              "labs/test-records/submissions/ci/v1/2026/09/02/stray.ndjson",
+              "labs/test-records/submissions/ci/v1/2026/09/02/" +
+              "run-90-test-records-check-a1.ndjson",
+              coverageObjectName(run),
+            ]),
+          read: (name) => {
+            read.push(name);
+            return stored.read(name);
+          },
+        },
+        store: new CoverageDebtStore(file),
+      });
+      expect(history.samples).toEqual([
+        { day: "2026-09-02", uncoveredLines: 78166, runId: 71 },
+      ]);
+      expect(read).toEqual([coverageObjectName(run)]);
+    });
+
     it("takes a re-run's newest attempt, and reads today again once one lands", async () => {
       const store = new CoverageDebtStore(file);
       const first: CoverageRun = { day: "2026-09-02", runId: 41, lines: 78060 };
