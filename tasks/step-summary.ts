@@ -66,11 +66,86 @@ export function appendSummary(text: string): void {
   Deno.writeTextFileSync(at, body, { append: true });
 }
 
-/** Says something both on the job's output and in its summary. */
+/**
+ * Says something both on the job's output and in its summary. The summary
+ * renders Markdown and the log does not, so the log gets each table drawn.
+ */
 export function say(lines: readonly string[]): void {
   const text = `${lines.join("\n")}\n`;
-  console.log(text);
+  console.log(drawTables(text));
   appendSummary(text);
+}
+
+/**
+ * `text` with each Markdown table in it drawn in box-drawing characters,
+ * and everything else as it was. A table is a row of cells between pipes,
+ * a row of dashes under it, and the rows of cells after that.
+ */
+export function drawTables(text: string): string {
+  const lines = text.split("\n");
+  const drawn: string[] = [];
+  for (let at = 0; at < lines.length;) {
+    if (isRow(lines[at]!) && isDelimiter(lines[at + 1])) {
+      const rows = [cellsOf(lines[at]!)];
+      at += 2;
+      while (at < lines.length && isRow(lines[at]!)) {
+        rows.push(cellsOf(lines[at++]!));
+      }
+      drawn.push(...box(rows));
+    } else {
+      drawn.push(lines[at++]!);
+    }
+  }
+  return drawn.join("\n");
+}
+
+/** Whether `line` is a row of a Markdown table. */
+function isRow(line: string): boolean {
+  return line.trimStart().startsWith("|");
+}
+
+/** Whether `line` is the row of dashes under a Markdown table's header. */
+function isDelimiter(line: string | undefined): boolean {
+  return line !== undefined && isRow(line) &&
+    cellsOf(line).every((cell) => /^:?-+:?$/.test(cell));
+}
+
+/** The cells of one row of a Markdown table, with their pipes unescaped. */
+function cellsOf(row: string): string[] {
+  return row.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replaceAll("\\|", "|"));
+}
+
+/**
+ * `rows`, the first of them the header, drawn as a box. A row short of
+ * cells is drawn with the rest empty.
+ */
+function box(rows: readonly string[][]): string[] {
+  // Counted in code points, which is what a monospaced log gives a column
+  // for every character these tables hold.
+  const width = (cell: string) => [...cell].length;
+  const widths = Array.from(
+    { length: Math.max(...rows.map((row) => row.length)) },
+    (_, column) => Math.max(...rows.map((row) => width(row[column] ?? ""))),
+  );
+  const rule = (left: string, middle: string, right: string) =>
+    left + widths.map((cells) => "─".repeat(cells + 2)).join(middle) + right;
+  const line = (row: readonly string[]) =>
+    "│" +
+    widths.map((cells, column) => {
+      const cell = row[column] ?? "";
+      return ` ${cell}${" ".repeat(cells - width(cell))} `;
+    }).join("│") +
+    "│";
+  const [header, ...body] = rows;
+  return [
+    rule("┌", "┬", "┐"),
+    line(header!),
+    rule("├", "┼", "┤"),
+    ...body.map(line),
+    rule("└", "┴", "┘"),
+  ];
 }
 
 /**

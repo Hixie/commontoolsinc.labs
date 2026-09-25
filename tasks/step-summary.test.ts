@@ -3,6 +3,7 @@ import { expect } from "@std/expect";
 import {
   appendSummary,
   cutToRoom,
+  drawTables,
   fit,
   say,
   SUMMARY_LIMIT,
@@ -195,6 +196,65 @@ describe("step-summary", () => {
         else Deno.env.set("GITHUB_STEP_SUMMARY", before);
         await Deno.remove(at);
       }
+    });
+  });
+
+  describe("drawTables()", () => {
+    it("draws a table in box-drawing characters", () => {
+      expect(drawTables(
+        "| Suite | Units |\n| --- | --- |\n| repo-gates | 2 |\n| cli | 14 |",
+      )).toBe(
+        [
+          "┌────────────┬───────┐",
+          "│ Suite      │ Units │",
+          "├────────────┼───────┤",
+          "│ repo-gates │ 2     │",
+          "│ cli        │ 14    │",
+          "└────────────┴───────┘",
+        ].join("\n"),
+      );
+    });
+
+    it("returns the lines around a table as they were", () => {
+      expect(
+        drawTables("## Lane 1\n\n| a |\n| :-: |\n| b |\n\nafter\n"),
+      ).toBe(
+        "## Lane 1\n\n┌───┐\n│ a │\n├───┤\n│ b │\n└───┘\n\nafter\n",
+      );
+    });
+
+    it("returns rows with no row of dashes under them as they were", () => {
+      const text = "| not | a table |\n| still | not |\n";
+      expect(drawTables(text)).toBe(text);
+    });
+
+    it("keeps an escaped pipe inside its cell", () => {
+      expect(drawTables("| a \\| b |\n| --- |\n| c |")).toBe(
+        "┌───────┐\n│ a | b │\n├───────┤\n│ c     │\n└───────┘",
+      );
+    });
+
+    it("draws a row short of cells with the rest empty", () => {
+      expect(drawTables("| a | b |\n| --- | --- |\n| c |")).toBe(
+        "┌───┬───┐\n│ a │ b │\n├───┼───┤\n│ c │   │\n└───┴───┘",
+      );
+    });
+  });
+
+  describe("say()", () => {
+    it("draws its tables in the log and keeps them Markdown in the summary", async () => {
+      const lines = ["| a |", "| --- |", "| b |"];
+      const logged: string[] = [];
+      const log = console.log;
+      console.log = (line: string) => logged.push(line);
+      let summary: string;
+      try {
+        summary = await withSummary(() => say(lines));
+      } finally {
+        console.log = log;
+      }
+      expect(summary).toBe("| a |\n| --- |\n| b |\n");
+      expect(logged).toEqual(["┌───┐\n│ a │\n├───┤\n│ b │\n└───┘\n"]);
     });
   });
 

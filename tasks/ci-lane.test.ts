@@ -1614,7 +1614,7 @@ describe("running a lane's work", () => {
     // The change reaches one of them, which is very likely a fix, so it
     // runs in spite of being withheld.
     expect(printed).toContain("yes, the change reaches it");
-    expect(printed).toContain("| no |");
+    expect(printed).toMatch(/│ no +│/);
   });
 
   it("prints the end of a capability's log, saying what it dropped", async () => {
@@ -1856,7 +1856,7 @@ describe("planning a lane the manifest chose", () => {
     // rather than by anything coordinating them.
     const counted = (printed: string): number =>
       printed.split("\n")
-        .map((line) => /^\| \S+ \| (\d+) \| /.exec(line))
+        .map((line) => /^│ \S+ +│ (\d+) +│ /.exec(line))
         .reduce((total, row) => total + (row === null ? 0 : Number(row[1])), 0);
     let placed = 0;
     for (const lane of [1, 2, 3, 4, 5]) {
