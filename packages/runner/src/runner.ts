@@ -131,6 +131,7 @@ import {
 } from "./builtins/navigate-context.ts";
 import { opInputsDocKey } from "./builtins/op-pattern-ref.ts";
 import {
+  delegatedCarriageOf,
   requireWaveAcceptance,
   waveRunContextOf,
   waveSettlementOf,
@@ -4642,9 +4643,7 @@ export class Runner {
             const settled = await settlement;
             if (settled.error === undefined) return;
 
-            const waveWithdrawalCause = (settled.error as {
-              waveWithdrawalCause?: unknown;
-            }).waveWithdrawalCause;
+            const waveWithdrawalCause = settled.error.waveWithdrawalCause;
             if (waveWithdrawalCause === "wave-abandoned") {
               // Explicit abandon is clean enclosing-lifecycle teardown, not a
               // structure-load failure. Keep it visible without incrementing
@@ -12111,18 +12110,11 @@ export class Runner {
         // the client committing the program under the user's own session;
         // without it the wave's accept gate refuses the crossing and the
         // child space's program never materializes.
-        const runContext = waveRunContextOf(instanceTx);
         this.#runtime.patternManager.replicatePatternToSpace(
           patternImpl,
           childResultCell.space,
           parentResultCell.space,
-          runContext?.acting !== undefined &&
-            runContext.capabilityRef !== undefined
-            ? {
-              acting: runContext.acting,
-              capabilityRef: runContext.capabilityRef,
-            }
-            : undefined,
+          delegatedCarriageOf(waveRunContextOf(instanceTx)),
         );
       }
       // Only a child in a space of its own claims one: an in-space nested
