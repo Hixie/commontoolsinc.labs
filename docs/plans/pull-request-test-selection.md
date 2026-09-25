@@ -1304,26 +1304,30 @@ The lane job's steps are fixed and do not vary with what the lane runs:
 1. Check out the repository at full depth.
 2. Set up Deno.
 3. Verify the lock file and install dependencies.
-4. Resolve the binary cache key and the compiler fingerprint.
-5. Restore the two built binaries and the pattern compile byte cache.
-6. Run `deno run -A tasks/ci-lane.ts` with the lane's arguments.
-7. Upload what a failing lane left behind.
-8. Upload the lane's coverage reports.
-9. Ship test records.
+4. Plan the lane: `deno run -A tasks/ci-lane.ts` with the lane's arguments and
+   `--dry-run`, which prints the lane's share, what it is projected to take,
+   and what was withheld.
+5. Resolve the binary cache key and the compiler fingerprint.
+6. Restore the two built binaries and the pattern compile byte cache.
+7. Run the lane: the same command with `--described`, which packs the same plan
+   again, names it in one line, and runs it.
+8. Upload what a failing lane left behind.
+9. Upload the lane's coverage reports.
+10. Ship test records.
 
-Everything conditional happens inside step 6. That is what makes the workflow
-independent of the topology. The one cost is that a capability which genuinely
-needs a GitHub Action — the two caches are the only ones that do — has to be
-represented by a fixed step that runs unconditionally and cheaply.
+Everything conditional happens inside steps 4 and 7. That is what makes the
+workflow independent of the topology. The one cost is that a capability which
+genuinely needs a GitHub Action — the two caches are the only ones that do — has
+to be represented by a fixed step that runs unconditionally and cheaply.
 
-Step 7 uploads what a lane leaves behind for somebody to read. A lane that
+Step 8 uploads what a lane leaves behind for somebody to read. A lane that
 failed keeps its own working directory, where a server's log is, and that
 directory sits under the job's temporary directory so the upload can reach it; a
-lane that passed removes it. Step 6 also runs with `ulimit -c unlimited` and
+lane that passed removes it. Step 7 also runs with `ulimit -c unlimited` and
 puts the core of any process in the lane that crashes natively under
 `$RUNNER_TEMP/ci-lane-cores`, which the same upload carries.
 
-Step 8 uploads the lane's coverage directory without its raw profiles, as
+Step 9 uploads the lane's coverage directory without its raw profiles, as
 `lane-coverage-<job>-<lane>`. An artifact is rooted at the directory its paths
 share, and the readers find a set's report by its place under that directory, at
 `lcov/sets/<suite>/<member>/coverage.lcov`, so the upload names the coverage
