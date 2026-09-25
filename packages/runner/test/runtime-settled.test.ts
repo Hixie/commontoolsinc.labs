@@ -23,7 +23,6 @@ describe("Runtime", () => {
 
   afterEach(async () => {
     await runtime.dispose();
-    await storageManager.close();
   });
 
   describe("instance members", () => {
