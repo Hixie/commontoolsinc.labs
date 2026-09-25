@@ -76,13 +76,21 @@ import {
   type SelectionReason,
   unholdableSuites,
 } from "./test-selection/plan.ts";
-import { type Census, census, isStandIn } from "./test-selection/census.ts";
+import {
+  type Census,
+  census,
+  isStandIn,
+  type PricedCensus,
+  pricedForRun,
+  type PricedManifest,
+} from "./test-selection/census.ts";
 import {
   type CoverageGateSelection,
   measuredMembersOf,
   measuredSetDirectory,
   measuredSetName,
   measuredSets,
+  measuresSuite,
 } from "./test-selection/coverage.ts";
 import type {
   Manifest,
@@ -365,7 +373,7 @@ export function unitsForRun(batch: Batch, run: number): UnitRequest[] {
  */
 export function batchesOf(
   suites: readonly Suite[],
-  manifest: Manifest,
+  manifest: PricedManifest,
   selections: readonly Selection[],
 ): Batch[] {
   const bySuite = new Map<string, Suite>(
@@ -444,14 +452,18 @@ export function batchesOf(
   // and a suite the model cannot price is one that makes lanes run out
   // of time. Two keys answer that, in this order.
   //
-  // A suite nothing has measured goes ahead of one something has,
-  // because it is the one worth measuring. And within each group the
-  // largest share of the lane goes first, because a lane that runs out
-  // of time should have spent it on the batch most worth knowing about
-  // and dropped the cheap ones. A share is read through `ownLoad`, which
-  // is what the packer charged the lane for the suite's tests, so a suite
-  // whose tests run slower than they were measured at, or run several
-  // times, is as large here as it was when the lane was filled.
+  // A suite whose charge this run did not measure goes ahead of one
+  // whose charge it did, because it is the one worth measuring. That is
+  // a suite no lane has run at all, and a suite no lane has run the way
+  // this run runs it: what a suite costs with coverage on is unknown
+  // until a lane has run it so, whatever it costs without. And within
+  // each group the largest share of the lane goes first, because a lane
+  // that runs out of time should have spent it on the batch most worth
+  // knowing about and dropped the cheap ones. A share is read through
+  // `ownLoad`, which is what the packer charged the lane for the suite's
+  // tests, so a suite whose tests run slower than they were measured at,
+  // or run several times, is as large here as it was when the lane was
+  // filled.
   //
   // Both keys are a function of the plan, and the identifier settles a
   // tie, so every attempt at a lane runs its batches in the same order
@@ -462,7 +474,7 @@ export function batchesOf(
   const keyed = [...batches.values()].map((batch) => ({
     batch,
     id: batch.suite.id,
-    measured: manifest.calibration.suites[batch.suite.id] === undefined ? 0 : 1,
+    measured: manifest.fitted.has(batch.suite.id) ? 1 : 0,
     seconds: selections
       .filter(({ entry }) => entry.suite === batch.suite.id)
       .map(({ entry, repeats }) => ownLoad(manifest, entry, repeats))
@@ -574,10 +586,11 @@ export function batchCoverage(
   suiteId: string,
   gate: CoverageGateSelection,
 ): BatchCoverage | undefined {
+  if (!measuresSuite(gate, suiteId, options.full)) return undefined;
   const dir = path.join(coverageRoot(options), COVERAGE_PROFILE_DIR, suiteId);
-  if (options.full) return { dir };
-  const members = measuredMembersOf(gate, suiteId);
-  return members.size === 0 ? undefined : { dir, members };
+  return options.full
+    ? { dir }
+    : { dir, members: measuredMembersOf(gate, suiteId) };
 }
 
 /**
@@ -1260,7 +1273,7 @@ export async function resolveManifest(
 
 /** What reading this tree against its manifest came to. */
 interface Reading {
-  seen: Census;
+  seen: PricedCensus;
   fetched: { objectName?: string; absent?: string };
 }
 
@@ -1300,7 +1313,11 @@ async function read(
     ? new Set<string>()
     : await changedFiles(options.root, options.base);
   return {
-    seen: census(suites, manifest.manifest, changed),
+    seen: pricedForRun(
+      census(suites, manifest.manifest, changed),
+      suites,
+      options.full,
+    ),
     fetched: {
       ...(manifest.objectName === undefined
         ? {}

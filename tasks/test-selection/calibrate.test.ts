@@ -9,6 +9,7 @@ import {
   laneObservations,
   laneObservationsOf,
   observationsOf,
+  pricedCalibration,
 } from "./calibrate.ts";
 import {
   batchMeasurementName,
@@ -72,6 +73,7 @@ function spread(
     for (const units of [20, 60]) {
       observations.push({
         suite: "s",
+        measured: false,
         ran,
         units,
         spent: spent(ran, units),
@@ -89,6 +91,7 @@ function spread(
 function oneSize(rate: number): BatchObservation[] {
   return Array.from({ length: MIN_CORRECTION_SAMPLES + 5 }, (_, i) => ({
     suite: "s",
+    measured: false,
     units: 80,
     ran: MIN_CORRECTION_SPAN_SECONDS * (1 + i),
     spent: MIN_CORRECTION_SPAN_SECONDS * (1 + i) + rate * 80,
@@ -120,7 +123,13 @@ describe("calibrate", () => {
         { run: "a", records: batch("workspace-unit", 40, 92, 17) },
       ]);
       expect(seen.batches).toEqual([
-        { suite: "workspace-unit", ran: 40, spent: 92, units: 17 },
+        {
+          suite: "workspace-unit",
+          measured: false,
+          ran: 40,
+          spent: 92,
+          units: 17,
+        },
       ]);
     });
 
@@ -152,12 +161,12 @@ describe("calibrate", () => {
         { run: "run-1-lane-2", records: batch("runner-unit", 20, 50, 9) },
       ]);
       expect(seen.batches.sort((a, b) => a.spent - b.spent)).toEqual([
-        { suite: "runner-unit", ran: 10, spent: 30, units: 4 },
-        { suite: "runner-unit", ran: 20, spent: 50, units: 9 },
+        { suite: "runner-unit", measured: false, ran: 10, spent: 30, units: 4 },
+        { suite: "runner-unit", measured: false, ran: 20, spent: 50, units: 9 },
       ]);
     });
 
-    it("joins a batch run with coverage to its own figures", () => {
+    it("joins a batch run with coverage to its own figures, and says it was", () => {
       // Its tests took the same time as the uninstrumented batch's, so
       // a join that ignored the marker could read either batch's spent
       // figure against either's.
@@ -169,8 +178,20 @@ describe("calibrate", () => {
         ],
       }]);
       expect(seen.batches.sort((a, b) => a.spent - b.spent)).toEqual([
-        { suite: "workspace-unit", ran: 40, spent: 92, units: 17 },
-        { suite: "workspace-unit", ran: 40, spent: 150, units: 17 },
+        {
+          suite: "workspace-unit",
+          measured: false,
+          ran: 40,
+          spent: 92,
+          units: 17,
+        },
+        {
+          suite: "workspace-unit",
+          measured: true,
+          ran: 40,
+          spent: 150,
+          units: 17,
+        },
       ]);
     });
 
@@ -229,6 +250,7 @@ describe("calibrate", () => {
         "object-1",
         [
           ...batch("runner-unit", 10, 30, 4),
+          ...batch("runner-unit", 10, 45, 4, true),
           measured(`${LANE_MEASUREMENT_PREFIX}setup fuse`, 14.8),
         ],
         "2026-09-12",
@@ -238,8 +260,17 @@ describe("calibrate", () => {
         {
           day: "2026-09-12",
           suite: "runner-unit",
+          measured: false,
           ran: 10,
           spent: 30,
+          units: 4,
+        },
+        {
+          day: "2026-09-12",
+          suite: "runner-unit",
+          measured: true,
+          ran: 10,
+          spent: 45,
           units: 4,
         },
       ]);
@@ -254,7 +285,15 @@ describe("calibrate", () => {
       // than that batch held, which is the direction a lane is killed
       // in, and errs low for a lane packing fewer: a lane holding one
       // unit of this suite is charged 13 against the 52 the batch spent.
-      expect(fitSuite([{ suite: "s", ran: 40, spent: 92, units: 4 }]))
+      expect(
+        fitSuite([{
+          suite: "s",
+          measured: false,
+          ran: 40,
+          spent: 92,
+          units: 4,
+        }]),
+      )
         .toEqual({ overhead: 0, correction: 1, unitOverhead: 13 });
     });
 
@@ -302,6 +341,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS * (1 + i),
           spent: MIN_CORRECTION_SPAN_SECONDS * (1 + i) + 10 + 0.5 * 20,
@@ -320,6 +360,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         [0.5, 20, 0.4, 0.7, 0.6].map((rate) => ({
           suite: "s",
+          measured: false,
           units: 10,
           ran: 30,
           spent: 30 + rate * 10,
@@ -333,6 +374,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         [0.4, 0.5, 0.6, 0.7].map((rate) => ({
           suite: "s",
+          measured: false,
           units: 10,
           ran: 30,
           spent: 30 + rate * 10,
@@ -346,8 +388,8 @@ describe("calibrate", () => {
       // rate it would be read at is a division by nothing. The intercept
       // covers it the way it covers every other observation.
       const fitted = fitSuite([
-        { suite: "s", units: 0, ran: 10, spent: 30 },
-        { suite: "s", units: 10, ran: 10, spent: 30 },
+        { suite: "s", measured: false, units: 0, ran: 10, spent: 30 },
+        { suite: "s", measured: false, units: 10, ran: 10, spent: 30 },
       ]);
       expect(fitted.unitOverhead).toBeCloseTo(2, 6);
       expect(fitted.overhead).toBeCloseTo(20, 6);
@@ -357,6 +399,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 1,
           ran: MIN_CORRECTION_SPAN_SECONDS * (1 + i),
           spent: 2 * MIN_CORRECTION_SPAN_SECONDS * (1 + i),
@@ -374,12 +417,14 @@ describe("calibrate", () => {
       const fitted = fitSuite([
         {
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS,
           spent: 80,
         },
         {
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS * 3,
           spent: 100,
@@ -395,6 +440,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS * (1 + i),
           spent: 50 * MIN_CORRECTION_SPAN_SECONDS * (1 + i),
@@ -412,6 +458,7 @@ describe("calibrate", () => {
         ...spread((ran, units) => 10 + 2 * ran + 0.5 * units),
         {
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS,
           spent: 900,
@@ -450,6 +497,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES + 3 }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 1,
           ran: 2 + 0.5 * i,
           spent: 41,
@@ -467,6 +515,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES + 1 }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 1,
           ran: most + i,
           spent: 200 + i / 10,
@@ -484,6 +533,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS * (2 + i),
           spent: MIN_CORRECTION_SPAN_SECONDS * (2 + i) / 3,
@@ -498,8 +548,8 @@ describe("calibrate", () => {
       // A batch whose wall time is under what its tests took, against a
       // correction of one, is not evidence that a unit gives time back.
       const fitted = fitSuite([
-        { suite: "s", units: 20, ran: 30, spent: 10 },
-        { suite: "s", units: 20, ran: 30, spent: 12 },
+        { suite: "s", measured: false, units: 20, ran: 30, spent: 10 },
+        { suite: "s", measured: false, units: 20, ran: 30, spent: 12 },
       ]);
       expect(fitted.correction).toBe(1);
       expect(fitted.unitOverhead).toBe(0);
@@ -513,6 +563,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES + 2 }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 20,
           ran: MIN_CORRECTION_SPAN_SECONDS * (2 + i),
           spent: MIN_CORRECTION_SPAN_SECONDS * (2 + i) / 3,
@@ -535,6 +586,7 @@ describe("calibrate", () => {
         i,
       ) => ({
         suite: "s",
+        measured: false,
         units: 10 * (1 + i) ** 2,
         ran: MIN_CORRECTION_SPAN_SECONDS * (1 + i),
         spent: MIN_CORRECTION_SPAN_SECONDS * (1 + i) + 7 * 10 * (1 + i) ** 2,
@@ -553,6 +605,7 @@ describe("calibrate", () => {
       const fitted = fitSuite(
         Array.from({ length: MIN_CORRECTION_SAMPLES }, (_, i) => ({
           suite: "s",
+          measured: false,
           units: 1,
           ran: MIN_CORRECTION_SPAN_SECONDS * (2 + i),
           spent: 500 - 0.5 * MIN_CORRECTION_SPAN_SECONDS * (2 + i),
@@ -590,8 +643,20 @@ describe("calibrate", () => {
       const fitted = calibrate({
         setup: new Map([["fuse", [14.8, 2.1]], ["browser", [0]]]),
         batches: [
-          { suite: "workspace-unit", ran: 40, spent: 92, units: 3 },
-          { suite: "runner-unit", ran: 10, spent: 20, units: 2 },
+          {
+            suite: "workspace-unit",
+            measured: false,
+            ran: 40,
+            spent: 92,
+            units: 3,
+          },
+          {
+            suite: "runner-unit",
+            measured: false,
+            ran: 10,
+            spent: 20,
+            units: 2,
+          },
         ],
       });
       expect(Object.keys(fitted.setupCost).sort()).toEqual(["browser", "fuse"]);
@@ -604,6 +669,100 @@ describe("calibrate", () => {
         6,
       );
     });
+
+    it("fits a suite's batches run with coverage on apart from the rest", () => {
+      // The two batches' tests took the same time, and the one with
+      // coverage on spent 58 seconds more. Fitted together, both would
+      // be charged what the dearer one cost.
+      const fitted = calibrate({
+        setup: new Map(),
+        batches: [
+          { suite: "s", measured: false, ran: 40, spent: 92, units: 4 },
+          { suite: "s", measured: true, ran: 40, spent: 150, units: 4 },
+        ],
+      });
+      expect(fitted.suites).toEqual({
+        s: { overhead: 0, correction: 1, unitOverhead: 13 },
+      });
+      expect(fitted.suitesWithCoverage).toEqual({
+        s: { overhead: 0, correction: 1, unitOverhead: 27.5 },
+      });
+    });
+
+    it("fits a suite run only with coverage on under that alone", () => {
+      const fitted = calibrate({
+        setup: new Map(),
+        batches: [
+          { suite: "s", measured: true, ran: 40, spent: 150, units: 4 },
+        ],
+      });
+      expect(fitted.suites).toEqual({});
+      expect(Object.keys(fitted.suitesWithCoverage ?? {})).toEqual(["s"]);
+    });
+
+    it("carries no coverage figure for a suite run only without", () => {
+      const fitted = calibrate({
+        setup: new Map(),
+        batches: [
+          { suite: "s", measured: false, ran: 40, spent: 92, units: 4 },
+        ],
+      });
+      expect(Object.keys(fitted.suites)).toEqual(["s"]);
+      expect(fitted.suitesWithCoverage).toEqual({});
+    });
+  });
+
+  describe("pricedCalibration()", () => {
+    const WITHOUT = { overhead: 1, correction: 1, unitOverhead: 0 };
+    const WITH = { overhead: 9, correction: 2, unitOverhead: 1 };
+    const calibration = {
+      setupCost: { fuse: 14.8 },
+      suites: { both: WITHOUT, plain: WITHOUT },
+      suitesWithCoverage: { both: WITH, covered: WITH },
+      prologue: 40,
+    };
+
+    it("charges a suite run with coverage on what it costs so, as measured", () => {
+      const priced = pricedCalibration(calibration, new Map([["both", true]]));
+      expect(priced.calibration.suites["both"]).toEqual(WITH);
+      expect([...priced.fitted]).toEqual(["both"]);
+    });
+
+    it("charges a suite run without coverage what it costs so, as measured", () => {
+      const priced = pricedCalibration(
+        calibration,
+        new Map([["both", false]]),
+      );
+      expect(priced.calibration.suites["both"]).toEqual(WITHOUT);
+      expect([...priced.fitted]).toEqual(["both"]);
+    });
+
+    it("charges what a suite costs run the other way where it has not been run this way", () => {
+      const priced = pricedCalibration(
+        calibration,
+        new Map([["plain", true], ["covered", false]]),
+      );
+      expect(priced.calibration.suites["plain"]).toEqual(WITHOUT);
+      expect(priced.calibration.suites["covered"]).toEqual(WITH);
+      expect([...priced.fitted]).toEqual([]);
+    });
+
+    it("charges nothing for a suite no lane has run either way", () => {
+      const priced = pricedCalibration(
+        calibration,
+        new Map([["unknown", true]]),
+      );
+      expect(Object.hasOwn(priced.calibration.suites, "unknown")).toBe(false);
+      expect([...priced.fitted]).toEqual([]);
+    });
+
+    it("returns every other figure as it was, and leaves its input alone", () => {
+      const priced = pricedCalibration(calibration, new Map([["both", true]]));
+      expect(priced.calibration.setupCost).toEqual({ fuse: 14.8 });
+      expect(priced.calibration.prologue).toBe(40);
+      expect(priced.calibration.suitesWithCoverage).toBeUndefined();
+      expect(calibration.suites.both).toEqual(WITHOUT);
+    });
   });
 
   describe("isLaneObservation()", () => {
@@ -614,11 +773,37 @@ describe("calibrate", () => {
         isLaneObservation({
           day: "d",
           suite: "s",
+          measured: true,
           ran: 10,
           spent: 30,
           units: 4,
         }),
       ).toBe(true);
+    });
+
+    it("returns `true` for a batch stored without saying whether coverage was on", () => {
+      expect(
+        isLaneObservation({
+          day: "d",
+          suite: "s",
+          ran: 10,
+          spent: 30,
+          units: 4,
+        }),
+      ).toBe(true);
+    });
+
+    it("returns `false` for a coverage flag that is not a boolean", () => {
+      expect(
+        isLaneObservation({
+          day: "d",
+          suite: "s",
+          measured: "yes",
+          ran: 10,
+          spent: 30,
+          units: 4,
+        }),
+      ).toBe(false);
     });
 
     it("returns `false` for a figure that is not a finite number", () => {
@@ -631,6 +816,7 @@ describe("calibrate", () => {
         isLaneObservation({
           day: "d",
           suite: "s",
+          measured: false,
           ran: 10,
           spent: "30",
           units: 4,
@@ -640,6 +826,7 @@ describe("calibrate", () => {
         isLaneObservation({
           day: "d",
           suite: "s",
+          measured: false,
           ran: Infinity,
           spent: 3,
           units: 4,
@@ -667,6 +854,7 @@ describe("calibrate", () => {
         {
           day: "2026-09-12",
           suite: "runner-unit",
+          measured: true,
           ran: 10,
           spent: 30,
           units: 4,
@@ -675,7 +863,22 @@ describe("calibrate", () => {
       ]);
       expect(seen.setup.get("fuse")).toEqual([14.8, 2.1]);
       expect(seen.batches).toEqual([
-        { suite: "runner-unit", ran: 10, spent: 30, units: 4 },
+        { suite: "runner-unit", measured: true, ran: 10, spent: 30, units: 4 },
+      ]);
+    });
+
+    it("reads a batch stored without the coverage flag as run without coverage", () => {
+      const seen = laneObservations([
+        {
+          day: "2026-09-12",
+          suite: "runner-unit",
+          ran: 10,
+          spent: 30,
+          units: 4,
+        },
+      ]);
+      expect(seen.batches).toEqual([
+        { suite: "runner-unit", measured: false, ran: 10, spent: 30, units: 4 },
       ]);
     });
   });

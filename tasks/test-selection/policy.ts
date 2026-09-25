@@ -302,58 +302,94 @@ export const RENAME_SUGGESTIONS = 5;
 export const ALIAS_GATE_MIN_CATCHES: number | undefined = undefined;
 
 /**
- * Workspace members that carry no measured set, each with the reason it
- * is here. A list rather than a rule that measures each member and
- * decides, because such a rule can take a member's gate away for a change
- * nobody meant as a change to coverage, and a gate that silently stops
- * gating is worse than no gate.
+ * Why a member carries no measured set. `size` is a member whose set is
+ * past what the whole run holds, which comes off once its tests fit.
+ * `source` is a member whose own Deno-only tests are not what should
+ * measure it, or that has none, which no measurement changes.
  */
-export const EXCLUDED_FROM_COVERAGE_GATE: ReadonlyMap<string, string> = new Map(
-  [
-    [
-      "packages/generated-patterns",
-      "Its test task defines no tests. Its test files run in the " +
+export type ExclusionKind = "size" | "source";
+
+/** One member the coverage gate leaves out, and why. */
+interface Exclusion {
+  member: string;
+  kind: ExclusionKind;
+
+  /** The reason, in words a person reads. */
+  reason: string;
+}
+
+/**
+ * Workspace members that carry no measured set. A list rather than a rule
+ * that measures each member and decides, because such a rule can take a
+ * member's gate away for a change nobody meant as a change to coverage,
+ * and a gate that silently stops gating is worse than no gate.
+ */
+const exclusions: readonly Exclusion[] = [
+  {
+    member: "packages/generated-patterns",
+    kind: "source",
+    reason: "Its test task defines no tests. Its test files run in the " +
       "generated-patterns integration job.",
-    ],
-    ["packages/home-schemas", "It has no tests."],
-    [
-      "packages/patterns",
-      "Authored pattern code is measured by transformer instrumentation " +
-      "in the pattern unit and integration jobs. The package's own " +
-      "`deno test` ignores the pattern files deliberately.",
-    ],
-    [
-      "packages/runner",
-      "Its whole set is past what all five lanes hold together.",
-    ],
-    [
-      "packages/cli",
-      "The command line's real coverage comes from the integration " +
+  },
+  {
+    member: "packages/home-schemas",
+    kind: "source",
+    reason: "It has no tests.",
+  },
+  {
+    member: "packages/patterns",
+    kind: "source",
+    reason: "Authored pattern code is measured by transformer " +
+      "instrumentation in the pattern unit and integration jobs. The " +
+      "package's own `deno test` ignores the pattern files deliberately.",
+  },
+  {
+    member: "packages/runner",
+    kind: "size",
+    reason: "Its whole set is past what all five lanes hold together.",
+  },
+  {
+    member: "packages/cli",
+    kind: "source",
+    reason: "The command line's real coverage comes from the integration " +
       "script rather than from these tests, so gating on them would " +
       "ratchet the wrong number.",
-    ],
-    [
-      "packages/identity",
-      "Every one of its tests runs in a browser through deno-web-test. " +
-      "It has no Deno-only half to measure.",
-    ],
-    [
-      "packages/deno-web-test",
-      "Its tests drive the browser harness end to end.",
-    ],
-    [
-      "packages/toolshed",
-      "Its tests want the service's own environment and its initialized " +
-      "database.",
-    ],
-    [
-      "packages/integration",
-      "The coverage metric counts none of its lines, since it leaves out " +
-      "every path with an `integration` directory in it, so a set over it " +
-      "would measure nothing.",
-    ],
-  ],
+  },
+  {
+    member: "packages/identity",
+    kind: "source",
+    reason: "Every one of its tests runs in a browser through " +
+      "deno-web-test. It has no Deno-only half to measure.",
+  },
+  {
+    member: "packages/deno-web-test",
+    kind: "source",
+    reason: "Its tests drive the browser harness end to end.",
+  },
+  {
+    member: "packages/toolshed",
+    kind: "source",
+    reason: "Its tests want the service's own environment and its " +
+      "initialized database.",
+  },
+  {
+    member: "packages/integration",
+    kind: "source",
+    reason: "The coverage metric counts none of its lines, since it " +
+      "leaves out every path with an `integration` directory in it, so a " +
+      "set over it would measure nothing.",
+  },
+];
+
+/** The exclusion list, each member against the reason it is there. */
+export const EXCLUDED_FROM_COVERAGE_GATE: ReadonlyMap<string, string> = new Map(
+  exclusions.map(({ member, reason }) => [member, reason]),
 );
+
+/** Why `member` is on `EXCLUDED_FROM_COVERAGE_GATE`, where it is. */
+export function exclusionKind(member: string): ExclusionKind | undefined {
+  return exclusions.find((exclusion) => exclusion.member === member)?.kind;
+}
 
 /** Whether a dial is a decision, a measurement, or computed. */
 export type DialSource = "chosen" | "measured" | "derived";

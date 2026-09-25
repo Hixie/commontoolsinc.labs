@@ -57,7 +57,7 @@
 
 import type { TestRecord } from "@commonfabric/test-support/records";
 import { isObjectOrArray } from "@commonfabric/utils/types";
-import type { Calibration } from "./manifest.ts";
+import type { Calibration, SuiteFit } from "./manifest.ts";
 import {
   batchMeasurement,
   isLaneMeasurement,
@@ -69,12 +69,23 @@ import {
   MIN_CORRECTION_SPAN_SECONDS,
 } from "./policy.ts";
 
-/** One thing a lane measured about itself, and the day it measured it. */
+/**
+ * One thing a lane measured about itself, and the day it measured it.
+ *
+ * A batch stored without `measured` is read as one run without
+ * coverage. An aggregate may hold batches of either kind without the
+ * flag, and that reading errs high: an instrumented batch among the
+ * uninstrumented raises what they are charged, where the other reading
+ * would put uninstrumented batches among the instrumented and lower what
+ * a lane measuring the suite is charged. Such batches age out of the
+ * window `COST_WINDOW_DAYS` names like any other.
+ */
 export type LaneObservation =
   | { day: string; capability: string; seconds: number }
   | {
     day: string;
     suite: string;
+    measured?: boolean;
     ran: number;
     spent: number;
     units: number;
@@ -97,13 +108,17 @@ export function isLaneObservation(value: unknown): value is LaneObservation {
   if (typeof one.day !== "string") return false;
   if (typeof one.capability === "string") return finite(one.seconds);
   return typeof one.suite === "string" && finite(one.ran) &&
-    finite(one.spent) && finite(one.units);
+    finite(one.spent) && finite(one.units) &&
+    (one.measured === undefined || typeof one.measured === "boolean");
 }
 
 /** One batch, as a lane measured it. */
 export interface BatchObservation {
   /** The suite the batch ran. */
   suite: string;
+
+  /** Whether coverage was on for the batch. */
+  measured: boolean;
 
   /**
    * Seconds the batch's own tests took, summed over every execution of
@@ -151,6 +166,7 @@ export function laneObservations(
     } else {
       batches.push({
         suite: one.suite,
+        measured: one.measured === true,
         ran: one.ran,
         spent: one.spent,
         units: one.units,
@@ -183,7 +199,7 @@ export function observationsOf(
   const ran = new Map<string, number>();
   const spent = new Map<string, number>();
   const units = new Map<string, number>();
-  const suiteOf = new Map<string, string>();
+  const batchOf = new Map<string, { suite: string; measured: boolean }>();
   for (const { run, records } of runs) {
     for (const record of records) {
       if (!isLaneMeasurement(record.test)) continue;
@@ -207,7 +223,7 @@ export function observationsOf(
       // coverage on pairs with the time its own tests took rather than
       // with an uninstrumented batch's.
       const key = `${run}\t${batch.suite}\t${batch.measured}`;
-      suiteOf.set(key, batch.suite);
+      batchOf.set(key, { suite: batch.suite, measured: batch.measured });
       // A count is not a duration. The record format carries one number
       // and calls it a duration, and the name is what says which of the
       // three this is, so the count is read back as it was written.
@@ -221,7 +237,7 @@ export function observationsOf(
     const opened = units.get(key);
     if (tests === undefined || opened === undefined) continue;
     batches.push({
-      suite: suiteOf.get(key)!,
+      ...batchOf.get(key)!,
       ran: tests,
       spent: took,
       units: opened,
@@ -248,6 +264,7 @@ export function laneObservationsOf(
     ...seen.batches.map((batch) => ({
       day,
       suite: batch.suite,
+      measured: batch.measured,
       ran: batch.ran,
       spent: batch.spent,
       units: batch.units,
@@ -434,17 +451,75 @@ export function calibrate(observations: Observations): Calibration {
   for (const [capability, seconds] of observations.setup) {
     setupCost[capability] = Math.max(...seconds);
   }
-  // Keyed by suite alone, which is how a calibration is keyed and how
-  // the packer looks one up. A suite's instrumented and uninstrumented
-  // batches are therefore fitted together, and the intercept is the
-  // largest residual of either, so an uninstrumented batch is charged
-  // what an instrumented one cost. That is the direction this errs in
-  // everywhere else.
-  const bySuite = new Map<string, BatchObservation[]>();
+  // Instrumenting a run costs it time, and how much is a property of the
+  // suite, so a suite's batches run with coverage on are fitted apart
+  // from the ones run without.
+  const without = new Map<string, BatchObservation[]>();
+  const withCoverage = new Map<string, BatchObservation[]>();
   for (const batch of observations.batches) {
-    bySuite.set(batch.suite, [...bySuite.get(batch.suite) ?? [], batch]);
+    const into = batch.measured ? withCoverage : without;
+    into.set(batch.suite, [...into.get(batch.suite) ?? [], batch]);
   }
-  const suites: Calibration["suites"] = {};
-  for (const [suite, batches] of bySuite) suites[suite] = fitSuite(batches);
-  return { setupCost, suites, prologue: LANE_PROLOGUE_SECONDS };
+  const fitted = (bySuite: ReadonlyMap<string, BatchObservation[]>) =>
+    Object.fromEntries(
+      [...bySuite].map(([suite, batches]) => [suite, fitSuite(batches)]),
+    );
+  return {
+    setupCost,
+    suites: fitted(without),
+    suitesWithCoverage: fitted(withCoverage),
+    prologue: LANE_PROLOGUE_SECONDS,
+  };
+}
+
+/** What a run charges its suites, and which of those charges it measured. */
+export interface Pricing {
+  /**
+   * The calibration the run charges by. Each suite's entry in `suites` is
+   * what the run charges it, whichever way the run runs its batches, so
+   * it carries no coverage fits of its own.
+   */
+  calibration: Calibration;
+
+  /**
+   * The suites whose charge was fitted from batches run the way this run
+   * runs them. Every other suite is charged what its batches cost when
+   * run the other way, or nothing where no lane has run it at all.
+   */
+  fitted: ReadonlySet<string>;
+}
+
+/**
+ * The calibration a run charges by, given each suite it runs and whether
+ * it runs that suite's batches with coverage on.
+ *
+ * A suite is charged what its batches have cost when run the way this
+ * run runs them. Where no lane has run it that way, it is charged what
+ * they cost run the other way: with coverage on that errs high, and
+ * without it is short by whatever instrumenting costs, but either is
+ * nearer than charging nothing.
+ */
+export function pricedCalibration(
+  calibration: Calibration,
+  measuring: ReadonlyMap<string, boolean>,
+): Pricing {
+  const suites: Record<string, SuiteFit> = { ...calibration.suites };
+  const fitted = new Set<string>();
+  const covered = calibration.suitesWithCoverage ?? {};
+  for (const [suite, measured] of measuring) {
+    const [same, other] = measured
+      ? [covered[suite], calibration.suites[suite]]
+      : [calibration.suites[suite], covered[suite]];
+    const charge = same ?? other;
+    if (same !== undefined) fitted.add(suite);
+    if (charge !== undefined) suites[suite] = charge;
+  }
+  return {
+    calibration: {
+      setupCost: calibration.setupCost,
+      suites,
+      prologue: calibration.prologue,
+    },
+    fitted,
+  };
 }

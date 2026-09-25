@@ -417,6 +417,7 @@ describe("build", () => {
       expect(read.lanes).toEqual([{
         day: "2026-08-20",
         suite: "workspace-unit",
+        measured: false,
         ran: 40,
         spent: 92,
         units: 17,
@@ -463,6 +464,7 @@ describe("build", () => {
         {
           day: "2026-08-20",
           suite: "workspace-unit",
+          measured: false,
           ran: 40,
           spent: 92,
           units: 17,
@@ -1090,15 +1092,24 @@ describe("build", () => {
     it("carries what lanes measured into the next run", () => {
       // The fit reads a week of them, and a publisher run folds a few
       // hours of objects, so they survive the aggregate rather than
-      // being read again each time.
+      // being read again each time. A batch stored without saying
+      // whether coverage was on for it is carried as it was.
       const aggregate = emptyAggregate("2026-08-20");
       aggregate.lanes = [
         { day: "2026-08-20", capability: "fuse", seconds: 14.8 },
         {
           day: "2026-08-20",
           suite: "runner-unit",
+          measured: true,
           ran: 10,
           spent: 30,
+          units: 4,
+        },
+        {
+          day: "2026-08-20",
+          suite: "runner-unit",
+          ran: 10,
+          spent: 20,
           units: 4,
         },
       ];
@@ -1910,6 +1921,7 @@ describe("the days a fold keeps a lane's measurements over", () => {
       {
         day: "2026-08-20",
         suite: "runner-unit",
+        measured: false,
         ran: 10,
         spent: 30,
         units: 4,
@@ -1969,6 +1981,7 @@ describe("the days a fold keeps a lane's measurements over", () => {
       {
         day: "2026-08-20",
         suite: "runner-unit",
+        measured: false,
         ran: 10,
         spent: 30,
         units: 4,

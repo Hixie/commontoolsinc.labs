@@ -46,6 +46,7 @@ import {
 import { loadTopology } from "./test-topology.ts";
 import { type Suite, unavailableUnits } from "./test-topology/suite.ts";
 import {
+  measuredCostLines,
   measuredSetName,
   type MeasuredSetRef,
   measuredSets,
@@ -602,11 +603,19 @@ export async function dispatch(
       // which sets exist is a fact about the tree, and only the baseline
       // each is measured against comes from a manifest.
       const manifest = await commitManifest(root, at, sources);
-      const sets = measuredSets(await sources.topology(root));
+      const topology = await sources.topology(root);
+      const sets = measuredSets(topology);
       for (
         const line of coverageLines(manifest, sets, await sources.members())
       ) {
         console.log(line);
+      }
+      // What a set costs is read from the manifest's fitted costs, so a
+      // tree read without one has nothing to say about it.
+      if (manifest !== undefined) {
+        for (const line of measuredCostLines(manifest, topology)) {
+          console.log(line);
+        }
       }
       return 0;
     }

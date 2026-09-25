@@ -850,6 +850,17 @@ describe("dispatch()", () => {
     expect(result.code).toBe(0);
     expect(result.out).toContain("workspace-unit/packages/memory");
     expect(result.out).toContain("no baseline yet");
+    expect(result.out).not.toContain("with coverage on");
+  });
+
+  it("says what the measured sets cost with coverage on, as far as it can", async () => {
+    // The manifest has fitted no suite's batches with coverage on, so
+    // what the set costs is something it cannot say yet.
+    const result = await ran(["coverage"]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain(
+      "no lane has run workspace-unit with coverage on",
+    );
   });
 
   it("names a member that carries no set beside the sets", async () => {

@@ -2,13 +2,23 @@ import { expect } from "@std/expect";
 import { describe, it } from "@std/testing/bdd";
 import {
   coverageGateFor,
+  measuredCost,
+  measuredCostLines,
   measuredMembersOf,
   measuredSetDirectory,
   measuredSetName,
   measuredSets,
   measuredUnitKeys,
 } from "./coverage.ts";
-import { LOCAL_COVERAGE_MAX_SETS } from "./policy.ts";
+import type { Calibration, ManifestEntry } from "./manifest.ts";
+import {
+  COST_WINDOW_DAYS,
+  LANE_BUDGET_SECONDS,
+  LANES,
+  LOCAL_COVERAGE_MAX_SECONDS,
+  LOCAL_COVERAGE_MAX_SETS,
+} from "./policy.ts";
+import { sampleEntry, sampleManifest } from "./testing.ts";
 import type { MeasuredSet, Suite } from "../test-topology/suite.ts";
 
 /** A suite carrying only what the coverage selection reads. */
@@ -244,6 +254,206 @@ describe("coverage", () => {
       expect([...measuredMembersOf(gate, "runner-unit")])
         .toEqual(["packages/runner"]);
       expect([...measuredMembersOf(gate, "nothing-unit")]).toEqual([]);
+    });
+  });
+
+  describe("what measured sets cost", () => {
+    const FREE = { overhead: 0, correction: 1, unitOverhead: 0 };
+
+    /** A calibration fitting each named suite's batches both ways. */
+    function measuredFits(...suites: string[]): Calibration {
+      const fits = Object.fromEntries(suites.map((id) => [id, FREE]));
+      return {
+        setupCost: {},
+        suites: fits,
+        suitesWithCoverage: { ...fits },
+        prologue: 0,
+      };
+    }
+
+    /** One recorded test of a unit, costing `cost`. */
+    function entry(
+      scope: string,
+      unit: string,
+      cost: number,
+      suite = "workspace-unit",
+    ): ManifestEntry {
+      return sampleEntry(
+        { k: "unit", s: scope, n: `${unit} > ${cost}` },
+        { suite, unit, cost },
+      );
+    }
+
+    const suites = [suite("workspace-unit", [bakery, cellar])];
+
+    describe("measuredCost()", () => {
+      it("returns what the entries cost with coverage on", () => {
+        const calibration = measuredFits();
+        calibration.suites["workspace-unit"] = FREE;
+        calibration.suitesWithCoverage!["workspace-unit"] = {
+          overhead: 10,
+          correction: 2,
+          unitOverhead: 1,
+        };
+        // The overhead once, and apart from it twice the tests' twelve
+        // seconds and one for each of the two units they fill.
+        expect(measuredCost(calibration, [
+          entry("bakery", "packages/bakery/glaze.test.ts", 3),
+          entry("bakery", "packages/bakery/glaze.test.ts", 4),
+          entry("bakery", "packages/bakery/proof.test.ts", 5),
+        ])).toEqual({ overhead: 10, spread: 26 });
+      });
+
+      it("returns `undefined` where no lane has run a suite with coverage on", () => {
+        const calibration = measuredFits();
+        calibration.suites["workspace-unit"] = FREE;
+        expect(measuredCost(calibration, [
+          entry("bakery", "packages/bakery/glaze.test.ts", 3),
+        ])).toBeUndefined();
+      });
+    });
+
+    describe("measuredCostLines()", () => {
+      it("names a set past `LOCAL_COVERAGE_MAX_SECONDS`, and no set inside it", () => {
+        const lines = measuredCostLines(
+          sampleManifest({
+            calibration: measuredFits("workspace-unit"),
+            entries: [
+              entry("bakery", "packages/bakery/glaze.test.ts", 20),
+              entry("bakery", "packages/bakery/proof.test.ts", 20),
+              entry(
+                "cellar",
+                "packages/cellar/rack.test.ts",
+                LOCAL_COVERAGE_MAX_SECONDS,
+              ),
+            ],
+          }),
+          suites,
+        );
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain(
+          "workspace-unit/packages/bakery costs 40.0s with coverage on",
+        );
+      });
+
+      describe("a member excluded for its size", () => {
+        /**
+         * The runner's unit suite, which opens a capability costing ten
+         * seconds, and whose batches with coverage on pay twenty before
+         * running anything: thirty a lane before its tests.
+         */
+        const runner: Suite = { ...suite("runner-unit", []), needs: ["deno"] };
+        const calibration = (): Calibration => ({
+          setupCost: { deno: 10 },
+          suites: {},
+          suitesWithCoverage: {
+            "runner-unit": { overhead: 20, correction: 1, unitOverhead: 0 },
+          },
+          prologue: 0,
+        });
+        const costing = (seconds: number) =>
+          measuredCostLines(
+            sampleManifest({
+              calibration: calibration(),
+              entries: [
+                entry(
+                  "runner",
+                  "packages/runner/test/one.test.ts",
+                  seconds,
+                  "runner-unit",
+                ),
+              ],
+            }),
+            [runner],
+          );
+        const room = LANE_BUDGET_SECONDS - 30;
+
+        it("is named once its tests fit the run's lanes, each paying its own overhead", () => {
+          expect(costing(room * 3)).toEqual([
+            `packages/runner is on EXCLUDED_FROM_COVERAGE_GATE for its ` +
+            `size, and its tests now cost ${
+              (room * 3 + 3 * 30).toFixed(1)
+            }s with coverage on across 3 lane(s), inside the run's ` +
+            `${LANES} lanes of ${LANE_BUDGET_SECONDS}s, so its line can ` +
+            `come off.`,
+          ]);
+        });
+
+        it("is not named where it fits the run only by paying its overhead once", () => {
+          // Charged once, this fits the five lanes' budget exactly. Each
+          // lane it spreads over pays the thirty again, so it does not.
+          expect(costing(LANE_BUDGET_SECONDS * LANES - 30)).toEqual([]);
+        });
+
+        it("is not named where a lane's fixed charge leaves no room for its tests", () => {
+          const lines = measuredCostLines(
+            sampleManifest({
+              calibration: {
+                ...calibration(),
+                setupCost: { deno: LANE_BUDGET_SECONDS },
+              },
+              entries: [
+                entry(
+                  "runner",
+                  "packages/runner/test/one.test.ts",
+                  1,
+                  "runner-unit",
+                ),
+              ],
+            }),
+            [runner],
+          );
+          expect(lines).toEqual([]);
+        });
+      });
+
+      it("names no member excluded for a reason other than its size", () => {
+        const lines = measuredCostLines(
+          sampleManifest({
+            calibration: measuredFits("workspace-unit"),
+            entries: [entry("cli", "packages/cli/test/one.test.ts", 1)],
+          }),
+          [],
+        );
+        expect(lines).toEqual([]);
+      });
+
+      it("says it cannot say what anything costs before a lane has run it with coverage on", () => {
+        const calibration = measuredFits();
+        calibration.suites["workspace-unit"] = FREE;
+        calibration.suites["runner-unit"] = FREE;
+        const lines = measuredCostLines(
+          sampleManifest({
+            calibration,
+            entries: [
+              entry("bakery", "packages/bakery/glaze.test.ts", 900),
+              entry("cellar", "packages/cellar/rack.test.ts", 1),
+              entry(
+                "runner",
+                "packages/runner/test/one.test.ts",
+                1,
+                "runner-unit",
+              ),
+            ],
+          }),
+          suites,
+        );
+        expect(lines).toEqual([
+          "What 3 measured set(s) or exclusion-list entries cost with " +
+          "coverage on cannot be said yet: no lane has run runner-unit, " +
+          `workspace-unit with coverage on in the last ${COST_WINDOW_DAYS} ` +
+          "day(s).",
+        ]);
+      });
+
+      it("says nothing of a set with no recorded test", () => {
+        expect(
+          measuredCostLines(
+            sampleManifest({ calibration: measuredFits(), entries: [] }),
+            suites,
+          ),
+        ).toEqual([]);
+      });
     });
   });
 });
