@@ -191,6 +191,15 @@ workflow. A run's lanes come from two jobs.
   N --of M` with `plan-full`'s `args`, or with `--base origin/<base>` where
   `plan-full` was skipped. A lane packs the same plan from the manifest and the
   tree as every other lane of its run, and runs its own share of it.
+- Each job of `tests` plans before it runs. Its `🗺️ Plan the lane` step runs
+  the lane with `--dry-run`, which prints the lane's share, what it is
+  projected to take, and what was withheld, in a step of their own. GitHub
+  folds away the top of a step thousands of lines long, which is what the
+  lane's own step becomes, so a plan printed there is hidden from anyone
+  watching the job. `🧪 Run the lane` then runs the lane with `--described`.
+  That packs the same plan again, since the tree and the manifest have not
+  changed, and names it in one line: its batches, what it is projected to
+  take, and the manifest it was packed against.
 
 So a pull request's five lanes start without waiting, and a run of every test
 waits for the count. Whether a run runs every test is decided in one place,

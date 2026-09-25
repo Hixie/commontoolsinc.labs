@@ -2862,6 +2862,9 @@ tests:
       uses: ./.github/actions/deno-setup
     - name: 🔍 Verify lock file & install dependencies
       uses: ./.github/actions/deno-install
+    - name: 🗺️ Plan the lane
+      timeout-minutes: *work-timeout
+      run: deno run -A tasks/ci-lane.ts $LANE_ARGS --dry-run
     - name: 🧮 Resolve what the lanes' binaries are built from
       id: binary-cache-key
       run: |
@@ -2896,7 +2899,7 @@ tests:
         mkdir -p "$RUNNER_TEMP/ci-lane-cores"
         ulimit -c unlimited
         sudo sysctl -w kernel.core_pattern="$RUNNER_TEMP/ci-lane-cores/core.%e.%p"
-        deno run -A tasks/ci-lane.ts $LANE_ARGS
+        deno run -A tasks/ci-lane.ts $LANE_ARGS --described
     - name: 📋 Upload what a failing lane left behind
       if: ${{ failure() }}
       uses: actions/upload-artifact
@@ -2926,6 +2929,12 @@ tests:
 one for each kind of run means its name, condition, matrix and arguments are
 written once. Everything that varies with what a lane runs happens inside
 `tasks/ci-lane.ts`, so one list of steps serves every run.
+
+The lane plans in a step of its own, with `--dry-run`, so its plan heads a
+step a reader of a running job can find. GitHub folds away the top of a step
+thousands of lines long, which the lane's own step becomes. The lane's step
+then packs the same plan again with `--described`, and names it in one line
+rather than printing it twice.
 
 The full-depth checkout and the `origin/<base>` spelling are what a lane needs
 to diff against the merge base, and what the append-only gates need to read the

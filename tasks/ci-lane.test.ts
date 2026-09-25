@@ -40,6 +40,7 @@ import {
   describeWithheld,
   fullLanes,
   type LaneDeps,
+  type LaneOptions,
   lanePlan,
   main,
   manifestMoment,
@@ -241,6 +242,13 @@ describe("reading the lane's command line", () => {
 
   it("refuses a flag it does not know", () => {
     expect(parseLaneArgs(["--shard", "1/5"])).toBeUndefined();
+  });
+
+  it("takes a plan described already only for a lane that runs", () => {
+    expect(parseLaneArgs(["--described"])?.described).toBe(true);
+    expect(parseLaneArgs(["--dry-run"])?.described).toBeUndefined();
+    // A dry run does nothing but describe.
+    expect(parseLaneArgs(["--described", "--dry-run"])).toBeUndefined();
   });
 });
 
@@ -1704,6 +1712,44 @@ describe("running a lane's work", () => {
 });
 
 describe("planning a lane without running it", () => {
+  /** What lane 2 of the full run prints, as `options` asks. */
+  async function printed(options: Partial<LaneOptions>): Promise<string> {
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => lines.push(line);
+    try {
+      await runLane({
+        lane: 2,
+        of: 5,
+        full: true,
+        dryRun: true,
+        laneCount: false,
+        root: REPOSITORY,
+        ...options,
+      }, {
+        manifest: ({ at }) =>
+          Promise.resolve({ absent: `no manifest at ${at}: held out here` }),
+      });
+    } finally {
+      console.log = log;
+    }
+    return lines.join("\n");
+  }
+
+  it("names a plan described already in one line, with its projection", async () => {
+    const described = await printed({ described: true });
+    const projected = /Projected: (\d+)s of (\d+)s/.exec(await printed({}));
+    expect(projected).not.toBeNull();
+    expect(described).toContain("ci-lane: running lane 2 of 5 as described: ");
+    expect(described).toContain("workspace-unit");
+    expect(described).toContain(
+      `projected at ${projected![1]}s of ${projected![2]}s, unselected: `,
+    );
+    expect(described).not.toContain("Lane 2 of 5");
+    expect(described).not.toContain("| Suite |");
+    expect(described.split("\n")).toHaveLength(1);
+  });
+
   it("plans the full run against the working tree", async () => {
     // What this reaches is the topology and the packing. Selection is
     // off, but the manifest is read either way for what things cost, so

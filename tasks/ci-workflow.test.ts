@@ -572,10 +572,19 @@ Deno.test("a lane runs the lane runner and holds the token alone", async () => {
         );
       }
     }
+    // The plan heads a step of its own, ahead of the lane's step, which
+    // packs the same plan and only names it.
+    const plan = namedStep(job, "🗺️ Plan the lane");
+    assertStringIncludes(
+      plan.run ?? "",
+      "\ndeno run -A tasks/ci-lane.ts $LANE_ARGS --dry-run\n",
+    );
     assertStringIncludes(
       lane.run ?? "",
-      "\ndeno run -A tasks/ci-lane.ts $LANE_ARGS\n",
+      "\ndeno run -A tasks/ci-lane.ts $LANE_ARGS --described\n",
     );
+    const steps = job.steps ?? [];
+    assert(steps.indexOf(plan) < steps.indexOf(lane));
     // The diff behind a change is taken against the merge base.
     const checkout = namedStep(job, "📥 Checkout repository");
     assertEquals(checkout.with?.["fetch-depth"], 0);

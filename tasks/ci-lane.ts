@@ -21,13 +21,18 @@
  * `main` cannot fix its number of lanes ahead of time the way a pull
  * request does, because the number depends on how much work there is and
  * the job matrix has to exist before anything starts. So one job asks
- * `--lane-count` and emits an integer, and that integer is the whole of
- * what passes from it to the lanes.
+ * `--lane-count` and emits an integer, and that integer and the `--full`
+ * the lanes are handed are the whole of what passes from it to them.
+ *
+ * A job prints its lane's plan in a step of its own, with `--dry-run`,
+ * and then runs the lane with `--described`, which packs the same plan
+ * again and names it in one line rather than printing it twice.
  *
  *   deno run -A tasks/ci-lane.ts --lane 3 --of 5 --base origin/main
  *   deno run -A tasks/ci-lane.ts --full --lane 1 --of 4
  *   deno run -A tasks/ci-lane.ts --full --lane-count
  *   deno run -A tasks/ci-lane.ts --lane 1 --of 5 --dry-run
+ *   deno run -A tasks/ci-lane.ts --lane 1 --of 5 --described
  */
 
 import { exists } from "@std/fs";
@@ -116,6 +121,16 @@ export interface LaneOptions {
 
   /** Print the plan and run nothing. */
   dryRun: boolean;
+
+  /**
+   * The plan was printed already, by a `--dry-run` of the same lane, so
+   * the lane names what it runs in one line rather than printing it
+   * again. A job does this so that the plan heads a step of its own,
+   * where a reader of a running job finds it rather than above thousands
+   * of lines of test output; the lane packs the same plan again, from the
+   * same tree and manifest, the way every lane packs its siblings' plan.
+   */
+  described?: boolean;
 
   /**
    * Print how many lanes the full run needs, and nothing else. This is
@@ -228,6 +243,10 @@ export function parseLaneArgs(
       options.dryRun = true;
       continue;
     }
+    if (flag === "--described") {
+      options.described = true;
+      continue;
+    }
     if (flag === "--lane-count") {
       options.laneCount = true;
       continue;
@@ -263,6 +282,9 @@ export function parseLaneArgs(
   // full run's question for a command line that did not ask it, and a
   // workflow edit dropping the flag would still get a plausible integer.
   if (options.laneCount && !options.full) return undefined;
+  // A dry run does nothing but describe, so one told the plan was
+  // described already has nothing to do.
+  if (options.described && options.dryRun) return undefined;
   return options;
 }
 
@@ -1553,35 +1575,50 @@ export async function runLane(
     );
   }
   const batches = batchesOf(suites, seen.manifest, mine.selections);
-  // A mandatory identity is placed however much it costs, and this is
-  // where a lane says it ran long.
-  if (laid.overBudgetSeconds > 0) {
-    console.log(
-      `ci-lane: the mandatory set puts a lane ` +
-        `${laid.overBudgetSeconds.toFixed(0)} seconds past the ` +
-        `${laid.budgetSeconds}-second budget`,
-    );
-  }
-
   const needs = new Set<CapabilityId>();
   for (const batch of batches) {
     for (const capability of batch.suite.needs) needs.add(capability);
   }
-  describePlan(
-    options,
-    batches,
-    [...needs].sort(),
-    fetched,
-    laid.unschedulable,
-    laid.crowding,
-    {
-      manifest: seen.manifest,
-      selections: mine.selections,
-      projectedSeconds: mine.projectedSeconds,
-    },
-    laid.budgetSeconds,
-  );
-  describeWithheld(laid.withheld, seen.mandatory);
+  if (options.described) {
+    // Enough to tell the plan this runs from the one described, should
+    // the two ever differ, and what it was projected to take beside the
+    // batches' own timings.
+    console.log(
+      `ci-lane: running lane ${options.lane} of ${options.of} as described: ` +
+        `${batches.length} batch(es) of ` +
+        `${batches.map((batch) => batch.suite.id).join(", ") || "nothing"}, ` +
+        `projected at ${mine.projectedSeconds.toFixed(0)}s of ` +
+        `${laid.budgetSeconds}s, ` +
+        (fetched.absent === undefined
+          ? `against ${fetched.objectName}`
+          : `unselected: ${fetched.absent}`),
+    );
+  } else {
+    // A mandatory identity is placed however much it costs, and this is
+    // where a lane says it ran long.
+    if (laid.overBudgetSeconds > 0) {
+      console.log(
+        `ci-lane: the mandatory set puts a lane ` +
+          `${laid.overBudgetSeconds.toFixed(0)} seconds past the ` +
+          `${laid.budgetSeconds}-second budget`,
+      );
+    }
+    describePlan(
+      options,
+      batches,
+      [...needs].sort(),
+      fetched,
+      laid.unschedulable,
+      laid.crowding,
+      {
+        manifest: seen.manifest,
+        selections: mine.selections,
+        projectedSeconds: mine.projectedSeconds,
+      },
+      laid.budgetSeconds,
+    );
+    describeWithheld(laid.withheld, seen.mandatory);
+  }
   if (options.dryRun) return true;
 
   // Asked before any batch runs, because the first pattern a batch
@@ -1811,7 +1848,7 @@ export async function main(
   if (options === undefined) {
     console.error(
       "usage: ci-lane.ts [--lane N] [--of M] [--full] [--dry-run] " +
-        "[--lane-count] [--base <ref>] [--at <iso>] [--coverage-dir <dir>]",
+        "[--described] [--lane-count] [--base <ref>] [--at <iso>] [--coverage-dir <dir>]",
     );
     return 2;
   }

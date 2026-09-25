@@ -165,6 +165,18 @@ jobs:
       - name: 🔍 Verify lock file & install dependencies
         uses: ./.github/actions/deno-install
 
+      # The plan heads a step of its own, where a reader of a running job
+      # finds it: GitHub folds away the top of a step thousands of lines
+      # long, which is what the lane's step becomes. The lane's step packs
+      # the same plan again from the same tree and manifest, and names it in
+      # one line. The arguments are a list of words, and splitting them is
+      # the point.
+      - name: 🗺️ Plan the lane
+        timeout-minutes: *work-timeout
+        run: |
+          # shellcheck disable=SC2086
+          deno run -A tasks/ci-lane.ts $LANE_ARGS --dry-run
+
       - name: 🧮 Resolve what the lanes' binaries are built from
         id: binary-cache-key
         run: |
@@ -230,7 +242,7 @@ jobs:
           ulimit -c unlimited
           sudo sysctl -w kernel.core_pattern="$RUNNER_TEMP/ci-lane-cores/core.%e.%p"
           # shellcheck disable=SC2086
-          deno run -A tasks/ci-lane.ts $LANE_ARGS
+          deno run -A tasks/ci-lane.ts $LANE_ARGS --described
 
       - name: 📋 Upload what a failing lane left behind
         if: ${{ failure() }}
