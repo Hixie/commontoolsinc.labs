@@ -4,6 +4,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
+import { exists } from "@std/fs";
 import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
 import { runDenoCommandWithTemporaryLock } from "@commonfabric/test-support/isolated-deno";
 import {
@@ -286,6 +287,36 @@ Deno.test("write-coverage-lcov converts real profiles to a normalized LCOV repor
       "instance query survived normalization",
     );
     assertStringIncludes(result.stdout, "Wrote LCOV");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("write-coverage-lcov drops a profile its process did not finish writing", async () => {
+  // A worker terminated as its process exits can leave the first part of its
+  // profile. That profile is dropped and the rest converts; left in place, it
+  // would fail `deno coverage` over the whole directory.
+  const root = await Deno.makeTempDir({ prefix: "write-lcov-" });
+  try {
+    const rawDir = await generateSampleProfiles(root);
+    const [finished] = [...Deno.readDirSync(rawDir)].filter((entry) =>
+      entry.name.endsWith(".json")
+    );
+    const text = await Deno.readTextFile(join(rawDir, finished.name));
+    const cut = join(rawDir, "cut.json");
+    await Deno.writeTextFile(cut, text.slice(0, Math.floor(text.length / 2)));
+    const output = join(root, "out.lcov");
+
+    const result = await runScript([rawDir, output]);
+
+    assertEquals(result.code, 0);
+    assertStringIncludes(await Deno.readTextFile(output), "sample.ts");
+    assertStringIncludes(result.stderr, "did not finish writing");
+    assert(!(await exists(cut)), "the unfinished profile is still there");
+    assert(
+      await exists(join(rawDir, finished.name)),
+      "a finished profile was removed",
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }

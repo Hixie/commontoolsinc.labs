@@ -183,11 +183,27 @@ export function isTrackedFile(url: string, repositoryRoot: string): boolean {
   );
 }
 
-async function removeEmptyCoverageProfiles(files: string[]): Promise<number> {
+/**
+ * Removes the profiles their writer never finished, and says how many.
+ *
+ * Deno writes a worker's profile when the worker is terminated, and does not
+ * wait for that write before the process exits. A worker terminated as its
+ * test ends can therefore leave no profile, an empty one, or the first part
+ * of one, depending on how far the write got. The three lose the same
+ * coverage; only the last two leave a file behind, and `deno coverage` refuses
+ * the whole directory over either. A profile is finished when it parses.
+ */
+async function removeUnfinishedCoverageProfiles(
+  files: string[],
+): Promise<number> {
   let removed = 0;
   for (const file of files) {
-    const info = await Deno.stat(file);
-    if (info.size > 0) continue;
+    try {
+      JSON.parse(await Deno.readTextFile(file));
+      continue;
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+    }
     await Deno.remove(file);
     removed++;
   }
@@ -250,10 +266,10 @@ export async function writeLcovReport(
     return { ok: true };
   }
 
-  const removedEmptyProfiles = await removeEmptyCoverageProfiles(profileFiles);
-  if (removedEmptyProfiles > 0) {
+  const removedProfiles = await removeUnfinishedCoverageProfiles(profileFiles);
+  if (removedProfiles > 0) {
     console.warn(
-      `Removed ${removedEmptyProfiles} empty coverage profile file(s) from ${profileDir}.`,
+      `Removed ${removedProfiles} coverage profile file(s) their process did not finish writing from ${profileDir}.`,
     );
   }
 
@@ -261,7 +277,7 @@ export async function writeLcovReport(
   if (remainingProfileFiles.length === 0) {
     await writeEmptyLcov(
       outputPath,
-      `No non-empty coverage profile files remain in ${profileDir}`,
+      `No finished coverage profile files remain in ${profileDir}`,
     );
     return { ok: true };
   }
