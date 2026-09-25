@@ -185,6 +185,13 @@ export interface MeasuredCost {
    * holds entries.
    */
   units: { overhead: number; entries: number }[];
+
+  /**
+   * The most any one entry charges the lane holding it, with its suite's
+   * and its unit's overheads. All of one entry's runs go in one lane, so
+   * no number of lanes holds an entry costing more than one lane does.
+   */
+  largest: number;
 }
 
 /**
@@ -203,14 +210,19 @@ export function measuredCost(
   for (const entry of entries) {
     bySuite.set(entry.suite, [...bySuite.get(entry.suite) ?? [], entry]);
   }
-  const cost: MeasuredCost = { overhead: 0, spread: 0, units: [] };
+  const cost: MeasuredCost = { overhead: 0, spread: 0, units: [], largest: 0 };
   for (const [suite, held] of bySuite) {
     const fitted = calibration.suitesWithCoverage?.[suite];
     if (fitted === undefined) return undefined;
     const units = new Map<string, number>();
     for (const entry of held) {
       units.set(entry.unit, (units.get(entry.unit) ?? 0) + 1);
-      cost.spread += fitted.correction * entry.cost * entry.repeats;
+      const own = fitted.correction * entry.cost * entry.repeats;
+      cost.spread += own;
+      cost.largest = Math.max(
+        cost.largest,
+        fitted.overhead + fitted.unitOverhead + own,
+      );
     }
     cost.overhead += fitted.overhead;
     for (const entries of units.values()) {
@@ -229,13 +241,15 @@ export function measuredCost(
  * Spread over some number of lanes, it charges its spread once, its
  * suites' overheads and the setup in every one of them, and each unit's
  * overhead in as many of them as the unit can be split over. Those lanes
- * hold it where that fits inside their budgets together. A lane's
- * prologue is already outside its budget.
+ * hold it where that fits inside their budgets together and its largest
+ * entry, with the setup, fits inside one of them. A lane's prologue is
+ * already outside its budget.
  */
 function lanesHolding(
   cost: MeasuredCost,
   setup: number,
 ): { lanes: number; seconds: number } | undefined {
+  if (cost.largest + setup > LANE_BUDGET_SECONDS) return undefined;
   for (let lanes = 1; lanes <= LANES; lanes++) {
     const seconds = cost.spread + lanes * (cost.overhead + setup) +
       cost.units.reduce(

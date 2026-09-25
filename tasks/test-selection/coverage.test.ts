@@ -308,6 +308,7 @@ describe("coverage", () => {
           overhead: 10,
           spread: 24,
           units: [{ overhead: 1, entries: 2 }, { overhead: 1, entries: 1 }],
+          largest: 21,
         });
       });
 
@@ -424,6 +425,19 @@ describe("coverage", () => {
           );
         });
 
+        it("says so where one of its tests costs more than a lane holds", () => {
+          // Two lanes hold the total, but one test's runs all go in one lane.
+          expect(costing(LANE_BUDGET_SECONDS)[0]).toContain(
+            "workspace-unit/packages/cellar costs more with coverage on " +
+              `than the run's ${LANES} lanes of ${LANE_BUDGET_SECONDS}s hold`,
+          );
+          expect(costing(LANE_BUDGET_SECONDS / 2, LANE_BUDGET_SECONDS / 2)[0])
+            .toContain(
+              `costs ${(LANE_BUDGET_SECONDS + 2 * 15).toFixed(1)}s with ` +
+                "coverage on",
+            );
+        });
+
         it("says so where the run's lanes cannot hold it", () => {
           expect(costing(LANE_BUDGET_SECONDS * LANES)[0]).toContain(
             "workspace-unit/packages/cellar costs more with coverage on " +
@@ -448,25 +462,28 @@ describe("coverage", () => {
           },
           prologue: 0,
         });
-        const costing = (seconds: number) =>
+        /** One test of the runner costing each of `seconds`. */
+        const costing = (...seconds: number[]) =>
           measuredCostLines(
             sampleManifest({
               calibration: calibration(),
-              entries: [
-                entry(
-                  "runner",
-                  "packages/runner/test/one.test.ts",
-                  seconds,
-                  "runner-unit",
-                ),
-              ],
+              entries: seconds.map((cost, index) =>
+                sampleEntry(
+                  { k: "unit", s: "runner", n: `test ${index}` },
+                  {
+                    suite: "runner-unit",
+                    unit: "packages/runner/test/one.test.ts",
+                    cost,
+                  },
+                )
+              ),
             }),
             [runner],
           );
         const room = LANE_BUDGET_SECONDS - 30;
 
         it("is named once its tests fit the run's lanes, each paying its own overhead", () => {
-          expect(costing(room * 3)).toEqual([
+          expect(costing(room, room, room)).toEqual([
             `packages/runner is on EXCLUDED_FROM_COVERAGE_GATE for its ` +
             `size, and its tests now cost ${
               (room * 3 + 3 * 30).toFixed(1)
@@ -479,7 +496,10 @@ describe("coverage", () => {
         it("is not named where it fits the run only by paying its overhead once", () => {
           // Charged once, this fits the five lanes' budget exactly. Each
           // lane it spreads over pays the thirty again, so it does not.
-          expect(costing(LANE_BUDGET_SECONDS * LANES - 30)).toEqual([]);
+          const tests = LANE_BUDGET_SECONDS * LANES - 30;
+          expect(
+            costing(...Array(2 * LANES).fill(tests / (2 * LANES))),
+          ).toEqual([]);
         });
 
         it("counts a unit's overhead in each lane its entries are split over", () => {
@@ -520,7 +540,10 @@ describe("coverage", () => {
         });
 
         it("counts a unit's overhead once where it holds one entry", () => {
+          // Two units of one entry each, which two lanes hold only if each
+          // unit's overhead is paid once.
           const unitOverhead = 5;
+          const each = LANE_BUDGET_SECONDS - 40;
           const lines = measuredCostLines(
             sampleManifest({
               calibration: {
@@ -529,20 +552,20 @@ describe("coverage", () => {
                   "runner-unit": { overhead: 20, correction: 1, unitOverhead },
                 },
               },
-              entries: [
+              entries: ["one", "two"].map((name) =>
                 entry(
                   "runner",
-                  "packages/runner/test/one.test.ts",
-                  LANE_BUDGET_SECONDS - 33,
+                  `packages/runner/test/${name}.test.ts`,
+                  each,
                   "runner-unit",
-                ),
-              ],
+                )
+              ),
             }),
             [runner],
           );
           expect(lines[0]).toContain(
             `now cost ${
-              (LANE_BUDGET_SECONDS - 33 + 2 * 30 + unitOverhead).toFixed(1)
+              (2 * each + 2 * 30 + 2 * unitOverhead).toFixed(1)
             }s with coverage on across 2 lane(s)`,
           );
         });
