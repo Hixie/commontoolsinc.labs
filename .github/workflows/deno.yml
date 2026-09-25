@@ -92,14 +92,10 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'ci: full')
     runs-on: ubuntu-latest
     timeout-minutes: *job-timeout
-    # The token is what the `github-api` capability hands to the suites that
-    # declared it. The lane takes it out of its own environment before it
-    # starts anything, so no other child of the lane inherits it.
     permissions:
       contents: read
     env:
       CF_TEST_RECORDS_DIR: ${{ github.workspace }}/test-records-spool
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       LANE_ARGS: >-
         --lane ${{ matrix.lane }} --of 5 --base origin/${{ github.base_ref }}
       LANE_JOB: PR Tests (${{ matrix.lane }}/5)
@@ -178,6 +174,12 @@ jobs:
 
       - name: 🧪 Run the lane
         timeout-minutes: *work-timeout
+        # The token is what the `github-api` capability hands to the suites
+        # that declared it, so only this step holds it. The lane takes it out
+        # of its own environment before it starts anything, so no other child
+        # of the lane inherits it.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # A process in the lane that crashes natively leaves its core under
         # the job's temporary directory, where the upload of what a failing
         # lane left behind finds it. The arguments are a list of words, and
@@ -276,7 +278,6 @@ jobs:
       contents: read
     env:
       CF_TEST_RECORDS_DIR: ${{ github.workspace }}/test-records-spool
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       LANE_ARGS: >-
         --full --lane ${{ matrix.lane }} --of ${{ needs.plan-full.outputs.of }}
       LANE_JOB: >-

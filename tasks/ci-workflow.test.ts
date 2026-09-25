@@ -534,8 +534,20 @@ Deno.test("the lanes run the lane runner with the lane count policy names", asyn
     const job = ci.jobs[id];
     assertEquals(job.strategy?.["fail-fast"], false);
     assertEquals(job.permissions, { contents: "read" });
-    assertEquals(job.env?.GITHUB_TOKEN, "${{ secrets.GITHUB_TOKEN }}");
+    // Only the lane step holds the token, which the lane hands on to the
+    // suites that declared `github-api` and to nothing else.
+    assertEquals(job.env?.GITHUB_TOKEN, undefined);
     const lane = namedStep(job, "🧪 Run the lane");
+    assertEquals(lane.env?.GITHUB_TOKEN, "${{ secrets.GITHUB_TOKEN }}");
+    for (const step of job.steps ?? []) {
+      if (step !== lane) {
+        assertEquals(
+          step.env?.GITHUB_TOKEN,
+          undefined,
+          `${step.name} holds the token`,
+        );
+      }
+    }
     assertStringIncludes(
       lane.run ?? "",
       "\ndeno run -A tasks/ci-lane.ts $LANE_ARGS\n",
