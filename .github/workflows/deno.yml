@@ -1924,6 +1924,10 @@ jobs:
       # only writes the comment to an artifact. The coverage-comment workflow
       # posts it from the base-repo context with a write token.
       pull-requests: read
+    # The check writes the run's coverage figures into this spool as
+    # measurements, which the last step ships to the record store.
+    env:
+      CF_TEST_RECORDS_DIR: ${{ github.workspace }}/test-records-spool
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1944,7 +1948,8 @@ jobs:
           digest-mismatch: error
 
       # The gate reads the coverage artifacts of every test job in this run, so
-      # no lane can be asked to run it and this job writes no test records.
+      # no lane can be asked to run it and this job writes no test records:
+      # what it ships is the run's coverage measurements alone.
       # `docs/specs/test-records.md` under "Recording" holds the criterion.
       - name: 📊 Run coverage check
         timeout-minutes: *work-timeout
@@ -1978,6 +1983,18 @@ jobs:
           path: perf-metrics.json
           retention-days: 90
           if-no-files-found: ignore
+
+      # The run's coverage measurements, for the dashboard's trend and the
+      # test-selection publisher, which read it from the record store, and
+      # for the run report, which reads it from this run's artifacts. Only a
+      # push ships one, because every reader takes a figure from a push to
+      # main alone.
+      - name: 📤 Ship test records
+        if: always() && github.event_name == 'push'
+        uses: ./.github/actions/test-records-ship
+        with:
+          artifact: coverage
+          job: Coverage Check
 
   # The store half of the test-topology drift guard. The tree half fails a
   # surface in the working tree that no suite claims; this fails one that is

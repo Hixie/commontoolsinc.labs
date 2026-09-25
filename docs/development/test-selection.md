@@ -226,20 +226,27 @@ Five things are worth knowing before reading a failure.
 Nothing about coverage fails a run on `main`. That run measures every set,
 which is where the baselines come from, and merges every report into the
 repository-wide figure the dashboard tile shows. `tasks/coverage-report.ts`
-is what measures and writes them, over a directory holding the lanes'
-uploaded coverage:
+is what measures them, over a directory holding the lanes' uploaded
+coverage:
 
 ```
-deno run -A tasks/coverage-report.ts --reports <directory> \
-  --run-id 1 --sha $(git rev-parse HEAD) --created-at $(date -u +%FT%TZ)
+CF_TEST_RECORDS_DIR=<spool> deno run -A tasks/coverage-report.ts \
+  --reports <directory>
 ```
 
-The run's identity is required rather than defaulted, because the gate
-looks a baseline up by the commit it was measured at and a figure stamped
-with none matches nothing.
+It writes the figures as measurements into the spool
+`CF_TEST_RECORDS_DIR` names, and with that variable unset it records no
+figure and only reports its summary. The job's shipping step carries them to the
+record store under the context the relay composes for the job, which names
+the commit and the run, so the measurements carry neither. The publisher
+collects the baselines from the objects it folds, each against the commit
+its context names, and keeps them for
+`LOCAL_COVERAGE_BASELINE_DAYS`;
+[Coverage figures in the store](COVERAGE.md#coverage-figures-in-the-record-store)
+says how each reader finds them.
 
-The report also publishes whether the run's compile byte cache was cold,
-read from the record each lane that opened the cache leaves beside its
+The measurements also say whether the run's compile byte cache was cold, read
+from the record each lane that opened the cache leaves beside its
 coverage, so that the dashboard can leave a cold run out of its trend.
 [Compile cache state and cold runs](COVERAGE.md#compile-cache-state-and-cold-runs)
 says why a cold run's figure differs.
@@ -1103,8 +1110,9 @@ itself.
   measures whole however much of the corpus it ran. That is a different
   number from the source group over the same member, which is that
   member measured by every test in the run and which a selected run only
-  samples; `measuredSetCoverageMetric` in `tasks/ci-check-lib.ts` is the
-  one name the producer and the reader share. The full run on the
+  samples; `coverageRecords` and `coverageFiguresOf` in
+  `@commonfabric/test-support/records` are the one naming the producer and
+  the reader share. The full run on the
   default branch is what publishes it, so this note is silent until the
   lanes carry that run.
 - **A new test that turned out to be flaky.** A test this run ran, the
