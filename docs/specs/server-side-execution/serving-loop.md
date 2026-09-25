@@ -63,8 +63,8 @@ A park can leave a space that still meets the ACTIVE criteria: a serving
 loop that throws, an initialization that fails, and a lease lapse that
 aborts a wave (§2) each park the space whatever its demand. So when any
 park completes, the host re-evaluates the criteria — live client
-sessions, undelivered events, and warm requests not yet consumed — and
-re-activates a space that meets them without waiting for another
+sessions, undelivered events, and outstanding warm requests (below) —
+and re-activates a space that meets them without waiting for another
 trigger. The exception is a park caused by another process's live lease
 refusing an acquire or a re-acquire (§2): that process serves the space,
 and an activation here would be refused again. A park during which a
@@ -178,20 +178,27 @@ scoped signal, never a blanket write-trigger — so T11.Q7 stays as
 designed (the admission hook alone still notifies without activating;
 a provisioning write ALONE still parks). Lifecycle: idempotent
 against an active target (the union is a no-op under standing client
-demand); a request racing a park re-carries itself into the successor
-activation; the captured warm demand is TENURE-scoped (it dies with
-the tenure — recompute-on-demand, §6 step 2, is the recovery posture
-for anything a dying tenure drops), and the request itself is a
-one-shot in-process signal, not a durable row — loss across a process
-crash in the staged-but-underived window is the OW46 silent-park
-observability family. One deliberate side effect, stated: the
-warm notice rides `noteExecutorCommit`, whose dirtiness marking means a
-foreign provisioning batch's staged writes now also PUSH to any client
-session subscribed to those docs in the target space — previously those
-engine-direct commits produced no notice at all, so a subscribed client
-saw them only on its next own sync. Beneficial (staleness removed),
-never load-bearing: no client in the ruled flows subscribes to setup
-docs before activation.
+demand); a request stays outstanding until a tenure that received it
+parks idle, which is the tenure's own verdict that nothing is left to
+serve. A request racing a park is carried into the successor
+activation. Any other end of a tenure that received one — a refused or
+failed activation, a loop failure, a lease loss — hands the request
+back to the host. Where the re-evaluation after a park (above) follows,
+it counts the request, and the successor captures it again. A park on
+a rival's lease has no re-evaluation, so there the request waits for
+this process's next activation of the space. The captured warm demand
+is TENURE-scoped, and the request itself is a one-shot in-process
+signal, not a durable row — loss across a process crash in the
+staged-but-underived window is the OW46 silent-park observability
+family. Impl: `host.ts`'s `#endTenure`; pinned in
+`packages/runner/test/executor-warm-request.test.ts`. One deliberate
+side effect, stated: the warm notice rides `noteExecutorCommit`, whose
+dirtiness marking means a foreign provisioning batch's staged writes
+now also PUSH to any client session subscribed to those docs in the
+target space — previously those engine-direct commits produced no
+notice at all, so a subscribed client saw them only on its next own
+sync. Beneficial (staleness removed), never load-bearing: no client in
+the ruled flows subscribes to setup docs before activation.
 
 **Parking.** A park releases the lease and stops the loop. A park for a
 lost lease, a failed loop, a failed initialization or a closing host

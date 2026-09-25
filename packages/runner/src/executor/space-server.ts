@@ -877,13 +877,21 @@ export class SpaceServer implements TransactionSealDestination {
    * session shape: a key with no demander pair — so a warmed,
    * SESSIONLESS tenure structure-loads the staged piece and derives it.
    * Tenure-scoped by construction: the map dies with this SpaceServer
-   * at park (a fresh activation builds a fresh instance), and
-   * recompute-on-demand is the ruled recovery posture for anything a
-   * dying tenure drops (serving-loop.md §6 step 2). */
+   * at park (a fresh activation builds a fresh instance). The requests
+   * behind it outlive a tenure that ends without serving them; see
+   * `#warmNotices`. */
   readonly #warmDemandKeys = new Map<
     string,
     { id: string; scopeKey: string }
   >();
+
+  /** The warm-marked notices this tenure has received, in arrival order,
+   * less each one whose every key an earlier one names. The host hands
+   * them to a successor when this tenure ends without serving them. */
+  readonly #warmNotices: AdmittedCommitNotice[] = [];
+
+  /** The keys `#warmNotices` names. */
+  readonly #warmNoticeKeys = new Set<string>();
 
   /**
    * Count of push-growth demand wakes, bumped once per
@@ -1280,6 +1288,12 @@ export class SpaceServer implements TransactionSealDestination {
    * re-evaluation of the space's ACTIVE criteria on it. */
   get whenParked(): Promise<void> {
     return this.#parked.promise;
+  }
+
+  /** The warm-marked notices this tenure has received, in arrival order,
+   * less each one whose every key an earlier one names. */
+  get warmNotices(): readonly AdmittedCommitNotice[] {
+    return this.#warmNotices;
   }
 
   /** Store head minus W — the per-space input to §7's watermarkLag. */
@@ -1796,6 +1810,7 @@ export class SpaceServer implements TransactionSealDestination {
       // runs a fresh demand pass over it (the same grace-coalesced
       // latch a session's watch change uses).
       let captured = false;
+      let named = false;
       for (const write of record.writes) {
         // The canonical key encoding (the registry's own), so warm keys
         // can never drift from client demand keys.
@@ -1804,7 +1819,15 @@ export class SpaceServer implements TransactionSealDestination {
           this.#warmDemandKeys.set(key, write);
           captured = true;
         }
+        // A lifecycle verb registers its staged keys as warm demand
+        // before its own warm notice names them, so what decides whether
+        // a notice is kept is the keys the kept notices name.
+        if (!this.#warmNoticeKeys.has(key)) {
+          this.#warmNoticeKeys.add(key);
+          named = true;
+        }
       }
+      if (named) this.#warmNotices.push(record);
       if (captured) this.noteDemandChanged("warm");
     }
     this.#feed.push(record);

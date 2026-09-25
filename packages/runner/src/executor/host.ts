@@ -179,15 +179,14 @@ export type ExecutorHostOptions = {
 export class ExecutorHost {
   readonly #options: ExecutorHostOptions;
   readonly #spaces = new Map<string, SpaceServer>();
-  readonly #activating = new Map<string, {
-    promise: Promise<void>;
-    warmNotices: AdmittedCommitNotice[];
-  }>();
+  readonly #activating = new Map<string, Promise<void>>();
 
-  /** Records admitted while a space's activation is still in flight
-   * (before its SpaceServer registers): buffered here, drained into the
-   * feed at registration — an admission racing activation must never be
-   * dropped (its seq may pass the activation's scan head). */
+  /** Records for a space's next SpaceServer, drained into its feed at
+   * registration: the admission that starts an activation, records
+   * admitted while one is in flight (an admission racing activation must
+   * never be dropped — its seq may pass the activation's scan head), warm
+   * notices racing a park, and the warm requests of a tenure that ended
+   * without serving them (see `#endTenure`). */
   readonly #pendingNotices = new Map<string, AdmittedCommitNotice[]>();
 
   /** The ONE process-lifetime localSeq counter for every sink this host
@@ -357,7 +356,7 @@ export class ExecutorHost {
         // and an activation before that would fail to acquire.
         await standing.whenParked;
       }
-      await this.#activate(space, []);
+      await this.#activate(space);
       const server = this.#spaces.get(space);
       if (server === undefined || !server.active) {
         throw new SpaceNotServedError(space);
@@ -404,60 +403,30 @@ export class ExecutorHost {
     // SEAL wakes the loop (SpaceServer.seal's feed wake). The
     // executor-cross-space E2E pins the end-to-end behavior.
     const existing = this.#spaces.get(notice.space);
-    if (existing !== undefined) {
-      // Active OR still activating: the record must reach the feed
-      // either way — an admission racing a mid-flight activation is the
-      // window a dropped record would open (the activation's scan covers
-      // only commits before its head). A PARKING server (registered,
-      // no longer active, no activation in flight) is the third case:
-      // chain a fresh activation behind the park so a space with live
-      // demand is never left unserved by the race. A WARM notice racing
-      // the park BUFFERS for the successor activation (drained at its
-      // registration, exactly like the mid-activation window below):
-      // the dying tenure's feed — and the warm capture that just went
-      // into it — die with the tenure, and SEVERAL warm notices in one
-      // park window chain ONE shared reactivation, so a notice passed
-      // by argument would be dropped for every notice but the first
-      // (#activate joins the in-flight activation without merging its
-      // pending list — the #6191 review's P1).
+    const activating = this.#activating.has(notice.space);
+    if (existing !== undefined && (existing.active || activating)) {
+      // Active, or registered by the activation still in flight: the
+      // record must reach the feed either way — an admission racing a
+      // mid-flight activation is the window a dropped record would open
+      // (the activation's scan covers only commits before its head).
       existing.enqueueCommit(notice);
-      const activation = this.#activating.get(notice.space);
-      if (
-        !existing.active && activation !== undefined && notice.warm === true
-      ) {
-        // A warm request is a one-shot activation obligation. Retain it
-        // with the initialization that owns the feed, so failed setup
-        // carries the request into its successor.
-        activation.warmNotices.push(notice);
-      }
-      if (!existing.active && activation === undefined) {
-        if (notice.warm === true) {
-          // Only in the true parking window (no successor in flight):
-          // once a successor is activating, the enqueue above already
-          // reached a feed that survives — its registration drain has
-          // either run against this buffer or the notice landed on the
-          // registered server directly.
-          let buffered = this.#pendingNotices.get(notice.space);
-          if (buffered === undefined) {
-            buffered = [];
-            this.#pendingNotices.set(notice.space, buffered);
-          }
-          buffered.push(notice);
-        }
-        this.#reactivateAfterPark(notice.space as MemorySpace, existing);
-      }
       return;
     }
-    const activating = this.#activating.get(notice.space);
-    if (activating !== undefined) {
+    if (existing !== undefined) {
+      // A PARKING server (registered, no longer active, no activation in
+      // flight): its feed dies with it. Chain a fresh activation behind
+      // the park so a space with live demand is never left unserved by
+      // the race, and buffer a WARM notice for it: several warm notices
+      // in one park window share ONE reactivation, and the buffer is what
+      // carries them all into it.
+      if (notice.warm === true) this.#buffer(notice);
+      this.#reactivateAfterPark(notice.space as MemorySpace, existing);
+      return;
+    }
+    if (activating) {
       // Activation started but its SpaceServer has not registered yet
       // (engine open in flight): buffer, drained at registration.
-      let buffered = this.#pendingNotices.get(notice.space);
-      if (buffered === undefined) {
-        buffered = [];
-        this.#pendingNotices.set(notice.space, buffered);
-      }
-      buffered.push(notice);
+      this.#buffer(notice);
       return;
     }
     // The admission-side activation hook (serving-loop.md §1 plane (b)):
@@ -490,7 +459,18 @@ export class ExecutorHost {
     ) {
       return;
     }
-    void this.#activate(notice.space as MemorySpace, [notice]);
+    this.#buffer(notice);
+    void this.#activate(notice.space as MemorySpace);
+  }
+
+  /** Buffers `notice` for its space's next SpaceServer. */
+  #buffer(notice: AdmittedCommitNotice): void {
+    const buffered = this.#pendingNotices.get(notice.space);
+    if (buffered === undefined) {
+      this.#pendingNotices.set(notice.space, [notice]);
+    } else {
+      buffered.push(notice);
+    }
   }
 
   #onSessionOpened(space: string): void {
@@ -519,7 +499,7 @@ export class ExecutorHost {
     ) {
       return;
     }
-    void this.#activate(space as MemorySpace, []);
+    void this.#activate(space as MemorySpace);
   }
 
   /** Chain a fresh activation behind a park in progress (`parking`), or
@@ -545,7 +525,7 @@ export class ExecutorHost {
   #reactivateAfterPark(space: MemorySpace, parking?: SpaceServer): void {
     void (async () => {
       await parking?.whenParked;
-      await this.#activating.get(space)?.promise;
+      await this.#activating.get(space);
       if (this.#closed || this.#spaces.get(space)?.active) return;
       const warm = this.#pendingNotices.get(space)?.some((notice) =>
         notice.warm === true
@@ -569,37 +549,26 @@ export class ExecutorHost {
         // The engine read awaited: re-check the activation preconditions.
         if (this.#closed || this.#spaces.get(space)?.active) return;
       }
-      void this.#activate(space, []);
+      void this.#activate(space);
     })();
   }
 
-  #activate(
-    space: MemorySpace,
-    pending: AdmittedCommitNotice[],
-  ): Promise<void> {
+  #activate(space: MemorySpace): Promise<void> {
     // One activation in flight per space: session-open and
     // commit-admitted hooks race, and a second concurrent activation
     // would double-build runtimes against one lease.
     const inFlight = this.#activating.get(space);
-    if (inFlight !== undefined) return inFlight.promise;
-    const warmNotices = pending.filter((notice) => notice.warm === true);
-    const activation = {
-      warmNotices,
-      promise: this.#activateInner(space, pending, warmNotices).finally(() => {
-        if (this.#activating.get(space) === activation) {
-          this.#activating.delete(space);
-        }
-      }),
-    };
+    if (inFlight !== undefined) return inFlight;
+    const activation = this.#activateInner(space).finally(() => {
+      if (this.#activating.get(space) === activation) {
+        this.#activating.delete(space);
+      }
+    });
     this.#activating.set(space, activation);
-    return activation.promise;
+    return activation;
   }
 
-  async #activateInner(
-    space: MemorySpace,
-    pending: AdmittedCommitNotice[],
-    consumedWarm: AdmittedCommitNotice[],
-  ): Promise<void> {
+  async #activateInner(space: MemorySpace): Promise<void> {
     if (this.#closed || this.#spaces.get(space)?.active) return;
     const streak = this.#failureParkStreaks.get(space) ?? 0;
     if (streak > 0) {
@@ -616,10 +585,6 @@ export class ExecutorHost {
       await this.#backoffSleep(delayMs);
       if (this.#closed || this.#spaces.get(space)?.active) return;
     }
-    // The warm notices this activation CONSUMES (the argument now; the
-    // drained buffer appends at drain time): re-buffered by the failure
-    // arms below — see #rebufferConsumedWarm. Collected from the start
-    // so an early throw (the engine open) loses nothing either.
     let parked = false;
     try {
       const engine = await this.#options.server.engineForSpace(space);
@@ -686,12 +651,7 @@ export class ExecutorHost {
               (this.#failureParkStreaks.get(space) ?? 0) + 1,
             );
           }
-          // Delete by IDENTITY: a successor activation may already have
-          // registered over this entry (the M5 park race), and the
-          // dying server must not evict it.
-          if (this.#spaces.get(space) === server) {
-            this.#spaces.delete(space);
-          }
+          this.#endTenure(space, server, reason === "idle");
           if (!rivalHoldsLease) this.#reactivateAfterPark(space, server);
           // No flag re-assert needed: the host's OWN enabler (claimed
           // at construction, shared refcount with Runtime enablers)
@@ -732,19 +692,13 @@ export class ExecutorHost {
       // enqueue into the feed rather than being dropped; the SpaceServer
       // itself filters records its activation scan already covers.
       this.#spaces.set(space, server);
-      for (const notice of pending) server.enqueueCommit(notice);
-      const buffered = this.#pendingNotices.get(space);
-      if (buffered !== undefined) {
-        this.#pendingNotices.delete(space);
-        for (const notice of buffered) server.enqueueCommit(notice);
-        for (const notice of buffered) {
-          if (notice.warm === true) consumedWarm.push(notice);
-        }
-      }
+      const buffered = this.#pendingNotices.get(space) ?? [];
+      this.#pendingNotices.delete(space);
+      for (const notice of buffered) server.enqueueCommit(notice);
+      // An activation that does not succeed has parked the server, so
+      // `onParked` above has already ended its tenure.
       const activated = await server.activate();
       if (!activated) {
-        this.#spaces.delete(space);
-        this.#rebufferConsumedWarm(space, consumedWarm);
         this.#reportActivationSettled(space, "refused");
         return;
       }
@@ -757,12 +711,13 @@ export class ExecutorHost {
         await server.park("host-closed");
       }
     } catch (error) {
-      this.#spaces.delete(space);
-      this.#rebufferConsumedWarm(space, consumedWarm);
       if (!parked) {
         // A throw that no park preceded, such as the engine open's, never
-        // reaches the park handler, so we count it and re-evaluate the
-        // space here, as that handler does for a failure park.
+        // reaches the park handler, so we end the tenure it built, if any,
+        // count the failure, and re-evaluate the space here, as that
+        // handler does for a failure park.
+        const server = this.#spaces.get(space);
+        if (server !== undefined) this.#endTenure(space, server, false);
         this.#failureParkStreaks.set(
           space,
           (this.#failureParkStreaks.get(space) ?? 0) + 1,
@@ -793,30 +748,27 @@ export class ExecutorHost {
     }
   }
 
-  /** Re-buffer the warm notices a FAILED activation consumed — its
-   * `pending` argument plus what it drained from `#pendingNotices` —
-   * so the next trigger's activation drains them into a live
-   * successor. A warm notice is a ONE-SHOT signal from a provisioning
-   * wave that has already committed: nothing re-issues it, and in the
-   * home-profile shape there is no client backstop — an activation
-   * dying AFTER the drain (`activate()` refusing on a rival process's
-   * unexpired lease, or throwing) would otherwise strand the staged
-   * setup underived with no crash anywhere (the OW46-family
-   * no-crash-required loss; pinned in executor-warm-request.test.ts).
-   * Prepended: the consumed notices are older than anything buffered
-   * while the failed activation was in flight. */
-  #rebufferConsumedWarm(
+  /** Unregisters `server`, whose tenure serving `space` has ended. Unless
+   * the tenure served its warm requests (`servedWarm`: it parked idle,
+   * with nothing left to do), they stay outstanding: they go back to
+   * `#pendingNotices`, ahead of anything buffered since, where the host's
+   * re-evaluation after a park counts them and a successor drains them. A
+   * warm request is a ONE-SHOT signal from a provisioning wave that has
+   * already committed, and nothing re-issues it, so a tenure that fails
+   * before deriving the staged setup would otherwise leave it underived
+   * with no client to demand it (serving-loop.md §1). Unregisters by
+   * identity, so a successor already registered for `space` stays. */
+  #endTenure(
     space: MemorySpace,
-    consumedWarm: readonly AdmittedCommitNotice[],
+    server: SpaceServer,
+    servedWarm: boolean,
   ): void {
-    if (consumedWarm.length === 0) return;
-    const standing = this.#pendingNotices.get(space);
-    this.#pendingNotices.set(
-      space,
-      standing === undefined
-        ? [...consumedWarm]
-        : [...consumedWarm, ...standing],
-    );
+    if (this.#spaces.get(space) === server) this.#spaces.delete(space);
+    if (servedWarm || server.warmNotices.length === 0) return;
+    this.#pendingNotices.set(space, [
+      ...server.warmNotices,
+      ...this.#pendingNotices.get(space) ?? [],
+    ]);
   }
 
   /** A cancellable backoff sleep: close() flushes the wakers so a
@@ -960,7 +912,7 @@ export class ExecutorHost {
     // re-activation may have been in flight when the snapshot was taken.
     while (this.#activating.size > 0) {
       await Promise.allSettled(
-        [...this.#activating.values()].map(({ promise }) => promise),
+        this.#activating.values(),
       );
     }
     // A server already parking on its own — a lost lease, a failed loop
