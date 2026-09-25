@@ -177,7 +177,7 @@ files are written to. The `cf test` command in
 integration path does not run through `cf test`; there the integration harness
 reads the same variable to decide whether to turn worker coverage on and where to
 write the merged LCOV it pulls back from the browser (see "How the integration
-jobs collect authored-pattern coverage").
+suites collect authored-pattern coverage").
 
 ## Two figures come out of the same reports
 

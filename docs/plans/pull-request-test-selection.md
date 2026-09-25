@@ -1,11 +1,10 @@
 # Choosing which tests a pull request runs
 
-Status: in progress. Part one is built. Parts two and three are built
-apart from the continuous-integration configuration that puts the lanes
-in `deno.yml`, and what only a run of those lanes can settle: the
-publisher's summary and the exclusion list both read costs that have none
-until lanes have run, and two pre-merge proofs need a run to prove
-anything about. [The work](#the-work) carries the detail. The record
+Status: in progress. Parts one, two and three are built, including the
+`lanes` job in `deno.yml` that runs them. What remains is what only a run
+of those lanes can settle: the publisher's summary and the exclusion list
+both read costs that have none until lanes have run, and two pre-merge
+proofs need a run to prove anything about. [The work](#the-work) carries the detail. The record
 store this plan consumes is live and holds the data the design needs,
 apart from what [What the store is
 missing](#what-the-store-is-missing) names.
@@ -2892,7 +2891,7 @@ schedule. The schedule is `LANE_BUDGET_SECONDS`, and a lane that reaches
 the bound above is one the packer got wrong; stopping it there would
 throw away the tests it had run along with the measurements that would
 have corrected the packer. So the pair clears the packed bound several
-times over, which is an hour of work inside a job ten minutes longer.
+times over, which is fifty minutes of work inside a job ten minutes longer.
 `tasks/ci-workflow.test.ts` holds it there, and holds every job's bound
 at least ten minutes above its work step's.
 

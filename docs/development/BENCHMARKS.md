@@ -112,9 +112,12 @@ compares across jobs. Adding a bench file to the list does not place it, so
 neither the calibration's position nor any other file's can be arranged from
 here.
 
-Benchmark numbers are not gated, and neither is CI wall time. The only
-coverage gate on a pull request is the measured-set one
-(`tasks/coverage-gate.ts`), which never ingests benchmark results, so a bench
+Benchmark numbers are not gated, and neither is CI wall time. The counts gated
+on a pull request include the measured-set coverage gate
+(`tasks/coverage-gate.ts`), the read limits of the headless lunch-poll render
+fixtures ([below](#headless-render-read-limits), in the `pattern-unit` suite),
+and the Topics read and graph limits ([below](#the-read-budget), in the
+`pattern-integration` suite). None of them ingests benchmark results, so a bench
 regression shows up as trend drift on the dashboard rather than as a failing
 check.
 

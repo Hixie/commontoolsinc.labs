@@ -1349,10 +1349,11 @@ run_piece_data_files() {
 # markers close the previous step's record and the exit trap closes the last
 # one, so a failing step is recorded with the failure.
 #
-# `all` runs every step, and every step also runs under one of the sections CI
-# dispatches: piece-values, piece-call, and piece-links. Both hold in
-# packages/cli/test/integration-sections.test.ts, which reads this table and
-# the units the `cli-core` suite enumerates.
+# `all` runs every step, and every step also has an arm that runs it alone,
+# which is what CI dispatches: the `cli-core` suite in
+# tasks/test-topology/cli.ts reads this table and makes each such arm a unit.
+# Both hold in packages/cli/test/integration-sections.test.ts, which reads this
+# table.
 #
 # Two kinds of arm live here. A **step arm** runs exactly one step, and
 # every step has one, so any step can be run and scheduled on its own. A

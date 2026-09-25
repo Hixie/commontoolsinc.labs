@@ -29,8 +29,10 @@ bound.
 Those two are the numbers to move when a lane runs long, and they are not the
 workflow's timeouts. `work-timeout` is a backstop, sized for the lane the cost
 model got wrong rather than for the lane it got right. Such a lane carries the
-measurements the model learns that mistake from, so stopping it costs the next
-run the same mistake as well as costing this one every test it had already run.
+measurements the model learns that mistake from. A batch's records reach the
+spool when the batch finishes, so stopping the lane loses those of the batch it
+was running, which is the likeliest to be the one the model got wrong, and fails
+this run as well.
 A full run packed with no usable cost model finished its healthy lanes in
 nineteen to forty-nine minutes, which is what an hour is chosen against: past
 that a lane is stuck rather than slow, and waiting longer buys nothing.
@@ -38,8 +40,8 @@ that a lane is stuck rather than slow, and waiting longer buys nothing.
 Rebalancing is not something anybody does here any more. What a test costs is
 measured on every run and published in the manifest, and the packer distributes
 items by that cost. A lane that runs long is a cost model that has drifted or a
-test that got slower, and both are visible in the lane's own job summary, which
-prints what it planned against what it spent.
+test that got slower, and both are visible in the lane itself: its job summary
+prints what it planned, and the test records it ships say what each test took.
 
 ## Required Pull Request Checks
 

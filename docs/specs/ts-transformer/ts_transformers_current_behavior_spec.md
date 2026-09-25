@@ -3434,8 +3434,9 @@ end_of_record
 `<url-encoded relative test path>[--<participant>].pattern-coverage.lcov`
 file per test into the coverage directory (`patternCoverageOutputPath`;
 `packages/cli/lib/test-runner.ts`). Per `docs/development/COVERAGE.md`, those
-files feed the CI coverage-debt gate as the sole source of covered-line data
-for authored pattern files (currently only the `pattern-unit` suite), and
+files, which the `pattern-unit` suite writes in CI, feed the CI coverage-debt
+gate's covered-line data for authored pattern files alongside the pattern
+integration suites' own stream (`TN:pattern-runtime-integration`), and
 `DA` records exist only for lines the instrumentation could name — the
 denominator caveat documented there.
 

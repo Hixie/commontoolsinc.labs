@@ -237,8 +237,9 @@ if it fails. Every opted-in run also sweeps the spool root and ships any
 spool whose owner's lock is free. Object names are deterministic, so
 shipping twice collides on create and duplicates never come into being.
 
-In CI, jobs hold no credentials: each lane ends with a credential-free
-step that gathers the spool and the lane's JUnit files into a
+In CI, jobs hold no credentials: the lane runner turns each suite's JUnit
+report into records in the lane's spool as the suite finishes, each lane
+ends with a credential-free step that gathers that spool into a
 `test-records-*` artifact, and the Test Records Relay workflow — the only
 CI principal that can write to the store — composes each artifact's context
 from the trusted event payload and creates one object per artifact.
@@ -353,9 +354,9 @@ is the record of who minted what for whom.
 
 A new surface is a suite under `tasks/test-topology/`, and the suite is
 what says where its runner writes JUnit: the invocation it builds carries
-the `--junit` specification the lane runner gathers, so nothing in
+the `junit` metadata the lane runner reads that report by, so nothing in
 `.github/workflows/` changes. A runner that already emits JUnit needs
-nothing but that specification, and a `--preload` naming
+nothing but that metadata, and a `--preload` naming
 `packages/test-support/src/records/preload.ts` where the surface is
 `deno test`. `preloadArgument()` from `@commonfabric/test-support/records`
 spells that flag; Deno resolves `--preload` as a path rather than through
