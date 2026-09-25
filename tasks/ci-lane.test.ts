@@ -1992,7 +1992,12 @@ describe("the lane's own housekeeping", () => {
     const dir =
       `${root}/coverage/${COVERAGE_PROFILE_DIR}/workspace-unit/packages__bakery`;
     await Deno.mkdir(dir, { recursive: true });
-    await Deno.writeTextFile(`${dir}/broken.json`, "this is not a profile");
+    // A file that parses, so the conversion takes it as a finished profile
+    // rather than dropping it as one its writer never finished.
+    await Deno.writeTextFile(
+      `${dir}/broken.json`,
+      JSON.stringify({ this: "is not a profile" }),
+    );
     const bare: Suite = {
       id: "workspace-unit",
       recordSurfaces: [{ kind: "unit", scope: "bakery" }],
@@ -3435,7 +3440,12 @@ describe("converting what a lane collected", () => {
     const dir =
       `${root}/coverage/${COVERAGE_PROFILE_DIR}/workspace-unit/packages__bakery`;
     await Deno.mkdir(dir, { recursive: true });
-    await Deno.writeTextFile(`${dir}/broken.json`, "this is not a profile");
+    // A file that parses, so the conversion takes it as a finished profile
+    // rather than dropping it as one its writer never finished.
+    await Deno.writeTextFile(
+      `${dir}/broken.json`,
+      JSON.stringify({ this: "is not a profile" }),
+    );
     const converted = await convertCoverage({ ...options(root) });
     expect(converted.ok).toBe(false);
     expect(converted.reports).toEqual(["workspace-unit/packages__bakery"]);
