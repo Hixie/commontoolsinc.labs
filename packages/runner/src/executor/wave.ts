@@ -3090,15 +3090,14 @@ export class WaveAccumulator
     actingSession?: string;
     capabilityRef: string;
   } | undefined {
-    return context.acting !== undefined && context.capabilityRef !== undefined
-      ? {
-        actingPrincipal: context.acting.user,
-        ...(context.acting.session !== undefined
-          ? { actingSession: context.acting.session }
-          : {}),
-        capabilityRef: context.capabilityRef,
-      }
-      : undefined;
+    const carriage = delegatedCarriageOf(context);
+    return carriage === undefined ? undefined : {
+      actingPrincipal: carriage.acting.user,
+      ...(carriage.acting.session !== undefined
+        ? { actingSession: carriage.acting.session }
+        : {}),
+      capabilityRef: carriage.capabilityRef,
+    };
   }
 
   /** The foreign-batch grouping key — (space, acting identity, grant).
