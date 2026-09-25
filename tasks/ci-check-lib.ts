@@ -10,7 +10,6 @@
 // Config (from environment)
 //
 
-
 export const REPO = Deno.env.get("GITHUB_REPOSITORY") ?? "commonfabric/labs";
 
 export const TOKEN = Deno.env.get("GITHUB_TOKEN");
