@@ -877,13 +877,19 @@ export class SpaceServer implements TransactionSealDestination {
    * session shape: a key with no demander pair — so a warmed,
    * SESSIONLESS tenure structure-loads the staged piece and derives it.
    * Tenure-scoped by construction: the map dies with this SpaceServer
-   * at park (a fresh activation builds a fresh instance), and
-   * recompute-on-demand is the ruled recovery posture for anything a
-   * dying tenure drops (serving-loop.md §6 step 2). */
+   * at park (a fresh activation builds a fresh instance). The requests
+   * behind it outlive a tenure that ends without serving them; see
+   * `#warmNotices`. */
   readonly #warmDemandKeys = new Map<
     string,
     { id: string; scopeKey: string }
   >();
+
+  /** The warm-marked notices behind `#warmDemandKeys`, in arrival order:
+   * each notice that captured a key the ones before it had not. The host
+   * hands them to a successor when this tenure ends without serving
+   * them. */
+  readonly #warmNotices: AdmittedCommitNotice[] = [];
 
   /**
    * Count of push-growth demand wakes, bumped once per
@@ -1280,6 +1286,12 @@ export class SpaceServer implements TransactionSealDestination {
    * re-evaluation of the space's ACTIVE criteria on it. */
   get whenParked(): Promise<void> {
     return this.#parked.promise;
+  }
+
+  /** The warm-marked notices behind this tenure's warm demand, in arrival
+   * order; a notice whose every key an earlier one captured is omitted. */
+  get warmNotices(): readonly AdmittedCommitNotice[] {
+    return this.#warmNotices;
   }
 
   /** Store head minus W — the per-space input to §7's watermarkLag. */
@@ -1805,7 +1817,10 @@ export class SpaceServer implements TransactionSealDestination {
           captured = true;
         }
       }
-      if (captured) this.noteDemandChanged("warm");
+      if (captured) {
+        this.#warmNotices.push(record);
+        this.noteDemandChanged("warm");
+      }
     }
     this.#feed.push(record);
     if (
