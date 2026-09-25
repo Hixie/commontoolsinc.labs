@@ -133,6 +133,13 @@ async function readMember(
 ): Promise<Member | undefined> {
   const memberDir = path.resolve(root, memberPath);
   const tasks = await memberTasks(memberDir);
+  if (tasks.browserTest && tasks.browserPaths.length === 0) {
+    throw new Error(
+      `\`${memberPath}\`'s \`browser-test\` task names no files the ` +
+        `topology can read. Write it as a \`deno run\` of its runner followed ` +
+        `by the paths or globs it runs.`,
+    );
+  }
   const whole = tasks.present && tasks.denoHalf &&
     tasks.denoTest === undefined;
   if (whole !== runsWhole.has(memberPath)) {
@@ -179,7 +186,7 @@ async function readMember(
   member.files = (await memberTestFiles(memberDir, tasks.denoTest))
     .map(relative);
   member.run = tasks.denoTest;
-  if (tasks.browserPaths.length > 0) {
+  if (tasks.browserTest) {
     // The browser unit is one unit rather than one per file, so without
     // this a member that splits its halves by a name — `*.browser.test.ts`
     // — is a member whose browser files no suite claims. They are the

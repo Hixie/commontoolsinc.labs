@@ -540,6 +540,23 @@ describe("running a member that cannot be handed a subset", () => {
     ]);
   });
 
+  it("throws for a browser half whose task names no files it can read", async () => {
+    const root = await workspace({
+      "./packages/bakery": {
+        tasks: {
+          test: { dependencies: ["deno-test", "browser-test"] },
+          "deno-test": "deno test --allow-read --ignore='**/*.browser.test.ts'",
+          "browser-test": "deno run -A ../deno-web-test/cli.ts",
+        },
+        files: ["test/glaze.test.ts", "test/oven.browser.test.ts"],
+      },
+    });
+    await expect(loadUnitSuites(root)).rejects.toThrow(
+      "`./packages/bakery`'s `browser-test` task names no files the " +
+        "topology can read.",
+    );
+  });
+
   it("leaves out a file the Deno-only half ignores for another suite", async () => {
     // Another suite runs `integration/`, so the ignore that keeps it out
     // of the `deno test` run does not make it the browser half's.
