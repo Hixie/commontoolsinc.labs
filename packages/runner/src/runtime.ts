@@ -2104,10 +2104,11 @@ export class Runtime {
    * Wait until the runtime is fully settled: the scheduler is idle, storage is
    * synced, AND every in-flight async builtin operation (`trackAsyncWork`) has
    * completed — including the reactive cascade its result writeback triggers.
-   * This is the "wait for everything, including async builtin I/O" companion to
-   * `idle()` (which intentionally returns before that I/O so handlers don't
-   * block on the network). Bounded: a builtin whose result re-triggers more
-   * async work converges in a few rounds.
+   * Re-checked until all of those hold at once, because each can restart the
+   * others. This is the "wait for everything, including async builtin I/O"
+   * companion to `idle()` (which intentionally returns before that I/O so
+   * handlers don't block on the network). Bounded: a builtin whose result
+   * re-triggers more async work converges in a few rounds.
    */
   async settled(maxRounds = 50): Promise<void> {
     for (let round = 0; round < maxRounds; round++) {
@@ -2118,6 +2119,9 @@ export class Runtime {
       // rechecks scheduler work whenever pending commits drain.
       await this.scheduler.idleWithPendingCommits();
       await this.storageManager.synced();
+      // Work queued while storage synced is work the barrier above has
+      // stopped watching.
+      if (!this.scheduler.isIdleWithPendingCommits()) continue;
       if (this.#pendingAsyncWork.size === 0) return;
       await Promise.allSettled([...this.#pendingAsyncWork.keys()]);
     }
@@ -2161,6 +2165,7 @@ export class Runtime {
     while (!signal?.aborted) {
       await this.scheduler.idleWithPendingCommits();
       await this.storageManager.synced();
+      if (!this.scheduler.isIdleWithPendingCommits()) continue;
       const relevant = [...this.#pendingAsyncWork]
         .filter(([, key]) => key === undefined || key === ownerKey)
         .map(([promise]) => promise);
