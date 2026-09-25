@@ -238,8 +238,9 @@ A batch that ended badly is written as a failure, and a test in it
 failing is enough to end it badly.
 
 The job that scores a run's coverage writes what the run's tests covered
-the same way, and it is a check no lane can be asked to run, since it
-reads what every lane produced. Each figure is a record named
+the same way. It is a check no lane can be asked to run, since it reads
+what every lane produced, so it records no test; what it writes are
+measurements, like a lane's, rather than records of a check. Each figure is a record named
 `ci-lane coverage group <group>` or `ci-lane coverage set <suite>/<member>`
 whose `durationMs` holds a count of uncovered lines, and a run whose
 pattern compile cache was not restored also carries

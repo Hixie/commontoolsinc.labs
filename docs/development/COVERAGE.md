@@ -920,9 +920,9 @@ was removed reads as a valid baseline unchanged. The file records each metric's
 uncovered-line count under a `durationSeconds` key, for the same reason the
 artifact keeps its name.
 
-The same figures also go to the record store, which is where every reader
-outside the ratchet takes them from; "Coverage figures in the record store"
-below says how.
+The same figures also go into the run's record artifacts, and from there to
+the record store; every reader outside the ratchet takes them from one of the
+two, as "Coverage figures in the record store" below says.
 
 A later PR run reads its ratchet baseline from the `perf-metrics` artifact of the
 `main` run for the base-branch commit it merged, or of the nearest ancestor of

@@ -205,8 +205,7 @@ export type CompileCacheKey = CompileCacheFamily;
 export type CompileCacheState = "cold" | "warm";
 
 /**
- * Compile cache states for a run, by the job family or lane cache they
- * describe. An absent key is unknown (a run whose cache state was never
+ * Compile cache states for a run, by the job family they describe. An absent key is unknown (a run whose cache state was never
  * recorded or could not be read) and is treated as not-cold: it is not
  * excluded from the coverage ratchet baseline.
  */

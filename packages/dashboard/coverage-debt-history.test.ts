@@ -316,12 +316,7 @@ describe("coverage-debt-history", () => {
 
     it("takes a re-run's newest attempt, and reads today again once one lands", async () => {
       const store = new CoverageDebtStore(file);
-      const first: CoverageRun = {
-        day: "2026-09-02",
-        runId: 41,
-        lines: 78060,
-        cold: true,
-      };
+      const first: CoverageRun = { day: "2026-09-02", runId: 41, lines: 78060 };
       expect(
         (await refreshCoverageDebt({
           days: 1,
@@ -329,13 +324,14 @@ describe("coverage-debt-history", () => {
           source: fakeCoverageStore([first]),
           store,
         })).samples,
-      ).toEqual([]);
+      ).toEqual([{ day: "2026-09-02", uncoveredLines: 78060, runId: 41 }]);
+      // Both attempts measured, and the one listed first is the older.
       const history = await refreshCoverageDebt({
         days: 1,
         now: NOW,
         source: fakeCoverageStore([
           first,
-          { ...first, attempt: 2, lines: 78166, cold: false },
+          { ...first, attempt: 2, lines: 78166 },
         ]),
         store,
       });

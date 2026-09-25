@@ -235,8 +235,8 @@ CF_TEST_RECORDS_DIR=<spool> deno run -A tasks/coverage-report.ts \
 ```
 
 It writes the figures as measurements into the spool
-`CF_TEST_RECORDS_DIR` names, and with that variable unset it writes nothing
-and only prints its summary. The job's shipping step carries them to the
+`CF_TEST_RECORDS_DIR` names, and with that variable unset it records no
+figure and only reports its summary. The job's shipping step carries them to the
 record store under the context the relay composes for the job, which names
 the commit and the run, so the measurements carry neither. The publisher
 collects the baselines from the objects it folds, each against the commit
@@ -1110,8 +1110,9 @@ itself.
   measures whole however much of the corpus it ran. That is a different
   number from the source group over the same member, which is that
   member measured by every test in the run and which a selected run only
-  samples; `measuredSetCoverageMetric` in `tasks/ci-check-lib.ts` is the
-  one name the producer and the reader share. The full run on the
+  samples; `coverageRecords` and `coverageFiguresOf` in
+  `@commonfabric/test-support/records` are the one naming the producer and
+  the reader share. The full run on the
   default branch is what publishes it, so this note is silent until the
   lanes carry that run.
 - **A new test that turned out to be flaky.** A test this run ran, the

@@ -57,7 +57,8 @@ export const COVERAGE_STALE_DAYS = 5;
  * until the `main` run for a landed commit has finished and the relay has
  * stored that run's coverage measurements, which takes longer than this, so
  * five minutes tracks the number about as closely as the number can be known.
- * A refresh that finds nothing new costs one listing.
+ * A refresh that finds nothing new costs a listing for each of today and
+ * yesterday.
  */
 export const COVERAGE_REFRESH_MS = 5 * 60_000;
 

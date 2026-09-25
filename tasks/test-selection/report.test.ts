@@ -93,7 +93,7 @@ function both(...sets: readonly CoverageFigures[]): CoverageFigures {
   return {
     groups: new Map(sets.flatMap((set) => [...set.groups])),
     sets: new Map(sets.flatMap((set) => [...set.sets])),
-    cold: false,
+    cold: sets.some((set) => set.cold),
   };
 }
 

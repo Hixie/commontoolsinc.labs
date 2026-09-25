@@ -56,7 +56,7 @@ export function coverageObject(run: CoverageRun): string {
     env: "ci",
     ci: {
       workflowRunId: String(run.runId),
-      runAttempt: 1,
+      runAttempt: run.attempt ?? 1,
       workflow: "CI",
       job: "Coverage Check",
       event: run.event ?? "push",
