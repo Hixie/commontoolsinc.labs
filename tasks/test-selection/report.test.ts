@@ -236,30 +236,72 @@ describe("report", () => {
   });
 
   describe("excusedIn()", () => {
-    /** A record a run holds, under the identity given. */
-    const named = (test: TestIdentity): TestRecord => ({
-      line: "record",
-      test,
-      outcome: "pass",
-      durationMs: 0,
-    });
+    /** A record a report holds, under the identity given. */
+    const named = (
+      test: TestIdentity,
+      outcome: TestRecord["outcome"] = "pass",
+    ): TestRecord => ({ line: "record", test, outcome, durationMs: 0 });
+
+    /** The record a lane writes for a test whose failures it excused. */
+    const excusing = (name: string): TestRecord =>
+      named({ ...laneBatch, n: excusedMeasurementName(key(name)) });
 
     it("returns every identity a lane recorded excusing", () => {
-      expect(excusedIn([
-        named({ ...laneBatch, n: excusedMeasurementName(key("kneads")) }),
-        named({ ...laneBatch, n: excusedMeasurementName(key("proves")) }),
+      expect(excusedIn([[
+        excusing("kneads"),
+        excusing("proves"),
         named(laneBatch),
-        named(test("kneads")),
-      ])).toEqual(new Set([key("kneads"), key("proves")]));
+        named(test("kneads"), "fail"),
+      ]])).toEqual(new Set([key("kneads"), key("proves")]));
     });
 
     it("returns nothing from a test that happens to carry the name", () => {
       // Only a lane writes about itself, and it writes under its own
       // surface.
 
-      expect(excusedIn([
+      expect(excusedIn([[
         named(test(excusedMeasurementName(key("kneads")))),
-      ])).toEqual(new Set());
+      ]])).toEqual(new Set());
+    });
+
+    it("returns an identity every report that failed it excused", () => {
+      // Two lanes both ran `kneads`, and a third report never failed it.
+
+      expect(excusedIn([
+        [excusing("kneads"), named(test("kneads"), "fail")],
+        [excusing("kneads"), named(test("kneads"), "fail")],
+        [named(test("kneads"))],
+      ])).toEqual(new Set([key("kneads")]));
+    });
+
+    it("leaves out an identity one report failed without excusing", () => {
+      // The second lane failed the run for `kneads`, whatever the first
+      // did.
+
+      expect(excusedIn([
+        [excusing("kneads"), named(test("kneads"), "fail")],
+        [named(test("kneads"), "fail"), excusing("proves")],
+      ])).toEqual(new Set([key("proves")]));
+    });
+
+    it("leaves out an identity a re-run attempt of a lane failed without excusing, in either order", () => {
+      // Each attempt of a lane job writes a report of its own, so a re-run
+      // is two reports of one lane.
+
+      const excusedAttempt = [
+        excusing("kneads"),
+        named(test("kneads"), "fail"),
+      ];
+      const failedAttempt = [named(test("kneads"), "fail")];
+      expect(excusedIn([excusedAttempt, failedAttempt])).toEqual(new Set());
+      expect(excusedIn([failedAttempt, excusedAttempt])).toEqual(new Set());
+    });
+
+    it("returns an identity one attempt excused and a re-run passed", () => {
+      expect(excusedIn([
+        [excusing("kneads"), named(test("kneads"), "fail")],
+        [named(test("kneads"))],
+      ])).toEqual(new Set([key("kneads")]));
     });
   });
 

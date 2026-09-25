@@ -293,25 +293,25 @@ export async function outcomesFromArtifacts(
   runId: number,
   listed?: readonly Artifact[],
 ): Promise<RunOutcomes | undefined> {
-  const records = await recordsFromArtifacts(runId, listed);
-  return records === undefined ? undefined : outcomesOf(records);
+  const reports = await reportsFromArtifacts(runId, listed);
+  return reports === undefined ? undefined : outcomesOf(reports.flat());
 }
 
 /**
- * Every record in one run's `test-records-*` artifacts, as
+ * The records in each of one run's `test-records-*` artifacts, as
  * `outcomesFromArtifacts` reads them, or nothing where one of them could
- * not be read.
+ * not be read. Each artifact is one job's attempt, and so one report.
  */
-export async function recordsFromArtifacts(
+export async function reportsFromArtifacts(
   runId: number,
   listed?: readonly Artifact[],
-): Promise<TestRecord[] | undefined> {
+): Promise<TestRecord[][] | undefined> {
   const artifacts = (listed ?? await fetchArtifactsForRun(runId))
     .filter((artifact) =>
       artifact.name.startsWith("test-records-") &&
       coverageArtifactAttempt(artifact.name) === undefined && !artifact.expired
     );
-  const records: TestRecord[] = [];
+  const reports: TestRecord[][] = [];
   for (let at = 0; at < artifacts.length; at += ARTIFACTS_AT_ONCE) {
     const batch = artifacts.slice(at, at + ARTIFACTS_AT_ONCE);
     for (const read of await Promise.all(batch.map(readArtifact))) {
@@ -326,10 +326,10 @@ export async function recordsFromArtifacts(
         );
         return undefined;
       }
-      records.push(...read);
+      reports.push(read);
     }
   }
-  return records;
+  return reports;
 }
 
 /**
@@ -472,13 +472,16 @@ async function manifestOfTheirRun(
   ran: StoredRun | undefined,
   resolve: (options: { at: string }) => Promise<ManifestFetch>,
 ): Promise<ManifestFetch> {
-  if (ran !== undefined && !ran.laned) {
+  if (ran === undefined) {
+    return { absent: "the store holds no records of the pull request's run" };
+  }
+  if (!ran.laned) {
     return {
       absent: "the pull request's own run did not run in lanes, so no " +
         "manifest decided what it ran",
     };
   }
-  if (ran?.commit === undefined) {
+  if (ran.commit === undefined) {
     return { absent: "the pull request's own run names no commit it tested" };
   }
   const at = await committedAt(ran.commit);
@@ -688,9 +691,9 @@ export async function main(
   }
 
   const listedHere = await fetchArtifactsForRun(run.id);
-  const recordsHere = await recordsFromArtifacts(run.id, listedHere);
-  const current = outcomesOf(recordsHere ?? []);
-  if (recordsHere === undefined || current.size === 0) {
+  const reportsHere = await reportsFromArtifacts(run.id, listedHere);
+  const current = outcomesOf(reportsHere?.flat() ?? []);
+  if (reportsHere === undefined || current.size === 0) {
     console.log(
       `Nothing readable from run ${run.id}, so there is nothing to say.`,
     );
@@ -741,7 +744,7 @@ export async function main(
     previous,
     pullRequest: view,
     nonGating: new Map(
-      [...excusedIn(recordsHere)].map((key) => [key, undefined]),
+      [...excusedIn(reportsHere)].map((key) => [key, undefined]),
     ),
     coverage: await coverageOfRun(run.id, listedHere),
     coverageBefore: await coverageOfRun(previousRun.id, listedThere),

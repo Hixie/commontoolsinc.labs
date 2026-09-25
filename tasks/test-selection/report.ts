@@ -120,15 +120,33 @@ export function outcomesOf(
  * The identities a run's lanes recorded excusing: those whose failures
  * the run did not fail for. A run that recorded none excused nothing,
  * which is every run whose tests did not run in lanes.
+ *
+ * `reports` holds one list of records per report, and every attempt of
+ * every job writes a report of its own. A re-run lane can excuse in one
+ * attempt a test it failed in another without excusing, and that other
+ * attempt failed the run for it. So an identity is excused only where
+ * some report excused it and every report that failed it excused it.
  */
-export function excusedIn(records: Iterable<TestRecord>): Set<string> {
+export function excusedIn(
+  reports: Iterable<Iterable<TestRecord>>,
+): Set<string> {
   const excused = new Set<string>();
-  for (const record of records) {
-    if (!isLaneMeasurement(record.test)) continue;
-    const key = excusedMeasurement(record.test.n);
-    if (key !== undefined) excused.add(key);
+  const unexcused = new Set<string>();
+  for (const records of reports) {
+    const failed = new Set<string>();
+    const excusing = new Set<string>();
+    for (const record of records) {
+      if (isLaneMeasurement(record.test)) {
+        const key = excusedMeasurement(record.test.n);
+        if (key !== undefined) excusing.add(key);
+      } else if (record.outcome === "fail") {
+        failed.add(testIdentityKey(record.test));
+      }
+    }
+    for (const key of excusing) excused.add(key);
+    for (const key of failed) if (!excusing.has(key)) unexcused.add(key);
   }
-  return excused;
+  return new Set([...excused].filter((key) => !unexcused.has(key)));
 }
 
 /**

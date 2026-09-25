@@ -18,6 +18,7 @@ import type { TestRecord } from "@commonfabric/test-support/records";
 import type { ManifestFetch } from "./test-selection/store.ts";
 import type { RunOutcomes } from "./test-selection/report.ts";
 import { excusedMeasurementName } from "./lane-measurement.ts";
+import { ciSubmissionsPrefix } from "./test-records-config.ts";
 import { buildZip } from "./zip-testing.ts";
 import {
   committedAt,
@@ -31,6 +32,7 @@ import {
   pullRequestHead,
   pullRequestOf,
   recordsInDirectory,
+  reportsFromArtifacts,
   runAt,
   runGit,
   runPartitions,
@@ -182,6 +184,15 @@ function tested(commit: string): RunContext {
   };
 }
 
+/**
+ * The name of an object the store holds for a run in the continuous
+ * integration provider, under the day `day` its attempt started.
+ */
+function stored(day: string, stem: string): string {
+  return `${ciSubmissionsPrefix()}/v${RECORD_SCHEMA_VERSION}/${day}/` +
+    `${stem}.ndjson`;
+}
+
 /** A record a lane wrote about itself, which says the run ran in lanes. */
 const laneMeasurement: TestRecord = {
   line: "record",
@@ -292,8 +303,15 @@ interface World {
   resolved?: string[];
 
   /**
+   * Whether the pull request has a run of its own, run 3 at its head.
+   * Where a case does not say, it has one exactly when the case gives
+   * that run's records.
+   */
+  theirRun?: boolean;
+
+  /**
    * What the pull request's own run recorded, as the store holds it, where
-   * a case gives that run. It is run 3, at the pull request's head.
+   * the case gives that run's records.
    */
   theirRecords?: readonly (TestRecord | RunContext)[];
 }
@@ -340,7 +358,8 @@ async function reporting(
     }
     if (url.includes("/actions/workflows/")) {
       const sha = new URL(url).searchParams.get("head_sha");
-      const theirs = world.theirRecords === undefined ? [] : [workflowRun({
+      const theirRun = world.theirRun ?? world.theirRecords !== undefined;
+      const theirs = !theirRun ? [] : [workflowRun({
         id: 3,
         head_sha: "b".repeat(40),
         event: "pull_request",
@@ -408,14 +427,17 @@ async function reporting(
         })),
       );
     }
-    // The store, which holds the pull request's own run where a case
-    // gives one, and otherwise nothing, so that run reads as one nothing
-    // is known about.
+    // The store, which holds the pull request's own run under the day it
+    // started where a case gives its records, and otherwise nothing, so
+    // that run reads as one nothing is known about.
     if (url.includes("/storage/v1/")) {
+      const prefix = new URL(url).searchParams.get("prefix") ?? "";
+      const names = world.theirRecords === undefined
+        ? []
+        : [stored("2026/09/07", "run-3-Test")];
       return Response.json({
-        items: world.theirRecords === undefined || !url.includes("run-3-")
-          ? []
-          : [{ name: "labs/test-records/submissions/ci/v1/run-3-Test.ndjson" }],
+        items: names.filter((name) => name.startsWith(prefix))
+          .map((name) => ({ name })),
       });
     }
     return new Response(
@@ -658,19 +680,26 @@ describe("post-main-report", () => {
 
   describe("outcomesFromStore()", () => {
     /**
-     * Answers a store listing with these object names, each one record,
-     * under a context naming the commit given for it where one is.
+     * Answers each store listing with the objects among these whose names
+     * are under the prefix it asks for, each one record, under a context
+     * naming the commit given for it where one is. An object is named for
+     * its day, as `stored()` names it.
      */
     async function fromStore(
       names: readonly string[],
       commits: Readonly<Record<string, string>> = {},
+      run: WorkflowRun = workflowRun({ id: 5 }),
     ): Promise<StoredRun | undefined> {
       const original = globalThis.fetch;
       globalThis.fetch = ((input: string | URL | Request) => {
         const url = typeof input === "string" ? input : input.toString();
         if (url.includes("/storage/v1/")) {
+          const prefix = new URL(url).searchParams.get("prefix") ?? "";
           return Promise.resolve(
-            Response.json({ items: names.map((name) => ({ name })) }),
+            Response.json({
+              items: names.filter((name) => name.startsWith(prefix))
+                .map((name) => ({ name })),
+            }),
           );
         }
         const commit = commits[url.slice(url.lastIndexOf("/") + 1)];
@@ -685,43 +714,67 @@ describe("post-main-report", () => {
         );
       }) as typeof fetch;
       try {
-        return await outcomesFromStore(workflowRun({ id: 5 }));
+        return await outcomesFromStore(run);
       } finally {
         globalThis.fetch = original;
       }
     }
 
     it("folds the records of every object the run wrote", async () => {
-      const outcomes = await fromStore([
-        "labs/test-records/submissions/ci/v1/2026/09/07/run-5-Test.ndjson",
-      ]);
+      const outcomes = await fromStore([stored("2026/09/07", "run-5-Test")]);
       expect(outcomes?.outcomes.get('["unit","bakery","kneads"]'))
         .toEqual({ passed: 1, failed: 0 });
     });
 
+    it("reads each object once where a re-run's attempts are under two days", async () => {
+      // The run was created one day and re-run the next, so each attempt
+      // wrote its object under its own day, and both days are listed.
+
+      const outcomes = await fromStore(
+        [
+          stored("2026/09/07", "run-5-Test-1"),
+          stored("2026/09/08", "run-5-Test-2"),
+        ],
+        {},
+        workflowRun({
+          id: 5,
+          created_at: "2026-09-07T23:00:00Z",
+          run_started_at: "2026-09-08T01:00:00Z",
+        }),
+      );
+      expect(outcomes?.outcomes.get('["unit","bakery","kneads"]'))
+        .toEqual({ passed: 2, failed: 0 });
+    });
+
     it("names the commit every report of the run tested", async () => {
-      const stored = await fromStore(
-        ["run-5-Test-1.ndjson", "run-5-Test-2.ndjson"],
+      const found = await fromStore(
+        [
+          stored("2026/09/07", "run-5-Test-1"),
+          stored("2026/09/07", "run-5-Test-2"),
+        ],
         {
           "run-5-Test-1.ndjson": "d".repeat(40),
           "run-5-Test-2.ndjson": "d".repeat(40),
         },
       );
-      expect(stored?.commit).toBe("d".repeat(40));
-      expect(stored?.outcomes.get('["unit","bakery","kneads"]'))
+      expect(found?.commit).toBe("d".repeat(40));
+      expect(found?.outcomes.get('["unit","bakery","kneads"]'))
         .toEqual({ passed: 2, failed: 0 });
     });
 
     it("names no commit where the reports name several", async () => {
-      const stored = await fromStore(
-        ["run-5-Test-1.ndjson", "run-5-Test-2.ndjson"],
+      const found = await fromStore(
+        [
+          stored("2026/09/07", "run-5-Test-1"),
+          stored("2026/09/07", "run-5-Test-2"),
+        ],
         {
           "run-5-Test-1.ndjson": "d".repeat(40),
           "run-5-Test-2.ndjson": "e".repeat(40),
         },
       );
-      expect(stored?.outcomes.size).toBe(1);
-      expect(stored?.commit).toBeUndefined();
+      expect(found?.outcomes.size).toBe(1);
+      expect(found?.commit).toBeUndefined();
     });
 
     // A run whose records never arrived is a run nothing is known about,
@@ -795,6 +848,46 @@ describe("post-main-report", () => {
     // one an earlier attempt correctly made.
     it("says nothing at all when one artifact could not be read", async () => {
       expect(await unreadable()).toBeUndefined();
+    });
+  });
+
+  describe("reportsFromArtifacts()", () => {
+    it("returns each attempt's records apart, and none of the coverage upload's", async () => {
+      // A lane re-run is two artifacts, and what one attempt excused is
+      // only an excusal of what that attempt failed.
+
+      const zips: Record<number, Uint8Array> = {
+        5: await recordsZip([excusing("kneads"), record("kneads", "fail")]),
+        7: await recordsZip([record("kneads", "fail")]),
+      };
+      const original = globalThis.fetch;
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const id = Number(url.match(/artifacts\/(\d+)\/zip/)![1]);
+        return Promise.resolve(
+          new Response(zips[id]! as BodyInit, { status: 200 }),
+        );
+      }) as typeof fetch;
+      const upload = (id: number, name: string) => ({
+        id,
+        name,
+        size_in_bytes: 1,
+        expired: false,
+      });
+      try {
+        expect(
+          await reportsFromArtifacts(7, [
+            upload(5, "test-records-lane-a1"),
+            upload(7, "test-records-lane-a2"),
+            upload(9, "test-records-coverage-a2"),
+          ]),
+        ).toEqual([
+          [excusing("kneads"), record("kneads", "fail")],
+          [record("kneads", "fail")],
+        ]);
+      } finally {
+        globalThis.fetch = original;
+      }
     });
   });
 
@@ -974,6 +1067,27 @@ describe("post-main-report", () => {
       }));
       expect(written[0]!.body).toContain(
         "This pull request ran it, and it passed there",
+      );
+    });
+
+    it("says nothing about whether the pull request's own run ran the test where the store holds none of its records", async () => {
+      // The pull request's run is there to be found, and the relay has not
+      // shipped what it recorded, so no manifest is resolved for it either.
+
+      const resolved: string[] = [];
+      const written = await reporting(world({
+        suites,
+        theirRun: true,
+        manifests: { "2026-09-07T05:00:00.000Z": { manifest } },
+        resolved,
+      }));
+      expect(resolved).toEqual([]);
+      expect(written[0]!.body).toContain(
+        "The pull request's own run could not be read, so there is nothing " +
+          "to say about whether it ran this test.",
+      );
+      expect(written[0]!.body).not.toContain(
+        "This pull request did not run it",
       );
     });
 
