@@ -359,8 +359,8 @@ export interface Folding {
  * - Score is computed from the combined inputs as of the day the manifest
  *   was written, which is the date of every other score in it.
  *
- * A unit holding one identity keeps that identity's entry. A test the manifest
- * lists twice counts once.
+ * A unit holding one identity keeps that identity's entry. Each identity is
+ * taken to be listed once, as `plan()` reduces the corpus before folding it.
  */
 export function foldWholeUnits(
   manifest: Manifest,
@@ -377,9 +377,7 @@ export function foldWholeUnits(
       entries.push(entry);
       continue;
     }
-    const group = grouped.get(unit) ?? [];
-    if (group.some((member) => testIdentityKey(member.test) === key)) continue;
-    grouped.set(unit, [...group, entry]);
+    grouped.set(unit, [...grouped.get(unit) ?? [], entry]);
   }
   const members = new Map<string, ManifestEntry[]>();
   const standsFor = new Map<string, string>();
@@ -595,6 +593,20 @@ function place(
 }
 
 /**
+ * Helper for `plan()`, which reduces an identity `entries` lists more than
+ * once to the last of its rows, in the place of the first. Every pass then
+ * reads the one row, so no two of them can disagree about what the
+ * identity costs or scores.
+ */
+function oncePerIdentity(
+  entries: readonly ManifestEntry[],
+): ManifestEntry[] {
+  const byKey = new Map<string, ManifestEntry>();
+  for (const entry of entries) byKey.set(testIdentityKey(entry.test), entry);
+  return [...byKey.values()];
+}
+
+/**
  * Works out what runs, and where.
  *
  * Four passes in order. Mandatory first, which can in principle put a
@@ -617,7 +629,10 @@ function place(
  * bounded by neither, and reports how far past a lane it went.
  */
 export function plan(input: PlanInput): Plan {
-  const folding = foldWholeUnits(input.manifest, input.wholeUnits);
+  const folding = foldWholeUnits(
+    { ...input.manifest, entries: oncePerIdentity(input.manifest.entries) },
+    input.wholeUnits,
+  );
   const manifest: Manifest = { ...input.manifest, entries: folding.entries };
   /** The key under which the packer places an identity. */
   const placedAs = (key: string): string => folding.standsFor.get(key) ?? key;
@@ -644,10 +659,9 @@ export function plan(input: PlanInput): Plan {
 
   const bound = input.boundSeconds ??
     (everything ? FULL_LANE_BOUND_SECONDS : LANE_BOUND_SECONDS);
-  const byKey = new Map<string, ManifestEntry>();
-  for (const entry of manifest.entries) {
-    byKey.set(testIdentityKey(entry.test), entry);
-  }
+  const byKey = new Map(
+    manifest.entries.map((entry) => [testIdentityKey(entry.test), entry]),
+  );
 
   // What runs whatever anything else says. A full run is the case where
   // that is the whole corpus, which is why it needs no pass of its own:
@@ -865,13 +879,9 @@ export function plan(input: PlanInput): Plan {
 
   // Density: descending value per second of what each identity would cost
   // the lane it went in, which the value floor points at the cheap tail.
-  // An identity the manifest carries twice is offered once, as the entry
-  // the mandatory pass would have placed.
   fillDensest(
     pass("density", FILL_VALUE_SHARE + FILL_DENSITY_SHARE),
-    remaining().filter((entry) =>
-      byKey.get(testIdentityKey(entry.test)) === entry
-    ),
+    remaining(),
   );
 
   // Exploration: a draw over what the value ordering did not pick, so

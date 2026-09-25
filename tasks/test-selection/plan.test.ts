@@ -1365,6 +1365,23 @@ describe("an identity a manifest carries twice", () => {
     const placed = keysOf(run(manifest)).filter((k) => k === key);
     expect(placed.length).toBe(1);
   });
+
+  it("places it as the last of its rows, whatever the first one scores", () => {
+    // The value pass orders by score, so a first row scoring far above
+    // the last would be the one it reached, where the density pass would
+    // reach the last.
+
+    const first = sampleEntry({ k: "unit", s: "memory", n: "case 0" }, {
+      unit: "packages/memory/test/case-0.test.ts",
+      score: 0.9,
+    });
+    const last = { ...first, score: 0.01 };
+    const placed = selected(
+      run(sampleManifest({ entries: [first, ...entries(3).slice(1), last] })),
+    ).filter((s) => s.entry.test.n === "case 0");
+    expect(placed.length).toBe(1);
+    expect(placed[0]!.entry).toBe(last);
+  });
 });
 
 describe("an identity the manifest does not carry", () => {
