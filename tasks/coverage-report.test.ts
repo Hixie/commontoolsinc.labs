@@ -21,7 +21,7 @@ import {
   coverageMetricForGroup,
   measuredSetCoverageMetric,
 } from "./ci-check-lib.ts";
-import type { CoverageDebtMetric } from "./coverage-metrics.ts";
+import { type CoverageDebtMetric, parseLcov } from "./coverage-metrics.ts";
 import {
   COMPILE_CACHE_STATE_FILE,
   COVERAGE_FAILURE_MARKER,
@@ -167,9 +167,29 @@ describe("coverage-report", () => {
       });
       try {
         const reports = await collectReports(root);
-        expect(reports.lcov.join("\n")).toContain("SF:/a.ts");
-        expect(reports.lcov.join("\n")).toContain("SF:/b.ts");
-        expect(reports.lcov.join("\n")).not.toContain("not a report");
+        expect([...reports.coverage.keys()].sort()).toEqual(["/a.ts", "/b.ts"]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("merges what two lanes measured of one file, line by line", async () => {
+      // Each report is read into the merge as it is found rather than
+      // joined with the others: a full run's reports joined are past the
+      // longest string a process can hold.
+
+      const root = await directoryOf({
+        "lane-1/lcov/sets/workspace-unit/packages_memory/coverage.lcov":
+          "SF:/a.ts\nDA:1,1\nDA:2,0\nend_of_record\n",
+        "lane-2/lcov/sets/runner-unit/packages_runner/coverage.lcov":
+          "SF:/a.ts\nDA:1,0\nDA:2,3\nend_of_record\n",
+      });
+      try {
+        const reports = await collectReports(root);
+        expect([...reports.coverage.get("/a.ts")!.lineHits]).toEqual([
+          [1, 1],
+          [2, 3],
+        ]);
       } finally {
         await Deno.remove(root, { recursive: true });
       }
@@ -226,7 +246,7 @@ describe("coverage-report", () => {
 
     it("returns nothing for a directory nothing was downloaded into", async () => {
       expect(await collectReports("/nonexistent-coverage-artifacts")).toEqual({
-        lcov: [],
+        coverage: new Map(),
         cold: false,
       });
     });
@@ -255,7 +275,7 @@ describe("coverage-report", () => {
 
         expect(
           await repositoryFigures(optionsFor(root, "artifacts"), {
-            lcov: [`SF:${alpha}\nDA:1,1\nDA:2,0\nend_of_record\n`],
+            coverage: parseLcov(`SF:${alpha}\nDA:1,1\nDA:2,0\nend_of_record\n`),
             cold: false,
           }),
         ).toEqual([
@@ -277,7 +297,7 @@ describe("coverage-report", () => {
       try {
         expect(
           await repositoryFigures(optionsFor(root, "artifacts"), {
-            lcov: ["TN:\nend_of_record\n"],
+            coverage: parseLcov("TN:\nend_of_record\n"),
             cold: false,
           }),
         ).toEqual([]);
@@ -296,7 +316,7 @@ describe("coverage-report", () => {
       try {
         expect(
           await repositoryFigures(optionsFor(root, "artifacts"), {
-            lcov: [],
+            coverage: new Map(),
             cold: false,
           }),
         ).toEqual([]);
