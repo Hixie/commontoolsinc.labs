@@ -13,7 +13,7 @@ import {
 } from "@commonfabric/data-model-schema";
 import { walkSchemaDocumentClosure } from "@commonfabric/data-model-schema/schema-closure";
 import { anySchema } from "@commonfabric/data-model-schema/schema-walk";
-import { isDID } from "@commonfabric/identity/did";
+import { isWellFormedDID } from "@commonfabric/identity/did";
 import {
   containsExternalSchemaRef,
   formatExternalSchemaRef,
@@ -93,6 +93,12 @@ import {
   getTransactionWriteAttempts,
 } from "../storage/transaction-inspection.ts";
 import { atomPropagationClass } from "./atom-classes.ts";
+import {
+  PRINCIPAL_CLAIM_KINDS,
+  principalClaimSpelling,
+  representsPrincipalSubject,
+  subjectResemblesPrincipal,
+} from "./represents-principal.ts";
 import {
   canonicalizeCfcMetadata,
   canonicalizeLogicalPath,
@@ -177,6 +183,7 @@ import {
 } from "./schema-refs.ts";
 import { createTrustResolver } from "./trust.ts";
 import {
+  CFC_ENFORCING_STRICTNESS,
   CFC_STRUCTURAL_PROVENANCE_SETUP_PROJECTION,
   type CfcAddress,
   cfcEnforcementStrictness,
@@ -810,10 +817,6 @@ const hasLabelValues = (label: IFCLabel): boolean =>
   (label.integrity?.length ?? 0) > 0;
 
 const CURRENT_PRINCIPAL_PLACEHOLDER_KEY = "__ctCurrentPrincipal";
-const CURRENT_PRINCIPAL_CLAIM_KINDS = new Set([
-  "authored-by",
-  "represents-principal",
-]);
 
 const isCurrentPrincipalPlaceholder = (value: unknown): boolean =>
   isObjectOrArray(value) && value[CURRENT_PRINCIPAL_PLACEHOLDER_KEY] === true;
@@ -884,44 +887,59 @@ const isCurrentPrincipalClaimAtom = (value: unknown): value is {
 } =>
   isObjectOrArray(value) &&
   typeof value.kind === "string" &&
-  CURRENT_PRINCIPAL_CLAIM_KINDS.has(value.kind);
+  PRINCIPAL_CLAIM_KINDS.has(value.kind);
 
-const hasLiteralDidCurrentPrincipalClaim = (value: unknown): boolean => {
-  if (Array.isArray(value)) {
-    return value.some(hasLiteralDidCurrentPrincipalClaim);
-  }
-  if (isCurrentPrincipalClaimAtom(value)) {
-    return isDID(value.subject);
-  }
-  if (isObjectOrArray(value)) {
-    return Object.values(value).some(hasLiteralDidCurrentPrincipalClaim);
-  }
-  return false;
-};
-
-const literalDidSubjectsForPrincipalClaim = (
+/**
+ * Why `value`, a schema's authored integrity, holds a principal claim a pattern
+ * may not write, or `undefined` when it holds none. Every spelling
+ * `principalClaimSpelling` recognizes, at any depth, must be the canonical
+ * object of exactly `kind` and `subject`, and its subject must be the runtime
+ * placeholder, `owner` when the schema declares one, or, without an owner, a
+ * literal that does not resemble a principal. So no reader of the canonical
+ * form, and no reader that normalizes some other spelling into it, resolves a
+ * pattern-written claim to a principal the runtime did not put there.
+ */
+const forgedPrincipalClaimReason = (
   value: unknown,
-  kind: string,
-  subjects: string[] = [],
-): string[] => {
+  owner: string | undefined,
+  path: readonly string[],
+): string | undefined => {
   if (Array.isArray(value)) {
     for (const entry of value) {
-      literalDidSubjectsForPrincipalClaim(entry, kind, subjects);
+      const reason = forgedPrincipalClaimReason(entry, owner, path);
+      if (reason !== undefined) return reason;
     }
-    return subjects;
+    return undefined;
   }
-  if (isCurrentPrincipalClaimAtom(value) && value.kind === kind) {
-    if (isDID(value.subject)) {
-      subjects.push(value.subject);
+  const spelling = principalClaimSpelling(value);
+  if (spelling === "string") {
+    return `current-principal integrity must be an object of kind and subject at /${
+      path.join("/")
+    }`;
+  }
+  if (spelling === "object") {
+    const claim = value as Record<string, unknown>;
+    if (Object.keys(claim).some((key) => key !== "kind" && key !== "subject")) {
+      return `current-principal integrity must carry only kind and subject at /${
+        path.join("/")
+      }`;
     }
-    return subjects;
+    const subject = claim.subject;
+    if (
+      isCurrentPrincipalPlaceholder(subject) ||
+      (owner !== undefined && subject === owner) ||
+      (owner === undefined && !subjectResemblesPrincipal(subject))
+    ) {
+      return undefined;
+    }
+    return `current-principal integrity subject must be runtime resolved at /${
+      path.join("/")
+    }`;
   }
   if (isObjectOrArray(value)) {
-    for (const entry of Object.values(value)) {
-      literalDidSubjectsForPrincipalClaim(entry, kind, subjects);
-    }
+    return forgedPrincipalClaimReason(Object.values(value), owner, path);
   }
-  return subjects;
+  return undefined;
 };
 
 const metadataAppliesToAnyPath = (
@@ -3896,18 +3914,27 @@ const currentPrincipalIntegrityReason = (
     const ownerPrincipal = isCurrentPrincipalPlaceholder(ownerPrincipalSpec)
       ? trustSnapshot.actingPrincipal
       : ownerPrincipalSpec;
-    if (!isDID(ownerPrincipal)) {
+    if (!isWellFormedDID(ownerPrincipal)) {
       return `ownerPrincipal must be a DID at /${path.join("/")}`;
+    }
+    const forgedOwnerClaim = forgedPrincipalClaimReason(
+      currentPrincipalValues,
+      ownerPrincipal,
+      path,
+    );
+    if (forgedOwnerClaim !== undefined) {
+      return forgedOwnerClaim;
     }
     const resolvedCurrentPrincipalValues = resolveCurrentPrincipalLabelValues(
       currentPrincipalValues,
       trustSnapshot.actingPrincipal,
     ) ?? currentPrincipalValues;
-    const representedOwners = literalDidSubjectsForPrincipalClaim(
-      resolvedCurrentPrincipalValues,
-      "represents-principal",
+    // Only an atom the label holds directly counts, since that is all a
+    // reader reads.
+    const representsOwner = resolvedCurrentPrincipalValues.some((atom) =>
+      representsPrincipalSubject(atom) === ownerPrincipal
     );
-    if (!representedOwners.some((subject) => subject === ownerPrincipal)) {
+    if (!representsOwner) {
       return `ownerPrincipal requires matching represents-principal integrity at /${
         path.join("/")
       }`;
@@ -3923,10 +3950,13 @@ const currentPrincipalIntegrityReason = (
   if (currentPrincipalValues.length === 0) {
     return undefined;
   }
-  if (hasLiteralDidCurrentPrincipalClaim(currentPrincipalValues)) {
-    return `current-principal integrity subject must be runtime resolved at /${
-      path.join("/")
-    }`;
+  const forgedClaim = forgedPrincipalClaimReason(
+    currentPrincipalValues,
+    undefined,
+    path,
+  );
+  if (forgedClaim !== undefined) {
+    return forgedClaim;
   }
   if (!currentPrincipalValues.some(hasCurrentPrincipalPlaceholder)) {
     return undefined;
@@ -6028,6 +6058,119 @@ function bindLinkCurrentPrincipalClauses<Clause>(
   return bound;
 }
 
+/**
+ * `label` with every principal claim removed from its integrity. A link write
+ * applies this to what the link value itself carries, its schema and its label
+ * view, because pattern code chooses both and the write check
+ * `currentPrincipalIntegrityReason` never sees either. A link takes principal
+ * claims only from its source's stored label and, for a source this
+ * transaction writes, from the schema entries those writes reach
+ * (`checkedSchemaPrincipalClaims`).
+ */
+const withoutPrincipalClaims = (label: IFCLabel): IFCLabel => {
+  const integrity = label.integrity;
+  if (integrity === undefined) return label;
+  const kept = integrity.filter((atom) =>
+    principalClaimSpelling(atom) === undefined
+  );
+  if (kept.length === integrity.length) return label;
+  return { ...label, integrity: kept.length > 0 ? kept : undefined };
+};
+
+/** The document a link write's source or target address names. */
+const linkDocument = (address: LinkWritePolicyInput["source"]) => ({
+  space: address.space,
+  id: address.id as URI,
+  scope: normalizeCellScope(address.scope),
+});
+
+/**
+ * The principal claims a link may take from `schema`, a schema this
+ * transaction holds for a document it has not persisted yet: the claims the
+ * deepest schema entry covering `path` declares itself, resolved against the
+ * acting principal, when a write in this transaction reaches that entry, and
+ * none otherwise. `currentPrincipalIntegrityReason` checks an entry only when a
+ * write reaches it, so an entry no write reaches holds claims nothing checked.
+ * A claim another entry contributes, through a copy or projection, is not
+ * taken either.
+ *
+ * Reaching the entry means the check ran, not that it passed. Only an
+ * enforcing mode aborts the commit when a check fails; under `observe` or
+ * `disabled` a failed check only keeps the source's own declared label from
+ * persisting, so there this returns none. It cannot ask whether the source's
+ * check passed instead: link labels are derived while the documents of the
+ * transaction are verified one at a time, and the source may not have been
+ * verified yet.
+ */
+const checkedSchemaPrincipalClaims = (
+  tx: IExtendedStorageTransaction,
+  schema: JSONSchema,
+  document: {
+    space: MemorySpace;
+    id: URI;
+    scope: ReturnType<typeof normalizeCellScope>;
+  },
+  path: readonly string[],
+): readonly CfcAtom[] => {
+  if (
+    cfcEnforcementStrictness(tx.getCfcState().enforcementMode) <
+      CFC_ENFORCING_STRICTNESS
+  ) {
+    return [];
+  }
+  const logicalPath = canonicalizeLogicalPath(path);
+  let match: ReturnType<typeof cfcSchemaEntries>[number] | undefined;
+  for (const entry of cfcSchemaEntries(schema)) {
+    if (
+      isPrefix(entry.path, logicalPath) &&
+      (match === undefined || match.path.length < entry.path.length)
+    ) {
+      match = entry;
+    }
+  }
+  if (
+    match === undefined || !isObjectOrArray(match.schema) ||
+    !isObjectOrArray(match.schema.ifc) ||
+    !ifcEntryAppliesToAttemptedWrite(
+      tx,
+      document,
+      match.path,
+      match.schema,
+      match.root,
+    )
+  ) {
+    return [];
+  }
+  const ifc = match.schema.ifc;
+  const declared = [
+    ...(Array.isArray(ifc.integrity) ? ifc.integrity : []),
+    ...(Array.isArray(ifc.addIntegrity) ? ifc.addIntegrity : []),
+  ];
+  return (resolveCurrentPrincipalLabelValues(
+    declared,
+    tx.getCfcState().trustSnapshot?.actingPrincipal,
+  ) ?? []).filter((atom) => principalClaimSpelling(atom) !== undefined);
+};
+
+/**
+ * `label`, derived from a schema this transaction holds for a link's source,
+ * with only the principal claims `checkedSchemaPrincipalClaims` allows.
+ */
+const withCheckedPrincipalClaims = (
+  label: IFCLabel,
+  checked: readonly CfcAtom[],
+): IFCLabel => {
+  const stripped = withoutPrincipalClaims(label);
+  const kept = (label.integrity ?? []).filter((atom) =>
+    principalClaimSpelling(atom) !== undefined &&
+    checked.some((claim) => deepEqual(claim, atom))
+  );
+  return kept.length === 0 ? stripped : {
+    ...stripped,
+    integrity: [...(stripped.integrity ?? []), ...kept],
+  };
+};
+
 /** Derives the link's root label and its authoritative source view. */
 const derivePersistedLinkLabel = (
   tx: IExtendedStorageTransaction,
@@ -6074,18 +6217,25 @@ const derivePersistedLinkLabel = (
       tx.getCfcState().trustSnapshot?.actingPrincipal,
     );
   }
+  // Only a schema this transaction's writes to the source are checked
+  // against can vouch for a principal claim; a setup result schema is not.
+  const sourceCandidate = candidateSchemas.get(targetKey(input.source));
   // A source that is itself a reference staged in this transaction, or a
   // value initialized on nobody's behalf, mints nothing for the acting
   // principal, as its own slot does not.
   let pendingSourceLabel = pendingSourceSchema !== undefined
-    ? persistedLabelFromSchemaAtPath(
-      tx,
-      pendingSourceSchema,
-      input.source.path,
-      input.source.space,
-      labelMintOptionsAt(
+    ? withCheckedPrincipalClaims(
+      persistedLabelFromSchemaAtPath(
         tx,
-        input.source,
+        pendingSourceSchema,
+        input.source.path,
+        input.source.space,
+        labelMintOptionsAt(tx, input.source, input.source.path),
+      ) ?? {},
+      sourceCandidate === undefined ? [] : checkedSchemaPrincipalClaims(
+        tx,
+        sourceCandidate,
+        linkDocument(input.source),
         input.source.path,
       ),
     )
@@ -6118,21 +6268,25 @@ const derivePersistedLinkLabel = (
         // value this derivation stands for, so it mints nothing for the
         // principal staging it; nor does a value the runtime initialized
         // there on nobody's behalf.
-        pendingSourceLabel = persistedLabelFromSchemaAtPath(
-          tx,
-          pendingSourceSchema,
-          input.target.path,
-          input.target.space,
-          labelMintOptionsAt(
+        pendingSourceLabel = withCheckedPrincipalClaims(
+          persistedLabelFromSchemaAtPath(
             tx,
-            input.target,
+            pendingSourceSchema,
+            input.target.path,
+            input.target.space,
+            labelMintOptionsAt(tx, input.target, input.target.path),
+          ) ?? {},
+          checkedSchemaPrincipalClaims(
+            tx,
+            targetCandidate,
+            linkDocument(input.target),
             input.target.path,
           ),
         );
       }
     }
   }
-  const linkSchemaLabel = rootLabelFromSchema(
+  const linkSchemaLabel = withoutPrincipalClaims(rootLabelFromSchema(
     tx,
     input.linkSchema,
     input.source.space,
@@ -6141,10 +6295,14 @@ const derivePersistedLinkLabel = (
       input.target,
       input.target.path,
     ),
-  );
+  ));
+  // Counted without the principal claims `persistedLinkEntries` strips from
+  // the view, so a view carrying only those does not stand in for the
+  // source's labels.
   const hasCarriedLabel =
-    input.cfcLabelView?.entries.some((entry) => hasLabelValues(entry.label)) ??
-      false;
+    input.cfcLabelView?.entries.some((entry) =>
+      hasLabelValues(withoutPrincipalClaims(entry.label))
+    ) ?? false;
   if (
     sourceMetadata === undefined && pendingSourceSchema === undefined &&
     !hasLabelValues(linkSchemaLabel) && !hasCarriedLabel &&
@@ -6294,10 +6452,10 @@ const persistedLinkEntries = (
     );
   };
   for (const entry of input.cfcLabelView?.entries ?? []) {
-    const gated = gateRuntimeMintedIntegrity(
+    const gated = withoutPrincipalClaims(gateRuntimeMintedIntegrity(
       cloneLabel(entry.label),
       linkIdentity,
-    );
+    ));
     if (!hasLabelValues(gated)) {
       continue;
     }
