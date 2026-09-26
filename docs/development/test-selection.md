@@ -1032,8 +1032,10 @@ the window, the same percentile a test's own cost is read at: for a
 suite, of what each batch spent beyond what its tests and its units
 account for, and for a capability, of how long each opening took. That
 is well above the typical observation of either. Up to one in ten
-exceeds its charge, which is what the safety margin
-`LANE_SAFETY_SECONDS` covers. The charge is not the slowest observation,
+exceeds its charge, by an amount the fit does not bound. The safety
+margin `LANE_SAFETY_SECONDS` absorbs such an excess up to its own size,
+and a lane whose observations exceed their charges by more than that
+between them runs past its bound. The charge is not the slowest observation,
 because each charge is paid by every lane that holds the suite or
 opens the capability: read at the slowest observation, one slow runner
 would set what every lane pays, and every lane would pack short by that
