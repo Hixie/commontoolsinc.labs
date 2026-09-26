@@ -3754,6 +3754,9 @@ export class SpaceReplica
    *  is no memoized mount to replace. */
   #aclChangedSinceMount = false;
 
+  /** How many times `#consumeOwedSessionRemount()` has replaced the session. */
+  #sessionRemounts = 0;
+
   readonly #docs = new Map<string, DocumentRecord>();
   readonly #syncTasks = new Map<string, SyncTask>();
   readonly #commitPromises = new Set<Promise<unknown>>();
@@ -4498,7 +4501,9 @@ export class SpaceReplica
    * `#memoizedSessionHandle()`, and the serving loop already re-attempts a
    * deferred event's load every drain (see the scheduler's `failHeadEventLoadPark`
    * and the SpaceServer's deferral backstop), so the heal arrives on the
-   * cadence the deferral machinery already runs at.
+   * cadence the deferral machinery already runs at. A `pull()` whose fetch
+   * was in flight when the revocation landed consumes it as that fetch
+   * fails, and makes the fetch once more on the remounted session.
    */
   noteAclChanged(): void {
     if (this.#closed) return;
@@ -4577,6 +4582,7 @@ export class SpaceReplica
       return;
     }
     this.#aclChangedSinceMount = false;
+    this.#sessionRemounts++;
     this.#sessionHandle = undefined;
     this.#sessionClient = undefined;
     // Dropping the terminated session drops the `closeError` half of
@@ -5495,7 +5501,29 @@ export class SpaceReplica
     // returned SUCCESS carrying the pre-revocation value. Idempotent and
     // cheap — a bare boolean test when nothing is owed.
     this.#consumeOwedSessionRemount();
+    const remounts = this.#sessionRemounts;
+    const result = await this.#pullFromSession(entries);
+    if (result.error === undefined) return result;
+    // A fetch in flight when an ACL verdict terminated its session fails on
+    // that session, and may be the only load this space sees, so it is the
+    // one that consumes the remount. The fetch is made once more on the
+    // remounted session, which admits or refuses it against the ACL as it
+    // now stands. The count, rather than the latch, is what is compared, so
+    // a caller that joined the failed fetch retries even where another
+    // caller consumed the latch first.
+    this.#consumeOwedSessionRemount();
+    return remounts === this.#sessionRemounts
+      ? result
+      : await this.#pullFromSession(entries);
+  }
 
+  /**
+   * Helper for `pull()`, which fetches `entries` through the session's watch
+   * set, joining any fetch already in flight for the same entries.
+   */
+  async #pullFromSession(
+    entries: [WatchAddress, SchemaPathSelector | undefined][],
+  ): Promise<Result<Unit, PullError>> {
     const normalizedEntries = normalizeSyncEntries(entries);
     // Phase 5's delegated-scoped-read fail-closed refusal, ENTRY-scoped
     // (the F3 fix; protocol.md §2's grant-scoped read design): decided
