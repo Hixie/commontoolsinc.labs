@@ -1937,9 +1937,10 @@ directly.
 
 What this costs is that a local record can now displace another test from
 a budgeted lane, rather than only ever adding to what runs. Three things
-bound that. Local keys are held by people with repository write access,
-which is the trust boundary the continuous-integration records already sit
-inside. Every manifest records the inputs behind every score, so a strange
+bound that. Every local key was minted by someone with repository write
+access, for themselves or for a person they chose to mint for, which is the
+trust boundary the continuous-integration records already sit inside.
+Every manifest records the inputs behind every score, so a strange
 selection can be traced back to the records that produced it. And the
 worst outcome is a pull request that ran a less useful set of tests, which
 `main` catches within about 15 minutes and reports back.
