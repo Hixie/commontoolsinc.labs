@@ -32,11 +32,11 @@ import {
 } from "./ci-check-lib.ts";
 import { recordCoverage } from "./coverage-records.ts";
 import {
-  collectCoverageDebtMetricsFromLcov,
+  collectCoverageDebtMetricsFromCoverage,
   collectMeasuredSetDebt,
   type CoverageDebtMetric,
-  parseLcov,
 } from "./coverage-metrics.ts";
+import { addLcovReport, type LcovFileCoverage } from "./lcov.ts";
 import { collectSetReports } from "./coverage-gate.ts";
 import { appendSummary } from "./step-summary.ts";
 import { readWorkspaceMembers } from "./workspace-tests.ts";
@@ -91,8 +91,12 @@ function reportsDirectory(options: ReportOptions): string {
 
 /** What the lanes' artifacts hold. */
 export interface LaneReports {
-  /** The content of every LCOV report found, one entry per file. */
-  lcov: string[];
+  /**
+   * The line coverage of every LCOV report found, merged by source file.
+   * Read one report at a time, because a full run's reports joined are
+   * past the longest string a process can hold.
+   */
+  coverage: Map<string, LcovFileCoverage>;
 
   /**
    * Whether a lane that opened the pattern compile byte cache found it not
@@ -106,12 +110,14 @@ export interface LaneReports {
  * the compile byte cache left of whether it found the cache restored.
  */
 export async function collectReports(at: string): Promise<LaneReports> {
-  const lcov: string[] = [];
+  const coverage = new Map<string, LcovFileCoverage>();
   const cacheStates = new Set<string>();
   try {
     for await (const entry of walk(at, { includeDirs: false })) {
       if (path.extname(entry.path) === ".lcov") {
-        lcov.push(await Deno.readTextFile(entry.path));
+        addLcovReport(coverage, await Deno.readTextFile(entry.path), {
+          mapPath: path.normalize,
+        });
       } else if (path.basename(entry.path) === COMPILE_CACHE_STATE_FILE) {
         cacheStates.add((await Deno.readTextFile(entry.path)).trim());
       }
@@ -125,7 +131,7 @@ export async function collectReports(at: string): Promise<LaneReports> {
   // it cannot read withholds the figure from a trend rather than letting a
   // cold run's figure through.
   return {
-    lcov,
+    coverage,
     cold: [...cacheStates].some((state) => state !== "warm"),
   };
 }
@@ -140,8 +146,10 @@ export async function collectReports(at: string): Promise<LaneReports> {
  * nothing about that file either, which is the rule the measured sets are
  * scored by.
  */
-function measuresAnything(lcov: string): boolean {
-  for (const record of parseLcov(lcov).values()) {
+function measuresAnything(
+  coverage: ReadonlyMap<string, LcovFileCoverage>,
+): boolean {
+  for (const record of coverage.values()) {
     if (record.lineHits.size > 0) return true;
   }
   return false;
@@ -164,11 +172,10 @@ export async function repositoryFigures(
   options: ReportOptions,
   reports: LaneReports,
 ): Promise<CoverageDebtMetric[]> {
-  const lcov = reports.lcov.join("\n");
-  if (!measuresAnything(lcov)) return [];
-  return await collectCoverageDebtMetricsFromLcov({
+  if (!measuresAnything(reports.coverage)) return [];
+  return await collectCoverageDebtMetricsFromCoverage({
     rootDir: options.root,
-    lcov,
+    coverage: reports.coverage,
   });
 }
 

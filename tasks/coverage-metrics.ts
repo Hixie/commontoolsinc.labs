@@ -81,8 +81,23 @@ export async function collectCoverageDebtMetrics(
 export async function collectCoverageDebtMetricsFromLcov(
   options: CoverageDebtMetricsFromLcovOptions,
 ): Promise<CoverageDebtMetric[]> {
+  return await collectCoverageDebtMetricsFromCoverage({
+    rootDir: options.rootDir,
+    coverage: parseLcov(options.lcov),
+  });
+}
+
+/**
+ * The debt metrics for coverage already read, keyed by normalized path the
+ * way `parseLcov` keys it, for a caller that merged more reports than one
+ * joined string could hold.
+ */
+export async function collectCoverageDebtMetricsFromCoverage(options: {
+  rootDir: string;
+  coverage: ReadonlyMap<string, LcovFileCoverage>;
+}): Promise<CoverageDebtMetric[]> {
   const sourceFiles = await collectSourceFiles(options.rootDir);
-  const lcovCoverage = parseLcov(options.lcov);
+  const lcovCoverage = options.coverage;
 
   let workspaceUncovered = 0;
   const groupUncovered = new Map<string, number>();
