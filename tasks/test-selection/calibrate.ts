@@ -52,9 +52,11 @@
  * suite's fixed cost and a capability's setup, are each read at the
  * ninetieth percentile of what lanes have seen. That is well above the
  * typical observation, and it is not the slowest one: up to one
- * observation in ten exceeds its charge, and what covers those is the
- * safety margin `LANE_SAFETY_SECONDS` leaves between a lane's budget and
- * its bound. Each charge is paid by every lane that holds the suite or
+ * observation in ten exceeds its charge, by an amount nothing here
+ * bounds. The safety margin `LANE_SAFETY_SECONDS` leaves between a lane's
+ * budget and its bound absorbs such an excess up to its own size, and a
+ * lane whose observations exceed their charges by more than that between
+ * them runs past its bound. Each charge is paid by every lane that holds the suite or
  * opens the capability, for as long as the window keeps the observations
  * it was read from. Read at the slowest observation, a single slow batch
  * would set what every lane is charged, and every lane would pack short
