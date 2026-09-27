@@ -2,10 +2,16 @@ import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { Identity } from "@commonfabric/identity";
 import { type FabricValue, isDeepFrozen } from "@commonfabric/data-model";
-import { StorageManager } from "../src/storage/cache.deno.ts";
+import { getContainersHashedForTestingOnly } from "@commonfabric/data-model/for-testing-only";
+import {
+  EmulatedStorageManager,
+  newLoopbackServer,
+  StorageManager,
+} from "../src/storage/cache.deno.ts";
 import type {
   IMemorySpaceAddress,
   IStorageTransaction,
+  StorageNotification,
   URI,
 } from "../src/storage/interface.ts";
 import {
@@ -64,6 +70,160 @@ const wholeListRead = async (
 
     expect(read.ok).toBeTruthy();
     return { value: read.ok!.value, descriptors };
+  } finally {
+    await storage.close();
+  }
+};
+
+/** A keyed map of `length` records, the shape a directory or an index has. */
+const keyedMap = (length: number) =>
+  Object.fromEntries(
+    Array.from({ length }, (_, index) => [
+      `key-${index}`,
+      { name: `entry-${index}`, nested: { id: `id-${index}` } },
+    ]),
+  );
+
+/** How many containers a whole hash of a `keyedMap(length)` document feeds. */
+const containersOfDocument = (length: number) => 2 + 2 * length;
+
+/**
+ * Commits a change to one entry of a document holding a keyed map of `length`
+ * records, then has a second session commit a change to another entry, and
+ * reports for each how many containers were hashed and what the first
+ * session's replica notified.
+ *
+ * Every comparison on the way asks whether two versions of the document
+ * differ. Comparing them by content hash feeds the hasher every container in
+ * a version, so a count that tracks the length of the map is one of those
+ * comparisons hashing the whole document.
+ *
+ * The replica watches the document, so the server sends each commit back to
+ * it as a copy decoded afresh, sharing nothing with the replica's own. Its own
+ * commit comes back holding what it already shows; the other session's comes
+ * back holding a change, which is what shows the echo is compared at all.
+ */
+const oneEntryCommit = async (
+  length: number,
+): Promise<{
+  containersHashed: number;
+  changedPaths: string[][];
+  echoedPaths: string[][];
+  foreignContainersHashed: number;
+  foreignPaths: string[][];
+}> => {
+  await using cleanup = new AsyncDisposableStack();
+  const server = newLoopbackServer({ subscriptionRefreshDelayMs: 0 });
+  cleanup.defer(() => server.close());
+  const [storage, peer] = [0, 1].map(() => {
+    const manager = EmulatedStorageManager.connectTo(server, { as: signer });
+    cleanup.defer(() => manager.close());
+    return manager;
+  });
+  const notifications: StorageNotification[] = [];
+  // A subscriber is what makes the replica compute the change a commit makes,
+  // for its own commit and again for each echo.
+  storage.subscribe({
+    next(notification) {
+      notifications.push(notification);
+      return undefined;
+    },
+  });
+  const pathsSince = (
+    start: number,
+    ...types: StorageNotification["type"][]
+  ) =>
+    notifications.slice(start)
+      .filter((notification) => types.includes(notification.type))
+      .flatMap((notification) =>
+        "changes" in notification
+          ? [...notification.changes].map((change) => [...change.address.path])
+          : []
+      );
+
+  const id: URI = `of:v2-transaction-one-entry-${length}`;
+  const seed = storage.edit();
+  expect(
+    seed.write({ space, id, type, path: [] }, { value: keyedMap(length) }).ok,
+  ).toBeTruthy();
+  expect((await seed.commit()).ok).toBeTruthy();
+  for (const manager of [storage, peer]) {
+    // Watching the document is what has the server send later commits back.
+    expect(
+      (await manager.open(space).sync(id, { path: [], schema: true })).ok,
+    ).toBeTruthy();
+    await manager.synced();
+  }
+
+  const before = getContainersHashedForTestingOnly();
+  const notified = notifications.length;
+  const tx = storage.edit();
+  expect(
+    tx.write({ space, id, type, path: ["value", "key-0", "name"] }, "edited")
+      .ok,
+  ).toBeTruthy();
+  expect((await tx.commit()).ok).toBeTruthy();
+  await storage.pullOpenSpacesToHead();
+  const containersHashed = getContainersHashedForTestingOnly() - before;
+  const changedPaths = pathsSince(notified, "commit");
+  const echoedPaths = pathsSince(notified, "integrate", "pull");
+
+  const foreignBefore = getContainersHashedForTestingOnly();
+  const foreignNotified = notifications.length;
+  const foreign = peer.edit();
+  expect(
+    foreign.write(
+      { space, id, type, path: ["value", "key-5", "name"] },
+      "edited elsewhere",
+    ).ok,
+  ).toBeTruthy();
+  expect((await foreign.commit()).ok).toBeTruthy();
+  await storage.pullOpenSpacesToHead();
+
+  return {
+    containersHashed,
+    changedPaths,
+    echoedPaths,
+    foreignContainersHashed: getContainersHashedForTestingOnly() -
+      foreignBefore,
+    foreignPaths: pathsSince(foreignNotified, "integrate", "pull"),
+  };
+};
+
+/**
+ * Commits a document holding a keyed map of `length` records, then changes
+ * one entry and changes it back within one transaction, and returns how many
+ * commit notifications that transaction produced.
+ *
+ * Each write is a change when it is made, so the transaction reaches its
+ * commit holding writes, and only comparing where the document ended with
+ * where it started finds that there is nothing to commit.
+ */
+const revertedWriteCommits = async (length: number): Promise<number> => {
+  const storage = StorageManager.emulate({ as: signer });
+  try {
+    let commits = 0;
+    storage.subscribe({
+      next(notification) {
+        if (notification.type === "commit") commits++;
+        return undefined;
+      },
+    });
+    const id: URI = `of:v2-transaction-reverted-${length}`;
+    const seed = storage.edit();
+    expect(
+      seed.write({ space, id, type, path: [] }, { value: keyedMap(length) })
+        .ok,
+    ).toBeTruthy();
+    expect((await seed.commit()).ok).toBeTruthy();
+    const seeded = commits;
+
+    const tx = storage.edit();
+    const path = ["value", "key-0", "name"];
+    expect(tx.write({ space, id, type, path }, "changed").ok).toBeTruthy();
+    expect(tx.write({ space, id, type, path }, "entry-0").ok).toBeTruthy();
+    expect((await tx.commit()).ok).toBeTruthy();
+    return commits - seeded;
   } finally {
     await storage.close();
   }
@@ -1061,6 +1221,42 @@ describe("v2-transaction", () => {
       // `Object.assign()`, both counts would read zero and agree.
       expect(short.copies).toBeGreaterThan(0);
       expect(long.copies).toBe(short.copies);
+    });
+
+    it("hashes as many containers committing one entry of a long map as of a short one", async () => {
+      const short = await oneEntryCommit(20);
+      const long = await oneEntryCommit(2_000);
+
+      // Both are needed: the equality alone passes a count that is flat but
+      // large, and the bound alone passes one that grows slowly with the map.
+      // The bound is one whole hash of the short document.
+      expect(long.containersHashed).toBe(short.containersHashed);
+      expect(long.containersHashed).toBeLessThan(containersOfDocument(20));
+      expect(long.foreignContainersHashed).toBe(
+        short.foreignContainersHashed,
+      );
+      expect(long.foreignContainersHashed).toBeLessThan(
+        containersOfDocument(20),
+      );
+    });
+
+    it("notifies the path each commit changed: its own once, and another session's through the echo", async () => {
+      // What the count above must not be bought with: the notification is
+      // what reactivity reads, and it has to name the change and only that.
+      // The replica's own echo holds what it already shows, so it notifies
+      // nothing; the other session's change arriving the same way is what
+      // shows the echo is compared at all.
+      const { changedPaths, echoedPaths, foreignPaths } = await oneEntryCommit(
+        2_000,
+      );
+
+      expect(changedPaths).toEqual([["value", "key-0", "name"]]);
+      expect(echoedPaths).toEqual([]);
+      expect(foreignPaths).toEqual([["value", "key-5", "name"]]);
+    });
+
+    it("commits nothing when writes leave the document equal to where it started", async () => {
+      expect(await revertedWriteCommits(2_000)).toBe(0);
     });
   });
 });
