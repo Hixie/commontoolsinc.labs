@@ -216,17 +216,19 @@ describe("calibrate", () => {
       ]);
     });
 
-    it("takes no pass count below one", () => {
-      const seen = observationsOf([
-        {
-          run: "a",
-          records: [
-            ...batch("pattern-unit", 900, 1400, 5),
-            passes("pattern-unit", 0),
-          ],
-        },
-      ]);
-      expect(seen.batches.map((one) => one.passes)).toEqual([undefined]);
+    it("takes no pass count that is not a whole number of one or more", () => {
+      for (const count of [0, -1, 1.5]) {
+        const seen = observationsOf([
+          {
+            run: "a",
+            records: [
+              ...batch("pattern-unit", 900, 1400, 5),
+              { ...passes("pattern-unit", 1), durationMs: count },
+            ],
+          },
+        ]);
+        expect(seen.batches.map((one) => one.passes)).toEqual([undefined]);
+      }
     });
 
     it("takes nothing from a longest unit whose batch wrote nothing else", () => {

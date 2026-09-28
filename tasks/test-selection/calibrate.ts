@@ -303,9 +303,12 @@ export function observationsOf(
       // and calls it a duration, and the name is what says which of the
       // five this is, so a count is read back as it was written.
       if (batch.kind === "units") units.set(key, record.durationMs);
-      // A batch makes at least one pass, and the fit divides by the count.
+      // A batch makes a whole number of passes, at least one, and the fit
+      // divides by the count.
       else if (batch.kind === "passes") {
-        if (record.durationMs >= 1) passes.set(key, record.durationMs);
+        if (Number.isInteger(record.durationMs) && record.durationMs >= 1) {
+          passes.set(key, record.durationMs);
+        }
       } else if (batch.kind === "ran") ran.set(key, seconds);
       else if (batch.kind === "longest") longest.set(key, seconds);
       else spent.set(key, seconds);
@@ -415,15 +418,15 @@ function slopeOf(
  * taken is what the units cost, and every batch then reads as having
  * spent nothing on them.
  *
- * A batch whose longest unit outlasted what the slope makes of the rest
- * spent what that unit took, not what the slope says, and fitting the
- * slope through it pulls the slope toward that unit, or past zero. So the
- * slope is fitted again over the batches a first fit over all of them
- * does not charge their longest unit, where those are enough to believe a
- * slope from. Where the first fit is not believed, the batches it is
- * fitted again over are those whose longest unit took less than half of
- * what the batch spent, which is to say those that spent most of what
- * they spent on units side by side.
+ * A batch whose floor, the longest unit of each pass added together,
+ * outlasted what the slope makes of the rest spent what those units took,
+ * not what the slope says, and fitting the slope through it pulls the
+ * slope toward them, or past zero. So the slope is fitted again over the
+ * batches a first fit over all of them does not charge their floor, where
+ * those are enough to believe a slope from. Where the first fit is not
+ * believed, the batches it is fitted again over are those whose floor
+ * took less than half of what the batch spent, which is to say those that
+ * spent most of what they spent on units side by side.
  */
 function correctionOf(
   observations: readonly BatchObservation[],
@@ -546,8 +549,8 @@ function unitCostOf(
  * holds.
  *
  * What a batch's tests took is read through `testsCost()`, so a batch
- * whose longest unit outlasted what the correction makes of the rest
- * leaves the intercept only what it spent beyond that unit. The packer
+ * whose floor outlasted what the correction makes of the rest leaves the
+ * intercept only what it spent beyond the longest unit of each pass. The packer
  * charges a lane's share of a suite the same way.
  *
  * The intercept is charged once for each pass a batch makes, since each

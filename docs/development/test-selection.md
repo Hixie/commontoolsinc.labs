@@ -1192,7 +1192,9 @@ has to fit is the run rather than one lane. A set spread over several lanes pays
 its suites' overheads and its capabilities' setup in each of them. It also pays
 each unit's overhead in every lane holding part of that unit, and a unit is
 split over no more lanes than it holds entries, so that overhead is paid at most
-once per entry. Each entry's own cost is multiplied by how many times it runs.
+once per entry. Each unit's selected entries are charged once for each time the
+unit runs, and the passes and unit openings a repeated entry adds are charged
+their overheads once, in the lane holding that entry.
 The units a set's suite declares unavailable are not run, so they are not
 charged. The line charges a set or a member all of that over the fewest lanes
 that hold it. All of one entry's runs go in one lane, so no number of lanes

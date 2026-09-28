@@ -2315,7 +2315,7 @@ with what is inside them: the runner unit suite has spent about half a
 second a unit across batches of five units and batches of three hundred.
 A model with only an intercept and a slope on the tests has to put that
 somewhere, and the only place left is the intercept, which is charged once
-however few units the batch holds. A suite whose whole set is expensive
+a pass however few units the batch holds. A suite whose whole set is expensive
 then prices out its own smallest batch.
 
 So the model is fitted instead. Every batch the lane runner executes
@@ -2410,11 +2410,11 @@ five figures are what one run of each unit comes to.
 The correction is fitted twice over whichever of the suite's batches it
 is read from, which the paragraph on stored figures below describes. The
 first fit uses every batch in that set. The second leaves out each batch
-whose longest unit took more than the first fit's correction makes of its
-tests, because what such a batch spent was decided by that one unit and
-says nothing about how the rest share out. Where the first fit is not to
-be believed, the second leaves out each batch whose longest unit took half
-or more of what the batch spent.
+whose floor, the longest unit of each pass added together, took more than
+the first fit's correction makes of its tests, because what such a batch
+spent was decided by those units and says nothing about how the rest share
+out. Where the first fit is not to be believed, the second leaves out each
+batch whose floor took half or more of what the batch spent.
 
 A lane also writes
 `ci-lane excused <identity>`, carrying no figure, for each identity whose
@@ -2425,8 +2425,8 @@ The tests' own time, rather than what the packer expected it to be. The
 two differ by however wrong the manifest's costs are, and a unit nothing
 has measured is charged a stand-in that can be out by a factor of ten.
 Fitting against the expectation puts that error in the intercept, which
-is charged once to every lane that holds the suite and kept for the whole
-window. An intercept past the planned budget already costs a whole lane
+is charged to every lane that holds the suite, once for each pass, and
+kept for the whole window. An intercept past the planned budget already costs a whole lane
 for each identity of the suite that runs, since a lane holding two things
 stops at that budget; past the lane's bound, which is what an identity's
 lone cost is weighed against, the suite places no discretionary identity
