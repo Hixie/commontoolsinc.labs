@@ -155,10 +155,10 @@ selected grammar and query, and one empty highlight.
 
 | Dimension | Shipped Python | Shipped Swift | Shipped Kotlin | Shipped TOML | Accepted maximum |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 95th-percentile lazy initialization | 29.41 ms | 71.98 ms | 65.31 ms | 29.71 ms | 75 ms |
-| 95th-percentile full highlighting | 27.89 ms | 37.69 ms | 44.66 ms | 24.17 ms | 50 ms |
-| 95th-percentile document parse, with structure | 35.56 ms | 39.08 ms | 54.36 ms | 32.62 ms | 50 ms |
-| 95th-percentile re-color after one edit | 15.07 ms | 15.36 ms | 32.76 ms | 14.83 ms | 25 ms |
+| 95th-percentile lazy initialization | 29.41 ms | 71.98 ms | 65.31 ms | 23.42 ms | 75 ms |
+| 95th-percentile full highlighting | 27.89 ms | 37.69 ms | 44.66 ms | 19.79 ms | 50 ms |
+| 95th-percentile document parse, with structure | 35.56 ms | 39.08 ms | 54.36 ms | 29.61 ms | 50 ms |
+| 95th-percentile re-color after one edit | 15.07 ms | 15.36 ms | 32.76 ms | 11.96 ms | 25 ms |
 | Compiled `cf` increase | 12.03 MiB | 3.72 MiB | 4.09 MiB, with TOML | with Kotlin | 14 MiB for runtime and first grammar; 10 MiB for a later grammar |
 | Unpacked dependencies | 11.95 MiB | 3.66 MiB | 3.30 MiB | 0.72 MiB | 14 MiB for runtime and first grammar; 10 MiB for a later grammar |
 | Owned source | 584 lines | 200 lines | 200 lines | 75 lines | 650 shipped lines; 200 for a later grammar |

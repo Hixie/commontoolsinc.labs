@@ -34,7 +34,7 @@ and TypeScript 6.0.3. They used `web-tree-sitter` 0.26.12,
 `@tree-sitter-grammars/tree-sitter-toml` 0.7.0. The dependency cache was warm.
 
 Other work shared the machine throughout, with a one-minute load average
-between 7 and 11 during the recorded runs. Each round therefore ran the Swift
+between 6 and 11 during the recorded runs. Each round therefore ran the Swift
 probe beside the new ones, so that the shipped Swift path's recorded figures
 calibrate the round: in both rounds Swift's median re-color and document parse
 were within 2.4 ms of the Swift report, and its 95th percentiles within 8.6 ms.
@@ -70,14 +70,18 @@ milliseconds; the maximums are 95th percentiles.
 
 | Dimension | Kotlin, round 1 | Kotlin, round 2 | TOML, round 1 | TOML, round 2 | Accepted maximum |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Lazy initialization | 62.80 / 65.31 | 53.97 / 59.24 | 27.03 / 29.71 | 24.65 / 29.57 | 75 ms |
-| Full highlighting | 33.56 / 39.86 | 34.97 / 44.66 | 19.47 / 24.17 | 17.50 / 20.28 | 50 ms |
-| Document parse, with structure | 45.52 / 49.89 | 47.24 / 54.36 | 29.31 / 32.62 | 27.11 / 30.15 | 50 ms |
-| Re-color after one edit | 26.10 / 31.67 | 26.61 / 32.76 | 12.94 / 14.83 | 11.07 / 14.62 | 25 ms |
+| Lazy initialization | 62.80 / 65.31 | 53.97 / 59.24 | 22.55 / 23.42 | 22.08 / 23.29 | 75 ms |
+| Full highlighting | 33.56 / 39.86 | 34.97 / 44.66 | 17.49 / 19.79 | 17.07 / 19.66 | 50 ms |
+| Document parse, with structure | 45.52 / 49.89 | 47.24 / 54.36 | 26.97 / 29.61 | 26.33 / 28.56 | 50 ms |
+| Re-color after one edit | 26.10 / 31.67 | 26.61 / 32.76 | 10.89 / 11.96 | 11.22 / 11.76 | 25 ms |
 
-The Swift runs beside them measured 14.57 / 17.65 and 14.28 / 16.09 ms for the
-re-color, against the 14.59 / 15.36 ms its report recorded, and 38.25 / 41.98
-and 39.64 / 47.66 ms for the document parse, against 37.24 / 39.08 ms.
+The TOML rounds were run separately, after each TOML unit was given its own
+table name. The Swift runs beside the Kotlin rounds measured 14.57 / 17.65 and
+14.28 / 16.09 ms for the re-color, against the 14.59 / 15.36 ms its report
+recorded, and 38.25 / 41.98 and 39.64 / 47.66 ms for the document parse,
+against 37.24 / 39.08 ms. Those beside the TOML rounds measured 14.34 / 15.70
+and 14.11 / 14.91 ms for the re-color, and 38.66 / 41.53 and 37.26 / 40.26 ms
+for the document parse.
 
 | Dimension | Kotlin | TOML | Accepted maximum |
 | --- | ---: | ---: | ---: |
