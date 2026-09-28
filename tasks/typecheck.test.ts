@@ -396,6 +396,73 @@ describe("typecheck", () => {
       }
     });
 
+    it("reaches the importers of a member naming a declaration file", async () => {
+      const root = await tree({
+        "deno.jsonc": JSON.stringify({ workspace: ["./packages/base"] }),
+        "packages/base/deno.json": JSON.stringify({
+          compilerOptions: { types: ["./ambient.d.ts"] },
+        }),
+        "packages/base/ambient.d.ts": "declare const ambient: number;\n",
+        "packages/base/mod.ts": "export const base = 1;\n",
+        "packages/top/mod.test.ts": 'import { base } from "../base/mod.ts";\n' +
+          "console.log(base);\n",
+        "packages/apart/mod.ts": "export const apart = 1;\n",
+      });
+      try {
+        const reached = await scopesReached(
+          root,
+          new Map(
+            ["apart", "base", "top"].map((
+              scope,
+            ) => [scope, [`packages/${scope}`]]),
+          ),
+        );
+        expect(reached(new Set(["packages/base/ambient.d.ts"])))
+          .toEqual(["base", "top"]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("reaches the importers of a module that was deleted", async () => {
+      // The graph is read from the tree after the change, where nothing
+      // holds the deleted module, so the import naming it is what leads
+      // back to the group whose check it breaks.
+      const root = await tree({
+        "packages/top/mod.test.ts":
+          'import { gone } from "../base/gone.ts";\n' +
+          "console.log(gone);\n",
+      });
+      try {
+        const reached = await scopesReached(
+          root,
+          new Map([["top", ["packages/top"]]]),
+        );
+        expect(reached(new Set(["packages/base/gone.ts"]))).toEqual(["top"]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("reaches a group importing a module under a query", async () => {
+      const root = await tree({
+        "packages/base/mod.ts": "export const base = 1;\n",
+        "packages/top/mod.test.ts":
+          'import { base } from "../base/mod.ts?fresh";\n' +
+          "console.log(base);\n",
+      });
+      try {
+        const reached = await scopesReached(
+          root,
+          new Map([["base", ["packages/base"]], ["top", ["packages/top"]]]),
+        );
+        expect(reached(new Set(["packages/base/mod.ts"])))
+          .toEqual(["base", "top"]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
     it("follows an import through a module no group checks", async () => {
       // A test reaching another package through a fixture is checked
       // against that package all the same, so the fixture is a way in.

@@ -437,7 +437,7 @@ TOOLSHED_PORT=58848 SHELL_PORT=5263 EXPERIMENTAL_SERVER_EXECUTION=false deno tas
 After the shell reports that it is listening, run the browser test:
 
 ```bash
-API_URL=http://127.0.0.1:8089 FRONTEND_URL=http://127.0.0.1:5263/ EXPERIMENTAL_SERVER_EXECUTION=false CF_ROW_RECONNECT_CONTROL_URL=http://127.0.0.1:58849/ CF_ROW_REPRO_ARTIFACT_DIR=/tmp/row-reconnect deno test -A packages/patterns/integration/reactive-vote-rows-browser.test.ts
+API_URL=http://127.0.0.1:8089 FRONTEND_URL=http://127.0.0.1:5263/ EXPERIMENTAL_SERVER_EXECUTION=false CF_ROW_RECONNECT_CONTROL_URL=http://127.0.0.1:58849/ CF_ROW_REPRO_ARTIFACT_DIR=/tmp/row-reconnect deno test --no-check -A packages/patterns/integration/reactive-vote-rows-browser.test.ts
 ```
 
 Each outage asserts that the relay closed live socket endpoints before the

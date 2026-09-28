@@ -994,7 +994,7 @@ export const set = (cache: Cache, key: string, value: string) =>
 - Run all tests using `deno task test` (NOT `deno test`). It is not a
   substitute for `deno task check`: every package's tests run under
   `--no-check`.
-- To run a single test file use `deno test path/to/test.ts`.
+- To run a single test file use `deno test --no-check path/to/test.ts`.
 - To test a specific package, `cd` into the package directory and run
   `deno task test`.
 

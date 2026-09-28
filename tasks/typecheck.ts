@@ -396,8 +396,11 @@ function localImporters(
     const graph: { modules: GraphModule[] } = JSON.parse(
       new TextDecoder().decode(stdout),
     );
+    // A query or a fragment names the same file to the type checker.
     const local = (specifier: string | undefined) =>
-      specifier?.startsWith(base) ? specifier.slice(base.length) : undefined;
+      specifier?.startsWith(base)
+        ? specifier.slice(base.length).replace(/[?#].*$/, "")
+        : undefined;
     const importers = new Map<string, string[]>();
     for (const module of graph.modules) {
       const importer = local(module.specifier);
@@ -505,18 +508,19 @@ export async function scopesReached(
       if (["deno.json", "deno.jsonc", "deno.lock"].includes(at)) {
         return everyScope;
       }
+      const manifest = /(^|\/)deno\.jsonc?$/.test(at);
       const scope = scopeOf.get(at) ??
-        (changed.has(at) ? scopeOfPath(at) : undefined);
+        (changed.has(at) || manifest ? scopeOfPath(at) : undefined);
       if (scope !== undefined && byScope.has(scope)) {
         reached.add(scope);
-        if (/(^|\/)deno\.jsonc?$/.test(at)) {
+        if (manifest) {
           for (const [file, owner] of scopeOf) {
             if (owner === scope) pending.push(file);
           }
         }
       }
-      const manifest = ambient.get(at);
-      if (manifest !== undefined) pending.push(manifest);
+      const naming = ambient.get(at);
+      if (naming !== undefined) pending.push(naming);
       pending.push(...importers.get(at) ?? []);
     }
     return [...reached].sort();
