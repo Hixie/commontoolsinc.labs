@@ -14,6 +14,7 @@ import {
   serializeSkipList,
   SKIP_LIST_VARIABLE,
   type SkipList,
+  spoolWritable,
   spoolWriteArgument,
   type TestIdentity,
 } from "@commonfabric/test-support/records";
@@ -92,6 +93,16 @@ export interface Invocation {
   cwd: string;
   env?: Record<string, string>;
   junit?: readonly JUnitOutput[];
+
+  /**
+   * Which of its suite's {@link Suite.processes} this invocation is, where
+   * its runner marks in the spool when its units began. A lane measures
+   * the time before that mark as the process's setup. Absent where the
+   * runner marks nothing, and the lane then counts the whole invocation as
+   * what its units took, as it does for a process that was named and left
+   * no mark.
+   */
+  process?: string;
 }
 
 /** What a suite is given when it builds its commands. */
@@ -189,6 +200,24 @@ export interface Suite {
    * suite writes no skip list for.
    */
   whole: readonly Unit[];
+
+  /**
+   * The process each unit runs in, where that process spends time on
+   * setup before any of its units begins and marks when they do: a
+   * `deno test` type-checking the module graph of every file it was
+   * handed, the pattern test runner starting up. A lane
+   * pays that setup each time it starts such a process, however many of
+   * the process's units it runs, so the packer charges it the first time a
+   * lane opens a unit of that process, and again for each further run of
+   * it a repeated test asks for. The name is the `process` the invocation
+   * running the unit carries, and means nothing outside its suite.
+   *
+   * A unit is absent where it runs in a process of its own, or in one that
+   * marks nothing, such as a `deno test` with no permission to write to
+   * its spool, and whatever that process spends is then part of what its
+   * units cost. Absent altogether where every unit is.
+   */
+  processes?: ReadonlyMap<Unit, string>;
 
   /**
    * Tree paths this suite accounts for beyond its units. A suite whose
@@ -579,6 +608,13 @@ export function fileSuite(options: FileSuiteOptions): Suite {
     // Every unit here is a file the command names. The preload reads the skip
     // list under the same path.
     whole: [],
+    // One `deno test` per part, which the preload marks where it can write
+    // to the spool.
+    processes: new Map(
+      [...partOf].flatMap(([unit, part]) =>
+        spoolWritable(part.flags) ? [[unit, part.junit.scope]] : []
+      ),
+    ),
     ...(options.measured === undefined ? {} : { measured: options.measured }),
 
     locate(record) {
@@ -650,6 +686,7 @@ export function fileSuite(options: FileSuiteOptions): Suite {
           cwd,
           env,
           junit: [{ path: junitPath, ...part.junit }],
+          ...(spoolWritable(part.flags) ? { process: part.junit.scope } : {}),
         });
       }
       return invocations;

@@ -32,12 +32,16 @@
 
 import * as path from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import { SKIP_LIST_VARIABLE } from "@commonfabric/test-support/records";
+import {
+  SKIP_LIST_VARIABLE,
+  spoolWritable,
+} from "@commonfabric/test-support/records";
 import {
   memberTasks,
   memberTestFiles,
   type ParsedTestTask,
   testBatches,
+  testBatchOf,
   unmatchedGlobs,
 } from "./deno-task.ts";
 import {
@@ -207,6 +211,23 @@ function wholeUnit(member: Member): string {
 }
 
 /**
+ * The `deno test` process a member's test file runs in, named by the
+ * member's scope and by which of the member's runs its flags put it in,
+ * or `undefined` where that run cannot write to its spool and so marks
+ * nothing. `file` is relative to the member's directory, as the member's
+ * task names it.
+ */
+function memberProcess(
+  scope: string,
+  run: ParsedTestTask,
+  file: string,
+): string | undefined {
+  return spoolWritable(testBatches(run, [file])[0]!.flags)
+    ? `${scope} ${testBatchOf(run, file)}`
+    : undefined;
+}
+
+/**
  * The measured set one member carries, or nothing where it carries none.
  *
  * A set holds the units of the member's Deno-only half and never its
@@ -260,12 +281,19 @@ function unitSuite(
   const byScope = new Map<string, Member>();
   const units: string[] = [];
   const whole: string[] = [];
+  const processes = new Map<string, string>();
   for (const member of members) {
     byScope.set(member.scope, member);
     if (member.run !== undefined) {
       for (const file of member.files) {
         units.push(file);
         byUnit.set(file, member);
+        const process = memberProcess(
+          member.scope,
+          member.run,
+          path.relative(member.memberPath, file),
+        );
+        if (process !== undefined) processes.set(file, process);
       }
     } else if (member.denoHalf) {
       // A member with no Deno-only half has nothing for a `deno task
@@ -300,6 +328,9 @@ function unitSuite(
     units,
     unavailable: [],
     whole,
+    // A file runs in the `deno test` its member's flags put it in, which
+    // the preload marks. The task a whole unit runs marks nothing.
+    processes,
     ...(sources.length === 0 ? {} : { sources }),
     ...(measured.length === 0 ? {} : { measured }),
 
@@ -385,6 +416,11 @@ function unitSuite(
           for (const [index, batch] of batches.entries()) {
             const name = index === 0 ? slug : `${slug}.${index}`;
             const junitPath = path.join(context.outputDir, `${name}.xml`);
+            const process = memberProcess(
+              member.scope,
+              member.run,
+              batch.files[0]!,
+            );
             const requests = batch.files.map((file) => byFile.get(file)!);
             invocations.push({
               command: [
@@ -398,6 +434,7 @@ function unitSuite(
               ],
               cwd: memberDir,
               env: { ...denoEnv, ...await skipEnv(context, name, requests) },
+              ...(process === undefined ? {} : { process }),
               junit: [{
                 path: junitPath,
                 kind: "unit",

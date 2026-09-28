@@ -13,6 +13,7 @@ import {
 import {
   parseSkipList,
   SKIP_LIST_VARIABLE,
+  spoolWritable,
 } from "@commonfabric/test-support/records";
 import { CAPABILITIES } from "./ci-capabilities.ts";
 import { collectMeasuredSetDebt } from "./coverage-metrics.ts";
@@ -189,6 +190,76 @@ describe("the test topology", () => {
     }
     await Deno.remove(outputDir, { recursive: true });
     expect(written).toEqual([]);
+  });
+
+  it("runs the units it names into one process in one invocation of that name, and the rest in none", async () => {
+    // The packer charges a process's setup for each process a lane starts,
+    // reading which process a unit runs in from `processes`, and a lane
+    // measures that setup from the invocation carrying the process's name.
+    // A unit named into one process and run in another is charged for a
+    // process it does not start, and asking for the units of one process
+    // then starts two.
+
+    const outputDir = await Deno.makeTempDir({ prefix: "topology-process-" });
+    const context = { root, outputDir, spoolDir: `${outputDir}/spool` };
+    const wrong: string[] = [];
+    for (const suite of suites) {
+      const byProcess = new Map<string | undefined, string[]>();
+      for (const unit of suite.units) {
+        const process = suite.processes?.get(unit);
+        byProcess.set(process, [...byProcess.get(process) ?? [], unit]);
+      }
+      for (const [process, units] of byProcess) {
+        const invocations = await suite.command(
+          units.map((unit) => ({ unit, skip: [] })),
+          context,
+        );
+        const named = invocations.flatMap((invocation) =>
+          invocation.process === undefined ? [] : [invocation.process]
+        );
+        const expected = process === undefined ? [] : [process];
+        if (JSON.stringify(named) !== JSON.stringify(expected)) {
+          wrong.push(
+            `${suite.id}: the units of ${JSON.stringify(process)} run in ` +
+              JSON.stringify(named),
+          );
+        }
+      }
+    }
+    await Deno.remove(outputDir, { recursive: true });
+    expect(wrong).toEqual([]);
+  });
+
+  it("names no process whose `deno test` cannot write to its spool", async () => {
+    // Such a process leaves no mark saying when its units began, so a
+    // lane can measure nothing of its setup, and a packer charging it the
+    // suite's process setup would charge a figure measured from others.
+
+    const outputDir = await Deno.makeTempDir({ prefix: "topology-marks-" });
+    const context = { root, outputDir, spoolDir: `${outputDir}/spool` };
+    const wrong: string[] = [];
+    let unwritable = 0;
+    for (const suite of suites) {
+      const invocations = await suite.command(
+        suite.units.map((unit) => ({ unit, skip: [] })),
+        context,
+      );
+      for (const invocation of invocations) {
+        if (invocation.command[1] !== "test") continue;
+        if (!spoolWritable(invocation.command)) unwritable += 1;
+        if (
+          invocation.process !== undefined &&
+          !spoolWritable(invocation.command)
+        ) {
+          wrong.push(`${suite.id}: ${invocation.process}`);
+        }
+      }
+    }
+    await Deno.remove(outputDir, { recursive: true });
+    expect(wrong).toEqual([]);
+    // Some members' tests run with no permission to write their spool,
+    // which is what makes the check above one that can fail.
+    expect(unwritable).toBeGreaterThan(0);
   });
 
   it("lets a default suite and a variant suite hold one source file", () => {
