@@ -991,16 +991,21 @@ function cheaperIn(
 
 /**
  * Helper for `plan()`, which reduces an identity `entries` lists more than
- * once to the last of its rows, in the place of the first. Every pass then
- * reads the one row, so no two of them can disagree about what the
- * identity costs or scores.
+ * once to the last of its rows, and lists the identities in the order of
+ * their keys. Every pass then reads the one row, so no two of them can
+ * disagree about what the identity costs or scores. What every pass reads
+ * after that, the units run whole included, is then in an order that
+ * depends on which identities there are and not on where the manifest
+ * listed them, so where two tie, their position does not decide.
  */
 function oncePerIdentity(
   entries: readonly ManifestEntry[],
 ): ManifestEntry[] {
   const byKey = new Map<string, ManifestEntry>();
   for (const entry of entries) byKey.set(testIdentityKey(entry.test), entry);
-  return [...byKey.values()];
+  return [...byKey]
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([, entry]) => entry);
 }
 
 /**

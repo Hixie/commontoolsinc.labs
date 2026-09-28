@@ -498,6 +498,21 @@ describe("plan", () => {
       expect(reasons.has("exploration")).toBe(true);
     });
 
+    it("breaks a tie in value by the identity key, not by position", () => {
+      // Two tests of one score, and room in the value pass's share for
+      // one of them: the same one is taken for value however the
+      // manifest lists the two, and no later pass has room for the other.
+      const tied = entries(2, () => ({ cost: 15, score: 0.5 }));
+      const reasons = (listed: ManifestEntry[]) =>
+        selected(run(sampleManifest({ entries: listed }), {
+          budgetSeconds: 26,
+          lanes: 1,
+        })).map((s) => [s.entry.test.n, s.reason]);
+      const inOrder = reasons(tied);
+      expect(inOrder).toEqual([["case 0", "value"]]);
+      expect(reasons([...tied].reverse())).toEqual(inOrder);
+    });
+
     it("draws the longest-unrun first", () => {
       // What makes the draw a sweep of the corpus rather than a sample
       // of it: everything ran yesterday except one that has not run for
@@ -844,8 +859,11 @@ describe("plan", () => {
       // Three lanes of 100 seconds, the proven test filling the value
       // pass's share in a lane to itself. Sixty tests in fifteen files,
       // at two values and two costs, tie with each other in many places,
-      // which the identity key decides. What follows the density pass is
-      // a draw seeded by position, so it is left out.
+      // which the identity key decides. The exploration draw is seeded by
+      // the manifest, and permutes what is left in an order that is the
+      // same however the manifest lists it. A unit run whole, of three
+      // tests, adds up the same costs in the same order and lists its
+      // tests the same way.
       const corpus = [
         opener,
         test("proven", "proven.test.ts", { cost: 163, score: 0.9 }),
@@ -857,21 +875,39 @@ describe("plan", () => {
               cost: [1, 2][(i >> 1) % 2]!,
             }),
         ),
+        ...[0.1, 0.2, 0.3].map((cost, i) =>
+          test(`part ${i}`, "whole.test.ts", {
+            cost,
+            inputs: {
+              catches: 2,
+              sources: 2,
+              churn: 1,
+              lastCatch: "2026-08-19",
+            },
+          })
+        ),
       ];
       const chosen = (entries: ManifestEntry[]) =>
         run(sampleManifest({ entries, calibration: perFile }), {
           lanes: 3,
           budgetSeconds: 100,
           mandatory: opened,
-        }).lanes.map((lane) =>
-          lane.selections
-            .filter((s) => s.reason !== "exploration")
-            .map((s) => [s.entry.test.n, s.reason])
-        );
+          wholeUnits: new Set(["workspace-unit\twhole.test.ts"]),
+        }).lanes.map((lane) => ({
+          seconds: lane.projectedSeconds,
+          selections: lane.selections.map((s) => [s.entry.test.n, s.reason]),
+        }));
       const inOrder = chosen(corpus);
+      const selections = inOrder.flatMap((lane) => lane.selections);
+      const taken = (reason: string) =>
+        selections.filter(([, why]) => why === reason).length;
+      expect(taken("density")).toBeGreaterThan(10);
+      expect(taken("exploration")).toBeGreaterThan(0);
       expect(
-        inOrder.flat().filter(([, reason]) => reason === "density").length,
-      ).toBeGreaterThan(10);
+        selections.map(([name]) => name).filter((name) =>
+          name!.startsWith("part ")
+        ),
+      ).toEqual(["part 0", "part 1", "part 2"]);
       expect(chosen([...corpus].reverse())).toEqual(inOrder);
       expect(
         chosen(seededOrder("shuffle", corpus.length).map((i) => corpus[i]!)),
