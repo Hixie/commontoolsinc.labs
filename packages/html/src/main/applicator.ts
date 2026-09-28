@@ -46,6 +46,16 @@ function isTextNode(node: unknown): node is Node {
 }
 
 /**
+ * Returns the first object that holds `key` directly, searching `target` and
+ * then each object on its prototype chain in turn. Returns `null` if no object
+ * in the chain holds `key`.
+ */
+function definerOf(target: object | null, key: string): object | null {
+  if (target === null || Object.hasOwn(target, key)) return target;
+  return definerOf(Object.getPrototypeOf(target), key);
+}
+
+/**
  * Options for creating a DOM applicator.
  */
 export interface DomApplicatorOptions {
@@ -94,6 +104,14 @@ export class DomApplicator {
   #pendingChildInserts: PendingChildInsert[] = [];
 
   #rootNodeId: number | null = null;
+
+  /**
+   * Document holding the copies of elements that `#unsetProp()` writes to,
+   * created on first use. No window displays it. An element in it loads no
+   * resources, runs no scripts, and never becomes an instance of a custom
+   * element class.
+   */
+  #probeDocument?: Document;
 
   constructor(options: DomApplicatorOptions) {
     this.#document = options.document ?? globalThis.document;
@@ -335,8 +353,59 @@ export class DomApplicator {
     } else if (key === "style") {
       node.removeAttribute("style");
     } else {
-      (node as any)[key] = undefined;
+      this.#unsetProp(node, key);
     }
+  }
+
+  /**
+   * Helper for `#removeProp()`, which returns `node` to the state it would be
+   * in if `key` had never been set on it.
+   *
+   * For a property that `node` inherits from the browser's own element
+   * classes, such as `.title`, this writes the current value to a copy of
+   * `node` and records which attributes that write sets. It then removes those
+   * attributes from `node`. When the write sets no attribute, as with `.value`
+   * on a text input, `node` takes the value that a new element with the same
+   * tag and attributes has.
+   *
+   * For any other property, such as one a custom element class defines, this
+   * sets the property to `undefined`.
+   */
+  #unsetProp(node: HTMLElement, key: string): void {
+    const probe = this.#builtInProbe(node, key);
+    if (probe === null) {
+      Reflect.set(node, key, undefined);
+      return;
+    }
+    const observer = new MutationObserver(() => {});
+    observer.observe(probe, { attributes: true });
+    Reflect.set(probe, key, Reflect.get(node, key));
+    const reflected = observer.takeRecords().flatMap((record) =>
+      record.attributeName ?? []
+    );
+    observer.disconnect();
+    if (reflected.length === 0) {
+      const pristine = probe.ownerDocument.createElement(node.localName);
+      for (const { name, value } of node.attributes) {
+        pristine.setAttribute(name, value);
+      }
+      Reflect.set(node, key, Reflect.get(pristine, key));
+    }
+    for (const name of reflected) node.removeAttribute(name);
+  }
+
+  /**
+   * Helper for `#unsetProp()`, which returns a copy of `node` in
+   * `#probeDocument` when `node` inherits `key` from the browser's own element
+   * classes. Returns `null` when `node` holds `key` directly, when a custom
+   * element class defines `key`, and when `node` has no property named `key`.
+   */
+  #builtInProbe(node: HTMLElement, key: string): HTMLElement | null {
+    const definer = definerOf(node, key);
+    if (definer === null || definer === node) return null;
+    this.#probeDocument ??= this.#document.implementation.createHTMLDocument();
+    const probe = this.#probeDocument.importNode(node, false);
+    return definerOf(probe, key) === definer ? probe : null;
   }
 
   #setEvent(nodeId: number, eventType: string, handlerId: number): void {
