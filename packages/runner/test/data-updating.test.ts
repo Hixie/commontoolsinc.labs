@@ -1490,7 +1490,9 @@ describe("data-updating", () => {
       // recursion into its content, so an element containing its own
       // objects-in-arrays draws a lower seed than they do. This pins the
       // sequence deliberately: a change to it would silently re-derive every
-      // nested anchored id.
+      // nested anchored id. Each element takes its array's position as its
+      // context, read from the written value, so the arrays written fresh
+      // here derive what a rewrite of stored ones would.
       const testCell = runtime.getCell<unknown>(
         space,
         "pre-order anchor ids",
@@ -1518,7 +1520,7 @@ describe("data-updating", () => {
       const rootLink = testCell.getAsNormalizedFullLink();
       const outerId = toURI(createRef({ id: "seed-0" }, {
         parent: { id: rootLink.id, space: rootLink.space },
-        path: ["0"],
+        path: [],
         context,
       }));
       const raw = testCell.getRaw() as unknown[];
@@ -1527,12 +1529,89 @@ describe("data-updating", () => {
 
       const innerId = toURI(createRef({ id: "seed-1" }, {
         parent: { id: outerId, space: rootLink.space },
-        path: ["kids", "0"],
+        path: ["kids"],
         context,
       }));
       const outerDoc = runtime.getCellFromLink(outerLink!, undefined, tx);
       const outerRaw = outerDoc.getRaw() as { kids: unknown[] };
       expect(parseLink(outerRaw.kids[0], outerDoc)?.id).toBe(innerId);
+    });
+
+    it("anchors a fresh array's element under the identity a stored one's takes", () => {
+      // The element's identity takes its array's position as context. That
+      // is read from the value the walk writes, so it does not depend on
+      // whether the array was stored before the write.
+      const testCell = runtime.getCell<unknown>(
+        space,
+        "fresh and stored anchor ids",
+        undefined,
+        tx,
+      );
+      const link = testCell.getAsNormalizedFullLink();
+      const context = "fresh and stored anchor ids";
+      const ids: (string | undefined)[] = [];
+      for (const note of ["first", "second"]) {
+        diffAndUpdate(
+          runtime,
+          tx,
+          link,
+          [{ note }],
+          context,
+          undefined,
+          () => "seed",
+        );
+        const raw = testCell.getRaw() as unknown[];
+        ids.push(parseLink(raw[0], testCell)?.id);
+      }
+      expect(ids[0]).toBe(toURI(createRef({ id: "seed" }, {
+        parent: { id: link.id, space: link.space },
+        path: [],
+        context,
+      })));
+      expect(ids[1]).toBe(ids[0]);
+    });
+
+    it("anchors a fresh scope-narrowed array element under the identity a stored one's takes", () => {
+      // Each element's schema narrows it to the user's instance, so the
+      // element is anchored at the same position in that instance. The array
+      // the element sits in is the one this walk writes, whichever instance
+      // holds its content.
+      const schema = {
+        type: "array",
+        items: {
+          type: "object",
+          scope: "user",
+          properties: { note: { type: "string" } },
+        },
+      } as const satisfies JSONSchema;
+      const testCell = runtime.getCell<unknown>(
+        space,
+        "fresh and stored scoped anchor ids",
+        schema,
+        tx,
+      );
+      const link = testCell.getAsNormalizedFullLink();
+      const context = "fresh and stored scoped anchor ids";
+      const ids: (string | undefined)[] = [];
+      for (const note of ["first", "second"]) {
+        diffAndUpdate(
+          runtime,
+          tx,
+          link,
+          [{ note }],
+          context,
+          undefined,
+          () => "seed",
+        );
+        const scoped = runtime.getCellFromLink(
+          { ...link, scope: "user", path: ["0"], schema: undefined },
+          undefined,
+          tx,
+        );
+        ids.push(parseLink(scoped.getRaw(), scoped)?.id);
+      }
+      expect(ids[0]).toBeDefined();
+      expect(ids[1]).toBe(ids[0]);
     });
 
     it("converges repeated references on one document", () => {
