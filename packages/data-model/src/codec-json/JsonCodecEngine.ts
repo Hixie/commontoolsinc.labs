@@ -43,9 +43,36 @@ import { createBaseJsonRegistry } from "./createBaseJsonRegistry.ts";
  * receiver cannot tell from two that were always distinct.
  */
 export class JsonCodecEngine extends BaseCodecEngine<JsonCodecValue, string> {
+  readonly #slotLimit: number | undefined;
+
+  /**
+   * Constructs an instance. The options other than `slotLimit` are those of
+   * `BaseCodecEngine`. `options.slotLimit`, when given, makes `decode()` refuse
+   * text standing for more slots than it allows -- an array counting as its
+   * length, holes included, and a record as its number of members -- before
+   * any of the text is walked. That bounds the work a decode of untrusted text
+   * does to its parse and at most `slotLimit` steps besides.
+   */
+  constructor(
+    options: {
+      registry: CodecRegistry<JsonCodecValue>;
+      lenient?: boolean;
+      mutable?: boolean;
+      slotLimit?: number;
+    },
+  ) {
+    super(options);
+    this.#slotLimit = options.slotLimit;
+  }
+
   //
   // Instance members
   //
+
+  /** The most slots a decode accepts, or `undefined` for no limit. */
+  get slotLimit(): number | undefined {
+    return this.#slotLimit;
+  }
 
   /** @inheritDoc */
   protected override newEncodeAct(env: LiveEnvironment): JsonEncodeAct {
@@ -62,7 +89,7 @@ export class JsonCodecEngine extends BaseCodecEngine<JsonCodecValue, string> {
     env: LiveEnvironment,
     _data: string,
   ): JsonDecodeAct {
-    return new JsonDecodeAct(this, env);
+    return new JsonDecodeAct(this, env, this.#slotLimit);
   }
 
   //
