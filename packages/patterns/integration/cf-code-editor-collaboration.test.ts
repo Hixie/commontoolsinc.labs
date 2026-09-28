@@ -23,6 +23,11 @@ import {
   waitForRuntimeIdle,
 } from "./cfc-browser-helpers.ts";
 
+import {
+  type PresenceRelay,
+  startPresenceRelay,
+} from "./code-editor-presence-relay.ts";
+
 const { API_URL, FRONTEND_URL, SPACE_NAME } = env;
 
 type EditorHost = Element & {
