@@ -332,14 +332,16 @@ export class FabricUnavailable extends BaseFabricPrimitive
         typeTag: string,
         state: FabricUnavailableState,
         _env: LiveEnvironment,
+        mutable = false,
       ): FabricValue {
         try {
           return FabricUnavailable.#instanceForState(state);
         } catch (e) {
-          return new ProblematicValue(
+          return ProblematicValue.make(
             typeTag,
             state,
             `Unavailable: ${(e instanceof Error) ? e.message : String(e)}`,
+            mutable,
           );
         }
       }
@@ -373,14 +375,16 @@ export class FabricUnavailable extends BaseFabricPrimitive
         typeTag: string,
         state: FabricUnavailableState,
         _env: LiveEnvironment,
+        mutable = false,
       ): FabricValue {
         try {
           return FabricUnavailable.#instanceForState(state);
         } catch (e) {
-          return new ProblematicValue(
+          return ProblematicValue.make(
             typeTag,
             state,
             (e instanceof Error) ? e.message : String(e),
+            mutable,
           );
         }
       }

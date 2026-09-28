@@ -226,6 +226,7 @@ export class FabricRegExp extends BaseFabricPrimitive
         typeTag: string,
         state: FabricRegExpState,
         _env: LiveEnvironment,
+        mutable = false,
       ): FabricValue {
         const flavor = state.flavor ?? DEFAULT_FLAVOR;
         const source = state.source ?? "";
@@ -234,10 +235,11 @@ export class FabricRegExp extends BaseFabricPrimitive
         try {
           return new FabricRegExp(flavor, source, flags);
         } catch (e) {
-          return new ProblematicValue(
+          return ProblematicValue.make(
             typeTag,
             state,
             `RegExp: ${e instanceof Error ? e.message : String(e)}`,
+            mutable,
           );
         }
       }
@@ -293,6 +295,7 @@ export class FabricRegExp extends BaseFabricPrimitive
         typeTag: string,
         state: FabricRegExpState,
         _env: LiveEnvironment,
+        mutable = false,
       ): FabricValue {
         const flavor = state.flavor ?? DEFAULT_FLAVOR;
         const source = state.source ?? "";
@@ -301,10 +304,11 @@ export class FabricRegExp extends BaseFabricPrimitive
         try {
           return new FabricRegExp(flavor, source, flags);
         } catch (e) {
-          return new ProblematicValue(
+          return ProblematicValue.make(
             typeTag,
             state,
             (e instanceof Error) ? e.message : String(e),
+            mutable,
           );
         }
       }

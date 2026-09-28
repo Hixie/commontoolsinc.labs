@@ -287,6 +287,7 @@ export class FabricKeyPair extends BaseFabricPrimitive {
         typeTag: string,
         state: FabricKeyPairMaterialState,
         _env: LiveEnvironment,
+        mutable = false,
       ): FabricValue {
         const { algorithm, publicKey, privateKey } = state;
 
@@ -297,10 +298,11 @@ export class FabricKeyPair extends BaseFabricPrimitive {
             new FabricBytes(fromBase64url(privateKey), true),
           );
         } catch (e) {
-          return new ProblematicValue(
+          return ProblematicValue.make(
             typeTag,
             state,
             `KeyPair: ${e instanceof Error ? e.message : String(e)}`,
+            mutable,
           );
         }
       }
