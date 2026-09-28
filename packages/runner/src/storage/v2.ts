@@ -3754,9 +3754,6 @@ export class SpaceReplica
    *  is no memoized mount to replace. */
   #aclChangedSinceMount = false;
 
-  /** How many times `#consumeOwedSessionRemount()` has replaced the session. */
-  #sessionRemounts = 0;
-
   readonly #docs = new Map<string, DocumentRecord>();
   readonly #syncTasks = new Map<string, SyncTask>();
   readonly #commitPromises = new Set<Promise<unknown>>();
@@ -4501,9 +4498,9 @@ export class SpaceReplica
    * `#memoizedSessionHandle()`, and the serving loop already re-attempts a
    * deferred event's load every drain (see the scheduler's `failHeadEventLoadPark`
    * and the SpaceServer's deferral backstop), so the heal arrives on the
-   * cadence the deferral machinery already runs at. A `pull()` whose fetch
-   * was in flight when the revocation landed consumes it as that fetch
-   * fails, and makes the fetch once more on the remounted session.
+   * cadence the deferral machinery already runs at. A watch request in
+   * flight when the revocation lands consumes it as the request fails, and
+   * is made once more on the remounted session.
    */
   noteAclChanged(): void {
     if (this.#closed) return;
@@ -4582,7 +4579,6 @@ export class SpaceReplica
       return;
     }
     this.#aclChangedSinceMount = false;
-    this.#sessionRemounts++;
     this.#sessionHandle = undefined;
     this.#sessionClient = undefined;
     // Dropping the terminated session drops the `closeError` half of
@@ -5501,29 +5497,7 @@ export class SpaceReplica
     // returned SUCCESS carrying the pre-revocation value. Idempotent and
     // cheap — a bare boolean test when nothing is owed.
     this.#consumeOwedSessionRemount();
-    const remounts = this.#sessionRemounts;
-    const result = await this.#pullFromSession(entries);
-    if (result.error === undefined) return result;
-    // A fetch in flight when an ACL verdict terminated its session fails on
-    // that session, and may be the only load this space sees, so it is the
-    // one that consumes the remount. The fetch is made once more on the
-    // remounted session, which admits or refuses it against the ACL as it
-    // now stands. The count, rather than the latch, is what is compared, so
-    // a caller that joined the failed fetch retries even where another
-    // caller consumed the latch first.
-    this.#consumeOwedSessionRemount();
-    return remounts === this.#sessionRemounts
-      ? result
-      : await this.#pullFromSession(entries);
-  }
 
-  /**
-   * Helper for `pull()`, which fetches `entries` through the session's watch
-   * set, joining any fetch already in flight for the same entries.
-   */
-  async #pullFromSession(
-    entries: [WatchAddress, SchemaPathSelector | undefined][],
-  ): Promise<Result<Unit, PullError>> {
     const normalizedEntries = normalizeSyncEntries(entries);
     // Phase 5's delegated-scoped-read fail-closed refusal, ENTRY-scoped
     // (the F3 fix; protocol.md §2's grant-scoped read design): decided
@@ -6149,7 +6123,7 @@ export class SpaceReplica
   ): Promise<Result<Unit, PullError>> {
     const refreshStart = performance.now();
     try {
-      const { session } = await this.#activeSessionHandle();
+      let { session } = await this.#activeSessionHandle();
       // Per-session (no global): mirror the storage setting onto the session so
       // its watch-mutation family (set + add) uses the ordered-issue concurrent
       // path. Idempotent; cheap to re-assert each refresh. Optional-chained so
@@ -6230,6 +6204,18 @@ export class SpaceReplica
       let mutation: MemoryV2Client.WatchMutationResult;
       try {
         mutation = await session.watchAddSync(watches);
+      } catch (error) {
+        // An ACL verdict can terminate the session while this request is in
+        // flight, and the request may be the only load the space sees, so its
+        // failure is what consumes the remount. The request is made once more
+        // on the remounted session, which admits or refuses it against the
+        // ACL as it now stands.
+        if (!this.#remountedSince(session)) throw error;
+        ({ session } = await this.#activeSessionHandle());
+        session.setConcurrentWatchRefresh?.(
+          this.#settings.experimentalConcurrentWatchRefresh === true,
+        );
+        mutation = await session.watchAddSync(watches);
       } finally {
         logger.time(watchAddStart, "watchRefresh", "watchAddSync");
       }
@@ -6266,6 +6252,15 @@ export class SpaceReplica
     } finally {
       logger.time(refreshStart, "watchRefresh", "total");
     }
+  }
+
+  /**
+   * Helper for `#refreshWatchSet()`, which consumes any session remount owed
+   * and returns whether `session` has been replaced as this replica's session.
+   */
+  #remountedSince(session: MemoryV2Client.SpaceSession): boolean {
+    this.#consumeOwedSessionRemount();
+    return this.#sessionSession !== session;
   }
 
   #consumeWatchView(view: MemoryV2Client.WatchView): void {
