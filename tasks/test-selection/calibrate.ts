@@ -50,15 +50,17 @@
  *
  * What that costs is worth being plain about, because it is charged to
  * every lane rather than to the occasional bad window. The packer reads
- * the fitted slope against a manifest cost, which is the largest of the
- * days' ninetieth percentiles and so is deliberately above what a test
- * usually takes. A slope fitted against what tests usually take, read
- * against a figure padded above that, over-charges by the padding. So a
- * lane is packed short of what it could hold, by whatever margin the
- * cost figures carry, and the headroom that keeps a lane inside its
- * bound is that padding rather than this intercept. Under-packing is the
- * direction every fit here errs in; it is the price of an intercept that
- * measures the machine rather than the manifest.
+ * the fitted slope against a manifest cost, which is the ninetieth
+ * percentile of a test's executions across the cost window and so is
+ * above what the test usually takes. A slope fitted against what tests
+ * usually take, read against a figure above that, over-charges by the
+ * difference. So a lane is packed short of what it could hold, by
+ * whatever margin the cost figures carry. That margin is one of three
+ * things between what a lane is projected to spend and its bound; the
+ * others are the charges below, each read high, and the safety margin
+ * `LANE_SAFETY_SECONDS`. Under-packing is the direction every fit here
+ * errs in; it is the price of an intercept that measures the machine
+ * rather than the manifest.
  *
  * Every fit here errs high: above what the typical lane pays. A cost
  * model that under-estimates puts a lane past the bound it is packed to
@@ -583,7 +585,7 @@ export function fitSuite(
   const remainders = observations
     .map((o) => o.spent - testsCost(o, correction) - unitOverhead * o.units)
     .sort((a, b) => a - b);
-  const overhead = Math.max(0, percentile90(remainders, remainders.length));
+  const overhead = Math.max(0, percentile90(remainders));
   return { overhead, correction, unitOverhead };
 }
 
@@ -597,7 +599,7 @@ export function calibrate(observations: Observations): Calibration {
   // is the slowest of them.
   for (const [capability, seconds] of observations.setup) {
     const sorted = [...seconds].sort((a, b) => a - b);
-    setupCost[capability] = percentile90(sorted, sorted.length);
+    setupCost[capability] = percentile90(sorted);
   }
   // Instrumenting a run costs it time, and how much is a property of the
   // suite, so a suite's batches run with coverage on are fitted apart

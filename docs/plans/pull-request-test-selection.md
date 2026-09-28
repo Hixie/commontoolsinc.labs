@@ -1537,13 +1537,17 @@ publisher computes:
   halved every 14 days as they age.
 - `flakeRate` — how often it disagrees with itself; see
   [Flakes and repeats](#flakes-and-repeats).
-- `cost` — the ninetieth percentile of its passing durations on the
-  worst of the last seven days. The ninetieth percentile rather than the
+- `cost` — the ninetieth percentile of all its passing durations over
+  the last seven days, taken together, so that each execution counts once
+  however the days fall. The ninetieth percentile rather than the
   maximum, because one unlucky runner should not permanently inflate an
   estimate, and rather than the mean, because a cost model that
-  under-estimates blows the time budget. A day is held as its slowest
-  executions and the count of all of them, so that the parts a day
-  arrives in combine into the percentile of the whole. Only passing
+  under-estimates blows the time budget. A day is held as counts of its
+  executions in duration buckets, 32 to each doubling, so that the parts
+  a day arrives in and the days of the window combine into the
+  percentile of the whole; reading a bucket as the largest duration it
+  counts puts the cost at most about 2.2% above the exact percentile, and
+  never below it. Only passing
   executions are measured: a failure ended where the failure was
   reached, and where a wait's safety net ended it, its duration is that
   net's bound. Only executions on continuous-integration runners are
@@ -2477,12 +2481,13 @@ someone raises the dial.
 
 The three numbers are the only place the five-minute promise lives. The promise
 is kept by packing rather than by a timeout. A lane's work step carries the
-workflow's ordinary `*work-timeout` bound of 30 minutes, and its job the
-`*job-timeout` bound of 40, like every bounded job in `deno.yml`. Those bounds
+`*lane-work-timeout` bound of 60 minutes, and its job the `*lane-job-timeout`
+bound of 70, a pair of anchors in `deno.yml` for the lanes alone. Those bounds
 only stop a lane that hangs, and are not the budget. A lane whose mandatory set
 is larger than the budget runs long and says by how much, rather than being
 stopped part way through with its later batches unrun and unmeasured. So raising
-`LANE_BOUND_SECONDS` moves nothing in the workflow.
+`LANE_BOUND_SECONDS` moves nothing in the workflow, unless it moves past the
+lane step's bound.
 
 ### Choosing what to run
 
@@ -2923,7 +2928,7 @@ tests:
     !cancelled() &&
     (needs.plan-full.result == 'success' || needs.plan-full.result == 'skipped')
   runs-on: ubuntu-latest
-  timeout-minutes: *job-timeout
+  timeout-minutes: *lane-job-timeout
   permissions:
     contents: read
   env:
@@ -2977,7 +2982,7 @@ tests:
         restore-keys: |
           cc-lane-${{ steps.compile-cache-key.outputs.fingerprint }}-
     - name: 🧪 Run the lane
-      timeout-minutes: *work-timeout
+      timeout-minutes: *lane-work-timeout
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -3035,13 +3040,17 @@ that declared `github-api` is given it back. The `contents: read` permission
 bounds what the token can do to reading this repository, which is what
 `check-action-pins` asks the service for.
 
-The lanes use the same timeout anchors as every other bounded job in the file:
-`*work-timeout`, 30 minutes, on the step that runs the lane, and `*job-timeout`,
-40, on the job, which satisfies the repository's rule that a job's bound is at
-least ten minutes above its work step's. `tasks/ci-workflow.test.ts` enforces
-that rule. A lane packs against its budget, which is derived from
-`LANE_BOUND_SECONDS` for a pull request and `FULL_LANE_BOUND_SECONDS` for the
-full run. The step bound only stops a lane that hangs. [The
+The lanes use a pair of timeout anchors of their own: `*lane-work-timeout`, 60
+minutes, on the step that runs the lane, and `*lane-job-timeout`, 70, on the
+job, which satisfies the repository's rule that a job's bound is at least ten
+minutes above its work step's. The step's bound sits above
+`FULL_LANE_BOUND_SECONDS`, thirty minutes, so that it stops only a lane that
+hangs. `tasks/ci-workflow.test.ts` enforces both. A pull request's lanes run in
+the same job, so a pull-request lane that hangs is stopped only by that same
+bound, although it is packed to finish in five minutes. A lane packs against its
+budget, which is derived from `LANE_BOUND_SECONDS` for a pull request and
+`FULL_LANE_BOUND_SECONDS` for the full run. The step bound only stops a lane
+that hangs. [The
 budget](#the-budget-and-why-it-is-derived-rather-than-chosen) says why the two
 are kept apart.
 
@@ -3133,8 +3142,8 @@ What the runner does, in order:
 What a lane costs beyond its tests is fitted from the lane's own
 measurements, and [The cost model](#the-cost-model) says how. What that
 section leaves to here is the order a lane takes its batches in, which
-decides which suites the model can ever learn. A lane that the 30-minute step
-timeout or a cancellation stops part way through leaves its later batches unrun,
+decides which suites the model can ever learn. A lane that its step timeout or
+a cancellation stops part way through leaves its later batches unrun,
 so they record nothing, and a suite the model cannot price is one that makes
 lanes over-run.
 
@@ -3994,7 +4003,7 @@ is pinned to the commit's date. And if none of that settles it,
 | A suite gains a new variant with no records | Every available item in that variant is mandatory until a successful full `main` run accounts for every enumerated item under that exact variant, the store drift guard passes, and the next publisher cycle includes the run. Other variants do not stand in for it. |
 | A variant deliberately skips a file or leaf | The topology reads the existing skip registry and the manifest reports the test as unavailable with its phase and reason. It is not unknown. Removing the skip makes it mandatory until `main` records it. |
 | One item is bigger than a lane's planned budget | It gets a lane to itself, up to the five-minute bound. Bigger than that, a mandatory item is still placed and its lane over-runs, while a discretionary one is listed as unschedulable in the manifest and reported; the 60-second ratchet is the fix. |
-| The mandatory set alone exceeds the budget | The lane runs it anyway and over-runs, past the five-minute bound where the set demands it. The work step's own timeout is 30 minutes and only stops a lane that hangs, so the lane finishes and is measured rather than stopped. Its job log says how far its plan was projected past the budget, which is what argues for raising the bound. |
+| The mandatory set alone exceeds the budget | The lane runs it anyway and over-runs, past the five-minute bound where the set demands it. The work step's own timeout is 60 minutes and only stops a lane that hangs, so the lane finishes and is measured rather than stopped. Its job log says how far its plan was projected past the budget, which is what argues for raising the bound. |
 | A measured set has no baseline, or none from an ancestor of the merge base | `Status` reports the comparison and does not fail. The next full `main` run supplies one. |
 | A measured member gains a test needing a browser or a server | It goes in the member's `browser-test` half, which no measured set holds, so the Deno-only half keeps its gate. A member with no such half yet names one. |
 | A measured set grows expensive | Reported in the publisher's summary and by `deno task test-selection coverage`. Nothing is excluded automatically; somebody splits the member's tests or adds a line to the exclusion list. |

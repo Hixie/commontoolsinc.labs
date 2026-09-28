@@ -245,9 +245,11 @@ it also holds the authored-pattern reports under
 `lcov/pattern-runtime/<suite>`.
 `test-records-tests-<lane>-a<attempt>` holds its test records.
 
-The lane step is bounded at 30 minutes and its job at 40, the workflow's
-ordinary bounds. Those only stop a lane that hangs. The budget a lane packs
-against is derived from `LANE_BOUND_SECONDS` for a pull request and
+The lane step is bounded at 60 minutes and its job at 70, by the lane job's own
+pair of timeout anchors, above the full run's thirty-minute lane bound. Those
+only stop a lane that hangs, and a pull request's lanes, which run in the same
+job, wait as long before one is stopped. The budget a lane packs against is
+derived from `LANE_BOUND_SECONDS` for a pull request and
 `FULL_LANE_BOUND_SECONDS` for the full run. Neither is a bound a lane is stopped
 at. A lane whose mandatory work passes its budget runs long rather than being
 stopped with its later batches unrun, and its job log says how far its plan was
@@ -455,8 +457,8 @@ rather than a setting to fix.
 | `LANE_PROLOGUE_SECONDS` | 40 | seconds | chosen | Up when checkout, setup, and cache restore take longer than this and eat into the safety margin; down when they take less. Nothing measures it. |
 | `LANE_SAFETY_SECONDS` | 30 | seconds | chosen | Up when lanes overrun their bound on slow runners; down when they finish early every time and the headroom is buying nothing. |
 | `LANE_BUDGET_SECONDS` | 230 | seconds | derived | Nothing edits this. It is the bound less the prologue and the safety margin, so a budget that does not fit inside its own bound cannot be written down. |
-| `FULL_LANE_BOUND_SECONDS` | 600 | seconds | chosen | Up when the run on `main` uses more jobs than it needs; down when `main` takes too long to say something broke. |
-| `FULL_LANE_BUDGET_SECONDS` | 530 | seconds | derived | Nothing edits this. It is the full run's bound less the same prologue and safety margin a pull request's lane pays, since a lane of either run is the same job doing the same setup on the same runner. |
+| `FULL_LANE_BOUND_SECONDS` | 1800 | seconds | chosen | Up when the run on `main` uses more jobs than it needs; down when `main` takes too long to say something broke. |
+| `FULL_LANE_BUDGET_SECONDS` | 1730 | seconds | derived | Nothing edits this. It is the full run's bound less the same prologue and safety margin a pull request's lane pays, since a lane of either run is the same job doing the same setup on the same runner. |
 | `FULL_LANES_MAX` | 30 | lanes | chosen | Up when the organization's runner limit rises; down when a push's full run crowds out the pull requests behind it. A full run needing more lanes than this takes this many, and a lane may then run past its budget. |
 | `FULL_RUN_LABEL` | ci: full | a label | chosen | Not a quantity. Change it only if the label collides with one the repository already uses for something else. |
 | `UNMEASURED_COST_SECONDS` | 1 | seconds | chosen | Up when a lane holding new tests runs long; down when it finishes early. It is reached for only by a suite with no measured unit at all, since a suite that has any charges an unmeasured one the larger of its units' mean and their ninetieth percentile. |
@@ -529,6 +531,12 @@ ones it could no longer reach. An aggregate written before those files
 were carried holds none, and each identity rejoins the manifest as its
 records name a file again.
 
+An identity's cost window holds, for each day, how many of its passing
+executions fell in each duration bucket, and its cost is the ninetieth
+percentile of every day of the window taken together.
+[The spec](../specs/test-selection.md#how-far-back-each-input-looks) says
+why it is read that way.
+
 A day of an identity's cost window carries the set of cost rules that
 sealed it, as `COST_RULE`. A day carrying no such stamp was sealed
 before the stamps began, which is every day an aggregate written before
@@ -540,12 +548,14 @@ there is, which for a test that has not passed since the change is until
 the day ages out of the window, and is dropped the moment the rules in
 force seal a day for that test.
 
-Changing which executions reach a day's sample, or what the sample
-holds, means changing `COST_RULE` in the same change. The cost window
-then refills over its own length, charging fewer days' figures while it
-does; carrying the old days instead would have figures the new rules
-would never produce deciding what a pull request runs for that same
-stretch.
+Changing which executions reach a day's sample means changing
+`COST_RULE` in the same change. The cost window then refills over its
+own length, charging fewer days' figures while it does; carrying the old
+days instead would have figures the new rules would never produce
+deciding what a pull request runs for that same stretch. Changing how a
+day's sample is stored does not change `COST_RULE`: the days already
+stored are read forward into the new form, at or above what they held,
+and keep the stamp of the rules that sealed them.
 
 A change to what a manifest or an aggregate holds needs no cold start.
 The area both are written under is named rather than numbered and does
@@ -1063,8 +1073,8 @@ run a suite that way yet, the run charges the other fit. Charging a run without
 coverage the coverage-on fit errs high. Charging a run with coverage the fit
 without it is short by whatever instrumenting costs. Either is nearer than
 charging nothing. A lane runs first the batches of a suite whose charge was not
-fitted the way this run runs it. A lane is stopped part way through only by the
-30-minute step timeout or by a cancellation, and one that is has then measured
+fitted the way this run runs it. A lane is stopped part way through only by its
+step timeout or by a cancellation, and one that is has then measured
 what the model most needs.
 
 A suite's own figures are what a lane is charged for holding the suite
