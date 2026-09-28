@@ -33,6 +33,8 @@ export const CI_JOBS_PATH = "/ci";
 export interface Job {
   repo: string; // the repository's own name, without the owner
   workflow: string; // the workflow's name
+  // The workflow's file, which no other workflow in its repository shares.
+  path: string;
   pinned: boolean; // kept in the tile's body even when it is passing
   // How the job reads: red for a failure somebody can still act on, orange for
   // one that has been failing too long to be news and for a job nothing could
@@ -153,16 +155,17 @@ function jobRow(job: Job, now: number): string {
 }
 
 /**
- * What the page orders jobs by: worst first, and within one status by
- * repository and then by workflow. A repository's name has no spaces in it.
- * Each row carries its key, which says nothing about the rows around it, so a
- * row that has not changed keeps its markup however the rows around it move.
+ * A key for `job` that puts it where `ordered` does and that no other job
+ * shares. A repository's name has no spaces in it. Each row carries its key,
+ * which says nothing about the rows around it, so a row that has not changed
+ * keeps its markup however the rows around it move.
  */
 function servedKey(job: Job): string {
   const rank = STATUS_RANK.bad - STATUS_RANK[job.status];
-  return `${rank} ${job.repo} ${job.workflow}`;
+  return `${rank} ${job.repo} ${job.workflow} ${job.path}`;
 }
 
+/** Worst first, and within one status by repository and then by workflow. */
 function ordered(jobs: readonly Job[]): Job[] {
   return [...jobs].sort((a, b) => servedKey(a).localeCompare(servedKey(b)));
 }
@@ -199,21 +202,38 @@ export interface SortableRow {
   readonly cells: ArrayLike<SortableCell>;
 }
 
-/** The parts of a column heading's button `sortTable()` uses. */
-export interface SortableHeading {
+/** The parts of a column heading's button the sorting functions use. */
+export interface SortableHeading<Row extends SortableRow> {
   getAttribute(name: string): string | null;
   readonly parentElement: {
     setAttribute(name: string, value: string): void;
   } | null;
+  addEventListener(type: "click", listener: () => void): void;
+  closest(selectors: "table"): SortableTable<Row> | null;
 }
 
-/** The parts of a table `sortTable()` uses. */
+/** The parts of a table the sorting functions use. */
 export interface SortableTable<Row extends SortableRow> {
   readonly tBodies: ArrayLike<{
     readonly rows: ArrayLike<Row>;
     appendChild(row: Row): unknown;
   }>;
-  querySelectorAll(selectors: string): ArrayLike<SortableHeading>;
+  hasAttribute(name: string): boolean;
+  querySelectorAll(selectors: string): ArrayLike<SortableHeading<Row>>;
+}
+
+/** The parts of a page, or of a rendering of it, `followSorting()` reads. */
+export interface SortableRoot<Row extends SortableRow> {
+  querySelectorAll(selectors: "table"): ArrayLike<SortableTable<Row>>;
+}
+
+/** The parts of a page `followSorting()` uses. */
+export interface SortablePage<Row extends SortableRow>
+  extends SortableRoot<Row> {
+  addEventListener(
+    type: typeof LIVE_PAGE_UPDATE,
+    listener: (event: { readonly detail: SortableRoot<Row> }) => void,
+  ): void;
 }
 
 /** The column a reader sorted a table by, and which way. */
@@ -270,29 +290,39 @@ export function sortTable<Row extends SortableRow>(
  * each fresh rendering of the page the same way before it is applied. The
  * rendering arrives in the order the page was served in, and sorted like the
  * page it compares equal wherever nothing changed, so those rows are kept.
+ * Every heading on the page came either with the page or with a rendering, so
+ * each is listened to as it arrives. It reads only the page it is given, which
+ * a test can fake, and the page carries it serialized.
  */
-function followSorting(page: Document): void {
+export function followSorting<Row extends SortableRow>(
+  page: SortablePage<Row>,
+): void {
   let order: SortOrder | undefined;
-  page.addEventListener("click", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest("table[data-sortable] th button[data-column]")
-      : null;
-    const table = button?.closest("table");
-    if (!button || !table) return;
-    const column = Number(button.getAttribute("data-column"));
-    order = {
-      column,
-      descending: order?.column === column && !order.descending,
-    };
-    sortTable<HTMLTableRowElement>(table, order);
-  });
-  page.addEventListener(LIVE_PAGE_UPDATE, (event) => {
-    if (order === undefined) return;
-    for (const table of event.detail.querySelectorAll("table")) {
-      if (table.hasAttribute("data-sortable")) {
-        sortTable<HTMLTableRowElement>(table, order);
+  const listen = (root: SortableRoot<Row>): SortableTable<Row>[] => {
+    const tables = Array.from(root.querySelectorAll("table"))
+      .filter((table) => table.hasAttribute("data-sortable"));
+    for (const table of tables) {
+      const headings = table.querySelectorAll("th button[data-column]");
+      for (const heading of Array.from(headings)) {
+        heading.addEventListener("click", () => {
+          const column = Number(heading.getAttribute("data-column"));
+          order = {
+            column,
+            descending: order?.column === column && !order.descending,
+          };
+          // The heading may have arrived in a rendering and been placed in
+          // the table the page already had.
+          sortTable(heading.closest("table") ?? table, order);
+        });
       }
     }
+    return tables;
+  };
+  listen(page);
+  page.addEventListener(LIVE_PAGE_UPDATE, (event) => {
+    const tables = listen(event.detail);
+    if (order === undefined) return;
+    for (const table of tables) sortTable(table, order);
   });
 }
 

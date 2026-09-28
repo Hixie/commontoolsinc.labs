@@ -67,17 +67,13 @@ export function reconcileMain<E extends Part<E>>(main: E, next: E): boolean {
  */
 export const LIVE_PAGE_UPDATE = "live-page-update";
 
-declare global {
-  interface DocumentEventMap {
-    [LIVE_PAGE_UPDATE]: CustomEvent<Element>;
-  }
-}
-
 /**
  * Announces `next` to the page as `LIVE_PAGE_UPDATE`, then makes `main` match
  * it with `reconcileMain`, and reports whether that changed anything.
  */
-export function updateMain(main: Element, next: Element): boolean {
+export function updateMain<
+  E extends Part<E> & { dispatchEvent(event: CustomEvent<E>): unknown },
+>(main: E, next: E): boolean {
   main.dispatchEvent(
     new CustomEvent(LIVE_PAGE_UPDATE, { bubbles: true, detail: next }),
   );

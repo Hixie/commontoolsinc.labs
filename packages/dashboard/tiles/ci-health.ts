@@ -437,6 +437,7 @@ async function jobOf(
   const job = {
     repo: shortName(inventory.repo),
     workflow: workflow.name,
+    path: workflow.path,
     pinned: isPinned(inventory.repo, workflow.path),
     href: workflowUrl(inventory.repo, workflow.path),
   };
@@ -539,6 +540,7 @@ function ciHealthView(collected: CiJobs, now = Date.now()): TileView {
     ...unreadableRepos.map((repo): Job => ({
       repo: shortName(repo),
       workflow: "workflows",
+      path: "",
       pinned: false,
       status: "warn",
       failing: false,

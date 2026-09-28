@@ -22,6 +22,7 @@ function job(over: Partial<Job> = {}): Job {
   return {
     repo: "labs",
     workflow: "CI",
+    path: ".github/workflows/ci.yml",
     pinned: false,
     status: "good",
     failing: false,
@@ -80,7 +81,7 @@ function arrange(): HTMLElement {
 
 // What the page's live client does with a fresh rendering of `jobs`.
 function update(fixture: HTMLElement, jobs: CiJobs): void {
-  updateMain(fixture.querySelector("main")!, mainFor(jobs));
+  updateMain<Element>(fixture.querySelector("main")!, mainFor(jobs));
 }
 
 function rows(fixture: HTMLElement): HTMLTableRowElement[] {

@@ -16,9 +16,10 @@ import {
   CI_JOBS_PATH,
   ciJobsPage,
   type Job,
+  followSorting,
   sortTable,
-  type SortOrder,
 } from "./ci-jobs-page.ts";
+import { LIVE_PAGE_UPDATE } from "./live-page-client.ts";
 import { livePage, livePageResponse } from "./live-page.ts";
 
 const MINUTE = 60_000;
@@ -29,6 +30,7 @@ function job(over: Partial<Job> = {}): Job {
   return {
     repo: "labs",
     workflow: "CI",
+    path: ".github/workflows/ci.yml",
     pinned: false,
     status: "good",
     failing: false,
@@ -391,20 +393,28 @@ Deno.test("ci jobs page: the page is live, with everything it renders inside mai
   assertStringIncludes(html, "/events?page=");
   assertStringIncludes(main, "collected 2026-09-22 14:28 UTC · 2m ago");
   assertStringIncludes(main, "<table data-sortable>");
-  assertStringIncludes(main, `<tr data-served="3 labs CI">`);
+  assertStringIncludes(main, `<tr data-served="3 labs CI .github/workflows/ci.yml">`);
   // The page's own script comes first, so it is listening for updates before
   // the page opens its stream.
   assert(html.indexOf("const sortTable") < html.indexOf("new EventSource"));
 });
 
 Deno.test("ci jobs page: each row carries the key it was served in order of", () => {
-  // A job's key is its own, whatever the jobs around it are.
+  // A job's key is its own, whatever the jobs around it are, and two
+  // workflows one repository gives the same name have keys of their own.
   const html = pageHtml(
     collection({
       jobs: [
-        job({ repo: "b" }),
-        job({ repo: "a" }),
-        job({ repo: "c", status: "bad", failing: true, result: "failure" }),
+        job({ repo: "b", path: "a.yml" }),
+        job({ repo: "a", path: "b.yml" }),
+        job({ repo: "a", path: "a.yml" }),
+        job({
+          repo: "c",
+          path: "a.yml",
+          status: "bad",
+          failing: true,
+          result: "failure",
+        }),
       ],
     }),
     NOW,
@@ -412,13 +422,13 @@ Deno.test("ci jobs page: each row carries the key it was served in order of", ()
 
   assertEquals(
     [...html.matchAll(/<tr data-served="([^"]*)">/g)].map((match) => match[1]),
-    ["0 c CI", "3 a CI", "3 b CI"],
+    ["0 c CI a.yml", "3 a CI a.yml", "3 a CI b.yml", "3 b CI a.yml"],
   );
 });
 
-// The parts of a table `sortTable()` uses, over plain objects.
-// `ci-jobs-page.browser.test.ts` runs the same function against the page's own
-// markup in a browser.
+// The parts of a page the sorting functions use, over plain objects.
+// `ci-jobs-page.browser.test.ts` runs the same functions against the page's
+// own markup in a browser.
 class FakeCell {
   constructor(
     readonly textContent: string,
@@ -453,6 +463,8 @@ class FakeBody {
 
 class FakeHeading {
   sort = "none";
+  table: FakeTable | null = null;
+  readonly #listeners: (() => void)[] = [];
   readonly parentElement = {
     setAttribute: (name: string, value: string) => {
       if (name === "aria-sort") this.sort = value;
@@ -464,81 +476,194 @@ class FakeHeading {
   getAttribute(name: string): string | null {
     return name === "data-column" ? String(this.column) : null;
   }
+
+  addEventListener(_type: "click", listener: () => void): void {
+    this.#listeners.push(listener);
+  }
+
+  closest(_selectors: "table"): FakeTable | null {
+    return this.table;
+  }
+
+  click(): void {
+    for (const listener of this.#listeners) listener();
+  }
 }
 
 // A table of jobs with a name column that sorts on its text and a duration
 // column that sorts on its key, in the order the page served them.
-function fakeTable(rows: [string, string][]) {
-  const body = new FakeBody();
-  body.rows = rows.map(([name, ms], served) =>
-    new FakeRow(name, `${served} ${name}`, [
-      new FakeCell(` ${name} `),
-      new FakeCell("", ms),
-    ])
-  );
-  const headings = [new FakeHeading(0), new FakeHeading(1)];
-  const table = {
-    tBodies: [body],
-    querySelectorAll: (selectors: string) =>
-      selectors === "th button[data-column]" ? headings : [],
-  };
-  return {
-    sort: (order: SortOrder) => sortTable(table, order),
-    order: () => body.rows.map((row) => row.name),
-    marks: () => headings.map((heading) => heading.sort),
-  };
+class FakeTable {
+  readonly body = new FakeBody();
+  tBodies = [this.body];
+  headings = [new FakeHeading(0), new FakeHeading(1)];
+
+  constructor(rows: [string, string][], readonly sortable = true) {
+    this.body.rows = rows.map(([name, ms], served) =>
+      new FakeRow(name, `${served} ${name}`, [
+        new FakeCell(` ${name} `),
+        new FakeCell("", ms),
+      ])
+    );
+    for (const heading of this.headings) heading.table = this;
+  }
+
+  hasAttribute(name: string): boolean {
+    return name === "data-sortable" && this.sortable;
+  }
+
+  querySelectorAll(selectors: string): FakeHeading[] {
+    return selectors === "th button[data-column]" ? this.headings : [];
+  }
+
+  order(): string[] {
+    return this.body.rows.map((row) => row.name);
+  }
+
+  marks(): string[] {
+    return this.headings.map((heading) => heading.sort);
+  }
+}
+
+// A page, or a rendering of one, holding `tables`.
+class FakeRoot {
+  constructor(readonly tables: FakeTable[]) {}
+
+  querySelectorAll(_selectors: "table"): FakeTable[] {
+    return this.tables;
+  }
+}
+
+class FakePage extends FakeRoot {
+  #update?: (event: { readonly detail: FakeRoot }) => void;
+
+  addEventListener(
+    _type: typeof LIVE_PAGE_UPDATE,
+    listener: (event: { readonly detail: FakeRoot }) => void,
+  ): void {
+    this.#update = listener;
+  }
+
+  // What the live client does before it applies `rendering`.
+  update(rendering: FakeRoot): void {
+    this.#update!({ detail: rendering });
+  }
 }
 
 Deno.test("ci jobs sorting: a column of numbers sorts as numbers, up then down", () => {
-  const table = fakeTable([["b", "200"], ["a", "9"], ["c", "40"]]);
+  const table = new FakeTable([["b", "200"], ["a", "9"], ["c", "40"]]);
 
-  table.sort({ column: 1, descending: false });
+  sortTable(table, { column: 1, descending: false });
   // As text, "200" would come before "40" and "9".
   assertEquals(table.order(), ["a", "c", "b"]);
   assertEquals(table.marks(), ["none", "ascending"]);
 
-  table.sort({ column: 1, descending: true });
+  sortTable(table, { column: 1, descending: true });
   assertEquals(table.order(), ["b", "c", "a"]);
   assertEquals(table.marks(), ["none", "descending"]);
 });
 
 Deno.test("ci jobs sorting: a cell with no key sorts on its text", () => {
-  const table = fakeTable([["zed", "1"], ["amp", "2"], ["loom", "3"]]);
-  table.sort({ column: 0, descending: false });
+  const table = new FakeTable([["zed", "1"], ["amp", "2"], ["loom", "3"]]);
+  sortTable(table, { column: 0, descending: false });
   assertEquals(table.order(), ["amp", "loom", "zed"]);
 });
 
-Deno.test("ci jobs sorting: a new column is marked and clears the last", () => {
-  const table = fakeTable([["b", "2"], ["a", "1"]]);
-
-  table.sort({ column: 0, descending: true });
-  assertEquals(table.marks(), ["descending", "none"]);
-  table.sort({ column: 1, descending: false });
-  assertEquals(table.marks(), ["none", "ascending"]);
-  assertEquals(table.order(), ["a", "b"]);
-});
-
 Deno.test("ci jobs sorting: equal values keep the order the rows were served in", () => {
-  const table = fakeTable([["worst", "5"], ["middle", "5"], ["best", "1"]]);
+  const table = new FakeTable([["worst", "5"], ["middle", "5"], ["best", "1"]]);
 
-  table.sort({ column: 1, descending: false });
+  sortTable(table, { column: 1, descending: false });
   assertEquals(table.order(), ["best", "worst", "middle"]);
-  table.sort({ column: 1, descending: true });
+  sortTable(table, { column: 1, descending: true });
   assertEquals(table.order(), ["worst", "middle", "best"]);
   // Not the order the last sort left them in.
-  table.sort({ column: 0, descending: true });
-  table.sort({ column: 1, descending: false });
+  sortTable(table, { column: 0, descending: true });
+  sortTable(table, { column: 1, descending: false });
   assertEquals(table.order(), ["best", "worst", "middle"]);
 });
 
 Deno.test("ci jobs sorting: a table without a body is refused", () => {
+  const table = new FakeTable([]);
+  table.tBodies = [];
   assertThrows(
-    () =>
-      sortTable<FakeRow>({
-        tBodies: [],
-        querySelectorAll: () => [],
-      }, { column: 0, descending: false }),
+    () => sortTable(table, { column: 0, descending: false }),
     Error,
     "a sortable table has a body",
   );
+});
+
+Deno.test("ci jobs sorting: a heading sorts up on its first click and down on its next", () => {
+  const table = new FakeTable([["b", "2"], ["a", "1"], ["c", "3"]]);
+  followSorting(new FakePage([table]));
+
+  table.headings[0].click();
+  assertEquals(table.order(), ["a", "b", "c"]);
+  assertEquals(table.marks(), ["ascending", "none"]);
+  table.headings[0].click();
+  assertEquals(table.order(), ["c", "b", "a"]);
+  assertEquals(table.marks(), ["descending", "none"]);
+});
+
+Deno.test("ci jobs sorting: a new column starts ascending after one sorted descending", () => {
+  const table = new FakeTable([["b", "2"], ["a", "1"]]);
+  followSorting(new FakePage([table]));
+
+  table.headings[0].click();
+  table.headings[0].click();
+  table.headings[1].click();
+  assertEquals(table.marks(), ["none", "ascending"]);
+  assertEquals(table.order(), ["a", "b"]);
+});
+
+Deno.test("ci jobs sorting: a table not marked sortable is left alone", () => {
+  const table = new FakeTable([["b", "2"], ["a", "1"]], false);
+  const page = new FakePage([table]);
+  followSorting(page);
+
+  table.headings[0].click();
+  assertEquals(table.order(), ["b", "a"]);
+  page.update(new FakeRoot([table]));
+  assertEquals(table.order(), ["b", "a"]);
+});
+
+Deno.test("ci jobs sorting: a rendering arrives sorted the way the reader sorted the page", () => {
+  const table = new FakeTable([["b", "2"], ["a", "1"]]);
+  const page = new FakePage([table]);
+  followSorting(page);
+  table.headings[1].click();
+  table.headings[1].click();
+
+  const rendering = new FakeTable([["c", "3"], ["b", "2"], ["a", "1"], [
+    "d",
+    "4",
+  ]]);
+  page.update(new FakeRoot([rendering]));
+  assertEquals(rendering.order(), ["d", "c", "b", "a"]);
+  assertEquals(rendering.marks(), ["none", "descending"]);
+});
+
+Deno.test("ci jobs sorting: a rendering arriving before any sort stays as served", () => {
+  const page = new FakePage([new FakeTable([["b", "2"], ["a", "1"]])]);
+  followSorting(page);
+
+  const rendering = new FakeTable([["b", "2"], ["a", "1"]]);
+  page.update(new FakeRoot([rendering]));
+  assertEquals(rendering.order(), ["b", "a"]);
+  assertEquals(rendering.marks(), ["none", "none"]);
+});
+
+Deno.test("ci jobs sorting: a heading that arrived in a rendering sorts the table it was placed in", () => {
+  const table = new FakeTable([["b", "2"], ["a", "1"]]);
+  const page = new FakePage([table]);
+  followSorting(page);
+
+  // The rendering's headings replace the page's, and its table is dropped.
+  const rendering = new FakeTable([["b", "2"], ["a", "1"]]);
+  page.update(new FakeRoot([rendering]));
+  table.headings = rendering.headings;
+  for (const heading of table.headings) heading.table = table;
+
+  table.headings[0].click();
+  assertEquals(table.order(), ["a", "b"]);
+  table.headings[0].click();
+  assertEquals(table.order(), ["b", "a"]);
 });
