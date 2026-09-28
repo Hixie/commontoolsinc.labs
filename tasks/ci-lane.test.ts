@@ -370,9 +370,11 @@ describe("turning a lane's selections into batches", () => {
   });
 
   it("skips the identities inside a chosen unit that were not chosen", () => {
+    // What the unit is expected to cost is what the chosen identities
+    // cost, since the skipped ones do not run.
     const manifest = manifestOf([
-      {},
-      { test: { k: "unit", s: "bakery", n: "glaze > browns" } },
+      { cost: 3 },
+      { test: { k: "unit", s: "bakery", n: "glaze > browns" }, cost: 5 },
     ]);
     const batches = batchesOf([bakery], pricedFor([bakery], manifest), [{
       entry: manifest.entries[0]!,
@@ -383,12 +385,14 @@ describe("turning a lane's selections into batches", () => {
     expect(batches[0]!.units).toEqual([{
       unit: "packages/bakery/glaze.test.ts",
       skip: ["glaze > browns"],
+      cost: 3,
     }]);
   });
 
   it("skips nothing inside a unit its suite declares whole", () => {
     // The runner of such a unit reads no skip list. The batch therefore carries
     // none, and the lane's report of what it ran lists every test in the unit.
+    // The unit is expected to cost what every test in it costs.
 
     const member = suite({
       id: "workspace-unit",
@@ -396,10 +400,11 @@ describe("turning a lane's selections into batches", () => {
       whole: ["packages/bakery"],
     });
     const manifest = manifestOf([
-      { unit: "packages/bakery" },
+      { unit: "packages/bakery", cost: 2 },
       {
         test: { k: "unit", s: "bakery", n: "glaze > browns" },
         unit: "packages/bakery",
+        cost: 7,
       },
     ]);
     const batches = batchesOf([member], pricedFor([member], manifest), [{
@@ -407,7 +412,9 @@ describe("turning a lane's selections into batches", () => {
       reason: "value",
       repeats: 1,
     }]);
-    expect(batches[0]!.units).toEqual([{ unit: "packages/bakery", skip: [] }]);
+    expect(batches[0]!.units).toEqual([
+      { unit: "packages/bakery", skip: [], cost: 9 },
+    ]);
   });
 
   it("skips nothing when every identity of a unit was chosen", () => {
@@ -3116,8 +3123,8 @@ describe("what a lane records about itself", () => {
 describe("the last corners of a lane's bookkeeping", () => {
   it("puts two identities of one unit in one batch, and skips neither", () => {
     const manifest = manifestOf([
-      {},
-      { test: { k: "unit", s: "bakery", n: "glaze > browns" } },
+      { cost: 3 },
+      { test: { k: "unit", s: "bakery", n: "glaze > browns" }, cost: 5 },
     ]);
     const bakery = suite({
       id: "workspace-unit",
@@ -3136,6 +3143,7 @@ describe("the last corners of a lane's bookkeeping", () => {
     expect(batches[0]!.units).toEqual([{
       unit: "packages/bakery/glaze.test.ts",
       skip: [],
+      cost: 8,
     }]);
   });
 
