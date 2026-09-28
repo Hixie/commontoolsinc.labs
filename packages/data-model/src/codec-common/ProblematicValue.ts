@@ -166,11 +166,11 @@ export class ProblematicValue extends BaseFabricInstance {
         value: ProblematicValue,
         _env: LiveEnvironment,
       ): ProblematicValueState {
-        return {
+        return Object.freeze({
           tag: value.wireTypeTag,
           state: value.state,
           error: value.error,
-        };
+        });
       }
 
       /**
@@ -200,6 +200,8 @@ export class ProblematicValue extends BaseFabricInstance {
         _env: LiveEnvironment,
         mutable = false,
       ): FabricValue {
+        // The preserved state is an external reference, so it is kept as it
+        // is; the record around it is not kept at all.
         const result = new ProblematicValue(
           state.tag,
           state.state,
