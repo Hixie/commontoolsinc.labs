@@ -2131,11 +2131,14 @@ particular sibling ran would otherwise be recorded as disagreeing with
 itself at every commit, which would pin its exclusion in place for good.
 The siblings run as often: the unit is invoked as many times as the
 excluded test's share asks for, and every identity the lane placed in it
-runs that many times. The cost model does not charge that. It charges
-each identity its own cost times its own repeat count, so a sibling that
-asked for one run and is invoked four times is paid for once, and a lane
-holding a unit like that is projected at a fraction of what it will
-spend.
+runs that many times. The cost model charges that in one of its two
+figures and not the other. A lane is charged no less than the time the
+unit takes, every identity in it once for each invocation. The loads,
+which set what the lane is charged where the suite's other units
+outweigh this one, charge each identity its own cost times its own
+repeat count, so there a sibling that asked for one run and is invoked
+four times is paid for once, and the lane is projected at less than
+what it will spend.
 
 **What these runs cannot separate is a bad machine.** All of an identity's
 runs at one commit go in one lane, so they run on one runner, and a runner
