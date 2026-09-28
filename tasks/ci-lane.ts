@@ -101,6 +101,7 @@ import {
 } from "./test-selection/coverage.ts";
 import type {
   Manifest,
+  ManifestEntry,
   UnschedulableEntry,
   WithheldReason,
 } from "./test-selection/manifest.ts";
@@ -423,10 +424,10 @@ export function batchesOf(
   const wholeOf = new Map<Suite, ReadonlySet<Unit>>(
     suites.map((suite) => [suite, new Set(suite.whole)]),
   );
-  const inUnit = new Map<string, string[]>();
+  const inUnit = new Map<string, ManifestEntry[]>();
   for (const entry of manifest.entries) {
     const key = `${entry.suite}\t${entry.unit}`;
-    inUnit.set(key, [...inUnit.get(key) ?? [], entry.test.n]);
+    inUnit.set(key, [...inUnit.get(key) ?? [], entry]);
   }
   const batches = new Map<string, Batch>();
   // What each unit was selected for: the names to run, and the most
@@ -450,11 +451,16 @@ export function batchesOf(
     const suite = bySuite.get(suiteId);
     if (suite === undefined) continue;
     const all = inUnit.get(key) ?? [];
-    const skip = wholeOf.get(suite)!.has(unit)
-      ? []
-      : all.filter((name) => !names.has(name));
+    // A unit declared whole runs every identity in it, chosen or not.
+    const whole = wholeOf.get(suite)!.has(unit);
+    const runs = whole ? all : all.filter((entry) => names.has(entry.test.n));
+    const request: UnitRequest = {
+      unit,
+      skip: whole ? [] : all.filter((entry) => !names.has(entry.test.n))
+        .map((entry) => entry.test.n),
+      cost: runs.reduce((total, entry) => total + entry.cost, 0),
+    };
     const batch = batches.get(suiteId);
-    const request: UnitRequest = { unit, skip };
     if (batch === undefined) {
       batches.set(suiteId, {
         suite,

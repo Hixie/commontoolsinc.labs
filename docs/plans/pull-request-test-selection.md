@@ -2443,7 +2443,11 @@ times than the longest one, the later passes are set by the shorter unit,
 so the bound is more than any one unit takes over all its runs. No pass
 takes longer than every unit in it put together, so for a suite whose
 correction is one or more the corrected sum is always the larger, and
-the bound changes nothing.
+the bound changes nothing. The bound is close to exact only where the
+runner starts the longest unit of each pass first: a five-minute file
+started after every other file of its pass finishes about five minutes
+after the rest of the pass. The pattern unit runner is handed each file's
+cost by the lane and starts the costliest first for that reason.
 
 The measurements travel through the machinery that already exists: the
 lane runner writes them as ordinary test records of kind `gate` and
