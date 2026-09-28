@@ -281,9 +281,9 @@ choose:
   for. Files of equal expected time, and every file of a local run, which has
   no such figures, start in the order the seed puts them in. A local run can
   therefore start the files in a different order from a lane at the same
-  commit. That does not change what any test sees, because the steps inside
-  each file run in the same order under the same seed, so the seed still
-  reproduces a failure.
+  commit. That changes nothing a test sees, because each file runs alone in
+  its process and its steps run in the order they are written, so a failure
+  seen in a lane recurs locally.
 
 #### Writing a task that runs tests
 
