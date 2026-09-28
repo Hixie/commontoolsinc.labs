@@ -6,12 +6,17 @@
  * Not a `*.test.ts` file, so the runner does not pick it up as a suite.
  */
 
+import { holdWorkerLifetimeLock } from "@commonfabric/utils/worker-lifetime";
+
 import type { RealmEncodedValue } from "@/codec-realm";
 import { fabricFromRealmValue } from "@/codecs.ts";
 import { UNAVAILABLE_SYNCING } from "@/fabric-primitives";
 
 /** What the worker reports back about one decoded value. */
 export type EchoReport = {
+  /** The worker's lifetime lock, which `terminateWorker()` waits on. */
+  lifetimeLock: string | undefined;
+
   /** Whether the decode succeeded. */
   ok: boolean;
 
@@ -66,7 +71,10 @@ function keyPairFacts(pair: unknown): Record<string, unknown> | undefined {
   };
 }
 
-self.onmessage = (ev: MessageEvent) => {
+const heldLifetimeLock = holdWorkerLifetimeLock();
+
+self.onmessage = async (ev: MessageEvent) => {
+  const lifetimeLock = await heldLifetimeLock;
   try {
     const value = fabricFromRealmValue(ev.data as RealmEncodedValue) as Record<
       string,
@@ -78,6 +86,7 @@ self.onmessage = (ev: MessageEvent) => {
     }
     self.postMessage(
       {
+        lifetimeLock,
         ok: true,
         classes,
         facts: {
@@ -153,7 +162,11 @@ self.onmessage = (ev: MessageEvent) => {
     );
   } catch (e) {
     self.postMessage(
-      { ok: false, error: (e as Error).message } satisfies EchoReport,
+      {
+        lifetimeLock,
+        ok: false,
+        error: (e as Error).message,
+      } satisfies EchoReport,
     );
   }
 };

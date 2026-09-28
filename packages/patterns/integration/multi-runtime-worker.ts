@@ -70,6 +70,7 @@ import {
 import { resolveLocalProgram } from "@commonfabric/runner/local-program.deno";
 import { getLoggerCountsBreakdown } from "@commonfabric/utils/logger";
 import { isObjectNotArray } from "@commonfabric/utils/types";
+import { holdWorkerLifetimeLock } from "@commonfabric/utils/worker-lifetime";
 import { authenticatedOwnerFromLabel } from "../../ui/src/v2/components/cf-owner-view/owner-predicate.ts";
 
 let cc: PiecesController | undefined;
@@ -1154,5 +1155,8 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 };
 
 (self as unknown as Worker).postMessage(
-  { ready: true } satisfies WorkerResponse,
+  {
+    ready: true,
+    lifetimeLock: await holdWorkerLifetimeLock(),
+  } satisfies WorkerResponse,
 );
