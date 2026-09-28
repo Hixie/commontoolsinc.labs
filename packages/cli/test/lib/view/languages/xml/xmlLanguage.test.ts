@@ -90,6 +90,20 @@ describe("xmlLanguage", () => {
     expect(verbatim(lines)).toBe(source);
   });
 
+  it("runs a processing instruction to its end, whatever its data holds", () => {
+    const source =
+      '<?php if ($a > 1) echo "<b>"; ?>\n<?xml-stylesheet href="s.css" ?>\n<a/>';
+    const lines = xmlLanguage.highlightLines(source);
+
+    expect(classesOf(lines, "php")).toEqual(["keyword"]);
+    expect(classesOf(lines, "b")).toEqual([]);
+    expect(classesOf(lines, "xml-stylesheet")).toEqual(["keyword"]);
+    expect(classesOf(lines, "href")).toEqual(["propertyName"]);
+    expect(classesOf(lines, '"s.css"')).toEqual(["string"]);
+    expect(outline(source)).toEqual([["a", 0, 2, 2]]);
+    expect(verbatim(lines)).toBe(source);
+  });
+
   it("ends an unclosed tag or value where the next tag begins", () => {
     const source = "<a href=\"open\n<b name='x'>text</b>";
     const lines = xmlLanguage.highlightLines(source);

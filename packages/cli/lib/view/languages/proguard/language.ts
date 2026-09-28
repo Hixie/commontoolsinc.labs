@@ -4,9 +4,10 @@ import { createRecoloringHighlighter } from "../classes.ts";
 import { proguardDocument, proguardLines } from "./proguard.ts";
 
 /** A line that starts with an option name from ProGuard's reference, whose
- * names share these stems. */
+ * names share these stems. Options whose names a compiler flag shares, such as
+ * `-include`, `-target`, and `-dump`, are not evidence. */
 const PROGUARD_OPTION_LINE =
-  /^[ \t]*-(?:keep|dont|assume|print|apply|adapt|optimi|obfuscation|classobfuscation|packageobfuscation|repackage|flatten|allowaccess|merge|overload|useunique|renamesourcefile|injars|outjars|libraryjars|include|basedirectory|verbose|ignorewarnings|whyareyoukeeping|if|checkdiscard|identifiernamestring|maximumremovedandroidloglevel|addconfigurationdebugging|target|forceprocessing|skipnonpublic|microedition|android|dump)[a-z]*(?=[\s,]|$)/m;
+  /^[ \t]*-(?:keep|dont|assume|printmapping|printseeds|printusage|printconfiguration|apply|adapt|optimizations|optimizationpasses|obfuscationdictionary|classobfuscation|packageobfuscation|repackage|flatten|allowaccess|mergeinterfaces|overloadaggressively|useunique|renamesourcefile|injars|outjars|libraryjars|basedirectory|ignorewarnings|whyareyoukeeping|checkdiscard|identifiernamestring|maximumremovedandroidloglevel|addconfigurationdebugging|skipnonpublic|forceprocessing)[a-z]*(?=[\s,]|$)/m;
 
 /**
  * The ProGuard language for the pager, which covers the keep rules ProGuard

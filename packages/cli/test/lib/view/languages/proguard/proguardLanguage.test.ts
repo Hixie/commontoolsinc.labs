@@ -39,7 +39,8 @@ describe("proguardLanguage", () => {
       expect(languageForSource("app.pro", "QT += core\nTARGET = app\n").id)
         .toBe("plain-text");
       const qtFlags =
-        "LIBS += \\\n    -L/usr/lib \\\n    -lfoo -framework Cocoa\n";
+        "QMAKE_CXXFLAGS += \\\n    -include forced.h \\\n    -target arm64 \\\n" +
+        "    -dumpversion\nLIBS += \\\n    -L/usr/lib \\\n    -lfoo -framework Cocoa\n";
       expect(languageForSource("app.pro", qtFlags).id).toBe("plain-text");
       expect(languageForSource("rules.pl.pro", "p(X) :-\n    -X > 1.\n").id)
         .toBe("plain-text");

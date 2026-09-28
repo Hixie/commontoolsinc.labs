@@ -34,6 +34,7 @@ interface OpenElement {
 
 const NAME = /[^\s<>/=?!"'&;[\]]+/y;
 const SPACE = /\s*/y;
+const PSEUDO_ATTRIBUTE = /([^\s=?"']+)(\s*=\s*)("[^"]*"|'[^']*')/g;
 const ENTITY = /&(?:#x[0-9A-Fa-f]+|#[0-9]+|[^\s<>&;"']+);/g;
 
 /** Attributes whose value names an element in its label. */
@@ -137,8 +138,7 @@ class Scanner {
     } else if (this.#take("<![CDATA[", "punctuation")) {
       this.#region("]]>", "string");
     } else if (this.#take("<?", "punctuation")) {
-      this.#name("keyword");
-      this.#attributes();
+      this.#instruction();
     } else if (this.#take("<!", "punctuation")) {
       this.#declaration();
     } else if (this.#take("</", "punctuation")) {
@@ -175,9 +175,7 @@ class Scanner {
       if (this.#at >= text.length || text[this.#at] === "<") {
         return { selfClosed: false, label };
       }
-      if (this.#take(">", "punctuation") || this.#take("?>", "punctuation")) {
-        return { selfClosed: false, label };
-      }
+      if (this.#take(">", "punctuation")) return { selfClosed: false, label };
       if (this.#take("/>", "punctuation")) return { selfClosed: true, label };
       if (this.#take("=", "operator")) continue;
       if (text[this.#at] === '"' || text[this.#at] === "'") {
@@ -188,6 +186,33 @@ class Scanner {
       attribute = this.#name("propertyName");
       if (attribute === "") this.#at++;
     }
+  }
+
+  /**
+   * Consume a processing instruction, which runs to `?>`. Its data is free
+   * text, in which `name="value"` pairs, such as an XML declaration's, are
+   * colored as attributes.
+   */
+  #instruction(): void {
+    this.#name("keyword");
+    const found = this.text.indexOf("?>", this.#at);
+    const end = found < 0 ? this.text.length : found;
+    const data = this.text.slice(this.#at, end);
+    for (const pair of data.matchAll(PSEUDO_ATTRIBUTE)) {
+      let at = this.#at + pair.index;
+      for (
+        const [part, cls] of [
+          [pair[1], "propertyName"],
+          [pair[2], "operator"],
+          [pair[3], "string"],
+        ] as const
+      ) {
+        this.#mark(at, at + part.length, cls);
+        at += part.length;
+      }
+    }
+    this.#at = end;
+    this.#take("?>", "punctuation");
   }
 
   /** Consume a declaration such as `<!DOCTYPE`, with its internal subset. */

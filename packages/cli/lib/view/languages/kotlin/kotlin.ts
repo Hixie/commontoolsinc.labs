@@ -142,8 +142,7 @@ function propertyEntry(node: SyntaxNode, inType: boolean) {
  * and the structure walk are the adapter's.
  *
  * The grammar package supplies the compiled parser, byte for byte the
- * WebAssembly build that the upstream grammar's npm package ships. That
- * grammar has no highlight query of its own.
+ * WebAssembly build in the upstream npm package, which has no highlight query.
  */
 export const kotlinGrammar: TreeSitterGrammar = {
   id: "kotlin",
@@ -155,9 +154,10 @@ export const kotlinGrammar: TreeSitterGrammar = {
 
   highlightQuery: HIGHLIGHT_QUERY,
 
-  // The grammar misparses a `catch` or `finally` clause on the line after a
-  // catch block. A line break that ends a line comment is what ends it.
-  insignificantLineBreaks: /(?<!\/\/[^\r\n]*)\}\s*(?=(?:catch|finally)\b)/g,
+  // The grammar misparses `catch` or `finally` on the line after a catch block.
+  // A line comment, from a `//` outside strings, keeps its line break.
+  insignificantLineBreaks:
+    /(?<!^(?:[^"\n]|"(?:[^"\\\n]|\\.)*")*\/\/[^\n]*)\}\s*(?=(?:catch|finally)\b)/gm,
 
   structureEntry(node) {
     const inType = () => TYPE_BODIES.has(node.parent!.type);

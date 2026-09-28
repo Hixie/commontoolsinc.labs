@@ -17,8 +17,9 @@ ProGuard rules, and XML use focused scanners.
 TOML is inside every recorded maximum. Kotlin is inside the maximums for
 initialization, complete highlighting, compiled and unpacked bytes, owned
 source, and build steps. On the probe's synthetic source it is over the
-25-millisecond maximum for re-coloring after an edit, and at the maximum for a
-document parse. On 100 kilobytes of the Weaver app's own Kotlin it is inside
+25-millisecond maximum for re-coloring after an edit in both measurement
+rounds, and over the 50-millisecond maximum for a document parse in one of
+them, at 54.36 ms. On 100 kilobytes of the Weaver app's own Kotlin it is inside
 both. "Re-coloring after an edit" gives the causes and the comparison the plan
 asks for when a maximum is exceeded.
 
@@ -53,7 +54,8 @@ Each source repeats a unit after one line of non-ASCII comment, to exactly
 100,009 UTF-8 bytes. The Kotlin unit is a seven-line annotated generic class
 holding a suspending function whose body interpolates a safe call and an elvis
 expression into a string. The TOML unit is a four-line version-catalog table
-with an inline table and an array. The edit renames the first `renderItem`
+with an inline table and an array; each unit names its table by its position,
+so that the source defines every table once. The edit renames the first `renderItem`
 after the middle of the source to `renderUnit`. Sample counts and the
 operations timed are the Swift probe's: 40 fresh-process initialization
 samples, and 50 each of a complete highlight, a document parse with structure,
@@ -146,8 +148,9 @@ Kotlin ignores those line breaks. A grammar can therefore name the stretches of
 source whose line breaks the language ignores, and the adapter gives the parser
 each line break in such a stretch as a space, which keeps every offset, while
 coloring and structure use the source as written. Kotlin names a `}` followed
-by white space and then `catch` or `finally`, unless a line comment holds the
-`}`, because the line break is what ends that comment. With that handling the
+by white space and then `catch` or `finally`, unless a line comment, which
+starts at a `//` outside the line's strings, holds the `}`, because the line
+break is what ends that comment. With that handling the
 packaged grammar covers the Weaver app better than the `fwcd` grammar does, as
 the table shows.
 

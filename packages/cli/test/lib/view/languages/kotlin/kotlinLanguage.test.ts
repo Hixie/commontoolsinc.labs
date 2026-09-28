@@ -225,6 +225,20 @@ describe("kotlinLanguage", () => {
       expect(classesOf(lines, "done")).toEqual(["callName"]);
     });
 
+    it("parses a second catch clause after a block holding a URL string", () => {
+      const source = [
+        "fun fetch() {",
+        "    try { load() }",
+        '    catch (e: IOException) { val url = "https://example.com" }',
+        "    catch (e: Exception) { fail(e) }",
+        "}",
+      ].join("\n");
+      const document = kotlinLanguage.parseDocument(source);
+
+      expect(classesOf(document.lines, "catch")).toEqual(["controlKeyword"]);
+      expect(classesOf(document.lines, "fail")).toEqual(["callName"]);
+    });
+
     it("keeps a catch clause out of a line comment that ends in a brace", () => {
       const source = [
         "fun read() {",

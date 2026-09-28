@@ -24,7 +24,8 @@ interface Subject {
   readonly module: string;
   readonly exported: string;
   readonly prefix: string;
-  readonly unit: string;
+  /** The repeated source, given how many units precede it. */
+  readonly unit: (index: number) => string;
   readonly original: string;
   readonly replacement: string;
   readonly filler: string;
@@ -35,7 +36,7 @@ const SUBJECTS: Readonly<Record<string, Subject>> = {
     module: "kotlin/language.ts",
     exported: "kotlinLanguage",
     prefix: "// café appears before measured tokens\n",
-    unit: `@Suppress("unused")
+    unit: () => `@Suppress("unused")
 internal class RenderedItem<T : Any>(private val scope: CoroutineScope) {
     suspend fun renderItem(value: T? = null): String {
         val label = "value=\${value?.toString() ?: "none"}"
@@ -51,9 +52,10 @@ internal class RenderedItem<T : Any>(private val scope: CoroutineScope) {
     module: "toml/language.ts",
     exported: "tomlLanguage",
     prefix: "# café appears before measured tokens\n",
-    unit: `[libraries.renderItem]
+    // Each table has its own name, since TOML defines a table only once.
+    unit: (index) => `[libraries.item${index}]
 group = "androidx.compose.ui"
-name = "ui-tooling"
+name = "renderItem"
 version = { ref = "compose", strictly = [1, 2.5, true] }
 `,
     original: "renderItem",
@@ -82,8 +84,10 @@ async function initialize() {
 function measuredSource(): string {
   const encoder = new TextEncoder();
   let source = subject.prefix;
-  while (encoder.encode(source + subject.unit).length + 3 <= TARGET_BYTES) {
-    source += subject.unit;
+  for (let index = 0;; index++) {
+    const unit = subject.unit(index);
+    if (encoder.encode(source + unit).length + 3 > TARGET_BYTES) break;
+    source += unit;
   }
   const remaining = TARGET_BYTES - encoder.encode(source).length;
   if (remaining > 0) {

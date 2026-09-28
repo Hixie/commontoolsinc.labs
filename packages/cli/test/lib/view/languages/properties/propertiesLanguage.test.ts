@@ -100,6 +100,14 @@ describe("propertiesLanguage", () => {
     expect(verbatim(document.lines)).toBe(source);
   });
 
+  it("ends lines only where the pager does, at a line feed", () => {
+    const document = propertiesLanguage.parseDocument("a=1\rb=2\nc=3");
+
+    expect(
+      document.flatStructure.map((node) => [node.label, node.startLine]),
+    ).toEqual([["a", 0], ["c", 1]]);
+  });
+
   it("reconstructs incomplete input exactly", () => {
     for (const source of ["key=\\", "=value", "a\\", "\\", "", "k=☕ 😀"]) {
       expect(verbatim(propertiesLanguage.parseDocument(source).lines))
