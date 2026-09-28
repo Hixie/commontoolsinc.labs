@@ -50,6 +50,10 @@ import type {
   ViewInterest,
   ViewPlan,
 } from "@commonfabric/memory/v2";
+import type {
+  PresenceEvent,
+  PresenceMembership,
+} from "@commonfabric/memory/v2/client";
 import type { OutboxAppendRow } from "@commonfabric/memory/v2/execution-outbox";
 import type { Immutable } from "@commonfabric/utils/types";
 
@@ -860,6 +864,33 @@ export const hasOperationStorageCapability = (
     typeof candidate.applyOperation === "function" &&
     typeof candidate.releaseOperationField === "function" &&
     typeof candidate.subscribeOperationField === "function";
+};
+
+/**
+ * A storage provider that reaches the memory server's presence rooms
+ * (memory-v2 `04-protocol.md` §4.13) through its space session. The
+ * membership outlives the session it was joined through: a reconnect rejoins
+ * it, and a replacement of the provider's replica rejoins it on the
+ * replacement's session, each time delivering a fresh `snapshot` with the id
+ * the relay assigned there and republishing the last record.
+ */
+export interface IPresenceStorageCapability {
+  /**
+   * Joins `room` under this provider's space, delivering the room's events
+   * to `observer`, and returns the membership.
+   */
+  joinPresenceRoom(
+    room: string,
+    observer: (event: PresenceEvent) => void,
+  ): Promise<PresenceMembership>;
+}
+
+export const hasPresenceStorageCapability = (
+  value: unknown,
+): value is IPresenceStorageCapability => {
+  if (value === null || value === undefined) return false;
+  const candidate = value as Partial<IPresenceStorageCapability>;
+  return typeof candidate.joinPresenceRoom === "function";
 };
 
 /**
