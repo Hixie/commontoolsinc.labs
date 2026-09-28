@@ -282,8 +282,8 @@ choose:
   no such figures, start in the order the seed puts them in. A local run can
   therefore start the files in a different order from a lane at the same
   commit. That changes nothing a test sees, because each file runs alone in
-  its process and its steps run in the order they are written, so a failure
-  seen in a lane recurs locally.
+  its process and its steps run in the order they are written, so every step
+  runs locally in the order it ran in the lane.
 
 #### Writing a task that runs tests
 
