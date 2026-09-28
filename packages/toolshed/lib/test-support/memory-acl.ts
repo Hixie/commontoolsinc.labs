@@ -16,8 +16,8 @@ import type { MemorySpace, Signer } from "@commonfabric/memory/interface";
 import { toDocumentPath } from "@commonfabric/memory/v2";
 import * as MemoryV2Client from "@commonfabric/memory/v2/client";
 import * as MemoryV2Server from "@commonfabric/memory/v2/server";
+import { authorizeLoopbackSessionOpen } from "@commonfabric/memory/v2/session-open-auth";
 import {
-  authorizeLoopbackSessionOpen,
   type Options,
   type SessionFactory,
   StorageManager,

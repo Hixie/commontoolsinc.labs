@@ -9,7 +9,7 @@ import { entityIdFrom, isStream, Runtime } from "@commonfabric/runner";
 import { PiecesController } from "@commonfabric/piece/ops";
 import { ExecutorHost } from "@commonfabric/runner/executor/host";
 import { LoopbackStorageManager } from "@commonfabric/runner/executor/loopback-storage";
-import { authorizeLoopbackSessionOpen } from "@commonfabric/runner/storage/cache.deno";
+import { authorizeLoopbackSessionOpen } from "@commonfabric/memory/v2/session-open-auth";
 import {
   createAclServer,
   genesisAcl,
