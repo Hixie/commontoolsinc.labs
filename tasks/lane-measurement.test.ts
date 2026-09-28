@@ -55,9 +55,19 @@ describe("lane-measurement", () => {
       });
     });
 
+    it("returns the suite a pass-count measurement names", () => {
+      expect(batchMeasurement("ci-lane passes batch pattern-unit")).toEqual({
+        suite: "pattern-unit",
+        measured: false,
+        kind: "passes",
+      });
+    });
+
     it("returns every name `batchMeasurementName()` composes", () => {
       for (const measured of [false, true]) {
-        for (const kind of ["spent", "ran", "units", "longest"] as const) {
+        for (
+          const kind of ["spent", "ran", "units", "longest", "passes"] as const
+        ) {
           const name = batchMeasurementName("runner-unit", measured, kind);
           expect(batchMeasurement(name))
             .toEqual({ suite: "runner-unit", measured, kind });

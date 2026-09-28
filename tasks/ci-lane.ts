@@ -79,6 +79,7 @@ import {
   type Selection,
   type SelectionReason,
   suiteLoad,
+  testsOf,
   unholdableSuites,
 } from "./test-selection/plan.ts";
 import {
@@ -385,7 +386,10 @@ export interface Batch {
   runs: Map<Unit, number>;
 }
 
-/** How many times a batch's longest-running unit runs. */
+/**
+ * How many passes a batch makes: the most runs any of its units asks for.
+ * Each pass is an invocation of the suite's command of its own.
+ */
 export function batchRepeats(batch: Batch): number {
   let most = 1;
   for (const runs of batch.runs.values()) most = Math.max(most, runs);
@@ -510,6 +514,7 @@ export function batchesOf(
     measured: manifest.fitted.has(batch.suite.id) ? 1 : 0,
     seconds: suiteLoad(
       manifest,
+      batch.suite.id,
       selections.filter(({ entry }) => entry.suite === batch.suite.id),
     ),
   }));
@@ -799,8 +804,11 @@ export async function runBatch(
   // batch's records as one list cannot tell that from a batch where
   // every execution ran.
   let unexplained = 0;
-  // Seconds each unit's records took, over every run of it.
-  const unitSeconds = new Map<string, number>();
+  // How many times a pass opened a unit, over every pass.
+  let opened = 0;
+  // What the unit that took longest in each pass took, added up over the
+  // passes.
+  let longest = 0;
   for (let run = 1; run <= batchRepeats(batch); run++) {
     console.log(
       `ci-lane: starting ${batch.suite.id}, run ${run} of ` +
@@ -810,9 +818,12 @@ export async function runBatch(
     const batchSpool = path.join(outputDir, "spool");
     await Deno.mkdir(batchSpool, { recursive: true });
     const asked = unitsForRun(batch, run);
+    opened += asked.length;
     // The units this execution recorded anything at all for, gathered
     // across whatever invocations the suite splits it into.
     const heard = new Set<string>();
+    // Seconds each unit's records took in this pass.
+    const unitSeconds = new Map<string, number>();
     const invocations = await batch.suite.command(asked, {
       root: options.root,
       outputDir,
@@ -877,18 +888,21 @@ export async function runBatch(
     for (const request of asked) {
       if (!heard.has(request.unit)) silent.add(request.unit);
     }
+    longest += Math.max(0, ...unitSeconds.values());
   }
   if (spool !== undefined) {
     spoolRecords(spool, [
       ...records,
       // What the batch spent, what its tests took between them, how many
-      // units it opened, and what its longest unit took over every run
-      // of it. The publisher fits a suite's cost beyond its tests from the
-      // four together: the first two differ by everything the batch paid
-      // that no test's duration holds, the third is the part of that which
-      // grows with the units opened, and the fourth is the least the batch
+      // times its passes opened a unit, what the longest unit of each
+      // pass took added together, and how many passes it made. The
+      // publisher fits a suite's cost beyond its tests from the five
+      // together: the first two differ by everything the batch paid that
+      // no test's duration holds, the third is the part of that which
+      // grows with the units opened, the fourth is the least the batch
       // could have spent on its tests however many of them ran side by
-      // side, since a unit's runs follow one another.
+      // side, since its passes follow one another, and the fifth is how
+      // many times it paid for starting the suite's command.
       //
       // The tests' own time is summed here rather than read back from
       // the records, because a reader has no way to tell which of a
@@ -917,7 +931,7 @@ export async function runBatch(
           coverage !== undefined,
           "units",
         ),
-        batch.units.length,
+        opened,
         ok,
       ),
       timingRecord(
@@ -926,7 +940,16 @@ export async function runBatch(
           coverage !== undefined,
           "longest",
         ),
-        Math.max(0, ...unitSeconds.values()),
+        longest,
+        ok,
+      ),
+      measurementRecord(
+        batchMeasurementName(
+          batch.suite.id,
+          coverage !== undefined,
+          "passes",
+        ),
+        batchRepeats(batch),
         ok,
       ),
     ]);
@@ -1148,14 +1171,12 @@ function chosenFor(
 ): { identities: number; seconds: number; why: string } {
   const mine = selections.filter((s) => s.entry.suite === suite);
   const reasons = new Map<SelectionReason, number>();
-  let seconds = 0;
   for (const selection of mine) {
     reasons.set(selection.reason, (reasons.get(selection.reason) ?? 0) + 1);
-    seconds += selection.entry.cost * selection.repeats;
   }
   return {
     identities: mine.length,
-    seconds,
+    seconds: testsOf(mine).ran,
     why: [...reasons].sort().map(([reason, count]) => `${reason} ${count}`)
       .join(", "),
   };
@@ -1180,11 +1201,12 @@ function standingOnStandIns(
   let units = 0;
   let seconds = 0;
   for (
-    const held of Map.groupBy(selections, ({ entry }) => entry.suite).values()
+    const [suite, held] of Map.groupBy(selections, ({ entry }) => entry.suite)
   ) {
     const measured = held.filter(({ entry }) => !isStandIn(entry));
     units += held.length - measured.length;
-    seconds += suiteLoad(manifest, held) - suiteLoad(manifest, measured);
+    seconds += suiteLoad(manifest, suite, held) -
+      suiteLoad(manifest, suite, measured);
   }
   return { units, seconds };
 }

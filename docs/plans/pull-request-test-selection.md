@@ -2135,14 +2135,10 @@ particular sibling ran would otherwise be recorded as disagreeing with
 itself at every commit, which would pin its exclusion in place for good.
 The siblings run as often: the unit is invoked as many times as the
 excluded test's share asks for, and every identity the lane placed in it
-runs that many times. The cost model charges that in one of its two
-figures and not the other. A lane is charged no less than the time the
-unit takes, every identity in it once for each invocation. The loads,
-which set what the lane is charged where the suite's other units
-outweigh this one, charge each identity its own cost times its own
-repeat count, so there a sibling that asked for one run and is invoked
-four times is paid for once, and the lane is projected at less than
-what it will spend.
+runs that many times. The cost model charges every identity in the unit
+once for each invocation, in both of the figures it charges the larger
+of, so a sibling that asked for one run and is invoked four times is paid
+for four times.
 
 **What these runs cannot separate is a bad machine.** All of an identity's
 runs at one commit go in one lane, so they run on one runner, and a runner
@@ -2154,13 +2150,14 @@ record here. That is the gap [flakes and repeats](#flakes-and-repeats)
 already names, and these runs sit inside it rather than widening it.
 
 What this costs is runner time. Each run is an invocation of its own, so
-the cost model charges every one its invocation rather than charging the
-file once. Most of the cost then arrives as more lanes, which the search
-`--lane-count` runs finds by packing what the lanes will actually be
-packed against. Not all of it: one identity's runs go in one lane, so an
-expensive identity multiplied past a lane's bound cannot be helped by adding
-lanes. The mandatory pass gives up runs until what is left fits, down to one,
-which is what the discretionary passes do.
+the cost model charges every one its invocation, and its suite's
+startup, rather than charging the file once. Most of the cost then
+arrives as more lanes, which the search `--lane-count` runs finds by
+packing what the lanes will actually be packed against. Not all of it:
+one identity's runs go in one lane, so an expensive identity multiplied
+past a lane's bound cannot be helped by adding lanes. The mandatory pass
+gives up runs until what is left fits, down to one, which is what the
+discretionary passes do.
 
 **A failure of an excluded test does not fail the run.** This is the
 second rule and it is a different question, which is what a `main` failure
@@ -2266,17 +2263,32 @@ lane = prologue
      + sum over the capabilities the lane opens of setupCost(capability)
      + sum over the lane's batches of batchCost(batch)
 
-batchCost(batch) = suiteOverhead(suite)
+batchCost(batch) = suiteOverhead(suite) * passes(batch)
+                 + unitOverhead(suite) * sum over units of runs(unit)
                  + testsCost(batch)
-                 + unitOverhead(suite) * the units the batch opens
 
 testsCost(batch) = the larger of
-                     correction(suite) * sum over items of cost(item) * runs(item)
+                     correction(suite) * sum over units of once(unit) * runs(unit)
                    and
-                     the largest over units of
-                       sum over the unit's items of cost(item)
-                         * the most runs(item) of any of them
+                     sum over p from 1 to passes(batch) of
+                       the largest once(unit) over units with runs(unit) >= p
+
+once(unit)       = sum over the unit's items in the batch of cost(item)
+runs(unit)       = the most runs(item) of any of those items
+passes(batch)    = the most runs(unit) of any unit in the batch
 ```
+
+The shape follows how a lane runs a batch. It runs the batch in passes,
+one for each time its most repeated unit runs. The first pass runs every
+unit, and each later pass runs the units still asking for another run,
+with every selected item of each of those units, since a unit is
+invoked with one skip list however many times it runs. Each pass is an
+invocation of the suite's command of its own, so it pays the suite's
+startup again: for the pattern unit suite that is another
+`deno task integration` process and another precompile. So a repeat costs its
+suite's overhead once for each pass it adds, its unit's overhead once for
+each pass that opens the unit, and the whole of its unit's selected items
+once for each run of the unit.
 
 The setup costs are what the table in
 [Capabilities and setup](#capabilities-and-setup) describes, measured
@@ -2307,23 +2319,25 @@ with what is inside them: the runner unit suite has spent about half a
 second a unit across batches of five units and batches of three hundred.
 A model with only an intercept and a slope on the tests has to put that
 somewhere, and the only place left is the intercept, which is charged once
-however few units the batch holds. A suite whose whole set is expensive
+a pass however few units the batch holds. A suite whose whole set is expensive
 then prices out its own smallest batch.
 
 So the model is fitted instead. Every batch the lane runner executes
-records what its own tests took between them, what the batch actually
-took, how many units it opened, and what its longest unit took over every
-run of it. The publisher fits those per suite over the last week —
+records what its own tests took between them over every pass, what the
+batch actually took, how many times its passes opened a unit, what the
+longest unit of each pass took added together, and how many passes it
+made. The publisher fits those per suite over the last week —
 `correction` is the least-squares slope of what a batch spent on what its
-tests took, `unitOverhead` is the rate a batch
-paid per unit for what it spent beyond its tests, and `suiteOverhead` is
-what those two leave — and publishes the result in the next manifest.
+tests took, `unitOverhead` is the rate a batch paid per unit it opened
+for what it spent beyond its tests, and `suiteOverhead` is what those two
+leave for each pass — and publishes the result in the next manifest.
 They start at zero, one and zero, and converge within a few days of lanes
 running. Three numbers per suite, all measured, none maintained by hand.
 
 The intercept is then set at the ninetieth percentile of what each batch
-spent beyond what the other two charge it, because a least-squares line
-sits in the middle of its observations and half the lanes would
+spent beyond what the other two charge it, over the passes it made,
+because a least-squares line sits in the middle of its observations and
+half the lanes would
 otherwise run past the budget they were packed against. It is not raised
 to the slowest batch, because the intercept is charged to every lane
 that holds the suite: one slow runner would set what every lane pays,
@@ -2364,39 +2378,47 @@ suite runs five files at a time, so a batch of seventy files spends about
 a third of what they took between them, and its correction says so. A
 batch holding a file that takes five minutes spends at least those five
 minutes, however few other files are beside it, and ten where the file
-runs twice, since a unit's runs follow one another. A model with only the
-correction charges that batch a third of the file's time and has to put
+runs twice, since a batch's passes follow one another. A model with only
+the correction charges that batch a third of the file's time and has to put
 the rest in the intercept, which every lane holding the suite pays. A
 single file taking longer than a lane's bound then puts the intercept
 past that bound, and every test of the suite costs more than a lane can
-hold. `testsCost` is therefore bounded below by the longest unit, since a
-unit's items and a unit's runs follow one another: the packer charges a
+hold. `testsCost` is therefore bounded below by what the longest unit of
+each pass takes, added up over the passes, since a unit's items run one
+after another and the passes follow one another: the packer charges a
 lane the larger of the two figures for its share of each suite, and the
-fit reads each batch's tests the same way. A unit runs as many times as
-the most any of its items asks for, and runs every item each time, so a
-repeat costs the whole unit. For a suite whose correction is one or more,
-holding no unit that runs more than once, the corrected sum is always the
-larger, and the bound changes nothing.
+fit reads each batch's tests the same way. Where a shorter unit runs more
+times than the longest one, the later passes are set by the shorter unit,
+so the bound is more than any one unit takes over all its runs. No pass
+takes longer than every unit in it put together, so for a suite whose
+correction is one or more the corrected sum is always the larger, and
+the bound changes nothing.
 
 The measurements travel through the machinery that already exists: the
 lane runner writes them as ordinary test records of kind `gate` and
 scope `ci`, named `ci-lane setup <capability>` and `ci-lane batch
-<suite>`. A batch is written four times, the others named `ci-lane ran
-batch <suite>`, `ci-lane units batch <suite>` and `ci-lane longest batch
-<suite>`, because none of what its tests took between them, how many
-units it opened, or what its longest unit took can be recovered from the
-records the batch produced: a reader of a report cannot tell which of its
-records came from which batch, and a unit whose tests all recorded
-nothing leaves no trace of having been opened.
+<suite>`. A batch is written five times, the others named `ci-lane ran
+batch <suite>`, `ci-lane units batch <suite>`, `ci-lane longest batch
+<suite>` and `ci-lane passes batch <suite>`, because none of what its
+tests took between them, how many times its passes opened a unit, what
+the longest unit of each pass took, or how many passes it made can be
+recovered from the records the batch produced: a reader of a report
+cannot tell which of its records came from which batch, and a unit whose
+tests all recorded nothing leaves no trace of having been opened. The
+names are what a reader knows a figure by, so a reader passes over a
+name it does not recognize as it passes over any other lane
+measurement, and reads the figures it does recognize as it always has.
+A batch that repeats nothing makes one pass, and for such a batch the
+five figures are what one run of each unit comes to.
 
 The correction is fitted twice over whichever of the suite's batches it
 is read from, which the paragraph on stored figures below describes. The
 first fit uses every batch in that set. The second leaves out each batch
-whose longest unit took more than the first fit's correction makes of its
-tests, because what such a batch spent was decided by that one unit and
-says nothing about how the rest share out. Where the first fit is not to
-be believed, the second leaves out each batch whose longest unit took half
-or more of what the batch spent.
+whose floor, the longest unit of each pass added together, took more than
+the first fit's correction makes of its tests, because what such a batch
+spent was decided by those units and says nothing about how the rest share
+out. Where the first fit is not to be believed, the second leaves out each
+batch whose floor took half or more of what the batch spent.
 
 A lane also writes
 `ci-lane excused <identity>`, carrying no figure, for each identity whose
@@ -2407,8 +2429,8 @@ The tests' own time, rather than what the packer expected it to be. The
 two differ by however wrong the manifest's costs are, and a unit nothing
 has measured is charged a stand-in that can be out by a factor of ten.
 Fitting against the expectation puts that error in the intercept, which
-is charged once to every lane that holds the suite and kept for the whole
-window. An intercept past the planned budget already costs a whole lane
+is charged to every lane that holds the suite, once for each pass, and
+kept for the whole window. An intercept past the planned budget already costs a whole lane
 for each identity of the suite that runs, since a lane holding two things
 stops at that budget; past the lane's bound, which is what an identity's
 lone cost is weighed against, the suite places no discretionary identity
@@ -2416,8 +2438,8 @@ at all. So an expectation that was briefly wrong takes the lanes away
 from everything else, and then holds a whole suite out of every pull
 request, for a week.
 The record format carries one number and calls it a duration, so the unit
-count travels in that field as a count, and the measurement's name is what
-says which of the four figures it is. A batch run
+and pass counts travel in that field as counts, and the measurement's name
+is what says which of the five figures it is. A batch run
 with coverage on carries `with coverage` on the end of its name, because
 instrumenting a run costs it time and how much is a property of the
 suite. The publisher fits those batches apart from what the suite's batches cost
@@ -2435,7 +2457,12 @@ and no others. A figure a lane did not record is absent rather than filled
 in, and an absent figure is not read as a default. A batch that does not
 say whether coverage was on could have been either kind of run, so it is
 offered to both of its suite's fits. A batch that does not say what its
-longest unit took is charged no floor. Either reading is a guess, and at
+longest units took is charged no floor. A batch that does not say how
+many passes it made is read as one pass. Where such a batch repeated a
+unit, its unit count counts each unit once and its longest-unit figure is
+the one unit that took longest over all its runs, so what its later
+passes spent starting the suite and opening units is left in its
+remainder. Each of these readings is a guess, and at
 the ninetieth percentile a few batches read wrongly set the intercept for
 as long as the window keeps them. So the fit narrows a suite's batches, one
 figure at a time, to those that carry it, wherever those number
@@ -2533,9 +2560,11 @@ behind 40 seconds of setup correctly loses to 40 seconds of tests that
 need nothing.
 
 Repeats are applied last, to items already selected, and are charged their
-full cost. An item that would be repeated but no longer fits gives up runs
-until it does, down to one, rather than being dropped: one observation
-beats none.
+full cost: every item of the unit for each run of the unit, and the
+suite's and the unit's overheads for each pass the runs add, as [the cost
+model](#the-cost-model) describes. An item that would be repeated but no
+longer fits gives up runs until it does, down to one, rather than being
+dropped: one observation beats none.
 
 ### Filling the lanes
 
@@ -3611,7 +3640,9 @@ its units are packed across lanes like any other mandatory work. Each of those
 lanes pays the set's suites' overheads and its capabilities' setup. Each lane
 holding part of a unit pays that unit's overhead, and a unit is split over no
 more lanes than it holds entries, so that overhead is paid at most once per
-entry. Each entry's own cost is multiplied by how many times it runs. The units
+entry. Each unit's selected entries are charged once for each time the
+unit runs, and the passes and unit openings a repeated entry adds are
+charged their overheads once, in the lane holding that entry. The units
 a set's suite declares unavailable are not run, so they are not charged. A set
 that no number of the run's lanes holds is named as costing more than those
 lanes hold.

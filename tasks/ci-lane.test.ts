@@ -1608,6 +1608,44 @@ describe("running a lane's work", () => {
     expect(printed).not.toContain("nothing has measured");
   });
 
+  it("counts a test in its batch's own time once for each run of its unit", () => {
+    // The unit runs twice because one of its tests asks for two runs, and
+    // every test in it runs each time: 1.5 and 2.5 seconds, twice over.
+    const [repeated, once] = manifestOf([
+      { test: { k: "unit", s: "bakery", n: "glaze > sets" }, cost: 1.5 },
+      { test: { k: "unit", s: "bakery", n: "glaze > cracks" }, cost: 2.5 },
+    ]).entries;
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => lines.push(line);
+    try {
+      describePlan(
+        lane,
+        [{
+          suite: runnable(["true"], "workspace-unit"),
+          units: [{ unit: "packages/bakery/glaze.test.ts", skip: [] }],
+          runs: new Map([["packages/bakery/glaze.test.ts", 2]]),
+        }],
+        ["deno"],
+        { objectName: "manifest-x.json.gz" },
+        [],
+        [],
+        {
+          manifest: manifestOf([]),
+          selections: [
+            { entry: repeated!, reason: "value", repeats: 2 },
+            { entry: once!, reason: "value", repeats: 1 },
+          ],
+          projectedSeconds: 96,
+        },
+        LANE_BUDGET_SECONDS,
+      );
+    } finally {
+      console.log = log;
+    }
+    expect(lines.join("\n")).toContain("│ 8s ");
+  });
+
   /**
    * What `describePlan` prints for a lane holding these selections
    * against a suite whose correction is `correction`, projected at 96
@@ -2728,12 +2766,13 @@ describe("what a lane records about itself", () => {
     }
   });
 
-  it("writes what its longest unit took over every run of it", async () => {
-    // A batch finishes no sooner than its longest unit, and a unit's runs
-    // follow one another. `slow` takes three seconds and runs twice, and
-    // `quick` takes one and runs once, so the figure is six seconds: not
-    // the three one run of `slow` takes, and not the seven every record
-    // comes to.
+  it("writes the longest unit of each pass, the units its passes opened, and the passes it made", async () => {
+    // A pass finishes no sooner than its longest unit, and the passes
+    // follow one another. `slow` takes three seconds and runs once, and
+    // `quick` takes one and runs three times, so the passes' longest
+    // units come to five seconds: not the three either unit takes over
+    // its own runs, and not the six every record comes to. The first pass
+    // opens both units and the other two open `quick`.
     const workDir = await Deno.makeTempDir({ prefix: "lane-longest-" });
     const spool = await Deno.makeTempDir({ prefix: "lane-spool-" });
     const took: Record<string, number> = { slow: 3000, quick: 1000 };
@@ -2768,7 +2807,7 @@ describe("what a lane records about itself", () => {
             },
           }),
           units: [{ unit: "slow", skip: [] }, { unit: "quick", skip: [] }],
-          runs: new Map([["slow", 2], ["quick", 1]]),
+          runs: new Map([["slow", 1], ["quick", 3]]),
         },
         lane,
         workDir,
@@ -2784,11 +2823,19 @@ describe("what a lane records about itself", () => {
       const spooled = written.join("");
       expect(spooled).toContain(
         '"n":"ci-lane longest batch pattern-unit"},"outcome":"pass"' +
-          ',"durationMs":6000',
+          ',"durationMs":5000',
+      );
+      expect(spooled).toContain(
+        '"n":"ci-lane units batch pattern-unit"},"outcome":"pass"' +
+          ',"durationMs":4',
+      );
+      expect(spooled).toContain(
+        '"n":"ci-lane passes batch pattern-unit"},"outcome":"pass"' +
+          ',"durationMs":3',
       );
       expect(spooled).toContain(
         '"n":"ci-lane ran batch pattern-unit"},"outcome":"pass"' +
-          ',"durationMs":7000',
+          ',"durationMs":6000',
       );
     } finally {
       await Deno.remove(workDir, { recursive: true });

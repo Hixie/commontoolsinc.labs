@@ -19,7 +19,7 @@ import {
 } from "../test-topology/suite.ts";
 import { memberScope } from "../test-topology/unit.ts";
 import type { Calibration, Manifest, ManifestEntry } from "./manifest.ts";
-import { longestUnit, ownTime } from "./plan.ts";
+import { chargedTests, testsOf } from "./plan.ts";
 import {
   COST_WINDOW_DAYS,
   EXCLUDED_FROM_COVERAGE_GATE,
@@ -170,16 +170,20 @@ export function measuresSuite(
  * is charged them in.
  */
 export interface MeasuredCost {
-  /** Each suite's overhead, which every lane holding it pays once. */
+  /** Each suite's overhead, which every lane holding it pays at least once. */
   overhead: number;
 
   /**
    * What the entries take, which is paid once however they are spread:
-   * for each suite, each entry's own cost through the suite's correction
-   * once for every time the entry runs, or the time its longest unit
-   * takes where that is more, as `suiteLoad()` charges a lane. Spreading a
-   * suite over lanes charges each lane at least its own share of each, so
-   * the lanes between them are charged no less.
+   * for each suite, what `chargedTests()` makes of them all in one lane,
+   * and the overheads of the passes and unit openings past the first that
+   * its most repeated entries add, since all of one entry's runs go in one
+   * lane. Spreading a suite over lanes charges each lane at least its own
+   * share of the loads, and the longest unit of each pass is in one of
+   * those lanes, so the lanes between them are charged no less, except
+   * where lanes split a unit whose entries ask for different numbers of
+   * runs. Each part of such a unit runs only as often as its own entries
+   * ask, so this errs high there.
    */
   spread: number;
 
@@ -192,11 +196,10 @@ export interface MeasuredCost {
   units: { overhead: number; entries: number }[];
 
   /**
-   * The most any one entry charges the lane holding it, with its suite's
-   * and its unit's overheads: its own cost through the correction, or its
-   * `ownTime()` where that is more, as a lane holding nothing else is
-   * charged it. All of one entry's runs go in one lane, so no number of
-   * lanes holds an entry costing more than one lane does.
+   * The most any one entry charges a lane holding nothing else, its
+   * suite's and its unit's overheads included. All of one entry's runs go
+   * in one lane, so no number of lanes holds an entry costing more than
+   * one lane does.
    */
   largest: number;
 }
@@ -221,25 +224,29 @@ export function measuredCost(
   for (const [suite, held] of bySuite) {
     const fitted = calibration.suitesWithCoverage?.[suite];
     if (fitted === undefined) return undefined;
-    const units = new Map<string, number>();
-    let spread = 0;
+    /** What `entries` take, and their overheads past one lane's first. */
+    const beyond = (entries: readonly ManifestEntry[]) => {
+      const tests = testsOf(
+        entries.map((entry) => ({ entry, repeats: entry.repeats })),
+      );
+      const units = new Set(entries.map((entry) => entry.unit)).size;
+      return chargedTests(fitted.correction, tests) +
+        fitted.overhead * (tests.longest.length - 1) +
+        fitted.unitOverhead * (tests.opened - units);
+    };
     for (const entry of held) {
-      units.set(entry.unit, (units.get(entry.unit) ?? 0) + 1);
-      const own = fitted.correction * entry.cost * entry.repeats;
-      spread += own;
       cost.largest = Math.max(
         cost.largest,
-        fitted.overhead + fitted.unitOverhead +
-          Math.max(own, ownTime(entry, entry.repeats)),
+        fitted.overhead + fitted.unitOverhead + beyond([entry]),
       );
     }
-    cost.spread += Math.max(
-      spread,
-      longestUnit(held.map((entry) => ({ entry, repeats: entry.repeats }))),
-    );
+    cost.spread += beyond(held);
     cost.overhead += fitted.overhead;
-    for (const entries of units.values()) {
-      cost.units.push({ overhead: fitted.unitOverhead, entries });
+    for (const entries of Map.groupBy(held, (entry) => entry.unit).values()) {
+      cost.units.push({
+        overhead: fitted.unitOverhead,
+        entries: entries.length,
+      });
     }
   }
   return cost;

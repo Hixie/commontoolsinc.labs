@@ -61,6 +61,11 @@ function longest(suite: string, seconds: number, coverage = false): TestRecord {
   return measured(batchMeasurementName(suite, coverage, "longest"), seconds);
 }
 
+/** What a lane writes about how many passes one batch made. */
+function passes(suite: string, count: number): TestRecord {
+  return figure(batchMeasurementName(suite, false, "passes"), count);
+}
+
 /**
  * Observations over every combination of a small and a large reading of
  * each of the two things a batch is charged for, far enough apart in the
@@ -183,6 +188,47 @@ describe("calibrate", () => {
           longest: 680,
         },
       ]);
+    });
+
+    it("joins how many passes it made, where the lane wrote that", () => {
+      // A count, like the units: read the way a duration is, three passes
+      // would arrive as 0.003.
+      const seen = observationsOf([
+        {
+          run: "a",
+          records: [
+            ...batch("pattern-unit", 900, 1400, 5),
+            longest("pattern-unit", 680),
+            passes("pattern-unit", 3),
+          ],
+        },
+      ]);
+      expect(seen.batches).toEqual([
+        {
+          suite: "pattern-unit",
+          measured: false,
+          ran: 900,
+          spent: 1400,
+          units: 5,
+          longest: 680,
+          passes: 3,
+        },
+      ]);
+    });
+
+    it("takes no pass count that is not a whole number of one or more", () => {
+      for (const count of [0, -1, 1.5]) {
+        const seen = observationsOf([
+          {
+            run: "a",
+            records: [
+              ...batch("pattern-unit", 900, 1400, 5),
+              { ...passes("pattern-unit", 1), durationMs: count },
+            ],
+          },
+        ]);
+        expect(seen.batches.map((one) => one.passes)).toEqual([undefined]);
+      }
     });
 
     it("takes nothing from a longest unit whose batch wrote nothing else", () => {
@@ -343,6 +389,23 @@ describe("calibrate", () => {
       }]);
     });
 
+    it("carries how many passes a batch made", () => {
+      const kept = laneObservationsOf(
+        "object-1",
+        [...batch("pattern-unit", 900, 1400, 5), passes("pattern-unit", 2)],
+        "2026-09-12",
+      );
+      expect(kept).toEqual([{
+        day: "2026-09-12",
+        suite: "pattern-unit",
+        measured: false,
+        ran: 900,
+        spent: 1400,
+        units: 5,
+        passes: 2,
+      }]);
+    });
+
     it("carries the day, so a stored observation can be aged", () => {
       const kept = laneObservationsOf(
         "object-1",
@@ -393,6 +456,21 @@ describe("calibrate", () => {
         }]),
       )
         .toEqual({ overhead: 0, correction: 1, unitOverhead: 13 });
+    });
+
+    it("charges its intercept once for each pass a batch made", () => {
+      // None of these opened a unit, so all a batch spent beyond its tests
+      // is the intercept, paid once a pass: 15 by every batch, where read
+      // as one pass the two batches that made two would say 30.
+      const batches = [
+        { ran: 10, spent: 40, passes: 2 },
+        { ran: 20, spent: 50, passes: 2 },
+        { ran: 5, spent: 20, passes: 1 },
+      ].map((one) => ({ suite: "s", measured: false, units: 0, ...one }));
+      expect(fitSuite(batches))
+        .toEqual({ overhead: 15, correction: 1, unitOverhead: 0 });
+      expect(fitSuite(batches.map(({ passes: _, ...one }) => one)).overhead)
+        .toBe(30);
     });
 
     it("tells what the tests cost from what the units cost, where a suite pays nothing to open a batch", () => {
@@ -908,6 +986,36 @@ describe("calibrate", () => {
       expect(fitSuite(bounded).correction).toBe(1);
     });
 
+    it("narrows to the batches that say how many passes they made, where enough do", () => {
+      // The three batches that said nothing ran their one unit twice, 150
+      // seconds a run, and spent another 100 starting the suite a second
+      // time. Read as one pass, that 100 would set the intercept.
+      const said = Array.from({ length: 15 }, (_, i) => ({
+        suite: "s",
+        measured: false,
+        units: 30,
+        ran: 60 * (2 + i),
+        spent: 60 * (2 + i) / 3,
+        longest: 10,
+        passes: 1,
+      }));
+      const unsaid = Array.from({ length: 3 }, () => ({
+        suite: "s",
+        measured: false,
+        units: 1,
+        ran: 300,
+        spent: 400,
+        longest: 300,
+      }));
+      const fitted = fitSuite([...said, ...unsaid]);
+      expect(fitted.correction).toBeCloseTo(1 / 3, 6);
+      expect(fitted.overhead).toBeCloseTo(0, 6);
+      expect(
+        fitSuite([...said.map(({ passes: _, ...one }) => one), ...unsaid])
+          .overhead,
+      ).toBeCloseTo(100, 6);
+    });
+
     it("fits a suite from every batch while too few say whether coverage was on", () => {
       const unmarked = Array.from({ length: 15 }, (_, i) => ({
         suite: "s",
@@ -1365,6 +1473,34 @@ describe("calibrate", () => {
       })).toBe(true);
     });
 
+    it("returns `true` for a batch carrying how many passes it made", () => {
+      expect(
+        isLaneObservation({
+          day: "d",
+          suite: "s",
+          ran: 10,
+          spent: 30,
+          units: 4,
+          passes: 2,
+        }),
+      ).toBe(true);
+    });
+
+    it("returns `false` for a pass count that is not a whole number of one or more", () => {
+      for (const figure of [null, "2", Infinity, 0, -1, 1.5]) {
+        expect(
+          isLaneObservation({
+            day: "d",
+            suite: "s",
+            ran: 10,
+            spent: 30,
+            units: 4,
+            passes: figure,
+          }),
+        ).toBe(false);
+      }
+    });
+
     it("returns `false` for anything that is not one", () => {
       expect(isLaneObservation({ capability: "fuse", seconds: 1 })).toBe(false);
       expect(isLaneObservation({ day: "d", seconds: 1 })).toBe(false);
@@ -1415,6 +1551,26 @@ describe("calibrate", () => {
         spent: 700,
         units: 3,
         longest: 680,
+      }]);
+    });
+
+    it("reads how many passes a stored batch made", () => {
+      const seen = laneObservations([{
+        day: "2026-09-12",
+        suite: "pattern-unit",
+        measured: false,
+        ran: 900,
+        spent: 1400,
+        units: 5,
+        passes: 2,
+      }]);
+      expect(seen.batches).toEqual([{
+        suite: "pattern-unit",
+        measured: false,
+        ran: 900,
+        spent: 1400,
+        units: 5,
+        passes: 2,
       }]);
     });
 
