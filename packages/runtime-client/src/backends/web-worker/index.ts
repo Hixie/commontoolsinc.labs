@@ -126,7 +126,17 @@ self.addEventListener("message", (event: MessageEvent) => {
 if (
   (typeof self !== "undefined") && (typeof self.postMessage === "function")
 ) {
+  // Held until this worker's runtime is torn down, so that the transport can
+  // wait for that; see `WorkerReadyNotification`.
+  const lifetimeLock = crypto.randomUUID();
+  await new Promise<void>((held, refused) => {
+    navigator.locks.request(lifetimeLock, () => {
+      held();
+      return new Promise<never>(() => {});
+    }).catch(refused);
+  });
+
   // The transport's own traffic, not the runtime's: it tells the client this
   // entry has run and the listener above is installed.
-  postToClient({ type: TransportNotificationType.WorkerReady });
+  postToClient({ type: TransportNotificationType.WorkerReady, lifetimeLock });
 }
