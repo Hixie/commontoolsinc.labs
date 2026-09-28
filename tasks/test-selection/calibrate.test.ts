@@ -761,6 +761,34 @@ describe("calibrate", () => {
       expect(fitSuite([...pooled, ...long]).correction).toBeCloseTo(0.3, 6);
     });
 
+    it("fits a suite from the batches that say what their longest unit took once there are enough of them", () => {
+      // The suite runs its units side by side. The batches decided by one
+      // long unit do not say so, and set the intercept wherever they are
+      // read.
+      const unsaid = Array.from({ length: 3 }, () => ({
+        suite: "s",
+        measured: false,
+        units: 1,
+        ran: 400,
+        spent: 400,
+      }));
+      const pooled = (saying: number) =>
+        Array.from({ length: 15 }, (_, i) => ({
+          suite: "s",
+          measured: false,
+          units: 30,
+          ran: 60 * (2 + i),
+          spent: 60 * (2 + i) / 3,
+          ...(i < saying ? { longest: 10 } : {}),
+        }));
+      expect(
+        fitSuite([...pooled(MIN_CORRECTION_SAMPLES), ...unsaid]).overhead,
+      ).toBeCloseTo(0, 6);
+      expect(
+        fitSuite([...pooled(MIN_CORRECTION_SAMPLES - 1), ...unsaid]).overhead,
+      ).toBeGreaterThan(250);
+    });
+
     it("fits a suite from every batch while too few say what their longest unit took", () => {
       // Two batches are too few to fit a correction from, so a suite
       // fitted from them alone would be charged its tests' whole time.
@@ -780,6 +808,123 @@ describe("calibrate", () => {
         longest: 10,
       }));
       expect(fitSuite([...unsaid, ...said]).correction).toBeCloseTo(1 / 3, 6);
+    });
+
+    it("narrows to the batches carrying each figure in turn, where enough do to fit from", () => {
+      // Enough batches say whether coverage was on to fit a correction
+      // from, so the three that do not are left out. Too few say what
+      // their longest unit took, so the batches that do not stay in.
+      const marked = Array.from({ length: 15 }, (_, i) => ({
+        suite: "s",
+        measured: false,
+        units: 30,
+        ran: 60 * (2 + i),
+        spent: 60 * (2 + i) / 3,
+      }));
+      const bounded = [0, 1].map(() => ({
+        suite: "s",
+        measured: false,
+        units: 30,
+        ran: 300,
+        spent: 100,
+        longest: 10,
+      }));
+      const unmarked = Array.from({ length: 3 }, () => ({
+        suite: "s",
+        units: 1,
+        ran: 400,
+        spent: 400,
+      }));
+      const fitted = fitSuite([...marked, ...bounded, ...unmarked]);
+      expect(fitted.correction).toBeCloseTo(1 / 3, 6);
+      expect(fitted.overhead).toBeCloseTo(0, 6);
+      expect(
+        fitSuite([
+          ...marked,
+          ...bounded,
+          ...unmarked.map((one) => ({ ...one, measured: false })),
+        ]).overhead,
+      ).toBeGreaterThan(250);
+    });
+
+    it("reads a suite's intercept from the batches that say, though they are too alike to fit a correction from", () => {
+      // Five small batches say they ran without coverage, all of one file
+      // and seconds apart. The large ones do not say. Three ran many
+      // files side by side, and one spent minutes on a single file.
+      const marked = [2, 3, 4, 5, 6].map((ran) => ({
+        suite: "s",
+        measured: false,
+        units: 1,
+        ran,
+        spent: ran + 4,
+      }));
+      const unmarked = [
+        ...[1000, 1500, 2000].map((ran) => ({
+          suite: "s",
+          units: 60,
+          ran,
+          spent: 0.3 * ran,
+        })),
+        { suite: "s", units: 3, ran: 900, spent: 700 },
+      ];
+      const fitted = fitSuite([...marked, ...unmarked]);
+      expect(fitted.correction).toBeLessThan(1);
+      expect(fitted.overhead).toBeLessThan(5);
+      for (const one of marked) {
+        expect(chargeFor(fitted, one)).toBeGreaterThanOrEqual(one.spent - 1e-9);
+      }
+      expect(
+        fitSuite([
+          ...marked,
+          ...unmarked.map((one) => ({ ...one, measured: false })),
+        ]).overhead,
+      ).toBeGreaterThan(100);
+    });
+
+    it("borrows the correction from every batch where those that say what their longest unit took are too alike to fit one", () => {
+      // The suite's batches spend half as much again as their tests took.
+      // Charged at one, a lane packing the large batches would run past
+      // what it was charged.
+      const bounded = [5, 6, 7].map((ran) => ({
+        suite: "s",
+        measured: false,
+        units: 1,
+        ran,
+        spent: 1.5 * ran,
+        longest: ran,
+      }));
+      const unbounded = [600, 900, 1200].map((ran) => ({
+        suite: "s",
+        measured: false,
+        units: 30,
+        ran,
+        spent: 1.5 * ran,
+      }));
+      const fitted = fitSuite([...bounded, ...unbounded]);
+      expect(fitted.correction).toBeCloseTo(1.5, 6);
+      for (const one of [...bounded, ...unbounded]) {
+        expect(chargeFor(fitted, one)).toBeCloseTo(one.spent, 6);
+      }
+      expect(fitSuite(bounded).correction).toBe(1);
+    });
+
+    it("fits a suite from every batch while too few say whether coverage was on", () => {
+      const unmarked = Array.from({ length: 15 }, (_, i) => ({
+        suite: "s",
+        units: 30,
+        ran: 60 * (2 + i),
+        spent: 60 * (2 + i) / 3,
+      }));
+      const marked = [0, 1].map(() => ({
+        suite: "s",
+        measured: true,
+        units: 30,
+        ran: 300,
+        spent: 100,
+      }));
+      expect(fitSuite([...unmarked, ...marked]).correction)
+        .toBeCloseTo(1 / 3, 6);
+      expect(fitSuite(marked).correction).toBe(1);
     });
 
     it("fits a suite whose batch runs faster than the sum of its tests", () => {
@@ -993,6 +1138,59 @@ describe("calibrate", () => {
       expect(Object.keys(fitted.suitesWithCoverage ?? {})).toEqual(["s"]);
     });
 
+    it("fits neither kind of run from a batch that does not say which it was, beside enough that do", () => {
+      // The unmarked batch ran with coverage on and spent 300 seconds
+      // more than its tests took. Read as run without, it would set what
+      // every lane is charged for the suite.
+      const without = spread((ran, units) => ran + units);
+      const withCoverage = spread((ran, units) => 2 * ran + units).map((
+        one,
+      ) => ({ ...one, measured: true }));
+      const unmarked = { suite: "s", ran: 40, spent: 340, units: 20 };
+      const fitted = calibrate({
+        setup: new Map(),
+        batches: [...without, ...withCoverage, unmarked],
+      });
+      expect(fitted.suites).toEqual(
+        calibrate({ setup: new Map(), batches: without }).suites,
+      );
+      expect(fitted.suitesWithCoverage).toEqual(
+        calibrate({ setup: new Map(), batches: withCoverage })
+          .suitesWithCoverage,
+      );
+      expect(fitted.suites.s!.overhead).toBeCloseTo(0, 6);
+    });
+
+    it("offers a batch that does not say which kind of run it was to both fits", () => {
+      // One batch of each kind is too few to fit a correction from, so
+      // both fits read the unmarked batches beside it.
+      const unmarked = Array.from({ length: 15 }, (_, i) => ({
+        suite: "s",
+        units: 30,
+        ran: 60 * (2 + i),
+        spent: 60 * (2 + i) / 3,
+      }));
+      const fitted = calibrate({
+        setup: new Map(),
+        batches: [
+          ...unmarked,
+          { suite: "s", measured: false, units: 30, ran: 300, spent: 100 },
+          { suite: "s", measured: true, units: 30, ran: 300, spent: 100 },
+        ],
+      });
+      expect(fitted.suites.s!.correction).toBeCloseTo(1 / 3, 6);
+      expect(fitted.suitesWithCoverage!.s!.correction).toBeCloseTo(1 / 3, 6);
+    });
+
+    it("fits both kinds of run from batches none of which say which they were", () => {
+      const unmarked = { suite: "s", ran: 40, spent: 92, units: 4 };
+      const fitted = calibrate({ setup: new Map(), batches: [unmarked] });
+      expect(fitted.suites).toEqual({
+        s: { overhead: 0, correction: 1, unitOverhead: 13 },
+      });
+      expect(fitted.suitesWithCoverage).toEqual(fitted.suites);
+    });
+
     it("carries no coverage figure for a suite run only without", () => {
       const fitted = calibrate({
         setup: new Map(),
@@ -1155,6 +1353,18 @@ describe("calibrate", () => {
       }
     });
 
+    it("returns `true` for a batch carrying a figure this reader does not know", () => {
+      expect(isLaneObservation({
+        day: "2026-09-12",
+        suite: "runner-unit",
+        measured: false,
+        ran: 10,
+        spent: 30,
+        units: 4,
+        invocations: 3,
+      })).toBe(true);
+    });
+
     it("returns `false` for anything that is not one", () => {
       expect(isLaneObservation({ capability: "fuse", seconds: 1 })).toBe(false);
       expect(isLaneObservation({ day: "d", seconds: 1 })).toBe(false);
@@ -1208,7 +1418,7 @@ describe("calibrate", () => {
       }]);
     });
 
-    it("reads a batch stored without the coverage flag as run without coverage", () => {
+    it("leaves a batch stored without the coverage flag not saying whether coverage was on", () => {
       const seen = laneObservations([
         {
           day: "2026-09-12",
@@ -1219,8 +1429,9 @@ describe("calibrate", () => {
         },
       ]);
       expect(seen.batches).toEqual([
-        { suite: "runner-unit", measured: false, ran: 10, spent: 30, units: 4 },
+        { suite: "runner-unit", ran: 10, spent: 30, units: 4 },
       ]);
+      expect(seen.batches.map((batch) => batch.measured)).toEqual([undefined]);
     });
   });
 });

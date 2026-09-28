@@ -107,25 +107,14 @@ import { percentile90 } from "./score.ts";
 /**
  * One thing a lane measured about itself, and the day it measured it.
  *
- * A batch stored without `measured` is read as one run without
- * coverage. An aggregate may hold batches of either kind without the
- * flag, and that reading errs high: an instrumented batch among the
- * uninstrumented raises what they are charged, where the other reading
- * would put uninstrumented batches among the instrumented and lower what
- * a lane measuring the suite is charged. Such batches age out of the
- * window `COST_WINDOW_DAYS` names like any other.
+ * A batch carries each figure `BatchObservation` marks optional only
+ * where whatever wrote it recorded that figure, and it may carry figures
+ * this reader does not know. An absent figure says nothing:
+ * `fitSuite()` prefers the batches that carry it.
  */
 export type LaneObservation =
   | { day: string; capability: string; seconds: number }
-  | {
-    day: string;
-    suite: string;
-    measured?: boolean;
-    ran: number;
-    spent: number;
-    units: number;
-    longest?: number;
-  };
+  | ({ day: string } & BatchObservation);
 
 /** Whether a stored figure is one the fit can use. */
 function finite(value: unknown): boolean {
@@ -149,13 +138,16 @@ export function isLaneObservation(value: unknown): value is LaneObservation {
     (one.longest === undefined || finite(one.longest));
 }
 
-/** One batch, as a lane measured it. */
+/**
+ * One batch, as a lane measured it. Each optional figure is absent where
+ * the batch does not say it, and `CARRIES` names every one of them.
+ */
 export interface BatchObservation {
   /** The suite the batch ran. */
   suite: string;
 
   /** Whether coverage was on for the batch. */
-  measured: boolean;
+  measured?: boolean;
 
   /**
    * Seconds the batch's own tests took, summed over every execution of
@@ -177,10 +169,34 @@ export interface BatchObservation {
   /**
    * Seconds the unit that took longest took, summed over every run of
    * it. The batch spent at least this on its tests, however many units it
-   * ran side by side. Absent where the lane did not measure it.
+   * ran side by side.
    */
   longest?: number;
 }
+
+/** The figures a `BatchObservation` may lack. */
+type OptionalFigure = {
+  [K in keyof BatchObservation]-?: undefined extends BatchObservation[K] ? K
+    : never;
+}[keyof BatchObservation];
+
+/**
+ * Whether a batch carries each figure it may lack. The type requires an
+ * entry for every optional figure of `BatchObservation`, so `fitSuite()`
+ * prefers the batches carrying a figure added there as it does the rest.
+ */
+const CARRIES: {
+  [K in OptionalFigure]: (observation: BatchObservation) => boolean;
+} = {
+  measured: (observation) => observation.measured !== undefined,
+  longest: (observation) => observation.longest !== undefined,
+};
+
+/** Batches a suite is fitted from, narrowest first, ending with all of them. */
+type Narrowed = [
+  readonly BatchObservation[],
+  ...(readonly BatchObservation[])[],
+];
 
 /** Every lane measurement a set of records holds, sorted into its kind. */
 export interface Observations {
@@ -208,14 +224,8 @@ export function laneObservations(
         one.seconds,
       ]);
     } else {
-      batches.push({
-        suite: one.suite,
-        measured: one.measured === true,
-        ran: one.ran,
-        spent: one.spent,
-        units: one.units,
-        ...(one.longest === undefined ? {} : { longest: one.longest }),
-      });
+      const { day: _, ...batch } = one;
+      batches.push(batch);
     }
   }
   return { setup, batches };
@@ -312,15 +322,7 @@ export function laneObservationsOf(
     ...[...seen.setup].flatMap(([capability, samples]) =>
       samples.map((seconds) => ({ day, capability, seconds }))
     ),
-    ...seen.batches.map((batch) => ({
-      day,
-      suite: batch.suite,
-      measured: batch.measured,
-      ran: batch.ran,
-      spent: batch.spent,
-      units: batch.units,
-      ...(batch.longest === undefined ? {} : { longest: batch.longest }),
-    })),
+    ...seen.batches.map((batch) => ({ day, ...batch })),
   ];
 }
 
@@ -363,8 +365,9 @@ function slopeOf(
  * charged thousands the first time a lane packs it whole. Inside a narrow
  * range the fixed cost dominates and the slope is noise, so it is fitted
  * only where the suite's batches have disagreed enough about that reading
- * for a slope to mean anything, and otherwise stays at one. That is the
- * reading which needs no evidence: a second of test time costs a second.
+ * for a slope to mean anything, and otherwise is not fitted at all.
+ * `fitSuite()` then charges one, which is the reading that needs no
+ * evidence: a second of test time costs a second.
  *
  * It is not believed where it comes out at or below zero. A correction
  * below one is ordinary — a batch runs its files in parallel, so the wall
@@ -399,16 +402,7 @@ function slopeOf(
  * what the batch spent, which is to say those that spent most of what
  * they spent on units side by side.
  */
-function correctionOf(observations: readonly BatchObservation[]): number {
-  return correctionThrough(observations) ?? 1;
-}
-
-/**
- * Helper for `correctionOf()` and `fitSuite()`, which returns the
- * correction `correctionOf()` describes, or `undefined` where neither fit
- * is to be believed.
- */
-function correctionThrough(
+function correctionOf(
   observations: readonly BatchObservation[],
 ): number | undefined {
   const fitted = slopeThrough(observations);
@@ -555,19 +549,36 @@ function unitCostOf(
  * left would grow with the units, so a lane packing a thousand of a
  * suite's cheapest units would be charged what a lane packing three is.
  *
- * A suite is fitted from its batches that say what their longest unit
- * took, wherever those alone fit a correction. A batch that does not say leaves in its
- * remainder whatever its longest unit took past the correction's share,
- * and at the ninetieth percentile a few such batches set the intercept for
- * as long as the window keeps them, where the batches beside them that do
- * say would not.
+ * A batch that lacks a figure is read at a guess. One that does not say
+ * whether coverage was on is read as run the way the fit is for, and one
+ * that does not say what its longest unit took is charged no floor. At
+ * the ninetieth percentile a few batches read wrongly set the intercept
+ * for as long as the window keeps them, where the batches beside them that
+ * do say would not. So each figure `CARRIES` names, in turn, narrows the
+ * batches to those that carry it, wherever there are
+ * `MIN_CORRECTION_SAMPLES` of those or more, and the intercept and the
+ * per-unit rate are read from the batches left.
+ *
+ * The correction is read from the narrowest of those sets of batches that
+ * fits one. A slope needs batches that disagree about how long their tests
+ * took, and the batches that carry a figure can be too alike to fit one,
+ * where charging one would under-charge a suite whose tests cost more
+ * than their own time. A least-squares slope moves with a misread batch in
+ * proportion to that batch's share of the fit, where a ninetieth
+ * percentile is set outright by the few batches at its top.
  */
 export function fitSuite(
   all: readonly BatchObservation[],
 ): { overhead: number; correction: number; unitOverhead: number } {
-  const bounded = all.filter((o) => o.longest !== undefined);
-  const observations = correctionThrough(bounded) === undefined ? all : bounded;
-  const correction = correctionOf(observations);
+  const narrowed = Object.values(CARRIES).reduce<Narrowed>((sets, carries) => {
+    const carrying = sets[0].filter(carries);
+    return carrying.length < MIN_CORRECTION_SAMPLES
+      ? sets
+      : [carrying, ...sets];
+  }, [all]);
+  const [observations] = narrowed;
+  const fits = narrowed.map(correctionOf);
+  const correction = fits.find((fit) => fit !== undefined) ?? 1;
   const unitOverhead = unitCostOf(observations, correction);
   const remainders = observations
     .map((o) => o.spent - testsCost(o, correction) - unitOverhead * o.units)
@@ -590,21 +601,24 @@ export function calibrate(observations: Observations): Calibration {
   }
   // Instrumenting a run costs it time, and how much is a property of the
   // suite, so a suite's batches run with coverage on are fitted apart
-  // from the ones run without.
-  const without = new Map<string, BatchObservation[]>();
-  const withCoverage = new Map<string, BatchObservation[]>();
-  for (const batch of observations.batches) {
-    const into = batch.measured ? withCoverage : without;
-    into.set(batch.suite, [...into.get(batch.suite) ?? [], batch]);
-  }
-  const fitted = (bySuite: ReadonlyMap<string, BatchObservation[]>) =>
+  // from the ones run without. A batch that does not say which it was
+  // could be either, so it is offered to both fits, and `fitSuite()` reads
+  // it only where the batches that do say are too few.
+  const fitted = (measured: boolean) =>
     Object.fromEntries(
-      [...bySuite].map(([suite, batches]) => [suite, fitSuite(batches)]),
+      [
+        ...Map.groupBy(
+          observations.batches.filter((o) =>
+            o.measured === undefined || o.measured === measured
+          ),
+          (o) => o.suite,
+        ),
+      ].map(([suite, batches]) => [suite, fitSuite(batches)]),
     );
   return {
     setupCost,
-    suites: fitted(without),
-    suitesWithCoverage: fitted(withCoverage),
+    suites: fitted(false),
+    suitesWithCoverage: fitted(true),
     prologue: LANE_PROLOGUE_SECONDS,
   };
 }

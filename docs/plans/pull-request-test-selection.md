@@ -2385,16 +2385,14 @@ records the batch produced: a reader of a report cannot tell which of its
 records came from which batch, and a unit whose tests all recorded
 nothing leaves no trace of having been opened.
 
-A batch stored without the fourth figure keeps whatever its longest unit
-took past the correction's share in what the intercept is read from. So
-once a suite has enough batches carrying the fourth figure to fit a
-correction from, it is fitted from those batches alone. The correction
-itself is fitted twice. The first fit uses every batch. The second
-leaves out each batch whose longest unit took more than the first fit's
-correction makes of its tests, because what such a batch spent was
-decided by that one unit and says nothing about how the rest share out.
-Where the first fit is not to be believed, the second leaves out each
-batch whose longest unit took half or more of what the batch spent.
+The correction is fitted twice over whichever of the suite's batches it
+is read from, which the paragraph on stored figures below describes. The
+first fit uses every batch in that set. The second leaves out each batch
+whose longest unit took more than the first fit's correction makes of its
+tests, because what such a batch spent was decided by that one unit and
+says nothing about how the rest share out. Where the first fit is not to
+be believed, the second leaves out each batch whose longest unit took half
+or more of what the batch spent.
 
 A lane also writes
 `ci-lane excused <identity>`, carrying no figure, for each identity whose
@@ -2427,6 +2425,29 @@ yet, the other fit. They ship in the lane's normal test-records artifact, the
 relay stores them like anything else, and the publisher reads them with the same
 reader it uses for everything else. No new pipeline, and the numbers show up in
 the existing dashboards for free.
+
+The publisher's aggregate keeps each batch with the figures its lane wrote
+and no others. A figure a lane did not record is absent rather than filled
+in, and an absent figure is not read as a default. A batch that does not
+say whether coverage was on could have been either kind of run, so it is
+offered to both of its suite's fits. A batch that does not say what its
+longest unit took is charged no floor. Either reading is a guess, and at
+the ninetieth percentile a few batches read wrongly set the intercept for
+as long as the window keeps them. So the fit narrows a suite's batches, one
+figure at a time, to those that carry it, wherever those number
+`MIN_CORRECTION_SAMPLES` or more, and reads the intercept and the per-unit
+rate from the batches left. The correction is read from the narrowest of
+those sets that fits one. The batches carrying a figure can be too alike to
+fit a slope from, and charging one in its place would under-charge a suite
+whose batches spend more than their tests took. A least-squares slope moves
+with a misread batch in proportion to its share of the fit, where a
+ninetieth percentile is set outright by the few batches at its top. Every
+optional figure of a batch observation is one the fit narrows by (`CARRIES`
+in `tasks/test-selection/calibrate.ts`), so a figure added to what a lane
+writes is preferred as soon as enough batches carry it. The aggregate needs
+no marker saying which figures it holds: a publisher reading one written by
+a later publisher keeps the figures it does not know, and writes them back
+as they were.
 
 ### The budget, and why it is derived rather than chosen
 

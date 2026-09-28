@@ -1137,6 +1137,30 @@ describe("build", () => {
         .toEqual(aggregate.lanes);
     });
 
+    it("carries a figure a later reader stored in a batch", () => {
+      // What a later reader stored beside the figures this one knows is
+      // left as it was, so that reader finds it again.
+      const later = { ...emptyAggregate("2026-08-20") } as Record<
+        string,
+        unknown
+      >;
+      const lanes = [{
+        day: "2026-08-20",
+        suite: "runner-unit",
+        measured: false,
+        ran: 10,
+        spent: 30,
+        units: 4,
+        invocations: 3,
+      }];
+      later.lanes = lanes;
+      const parsed = parseAggregate(JSON.stringify(later));
+      expect(parsed?.lanes).toEqual(lanes);
+      expect(
+        new Fold(parsed!, NO_ALIASES, "2026-08-20").finish().aggregate.lanes,
+      ).toEqual(lanes);
+    });
+
     it("drops a stored lane measurement it cannot read", () => {
       // Each one stands alone, so one that will not read is dropped by
       // itself rather than taking a week of measurements with it. The

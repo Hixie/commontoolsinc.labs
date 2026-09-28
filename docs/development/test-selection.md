@@ -481,7 +481,7 @@ rather than a setting to fix.
 | `FILL_DENSITY_SHARE` | 0.25 | share of the run's budget | chosen | Up when more of the cheap tail should run; down when the tail is displacing tests with a record. |
 | `FILL_EXPLORATION_SHARE` | 0.15 | share of the run's budget | chosen | Up when the unselected corpus is going stale; down when lanes spend the share on tests that never find anything. |
 | `MIN_CORRECTION_SPAN_SECONDS` | 23 | seconds | derived | A tenth of a lane's budget, measured as the widest gap between the time two batches' own tests took. Nothing edits it: it moves only when the lane's budget does. |
-| `MIN_CORRECTION_SAMPLES` | 3 | batches | chosen | Up when a slope is being fitted from too little and swinging about; down when a suite's real slope takes too long to be believed. |
+| `MIN_CORRECTION_SAMPLES` | 3 | batches | chosen | Up when a slope is being fitted from too little and swinging about; down when a suite's real slope takes too long to be believed. It is also how many of the batches a suite's fit is still reading must carry a figure before the batches lacking it are left out. |
 | `FLAKE_EXCLUSION_RATE` | 0.005 | share of runs | chosen | Up when fewer tests should be held back from pull requests; down when flakes are still blocking people. |
 | `FLAKE_MIN_EXECUTIONS` | 2 | runs of one item | chosen | What an item that has ever disagreed runs. Down to one when the cheapest evidence of intermittency is not worth a second execution; nowhere useful above two, since the line through the anchor covers everything flakier. |
 | `FLAKE_ANCHOR_RATE` | 0.01 | share of runs | chosen | With `FLAKE_ANCHOR_EXECUTIONS`, the point the count's line passes through. Down to make the count climb faster with the rate; up to make it climb slower. |
@@ -949,7 +949,9 @@ cannot tell which of its records came from which batch, and a unit whose
 tests all recorded nothing leaves no trace of having been opened. The
 fourth bounds what the batch spent on its tests from below, for a suite
 that runs its units side by side; [the cost model](../plans/pull-request-test-selection.md#the-cost-model)
-says how.
+says how. A stored batch carries the figures its lane wrote and no others,
+and the fit prefers the batches that carry each figure over those that
+lack it, which the same section also covers.
 
 What its tests took, rather than what the packer expected them to take.
 The two differ by however wrong the manifest's costs are, and a unit
@@ -1030,8 +1032,10 @@ A batch run with coverage on is fitted apart from what the suite's batches cost
 without coverage, because instrumenting a run costs it time and how much is a
 property of the suite. The manifest carries the two fits in two maps of its
 calibration: `suites` for batches run without coverage, and `suitesWithCoverage`
-for batches run with it. The line counts each suite once whether it has one fit
-or two, and the last figure is how many have a coverage-on fit.
+for batches run with it. A stored batch that does not say whether coverage was
+on is read into either fit only where fewer than `MIN_CORRECTION_SAMPLES` of the
+suite's batches say they ran that way. The line counts each suite once whether
+it has one fit or two, and the last figure is how many have a coverage-on fit.
 
 The two fixed charges, a suite's `suiteOverhead` and a capability's
 `setupCost`, are each the ninetieth percentile of what lanes have seen in
