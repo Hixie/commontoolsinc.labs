@@ -54,12 +54,13 @@ a lane's budget. A lane packs its work against a budget
 `FULL_LANE_BOUND_SECONDS`. Those are what a lane is packed to finish inside, not
 bounds it is stopped at. The step bound only stops a lane that hangs, so it sits
 well above the larger of the two lane bounds, and `tasks/ci-workflow.test.ts`
-fails when it does not sit above it at all. A pull request's lanes run in the
-same job, so a pull-request lane that hangs is stopped only by that same bound,
-although it is packed to finish in five minutes. A lane whose mandatory work
-passes its budget runs long and says by how much in its job log, rather than
-being stopped with its later batches unrun. Raising a lane bound in `policy.ts`
-past the lane step's bound means raising that anchor in the same change.
+fails when it does not sit above it at all. A pull request's lanes are instances
+of the same job definition and take the same bounds, so a pull-request lane that
+hangs is stopped only at the lane step's bound, although it is packed to finish
+in five minutes. A lane whose mandatory work passes its budget runs long and
+says by how much in its job log, rather than being stopped with its later
+batches unrun. Raising a lane bound in `policy.ts` past the lane step's bound
+means raising that anchor in the same change.
 
 ## A compile cache is keyed on a resolved fingerprint, not on the compiler's inputs listed in `hashFiles`
 

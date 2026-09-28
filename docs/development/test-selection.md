@@ -247,9 +247,9 @@ it also holds the authored-pattern reports under
 
 The lane step is bounded at 60 minutes and its job at 70, by the lane job's own
 pair of timeout anchors, above the full run's thirty-minute lane bound. Those
-only stop a lane that hangs, and a pull request's lanes, which run in the same
-job, wait as long before one is stopped. The budget a lane packs against is
-derived from `LANE_BOUND_SECONDS` for a pull request and
+only stop a lane that hangs, and a pull request's lanes, which are instances of
+the same job definition, wait as long before one is stopped. The budget a lane
+packs against is derived from `LANE_BOUND_SECONDS` for a pull request and
 `FULL_LANE_BOUND_SECONDS` for the full run. Neither is a bound a lane is stopped
 at. A lane whose mandatory work passes its budget runs long rather than being
 stopped with its later batches unrun, and its job log says how far its plan was

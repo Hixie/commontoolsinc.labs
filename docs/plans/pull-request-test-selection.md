@@ -3045,12 +3045,12 @@ minutes, on the step that runs the lane, and `*lane-job-timeout`, 70, on the
 job, which satisfies the repository's rule that a job's bound is at least ten
 minutes above its work step's. The step's bound sits above
 `FULL_LANE_BOUND_SECONDS`, thirty minutes, so that it stops only a lane that
-hangs. `tasks/ci-workflow.test.ts` enforces both. A pull request's lanes run in
-the same job, so a pull-request lane that hangs is stopped only by that same
-bound, although it is packed to finish in five minutes. A lane packs against its
-budget, which is derived from `LANE_BOUND_SECONDS` for a pull request and
-`FULL_LANE_BOUND_SECONDS` for the full run. The step bound only stops a lane
-that hangs. [The
+hangs. `tasks/ci-workflow.test.ts` enforces both. A pull request's lanes are
+instances of the same job definition and take the same bounds, so a pull-request
+lane that hangs is stopped only at the lane step's bound, although it is packed
+to finish in five minutes. A lane packs against its budget, which is derived
+from `LANE_BOUND_SECONDS` for a pull request and `FULL_LANE_BOUND_SECONDS` for
+the full run. The step bound only stops a lane that hangs. [The
 budget](#the-budget-and-why-it-is-derived-rather-than-chosen) says why the two
 are kept apart.
 
