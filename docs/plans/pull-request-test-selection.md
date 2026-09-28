@@ -1327,9 +1327,10 @@ lane that passed removes it. Step 7 also runs with `ulimit -c unlimited` and
 puts the core of any process in the lane that crashes natively under
 `$RUNNER_TEMP/ci-lane-cores`, which the same upload carries.
 
-Step 9 uploads the lane's coverage directory without its raw profiles, as
-`lane-coverage-<job>-<lane>`. An artifact is rooted at the directory its paths
-share, and the readers find a set's report by its place under that directory, at
+Step 9 uploads the lane's coverage directory as `lane-coverage-<job>-<lane>`.
+The raw profiles are beside it, in `coverage-raw/`, and stay behind. An artifact
+is rooted at the directory its path names, and the readers find a set's report
+by its place under that directory, at
 `lcov/sets/<suite>/<member>/coverage.lcov`, so the upload names the coverage
 directory rather than the reports' own. A measured set the lane saw fail is
 marked by a file beside its report, and the file saying whether the compile
@@ -3115,9 +3116,7 @@ tests:
       uses: actions/upload-artifact
       with:
         name: lane-coverage-${{ github.job }}-${{ matrix.lane }}
-        path: |
-          coverage/
-          !coverage/raw/
+        path: coverage/
         overwrite: true
         if-no-files-found: ignore
     - name: 📤 Ship test records
