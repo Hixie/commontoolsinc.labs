@@ -940,15 +940,18 @@ Left out of everything scored, they are not discarded. The publisher
 keeps them in its rolling aggregate over `COST_WINDOW_DAYS`, the same
 window it measures a test's cost over, and fits `setupCost`,
 `suiteOverhead`, `correction` and `unitOverhead` from them for the next
-manifest. A lane writes one record per capability it opens and four per
+manifest. A lane writes one record per capability it opens and five per
 batch — what the batch spent, what its own tests took between them, how
-many units it opened, and what its longest unit took over every run of
-it — and it is the second and third that make a fit possible. Neither can
-be recovered from the records the batch produced: a reader of a report
-cannot tell which of its records came from which batch, and a unit whose
-tests all recorded nothing leaves no trace of having been opened. The
-fourth bounds what the batch spent on its tests from below, for a suite
-that runs its units side by side; [the cost model](../plans/pull-request-test-selection.md#the-cost-model)
+many times its passes opened a unit, what the longest unit of each pass
+took added together, and how many passes it made — and it is the second
+and third that make a fit possible. Neither can be recovered from the
+records the batch produced: a reader of a report cannot tell which of its
+records came from which batch, and a unit whose tests all recorded
+nothing leaves no trace of having been opened. The fourth bounds what the
+batch spent on its tests from below, for a suite that runs its units side
+by side, and the fifth is how many times the batch paid for starting the
+suite's command, since a batch that repeats a unit runs in one pass per
+run; [the cost model](../plans/pull-request-test-selection.md#the-cost-model)
 says how. A stored batch carries the figures its lane wrote and no others,
 and the fit prefers the batches that carry each figure over those that
 lack it, which the same section also covers.

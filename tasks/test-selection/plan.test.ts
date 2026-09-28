@@ -12,6 +12,7 @@ import {
   type Selection,
   type SelectionReason,
   suiteLoad,
+  testsOf,
 } from "./plan.ts";
 import type { Calibration, Manifest, ManifestEntry } from "./manifest.ts";
 import type { WithheldReason } from "@commonfabric/test-support/records";
@@ -1224,6 +1225,145 @@ describe("plan", () => {
       expect(result.lanes[0]!.projectedSeconds).toBeCloseTo(12, 6);
     });
 
+    describe("a unit that runs more than once", () => {
+      // A lane runs a suite's share in passes, one for each time its most
+      // repeated unit runs, and each pass invokes the suite's command
+      // afresh over the units still running.
+
+      /** A manifest of one suite whose tests all have to run. */
+      function repeated(
+        fit: Calibration["suites"][string],
+        tests: { cost: number; repeats: number; unit: string }[],
+      ) {
+        const manifest = sampleManifest({
+          entries: entries(tests.length, (i) => tests[i]!),
+          calibration: {
+            setupCost: {},
+            suites: { "workspace-unit": fit },
+            prologue: 0,
+          },
+        });
+        return run(manifest, {
+          lanes: 1,
+          budgetSeconds: 1000,
+          mandatory: everything(manifest),
+        }).lanes[0]!.projectedSeconds;
+      }
+
+      it("charges a suite's overhead once for each pass", () => {
+        // Three passes, for the unit that runs three times; the unit that
+        // runs once adds none.
+        expect(
+          repeated({ overhead: 10, correction: 1, unitOverhead: 0 }, [
+            { cost: 1, repeats: 3, unit: "packages/memory/test/a.test.ts" },
+            { cost: 1, repeats: 1, unit: "packages/memory/test/b.test.ts" },
+          ]),
+        ).toBeCloseTo(30 + 4, 6);
+      });
+
+      it("charges a unit's overhead once for each pass that opens it", () => {
+        expect(
+          repeated({ overhead: 0, correction: 1, unitOverhead: 5 }, [
+            { cost: 1, repeats: 2, unit: "packages/memory/test/a.test.ts" },
+            { cost: 1, repeats: 1, unit: "packages/memory/test/b.test.ts" },
+          ]),
+        ).toBeCloseTo(15 + 3, 6);
+      });
+
+      it("charges the loads every test of a unit for each run of the unit", () => {
+        // The repeated unit takes 20 a run and runs twice, so the loads
+        // come to 0.4 of 40 and 200, where the floor is 20 and 20.
+        expect(
+          repeated({ overhead: 0, correction: 0.4, unitOverhead: 0 }, [
+            { cost: 10, repeats: 2, unit: "packages/memory/test/a.test.ts" },
+            { cost: 10, repeats: 1, unit: "packages/memory/test/a.test.ts" },
+            ...Array.from({ length: 10 }, (_, i) => ({
+              cost: 20,
+              repeats: 1,
+              unit: `packages/memory/test/${i}.test.ts`,
+            })),
+          ]),
+        ).toBeCloseTo(96, 6);
+      });
+
+      it("charges a unit's earlier tests again when a later one repeats it", () => {
+        // The test of 40 is placed first, as the dearer, and runs once.
+        // The test of 5 then makes its unit run three times, which runs the
+        // test of 40 twice more: the unit takes 135, and with the twelve
+        // other files of 20 the loads come to 0.4 of 375.
+        expect(
+          repeated({ overhead: 0, correction: 0.4, unitOverhead: 0 }, [
+            { cost: 40, repeats: 1, unit: "packages/memory/test/a.test.ts" },
+            { cost: 5, repeats: 3, unit: "packages/memory/test/a.test.ts" },
+            ...Array.from({ length: 12 }, (_, i) => ({
+              cost: 20,
+              repeats: 1,
+              unit: `packages/memory/test/${i}.test.ts`,
+            })),
+          ]),
+        ).toBeCloseTo(150, 6);
+      });
+
+      it("charges the floor the longest unit of each pass", () => {
+        // The first pass takes the unit of 100, and the second the unit of
+        // 60, which is the only one still running.
+        expect(
+          repeated({ overhead: 0, correction: 0.4, unitOverhead: 0 }, [
+            { cost: 100, repeats: 1, unit: "packages/memory/test/a.test.ts" },
+            { cost: 60, repeats: 2, unit: "packages/memory/test/b.test.ts" },
+          ]),
+        ).toBeCloseTo(160, 6);
+      });
+
+      it("reads a lane's share the way the packer charged it", () => {
+        const manifest = sampleManifest({
+          entries: entries(3, (i) => ({
+            cost: [100, 60, 30][i]!,
+            repeats: [1, 2, 3][i]!,
+            unit: `packages/memory/test/${i}.test.ts`,
+          })),
+          calibration: {
+            setupCost: {},
+            suites: {
+              "workspace-unit": {
+                overhead: 0,
+                correction: 0.4,
+                unitOverhead: 0,
+              },
+            },
+            prologue: 0,
+          },
+        });
+        const lane = run(manifest, {
+          lanes: 1,
+          budgetSeconds: 1000,
+          mandatory: everything(manifest),
+        }).lanes[0]!;
+        // The passes take 100, 60 and 30.
+        expect(suiteLoad(manifest, "workspace-unit", lane.selections))
+          .toBeCloseTo(190, 6);
+        expect(lane.projectedSeconds).toBeCloseTo(190, 6);
+        expect(testsOf(lane.selections)).toEqual({
+          ran: 100 + 120 + 90,
+          longest: [100, 60, 30],
+          opened: 6,
+        });
+      });
+    });
+
+    describe("testsOf()", () => {
+      it("returns the same figures whatever order the selections are listed in", () => {
+        // Added in this order, 0.1, 0.2 and 0.3 come to 0.6000000000000001,
+        // and in the other to 0.6.
+        const selections = entries(3, (i) => ({
+          cost: [0.1, 0.2, 0.3][i]!,
+          unit: "packages/memory/test/one.test.ts",
+        })).map((entry) => ({ entry, repeats: 1 }));
+        expect(testsOf(selections.toReversed())).toEqual(testsOf(selections));
+        expect(testsOf(selections).ran).toBe(0.6000000000000001);
+      });
+    });
+
     describe("a suite running its units side by side", () => {
       // Its correction is well below one, because a batch of many units
       // spends a fraction of what they take between them. A batch still
@@ -1302,12 +1442,16 @@ describe("plan", () => {
         const result = run(manifest, { lanes: 1, budgetSeconds: 200 });
         const selections = result.lanes[0]!.selections;
         expect(selections.length).toBe(6);
-        expect(suiteLoad(manifest, selections)).toBeCloseTo(
+        expect(suiteLoad(manifest, "workspace-unit", selections)).toBeCloseTo(
           result.lanes[0]!.projectedSeconds,
           6,
         );
-        expect(suiteLoad(manifest, selections)).toBeCloseTo(80, 6);
-        expect(suiteLoad(manifest, selections.slice(2))).toBeCloseTo(16, 6);
+        expect(suiteLoad(manifest, "workspace-unit", selections)).toBeCloseTo(
+          80,
+          6,
+        );
+        expect(suiteLoad(manifest, "workspace-unit", selections.slice(2)))
+          .toBeCloseTo(16, 6);
       });
 
       it("charges a lane every run of a repeated test in full", () => {

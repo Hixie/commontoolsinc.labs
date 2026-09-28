@@ -316,7 +316,8 @@ describe("coverage", () => {
       it("charges its largest entry no less than that entry's own time", () => {
         // The suite runs its units side by side, and a lane holding one
         // entry still takes that entry's whole time, twice over where it
-        // runs twice, however the entries are spread.
+        // runs twice, however the entries are spread. Each run is a pass
+        // of its own, which starts the suite and opens the unit again.
         const repeated = {
           ...entry("bakery", "packages/bakery/glaze.test.ts", 100),
           repeats: 2,
@@ -328,9 +329,9 @@ describe("coverage", () => {
           ),
         ).toEqual({
           overhead: 10,
-          spread: 200,
+          spread: 211,
           units: [{ overhead: 1, entries: 1 }],
-          largest: 211,
+          largest: 222,
         });
       });
 
