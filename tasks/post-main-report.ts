@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-net --allow-env --allow-read --allow-write --allow-run=git,unzip
+#!/usr/bin/env -S deno run --allow-net --allow-env --allow-read --allow-write --allow-run=git,unzip,deno
 
 /**
  * Tells a pull request what a later run on the default branch found.
