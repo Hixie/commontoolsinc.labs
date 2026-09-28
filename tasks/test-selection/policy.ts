@@ -180,8 +180,10 @@ export const MIN_CORRECTION_SPAN_SECONDS = LANE_BUDGET_SECONDS / 10;
  * a lane pack work it has no time for: two batches of one suite have
  * fitted a slope of zero, which says a second of its tests costs nothing.
  *
- * It is also how many of a suite's batches must carry a figure before the
- * suite is fitted from those alone, which `fitSuite()` describes.
+ * It is also how many of the batches a suite's fit is still reading must
+ * carry a figure before the fit narrows to those alone. The fit narrows by
+ * one figure at a time, so each count is taken among the batches left by
+ * the figures before it, which `fitSuite()` describes.
  */
 export const MIN_CORRECTION_SAMPLES = 3;
 
@@ -723,8 +725,8 @@ export const DIALS: readonly Dial[] = [
     why:
       "Up when a slope is being fitted from too little and swinging about; " +
       "down when a suite's real slope takes too long to be believed. It " +
-      "is also how many of a suite's batches must carry a figure before " +
-      "the batches lacking it are left out of the suite's fit.",
+      "is also how many of the batches a suite's fit is still reading " +
+      "must carry a figure before the batches lacking it are left out.",
   },
   {
     name: "FLAKE_EXCLUSION_RATE",

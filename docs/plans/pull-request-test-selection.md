@@ -2385,12 +2385,14 @@ records the batch produced: a reader of a report cannot tell which of its
 records came from which batch, and a unit whose tests all recorded
 nothing leaves no trace of having been opened.
 
-The correction itself is fitted twice. The first fit uses every batch.
-The second leaves out each batch whose longest unit took more than the
-first fit's correction makes of its tests, because what such a batch spent
-was decided by that one unit and says nothing about how the rest share out.
-Where the first fit is not to be believed, the second leaves out each
-batch whose longest unit took half or more of what the batch spent.
+The correction is fitted twice over whichever of the suite's batches it
+is read from, which the paragraph on stored figures below describes. The
+first fit uses every batch in that set. The second leaves out each batch
+whose longest unit took more than the first fit's correction makes of its
+tests, because what such a batch spent was decided by that one unit and
+says nothing about how the rest share out. Where the first fit is not to
+be believed, the second leaves out each batch whose longest unit took half
+or more of what the batch spent.
 
 A lane also writes
 `ci-lane excused <identity>`, carrying no figure, for each identity whose
