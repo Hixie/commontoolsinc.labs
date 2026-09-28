@@ -46,3 +46,23 @@ Deno.test("a rendering with other parts, or other text between them, replaces ma
     expect(page.querySelector("main")?.outerHTML).toBe(next);
   }
 });
+
+Deno.test("the header's age changing leaves focus on the link beside it", () => {
+  const main = document.createElement("main");
+  main.innerHTML = `<div class="top"><a href="/">← dashboard</a><span>1h ago</span></div>`;
+  document.body.append(main);
+  try {
+    const back = main.querySelector("a")!;
+    back.focus();
+    expect(reconcileMain(
+      main,
+      mainOf(
+        `<main><div class="top"><a href="/">← dashboard</a><span>2h ago</span></div></main>`,
+      ),
+    )).toBe(true);
+    expect(document.activeElement).toBe(back);
+    expect(main.querySelector("span")?.textContent).toBe("2h ago");
+  } finally {
+    main.remove();
+  }
+});

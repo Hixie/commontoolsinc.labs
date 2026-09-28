@@ -228,9 +228,62 @@ describe("LIVE_PAGE_CLIENT", () => {
     expect(LIVE_PAGE_CLIENT).toContain(
       `const VERSION = ${JSON.stringify(version)};`,
     );
-    // Parses the script without running it, which is where a leftover type
-    // annotation in an injected function would show up.
-    new Function(LIVE_PAGE_CLIENT.match(/^<script>([\s\S]*)<\/script>$/)![1]);
     await page.close();
+  });
+
+  it("follows the page's own stream and reloads on any other version", () => {
+    /** The browser the script runs in, as far as the script reaches it. */
+    class FakeSource {
+      readonly listeners = new Map<string, (event: { data: string }) => void>();
+      readyState = 1;
+      constructor(readonly url: string) {
+        sources.push(this);
+      }
+      addEventListener(
+        type: string,
+        listener: (event: { data: string }) => void,
+      ): void {
+        this.listeners.set(type, listener);
+      }
+      close(): void {}
+    }
+    const sources: FakeSource[] = [];
+    let reloads = 0;
+    const location = {
+      pathname: "/test-selection",
+      search: "?x=1",
+      reload: () => reloads++,
+    };
+    const document = {
+      getElementById: () => null,
+      querySelector: () => null,
+      addEventListener: () => {},
+    };
+    class DOMParser {
+      parseFromString() {
+        return { querySelector: () => null };
+      }
+    }
+    new Function(
+      "document",
+      "location",
+      "EventSource",
+      "DOMParser",
+      "setInterval",
+      "addEventListener",
+      LIVE_PAGE_CLIENT.match(/^<script>([\s\S]*)<\/script>$/)![1],
+    )(document, location, FakeSource, DOMParser, () => 0, () => {});
+
+    expect(sources.map((source) => source.url)).toEqual([
+      "/events?page=%2Ftest-selection%3Fx%3D1",
+    ]);
+    const deliver = (version: string) =>
+      sources[0].listeners.get("page")!({
+        data: JSON.stringify({ version, html: "<main></main>" }),
+      });
+    deliver(SERVING_VERSION);
+    expect(reloads).toBe(0);
+    deliver(`${SERVING_VERSION}-next`);
+    expect(reloads).toBe(1);
   });
 });

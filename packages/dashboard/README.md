@@ -186,15 +186,19 @@ and keeps everything that changes inside its `<main>` element. The page opens
 heartbeat down that stream and renders the page again by calling the route's
 handler, and it sends the new markup when that differs from what it last sent. A
 page that connects is sent the current markup whether or not it changed. The
-browser replaces the elements of `<main>` that differ from the new markup's,
-which leaves the theme switch, the script, and every unchanged table alone, so a
-reader's selection survives the header's age ticking over. Every rendering it
-sends names the version being served, and a page built by another version
-reloads instead. The page follows its stream with the dashboard's own code
-(`followUpdates` in `stream-client.ts`), reopening it after two missed
-heartbeats, and its badge reads OFFLINE while it cannot hear the server. A page
-is rendered only while some browser is showing it. The test selection page is
-live, so a screen left on it follows the manifests as the publisher writes them.
+browser keeps every element whose tags, attributes, and text between its
+children match the new markup's, and whose children match in number, and
+compares those children the same way; any other element that differs is
+replaced whole. So when the header's age ticks over, only the text giving the
+age is replaced, and the rest of the page keeps a reader's focus and selection.
+A manifest that adds or removes a section of the page replaces the whole of
+`<main>`. Every rendering it sends names the version being served, and a page
+built by another version reloads instead. The page follows its stream with the
+dashboard's own code (`followUpdates` in `stream-client.ts`), reopens it once it
+has heard nothing for three heartbeat periods, and its badge reads OFFLINE while
+it cannot hear the server. A page is rendered only while some browser is showing
+it. The test selection page is live, so a screen left on it follows the
+manifests as the publisher writes them.
 
 The tab favicon follows the most urgent visible tile. It is red when any tile is
 red, orange when there are no red tiles but at least one orange tile, and green

@@ -27,7 +27,7 @@ import { SERVING_VERSION } from "./version.ts";
 
 /**
  * How long a page goes without hearing the server before it replaces its
- * stream. The server is heard on every tick, so this allows two to go missing.
+ * stream: three serving ticks, each of which sends a heartbeat.
  */
 const SILENCE_MS = 3 * TICK_MS;
 
@@ -74,23 +74,11 @@ export function livePages(
   const encoder = new TextEncoder();
   let beats = 0;
 
-  const leave = (key: string, client: Client) => {
-    const page = watched.get(key);
-    if (!page) return;
-    page.clients.delete(client);
-    page.joined.delete(client);
-    if (page.clients.size === 0) watched.delete(key);
-  };
-
-  const deliver = (key: string, clients: Iterable<Client>, event: string) => {
+  // A stream leaves its page as it is cancelled, which is before anything
+  // could be sent down it closed.
+  const deliver = (clients: Iterable<Client>, event: string) => {
     const bytes = encoder.encode(event);
-    for (const client of [...clients]) {
-      try {
-        client.enqueue(bytes);
-      } catch {
-        leave(key, client);
-      }
-    }
+    for (const client of clients) client.enqueue(bytes);
   };
 
   // Renderings may overlap, so one that never finishes holds up none after
@@ -111,7 +99,6 @@ export function livePages(
       page.html = html;
       const event: LivePageEvent = { version, html };
       deliver(
-        key,
         recipients,
         `event: page\ndata: ${JSON.stringify(event)}\n\n`,
       );
@@ -134,29 +121,28 @@ export function livePages(
         return new Response("no live page there", { status: 404 });
       }
       const key = target.pathname + target.search;
-      let client: Client | undefined;
+      const page = watched.get(key) ?? {
+        url: target,
+        route,
+        clients: new Set(),
+        joined: new Set(),
+        started: 0,
+        applied: 0,
+      };
+      watched.set(key, page);
+      let client: Client;
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           client = controller;
-          let page = watched.get(key);
-          if (!page) {
-            page = {
-              url: target,
-              route,
-              clients: new Set(),
-              joined: new Set(),
-              started: 0,
-              applied: 0,
-            };
-            watched.set(key, page);
-          }
           page.clients.add(controller);
           page.joined.add(controller);
           controller.enqueue(encoder.encode(": connected\n\n"));
           void render(key, page);
         },
         cancel() {
-          if (client) leave(key, client);
+          page.clients.delete(client);
+          page.joined.delete(client);
+          if (page.clients.size === 0) watched.delete(key);
         },
       });
       return new Response(stream, {
@@ -169,7 +155,7 @@ export function livePages(
 
     async tick(): Promise<void> {
       const beat = `event: ping\ndata: ${++beats}\n\n`;
-      for (const [key, page] of watched) deliver(key, page.clients, beat);
+      for (const page of watched.values()) deliver(page.clients, beat);
       await Promise.all([...watched].map(([key, page]) => render(key, page)));
     },
   };

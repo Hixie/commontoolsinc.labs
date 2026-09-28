@@ -13,22 +13,47 @@ export interface Part<E> {
 
 /**
  * Makes `main`, the page's `<main>`, match `next`, the one in a fresh
- * rendering, and reports whether it changed anything. Where the two hold the
- * same number of elements, only the elements that differ are replaced, so a
- * reader's selection or search highlights in an unchanged part of the page
- * survive an update to another part. Otherwise `main` is replaced whole.
+ * rendering, and reports whether it changed anything. An element whose tag,
+ * attributes, and text between its children match its counterpart's, and
+ * which has as many children, is kept, and each of its children is made to
+ * match in the same way. Any other element that differs is replaced whole.
+ * So only what changed is replaced, and the rest of the page, with a reader's
+ * focus, selection, or search highlights in it, stays where it is.
  */
 export function reconcileMain<E extends Part<E>>(main: E, next: E): boolean {
-  if (next.innerHTML === main.innerHTML) return false;
-  const before = Array.from(main.children);
-  const after = Array.from(next.children);
-  const changed = after.length === before.length
-    ? after.flatMap((part, index) =>
-      part.outerHTML === before[index].outerHTML ? [] : [index]
-    )
-    : [];
-  // No element differing means the difference is in text between them.
-  if (changed.length === 0) main.replaceWith(next);
-  for (const index of changed) before[index].replaceWith(after[index]);
+  if (main.outerHTML === next.outerHTML) return false;
+  // Everything in an element's markup other than its child elements: its tags,
+  // its attributes, and the text between the children.
+  const frame = (part: E): string => {
+    const inner = part.innerHTML;
+    let at = 0;
+    const kept: string[] = [];
+    for (const child of Array.from(part.children)) {
+      const start = inner.indexOf(child.outerHTML, at);
+      kept.push(inner.slice(at, start));
+      at = start + child.outerHTML.length;
+    }
+    kept.push(inner.slice(at));
+    // The inner markup ends where the closing tag starts, so it is the last
+    // copy of it in the outer markup; an earlier one may be in an attribute.
+    const outer = part.outerHTML;
+    const start = outer.lastIndexOf(inner);
+    return outer.slice(0, start) + kept.join("\0") +
+      outer.slice(start + inner.length);
+  };
+  const reconcile = (current: E, fresh: E): void => {
+    if (current.outerHTML === fresh.outerHTML) return;
+    const before = Array.from(current.children);
+    const after = Array.from(fresh.children);
+    if (
+      before.length === 0 || before.length !== after.length ||
+      frame(current) !== frame(fresh)
+    ) {
+      current.replaceWith(fresh);
+      return;
+    }
+    before.forEach((child, index) => reconcile(child, after[index]));
+  };
+  reconcile(main, next);
   return true;
 }
