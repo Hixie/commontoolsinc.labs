@@ -100,7 +100,6 @@ export {
 export {
   preloadArgument,
   preloadModulePath,
-  spoolWritable,
   spoolWriteArgument,
 } from "./preload-path.ts";
 export {

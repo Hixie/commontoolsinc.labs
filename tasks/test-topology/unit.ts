@@ -32,10 +32,7 @@
 
 import * as path from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import {
-  SKIP_LIST_VARIABLE,
-  spoolWritable,
-} from "@commonfabric/test-support/records";
+import { SKIP_LIST_VARIABLE } from "@commonfabric/test-support/records";
 import {
   memberTasks,
   memberTestFiles,
@@ -212,19 +209,16 @@ function wholeUnit(member: Member): string {
 
 /**
  * The `deno test` process a member's test file runs in, named by the
- * member's scope and by which of the member's runs its flags put it in,
- * or `undefined` where that run cannot write to its spool and so marks
- * nothing. `file` is relative to the member's directory, as the member's
- * task names it.
+ * member's scope and by which of the member's runs its flags put it in.
+ * `file` is relative to the member's directory, as the member's task names
+ * it.
  */
 function memberProcess(
   scope: string,
   run: ParsedTestTask,
   file: string,
-): string | undefined {
-  return spoolWritable(testBatches(run, [file])[0]!.flags)
-    ? `${scope} ${testBatchOf(run, file)}`
-    : undefined;
+): string {
+  return `${scope} ${testBatchOf(run, file)}`;
 }
 
 /**
@@ -288,12 +282,14 @@ function unitSuite(
       for (const file of member.files) {
         units.push(file);
         byUnit.set(file, member);
-        const process = memberProcess(
-          member.scope,
-          member.run,
-          path.relative(member.memberPath, file),
+        processes.set(
+          file,
+          memberProcess(
+            member.scope,
+            member.run,
+            path.relative(member.memberPath, file),
+          ),
         );
-        if (process !== undefined) processes.set(file, process);
       }
     } else if (member.denoHalf) {
       // A member with no Deno-only half has nothing for a `deno task
@@ -301,12 +297,15 @@ function unitSuite(
       units.push(wholeUnit(member));
       byUnit.set(wholeUnit(member), member);
       whole.push(wholeUnit(member));
+      // A whole unit is a process of its own, named after the unit.
+      processes.set(wholeUnit(member), wholeUnit(member));
     }
     if (member.browserTest) {
       const unit = `${wholeUnit(member)}${BROWSER_SUFFIX}`;
       units.push(unit);
       byUnit.set(unit, member);
       whole.push(unit);
+      processes.set(unit, unit);
     }
   }
 
@@ -328,8 +327,9 @@ function unitSuite(
     units,
     unavailable: [],
     whole,
-    // A file runs in the `deno test` its member's flags put it in, which
-    // the preload marks. The task a whole unit runs marks nothing.
+    // A file runs in the `deno test` its member's flags put it in, and a
+    // whole unit in the task it names. Whichever of those marks when its
+    // units began has its setup measured; every one of them has a setup.
     processes,
     ...(sources.length === 0 ? {} : { sources }),
     ...(measured.length === 0 ? {} : { measured }),
@@ -403,6 +403,7 @@ function unitSuite(
             command: [Deno.execPath(), "task", member.denoTestTask],
             cwd: memberDir,
             env: denoEnv,
+            process: whole,
           });
         }
         if (files.length > 0 && member.run !== undefined) {
@@ -434,7 +435,7 @@ function unitSuite(
               ],
               cwd: memberDir,
               env: { ...denoEnv, ...await skipEnv(context, name, requests) },
-              ...(process === undefined ? {} : { process }),
+              process,
               junit: [{
                 path: junitPath,
                 kind: "unit",
@@ -449,6 +450,7 @@ function unitSuite(
             command: [Deno.execPath(), "task", "browser-test"],
             cwd: memberDir,
             env,
+            process: `${whole}${BROWSER_SUFFIX}`,
           });
         }
       }

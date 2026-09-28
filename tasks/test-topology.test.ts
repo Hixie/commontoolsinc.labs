@@ -13,7 +13,6 @@ import {
 import {
   parseSkipList,
   SKIP_LIST_VARIABLE,
-  spoolWritable,
 } from "@commonfabric/test-support/records";
 import { CAPABILITIES } from "./ci-capabilities.ts";
 import { collectMeasuredSetDebt } from "./coverage-metrics.ts";
@@ -230,36 +229,18 @@ describe("the test topology", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("names no process whose `deno test` cannot write to its spool", async () => {
-    // Such a process leaves no mark saying when its units began, so a
-    // lane can measure nothing of its setup, and a packer charging it the
-    // suite's process setup would charge a figure measured from others.
-
-    const outputDir = await Deno.makeTempDir({ prefix: "topology-marks-" });
-    const context = { root, outputDir, spoolDir: `${outputDir}/spool` };
-    const wrong: string[] = [];
-    let unwritable = 0;
-    for (const suite of suites) {
-      const invocations = await suite.command(
-        suite.units.map((unit) => ({ unit, skip: [] })),
-        context,
-      );
-      for (const invocation of invocations) {
-        if (invocation.command[1] !== "test") continue;
-        if (!spoolWritable(invocation.command)) unwritable += 1;
-        if (
-          invocation.process !== undefined &&
-          !spoolWritable(invocation.command)
-        ) {
-          wrong.push(`${suite.id}: ${invocation.process}`);
-        }
-      }
-    }
-    await Deno.remove(outputDir, { recursive: true });
-    expect(wrong).toEqual([]);
-    // Some members' tests run with no permission to write their spool,
-    // which is what makes the check above one that can fail.
-    expect(unwritable).toBeGreaterThan(0);
+  it("names a process for every unit of a suite or for none", () => {
+    // The packer charges a suite's process setup only to the units named
+    // into a process, so a unit left out of a suite that names others
+    // would be charged no setup at all.
+    const partial = suites.filter((suite) =>
+      suite.processes !== undefined && suite.processes.size > 0 &&
+      suite.units.some((unit) => !suite.processes!.has(unit))
+    ).map((suite) => suite.id);
+    expect(partial).toEqual([]);
+    expect(
+      suites.filter((suite) => (suite.processes?.size ?? 0) > 0).length,
+    ).toBeGreaterThan(0);
   });
 
   it("lets a default suite and a variant suite hold one source file", () => {

@@ -14,7 +14,6 @@ import {
   serializeSkipList,
   SKIP_LIST_VARIABLE,
   type SkipList,
-  spoolWritable,
   spoolWriteArgument,
   type TestIdentity,
 } from "@commonfabric/test-support/records";
@@ -95,12 +94,11 @@ export interface Invocation {
   junit?: readonly JUnitOutput[];
 
   /**
-   * Which of its suite's {@link Suite.processes} this invocation is, where
-   * its runner marks in the spool when its units began. A lane measures
-   * the time before that mark as the process's setup. Absent where the
-   * runner marks nothing, and the lane then counts the whole invocation as
-   * what its units took, as it does for a process that was named and left
-   * no mark.
+   * Which of its suite's {@link Suite.processes} this invocation is. A
+   * lane measures the time before the earliest mark its runner leaves in
+   * the spool saying its units began as the process's setup, and counts
+   * nothing of an invocation that leaves no mark or names no process: what
+   * such an invocation spends is what its units took.
    */
   process?: string;
 }
@@ -202,20 +200,23 @@ export interface Suite {
   whole: readonly Unit[];
 
   /**
-   * The process each unit runs in, where that process spends time on
-   * setup before any of its units begins and marks when they do: a
-   * `deno test` type-checking the module graph of every file it was
-   * handed, the pattern test runner starting up. A lane
-   * pays that setup each time it starts such a process, however many of
-   * the process's units it runs, so the packer charges it the first time a
-   * lane opens a unit of that process, and again for each further run of
-   * it a repeated test asks for. The name is the `process` the invocation
-   * running the unit carries, and means nothing outside its suite.
+   * The process each unit runs in, for a suite whose processes spend time
+   * on setup before any of their units begins: a `deno test` type-checking
+   * the module graph of every file it was handed, the pattern test runner
+   * starting up. A lane pays that setup each time it starts such a
+   * process, however many of the process's units it runs, so the packer
+   * charges it the first time a lane opens a unit of that process, and
+   * again for each further run of it a repeated test asks for. What it
+   * charges is measured from the processes that mark when their units
+   * begin, and charged to every process named here, marking or not. The
+   * name is the `process` the invocation running the unit carries, and
+   * means nothing outside its suite.
    *
-   * A unit is absent where it runs in a process of its own, or in one that
-   * marks nothing, such as a `deno test` with no permission to write to
-   * its spool, and whatever that process spends is then part of what its
-   * units cost. Absent altogether where every unit is.
+   * A suite names a process for every unit or for none, since the packer
+   * charges a suite's process setup only to the units named here. Absent
+   * where no process the suite starts marks when its units began, such as
+   * a repository gate or one type check over many paths, and whatever such
+   * a process spends is then part of what its units cost.
    */
   processes?: ReadonlyMap<Unit, string>;
 
@@ -608,12 +609,9 @@ export function fileSuite(options: FileSuiteOptions): Suite {
     // Every unit here is a file the command names. The preload reads the skip
     // list under the same path.
     whole: [],
-    // One `deno test` per part, which the preload marks where it can write
-    // to the spool.
+    // One `deno test` per part.
     processes: new Map(
-      [...partOf].flatMap(([unit, part]) =>
-        spoolWritable(part.flags) ? [[unit, part.junit.scope]] : []
-      ),
+      [...partOf].map(([unit, part]) => [unit, part.junit.scope]),
     ),
     ...(options.measured === undefined ? {} : { measured: options.measured }),
 
@@ -686,7 +684,7 @@ export function fileSuite(options: FileSuiteOptions): Suite {
           cwd,
           env,
           junit: [{ path: junitPath, ...part.junit }],
-          ...(spoolWritable(part.flags) ? { process: part.junit.scope } : {}),
+          process: part.junit.scope,
         });
       }
       return invocations;

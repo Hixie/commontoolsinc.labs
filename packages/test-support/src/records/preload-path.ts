@@ -87,13 +87,3 @@ export function spoolWriteArgument(
   if (!grantsEverything(flags, "--allow-read", "R")) return undefined;
   return `--allow-write=${spool}`;
 }
-
-/**
- * Whether a `deno test` run under `flags` can write to its spool, given
- * the permission `spoolWriteArgument()` adds. One that cannot leaves no
- * name map there, and no mark saying when its units began.
- */
-export function spoolWritable(flags: readonly string[]): boolean {
-  return grantsEverything(flags, "--allow-write", "W") ||
-    grantsEverything(flags, "--allow-read", "R");
-}

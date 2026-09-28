@@ -982,9 +982,12 @@ process each of its units runs in, in `Suite.processes`, and the
 invocation that runs them carries the same name as `process`. A lane
 charges a suite's process setup once for each process it starts, so a
 lane holding files of twenty workspace members pays it twenty times. A
-process whose runner marks nothing, such as a repository gate running
-one unit, or a `deno test` with no permission to write to its spool, has
-its setup counted as part of what its units took.
+suite names a process for every unit or for none. A suite whose
+processes mark nothing, such as the repository gates, names none, and
+their setup is counted as part of what their units took. A process that
+leaves no mark in a suite whose others do, such as a `deno test` with no
+permission to write to its spool, is charged the setup measured from
+the rest.
 
 A suite's fit is published twice. The figures every packer reads,
 `suiteOverhead`, `correction` and `unitOverhead`, are fitted from every

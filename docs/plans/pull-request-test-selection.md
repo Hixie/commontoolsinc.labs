@@ -2331,9 +2331,10 @@ of the average comes near the ninetieth percentile of their sum, where
 charging each process its own ninetieth percentile would charge twenty
 of them more than twenty ever take. A lane starting one process is
 charged less than that one's ninetieth percentile, and the intercept
-covers the difference. A `deno test` with no permission to write to its
-spool leaves no mark, so a suite names no process for its units, and
-its setup is charged as that of a process that marks nothing.
+covers the difference. A suite names a process for every unit or for
+none, and a process that leaves no mark, such as a `deno test` with no
+permission to write to its spool or a workspace member's whole test
+task, is charged the setup measured from the processes that do.
 
 The charge is per process rather than per lane because that is how often
 it is paid. A lane holding files of twenty workspace members starts at

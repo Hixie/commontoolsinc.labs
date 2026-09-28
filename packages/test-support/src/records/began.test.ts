@@ -94,6 +94,18 @@ describe("began", () => {
       }
     });
 
+    it("throws where the spool cannot be read, rather than reading no mark", async () => {
+      // A file where the spool should be is one way reading it fails.
+      const dir = await Deno.makeTempDir();
+      try {
+        const file = join(dir, "not-a-directory");
+        await Deno.writeTextFile(file, "");
+        await expect(unitsBegan(file)).rejects.toThrow();
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
     it("returns `undefined` for a spool holding no mark, and for one that does not exist", async () => {
       const spool = await Deno.makeTempDir();
       try {

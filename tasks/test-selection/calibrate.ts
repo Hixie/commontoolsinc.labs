@@ -42,11 +42,12 @@
  * a batch spent beyond everything else here, which a lane is charged once
  * for each pass.
  *
- * A process whose runner marks nothing is one that runs a single unit, or
- * one whose units cannot be told apart from its setup, such as one type
- * check over many paths, or a `deno test` with no permission to write to
- * its spool. What it spends before its units is then part of what its
- * units cost.
+ * A suite whose processes mark nothing, such as the repository gates or
+ * one type check over many paths, keeps what they spend before their
+ * units in what its units cost. A process of a suite whose other
+ * processes mark, but which leaves no mark itself, such as a `deno test`
+ * with no permission to write to its spool, is charged the setup
+ * measured from the rest.
  *
  * The fourth figure is what a suite running its units side by side is
  * bounded by. The pattern unit suite runs five files at a time, so a batch
@@ -605,7 +606,9 @@ function unitCostOf(
  * proportion to what the lane holds. What the suite's processes spend
  * before their units begin is spread through those three, however many
  * processes a lane starts. It is what a packer charges that does not know
- * the second fit.
+ * the second fit, so it reads what that packer's lanes spent: a batch that
+ * does not say what its processes spent on setup is as good a reading of
+ * it as one that does, and the first fit prefers neither.
  *
  * The second fit, `process`, is made where some batch measured its
  * processes' setup and started a process that marks when its units begin,
@@ -633,13 +636,18 @@ export function fitSuite(all: readonly BatchObservation[]): SuiteFit {
       setup.processes === 0 ? [] : [setup.seconds / setup.processes]
     )
     .sort((a, b) => a - b);
+  // The first fit reads no setup, so it prefers no batch for carrying one.
+  const whole = Object.entries(CARRIES).flatMap(([figure, carries]) =>
+    figure === "setup" ? [] : [carries]
+  );
   return {
-    ...fitOver(all),
+    ...fitOver(all, whole),
     ...(perProcess.length === 0 ? {} : {
       process: {
         setup: percentile90(perProcess),
         ...fitOver(
           measured.map((o) => ({ ...o, spent: o.spent - o.setup.seconds })),
+          Object.values(CARRIES),
         ),
       },
     }),
@@ -684,17 +692,16 @@ export function fitSuite(all: readonly BatchObservation[]): SuiteFit {
  * left would grow with the units, so a lane packing a thousand of a
  * suite's cheapest units would be charged what a lane packing three is.
  *
- * A batch that lacks a figure is read at a guess. One that does not say
- * whether coverage was on is read as run the way the fit is for, one that
- * does not say what its longest units took is charged no floor, one that
- * does not say how many passes it made is read as one pass, though where
- * it repeated a unit its later passes' startup is then left in its
- * remainder, and one that does not say what its processes spent on setup
- * is read as having spent it on its units. At the ninetieth percentile a
- * few batches read wrongly set the intercept for as long as the window
- * keeps them, where the batches beside them that do say would not. So each
- * figure `CARRIES` names, in turn, narrows the batches to those that carry
- * it, wherever there are
+ * A batch that lacks a figure the fit reads is read at a guess. One that
+ * does not say whether coverage was on is read as run the way the fit is
+ * for, one that does not say what its longest units took is charged no
+ * floor, and one that does not say how many passes it made is read as one
+ * pass, though where it repeated a unit its later passes' startup is then
+ * left in its remainder. At the ninetieth percentile a few batches read
+ * wrongly set the intercept for as long as the window keeps them, where
+ * the batches beside them that do say would not. So each of `narrowing`,
+ * the tests `CARRIES` holds for the figures the fit reads, in turn narrows
+ * the batches to those that carry its figure, wherever there are
  * `MIN_CORRECTION_SAMPLES` of those or more, and the intercept and the
  * per-unit rate are read from the batches left.
  *
@@ -708,8 +715,9 @@ export function fitSuite(all: readonly BatchObservation[]): SuiteFit {
  */
 function fitOver(
   all: readonly BatchObservation[],
+  narrowing: readonly ((observation: BatchObservation) => boolean)[],
 ): { overhead: number; correction: number; unitOverhead: number } {
-  const narrowed = Object.values(CARRIES).reduce<Narrowed>((sets, carries) => {
+  const narrowed = narrowing.reduce<Narrowed>((sets, carries) => {
     const carrying = sets[0].filter(carries);
     return carrying.length < MIN_CORRECTION_SAMPLES
       ? sets

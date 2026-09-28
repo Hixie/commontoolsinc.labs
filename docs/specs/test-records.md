@@ -161,10 +161,10 @@ test runner: a mark saying when a process began running its units, named
 since the epoch. Deno runs the preload before loading each test file, after
 type-checking every file the process was handed, so a `deno test` permitted to
 write to its spool leaves a mark per file and the earliest falls where the
-process's setup ends; the pattern test runner leaves one before it compiles its
-files' programs. A lane reads the
-earliest mark once the process has ended, to measure that setup. Nothing that
-reads records reads a mark, and a spool shipped as a run ships only its records.
+process's setup ends, and one that is not leaves none; the pattern test runner
+leaves one before it compiles its files' programs. A lane reads the earliest
+mark once the process has ended, to measure that setup. Nothing that reads
+records reads a mark, and a spool shipped as a run ships only its records.
 
 The context line carries `schema` (this document describes version 1, the
 `v1` in object paths), a per-object ULID `reportId`, the canonical `repo`

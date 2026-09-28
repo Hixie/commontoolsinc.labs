@@ -53,7 +53,12 @@ export function markUnitsBegan(
 /**
  * The earliest time a mark in `spool` says units began, in milliseconds
  * since the epoch, or `undefined` where the spool holds no mark that
- * reads as one.
+ * reads as one, or does not exist.
+ *
+ * @throws Whatever reading the spool or a mark in it throws, other than
+ *   its not being there: a mark that cannot be read is a measurement lost,
+ *   and passing over it would count the process's setup as its units'
+ *   time.
  */
 export async function unitsBegan(spool: string): Promise<number | undefined> {
   let earliest: number | undefined;
@@ -65,18 +70,24 @@ export async function unitsBegan(spool: string): Promise<number | undefined> {
       ) {
         continue;
       }
-      let at: unknown;
-      try {
-        at = JSON.parse(await Deno.readTextFile(join(spool, entry.name)));
-      } catch {
-        continue;
-      }
+      const at = parsed(await Deno.readTextFile(join(spool, entry.name)));
       if (typeof at !== "number" || !Number.isFinite(at)) continue;
       if (earliest === undefined || at < earliest) earliest = at;
     }
-  } catch {
-    // A spool that is missing, or vanishes mid-listing, holds the marks
-    // read so far.
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
   return earliest;
+}
+
+/**
+ * Helper for `unitsBegan()`, which reads a mark, or nothing for text that
+ * is not JSON.
+ */
+function parsed(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }

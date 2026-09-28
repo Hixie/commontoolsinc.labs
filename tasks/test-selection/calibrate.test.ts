@@ -578,24 +578,12 @@ describe("calibrate", () => {
           .not.toBeCloseTo(1 / 3, 2);
       });
 
-      it("fits both fits from those batches alone, where there are enough of them", () => {
-        // The batch that did not say where its setup ended spent minutes,
-        // and would set the intercept were it read.
+      it("fits the process fit from those batches alone, and the figures beside it from every batch", () => {
+        // The batches that did not say where their setup ended spent
+        // minutes. They are as good a reading of what a packer charging no
+        // process setup should charge as the rest, and no reading at all of
+        // what a process's setup is.
         const said = pooled((i) => 10 + i);
-        const unsaid = {
-          suite: "s",
-          measured: false,
-          ran: 100,
-          units: 10,
-          spent: 500,
-        };
-        expect(fitSuite([...said, unsaid])).toEqual(fitSuite(said));
-      });
-
-      it("fits the process fit from those batches alone, where they are too few to narrow the other fit to", () => {
-        // Two batches are fewer than a correction is fitted from, so the
-        // first fit reads every batch, and the second reads the two.
-        const said = pooled((i) => 10 + i).slice(0, 2);
         const unsaid = Array.from({ length: 4 }, () => ({
           suite: "s",
           measured: false,
@@ -608,10 +596,7 @@ describe("calibrate", () => {
         expect(whole).toEqual(
           fitSuite([...said.map(({ setup: _, ...one }) => one), ...unsaid]),
         );
-        expect(whole.unitOverhead).not.toBeCloseTo(
-          fitSuite(said).unitOverhead,
-          2,
-        );
+        expect(whole.overhead).toBeGreaterThan(fitSuite(said).overhead);
       });
 
       it("makes no process fit where no batch started a process that marks when its units began", () => {
