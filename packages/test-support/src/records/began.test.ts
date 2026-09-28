@@ -50,6 +50,24 @@ describe("began", () => {
       }
     });
 
+    it("warns rather than throwing where the mark cannot be written", async () => {
+      // A file where the spool should be. A missing mark costs a
+      // measurement, and must not fail the tests the process was running.
+      const parent = await Deno.makeTempDir();
+      const spool = join(parent, "in-the-way");
+      await Deno.writeTextFile(spool, "");
+      const said: string[] = [];
+      const warn = console.warn;
+      console.warn = (...parts: unknown[]) => said.push(parts.join(" "));
+      try {
+        markUnitsBegan(spoolAt(spool), 1_000);
+      } finally {
+        console.warn = warn;
+        await Deno.remove(parent, { recursive: true });
+      }
+      expect(said.join("\n")).toContain("cannot mark when units began");
+    });
+
     it("writes nothing where no spool is named", async () => {
       const dir = await Deno.makeTempDir();
       try {
