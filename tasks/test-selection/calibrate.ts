@@ -637,7 +637,7 @@ export function fitSuite(all: readonly BatchObservation[]): SuiteFit {
     ...fitOver(all),
     ...(perProcess.length === 0 ? {} : {
       process: {
-        setup: percentile90(perProcess, perProcess.length),
+        setup: percentile90(perProcess),
         ...fitOver(
           measured.map((o) => ({ ...o, spent: o.spent - o.setup.seconds })),
         ),
