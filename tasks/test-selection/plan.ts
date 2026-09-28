@@ -253,18 +253,47 @@ interface Filling {
   tests: Map<string, SuiteTests>;
 
   /**
-   * The invocation units whose overheads this lane has paid, against the
-   * time each takes there: the `ownTime()` of its selections added
-   * together. Each is named by its suite as well as its path. Two suites
+   * The invocation units whose overheads this lane has paid, against what
+   * its selections in each take, by suite and then by path. Two suites
    * name the same path where they run the same file two ways — the two
    * postures of a pattern integration test, a package built for two
    * targets — and each of those is a runner started and a module loaded of
    * its own.
    */
-  unitTime: Map<string, number>;
+  unitTime: Map<string, Map<string, UnitRun>>;
 
   /** Seconds of work placed here so far. */
   load: number;
+}
+
+/**
+ * What a unit's selections in a lane take: a unit's runner runs it as many
+ * times as the most any selection in it asks for, and every selection in
+ * it each time.
+ */
+interface UnitRun {
+  /** The selections' own costs, added together. */
+  once: number;
+
+  /** How many times the unit runs. */
+  runs: number;
+}
+
+/** The time a unit takes in a lane, its runs one after another. */
+function timeOf(unit: UnitRun): number {
+  return unit.once * unit.runs;
+}
+
+/** What a unit's selections take once it holds `entry` as well. */
+function withIdentity(
+  unit: UnitRun | undefined,
+  entry: ManifestEntry,
+  repeats: number,
+): UnitRun {
+  return {
+    once: (unit?.once ?? 0) + entry.cost,
+    runs: Math.max(unit?.runs ?? 1, repeats),
+  };
 }
 
 /**
@@ -277,10 +306,13 @@ interface SuiteTests {
 
   /** The time the longest of the units they are in takes. */
   longest: number;
+
+  /** The most times any of those units runs. */
+  runs: number;
 }
 
 /** What a lane holding nothing of a suite is charged for its tests. */
-const NO_TESTS: SuiteTests = { load: 0, longest: 0 };
+const NO_TESTS: SuiteTests = { load: 0, longest: 0, runs: 1 };
 
 /** What one identity costs a lane that is running nothing else. */
 function loneCost(
@@ -324,8 +356,13 @@ function fixedCost(
   return loneCost(manifest, input, { ...entry, cost: 0 });
 }
 
+/** Whether `lane` has opened the unit of `entry` already. */
+function opens(lane: Filling, entry: ManifestEntry): boolean {
+  return lane.unitTime.get(entry.suite)?.has(entry.unit) ?? false;
+}
+
 /** How a lane names one unit of one suite among the units it has opened. */
-function openedUnit(entry: ManifestEntry): string {
+function openedUnit(entry: Pick<ManifestEntry, "suite" | "unit">): string {
   return `${entry.suite}\t${entry.unit}`;
 }
 
@@ -477,14 +514,14 @@ export function ownLoad(
 }
 
 /**
- * What one identity adds to the time its unit takes: its own cost for
- * each time it runs, with no correction. A unit's tests and a unit's runs
+ * The time one identity takes in a unit of its own: its own cost for each
+ * time it runs, with no correction. A unit's tests and a unit's runs
  * follow one another, so a suite running its units side by side, whose
  * correction is well below one, still does not finish a batch before its
  * longest unit has.
  */
 export function ownTime(entry: ManifestEntry, repeats: number): number {
-  return entry.cost * repeats;
+  return timeOf(withIdentity(undefined, entry, repeats));
 }
 
 /**
@@ -506,21 +543,29 @@ export function suiteLoad(
   const loads = selections
     .map(({ entry, repeats }) => ownLoad(manifest, entry, repeats))
     .toSorted((a, b) => a - b);
-  const units = new Map<string, number>();
-  for (const { entry, repeats } of selections) {
-    units.set(
-      entry.unit,
-      (units.get(entry.unit) ?? 0) + ownTime(entry, repeats),
-    );
-  }
   return charged({
     load: loads.reduce((sum, load) => sum + load, 0),
-    longest: Math.max(0, ...units.values()),
+    longest: longestUnit(selections),
   });
 }
 
+/**
+ * The time the longest unit among `selections` takes, all of them in one
+ * lane: the second of the two figures `suiteLoad()` charges the larger of.
+ */
+export function longestUnit(
+  selections: readonly Pick<Selection, "entry" | "repeats">[],
+): number {
+  const units = new Map<string, UnitRun>();
+  for (const { entry, repeats } of selections) {
+    const key = openedUnit(entry);
+    units.set(key, withIdentity(units.get(key), entry, repeats));
+  }
+  return Math.max(0, ...[...units.values()].map(timeOf));
+}
+
 /** What a lane is charged for its selections of one suite. */
-function charged(tests: SuiteTests): number {
+function charged(tests: Pick<SuiteTests, "load" | "longest">): number {
   return Math.max(tests.load, tests.longest);
 }
 
@@ -533,15 +578,19 @@ function withSelection(
   lane: Filling,
   entry: ManifestEntry,
   repeats: number,
-): { held: SuiteTests; tests: SuiteTests; unit: number } {
+): { held: SuiteTests; tests: SuiteTests; unit: UnitRun } {
   const held = lane.tests.get(entry.suite) ?? NO_TESTS;
-  const unit = (lane.unitTime.get(openedUnit(entry)) ?? 0) +
-    ownTime(entry, repeats);
+  const unit = withIdentity(
+    lane.unitTime.get(entry.suite)?.get(entry.unit),
+    entry,
+    repeats,
+  );
   return {
     held,
     tests: {
       load: held.load + ownLoad(manifest, entry, repeats),
-      longest: Math.max(held.longest, unit),
+      longest: Math.max(held.longest, timeOf(unit)),
+      runs: Math.max(held.runs, unit.runs),
     },
     unit,
   };
@@ -570,10 +619,10 @@ function marginalCost(
   let cost = Math.max(
     held.load - was + ownLoad(manifest, entry, repeats),
     held.longest - was,
-    unit - was,
+    timeOf(unit) - was,
   );
   if (!lane.suites.has(entry.suite)) cost += fitted?.overhead ?? 0;
-  if (!lane.unitTime.has(openedUnit(entry))) {
+  if (!opens(lane, entry)) {
     cost += fitted?.unitOverhead ?? 0;
   }
   for (const capability of input.capabilities.get(entry.suite) ?? []) {
@@ -670,28 +719,28 @@ interface Opened {
    * Which tests of its suite may now cost this lane less: every one of
    * them; or those whose own cost is more than `outside`, together with
    * those in a unit open in this lane whose own cost is more than
-   * `within()` of that unit's time here; or none, where this is
-   * `undefined`. `outside` covers a unit not open here, where `t` is
-   * nothing.
+   * `within()` of that unit's `UnitRun` here; or none, where this is
+   * `undefined`. `outside` covers a unit not open here, which takes
+   * nothing and runs once.
    *
    * A lane holding a suite's tests is charged their loads `L` or the time
-   * `T` its longest unit takes, whichever is more; call that `C`. A test
-   * costing `k`, of correction `c`, in a unit taking `t` in the lane
-   * (nothing for a unit the lane has not opened), adds whichever of
-   * `L + ck - C`, `t + k - C` and nothing is largest. Where a placement
-   * leaves `C` as it was, none of these can fall. Otherwise a test's cost
-   * falls only where one of the first two was positive before. Where `L`
-   * sets the charge after, what `L + ck` adds becomes exactly `ck`, so
-   * only `t + k` can have added more, which needs `k > (C - t) / (1 - c)`,
-   * and never so where `c` is one or more. Where `T` sets it after,
-   * either can fall, which needs `k > (C - L) / c` or `k > C - t`, so
-   * `outside` asks the first of every test. In the unit the placement went
-   * in, `t + k - C` cannot fall, since `C` rose by no more than `t` did,
-   * so `within()` is not asked of that unit.
+   * `T` its longest unit takes, whichever is more; call that `C`. One run
+   * of a test costing `k`, of correction `c`, in a unit taking `t` in the
+   * lane and running `r` times there, adds whichever of `L + ck - C`,
+   * `t + rk - C` and nothing is largest. Where a placement leaves `C` as
+   * it was, none of these can fall. Otherwise a test's cost falls only
+   * where one of the first two was positive before. Where `L` sets the
+   * charge after, what `L + ck` adds becomes exactly `ck`, so only
+   * `t + rk` can have added more, which needs `k > (C - t) / (r - c)`, and
+   * never so where `c` is `r` or more. Where `T` sets it after, either can
+   * fall, which needs `k > (C - L) / c` or `k > (C - t) / r`, so `outside`
+   * asks the first of every test. In the unit the placement went in,
+   * `t + rk - C` cannot fall, since `C` rose by no more than `t` did, so
+   * `within()` is not asked of that unit.
    */
   cheaper:
     | "all"
-    | { outside: number; within: (time: number) => number }
+    | { outside: number; within: (unit: UnitRun) => number }
     | undefined;
 }
 
@@ -713,7 +762,7 @@ function place(
   const opened: Opened = {
     lane,
     suite,
-    unit: !lane.unitTime.has(openedUnit(entry)),
+    unit: !opens(lane, entry),
     capabilities: (input.capabilities.get(entry.suite) ?? []).filter(
       (capability) => !lane.capabilities.has(capability),
     ),
@@ -725,7 +774,10 @@ function place(
   };
   lane.selections.push({ entry, reason, repeats });
   lane.tests.set(entry.suite, tests);
-  lane.unitTime.set(openedUnit(entry), unit);
+  lane.unitTime.set(
+    entry.suite,
+    (lane.unitTime.get(entry.suite) ?? new Map()).set(entry.unit, unit),
+  );
   lane.load += spot.cost;
   lane.suites.add(entry.suite);
   for (const capability of opened.capabilities) {
@@ -750,13 +802,17 @@ function cheaperIn(
     const shared = (was - held.load) / correction;
     return {
       outside: Math.min(shared, was),
-      within: (time) => was - time,
+      within: (unit) => (was - timeOf(unit)) / unit.runs,
     };
   }
-  if (correction >= 1) return undefined;
+  // A test whose unit runs no more times than the correction multiplies
+  // its load by adds no more to its unit than to the loads.
+  if (tests.runs <= correction) return undefined;
+  const past = (runs: number, time: number) =>
+    runs > correction ? (was - time) / (runs - correction) : Infinity;
   return {
-    outside: was / (1 - correction),
-    within: (time) => (was - time) / (1 - correction),
+    outside: past(1, 0),
+    within: (unit) => past(unit.runs, timeOf(unit)),
   };
 }
 
@@ -822,7 +878,7 @@ export function plan(input: PlanInput): Plan {
     capabilities: new Set<string>(),
     suites: new Set<string>(),
     tests: new Map<string, SuiteTests>(),
-    unitTime: new Map<string, number>(),
+    unitTime: new Map<string, Map<string, UnitRun>>(),
     load: 0,
   }));
 
@@ -1391,11 +1447,11 @@ function density(entry: ManifestEntry, cost: number): number {
  * opens its unit, its suite, or one of its capabilities, again for each
  * placement that lowers what it costs against its suite's charge, and
  * again for each lane that fills too far to hold it. A placement is
- * weighed against its own lane alone, since no other lane changed. For a
- * suite whose correction is one or more, a placement lowers nothing
- * against the charge. For any other suite, a placement raising the
- * suite's charge in a lane can lower the cost there of many of its
- * candidates at once, and those are offered again. On the published
+ * weighed against its own lane alone, since no other lane changed. A
+ * suite whose correction is one or more, in a lane running none of its
+ * units more than once, lowers nothing against the charge. Otherwise a
+ * placement raising the suite's charge in a lane can lower the cost there
+ * of many of its candidates at once, and those are offered again. On the published
  * manifest that adds about half to planning. Where one unit of such a
  * suite holds tens of thousands of candidates and sets what its lanes are
  * charged, each placement in it lowers what most of the rest cost, and
@@ -1494,11 +1550,13 @@ function cheaperOf(
   if (cheaper === undefined) return [];
   if (cheaper === "all") return bySuite.get(suite) ?? [];
   const found = [...costliestFirst(bySuite.get(suite) ?? [], cheaper.outside)];
-  const placed = openedUnit(entry);
-  for (const [unit, time] of opened.lane.unitTime) {
-    if (unit === placed || !unit.startsWith(`${suite}\t`)) continue;
+  for (const [unit, run] of opened.lane.unitTime.get(suite) ?? []) {
+    if (unit === entry.unit) continue;
     found.push(
-      ...costliestFirst(byUnit.get(unit) ?? [], cheaper.within(time)),
+      ...costliestFirst(
+        byUnit.get(openedUnit({ suite, unit })) ?? [],
+        cheaper.within(run),
+      ),
     );
   }
   return found;

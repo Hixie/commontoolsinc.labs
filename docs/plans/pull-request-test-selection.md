@@ -2267,7 +2267,8 @@ testsCost(batch) = the larger of
                      correction(suite) * sum over items of cost(item) * runs(item)
                    and
                      the largest over units of
-                       sum over the unit's items of cost(item) * runs(item)
+                       sum over the unit's items of cost(item)
+                         * the most runs(item) of any of them
 ```
 
 The setup costs are what the table in
@@ -2364,9 +2365,11 @@ past that bound, and every test of the suite costs more than a lane can
 hold. `testsCost` is therefore bounded below by the longest unit, since a
 unit's items and a unit's runs follow one another: the packer charges a
 lane the larger of the two figures for its share of each suite, and the
-fit reads each batch's tests the same way. For a suite whose correction
-is one or more the corrected sum is always the larger, and the bound
-changes nothing.
+fit reads each batch's tests the same way. A unit runs as many times as
+the most any of its items asks for, and runs every item each time, so a
+repeat costs the whole unit. For a suite whose correction is one or more,
+holding no unit that runs more than once, the corrected sum is always the
+larger, and the bound changes nothing.
 
 The measurements travel through the machinery that already exists: the
 lane runner writes them as ordinary test records of kind `gate` and
@@ -2377,11 +2380,20 @@ batch <suite>`, `ci-lane units batch <suite>` and `ci-lane longest batch
 units it opened, or what its longest unit took can be recovered from the
 records the batch produced: a reader of a report cannot tell which of its
 records came from which batch, and a unit whose tests all recorded
-nothing leaves no trace of having been opened. A suite is fitted from its
-batches that carry the fourth, wherever those alone fit a correction, since a batch without
-it leaves its longest unit's excess in the intercept. The correction is
-fitted over the batches a first fit does not charge their longest unit,
-since a batch that unit decided says nothing about the slope. A lane also writes
+nothing leaves no trace of having been opened.
+
+A batch stored without the fourth figure keeps whatever its longest unit
+took past the correction's share in what the intercept is read from. So
+once a suite has enough batches carrying the fourth figure to fit a
+correction from, it is fitted from those batches alone. The correction
+itself is fitted twice. The first fit uses every batch. The second
+leaves out each batch whose longest unit took more than the first fit's
+correction makes of its tests, because what such a batch spent was
+decided by that one unit and says nothing about how the rest share out.
+Where the first fit is not to be believed, the second leaves out each
+batch whose longest unit took half or more of what the batch spent.
+
+A lane also writes
 `ci-lane excused <identity>`, carrying no figure, for each identity whose
 failures it did not fail the run for, so what a run excused can be read from
 that run's own records.

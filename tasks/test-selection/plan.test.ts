@@ -1260,6 +1260,25 @@ describe("plan", () => {
         expect(result.lanes[0]!.projectedSeconds).toBeCloseTo(120, 6);
       });
 
+      it("charges a unit every test in it for each run its most repeated test asks for", () => {
+        // The runner runs the unit twice, with both tests each time, so it
+        // takes 40 seconds, where the two tests' own runs come to 30.
+        const manifest = sampleManifest({
+          entries: entries(2, (i) => ({
+            cost: 10,
+            repeats: i === 0 ? 2 : 1,
+            unit: "packages/memory/test/one.test.ts",
+          })),
+          calibration: sideBySide,
+        });
+        const result = run(manifest, {
+          lanes: 1,
+          budgetSeconds: 200,
+          mandatory: everything(manifest),
+        });
+        expect(result.lanes[0]!.projectedSeconds).toBeCloseTo(40, 6);
+      });
+
       it("charges a lane the corrected sum where that is more", () => {
         const manifest = sampleManifest({
           entries: entries(10, () => ({ cost: 20 })),
