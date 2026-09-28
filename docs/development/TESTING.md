@@ -279,7 +279,11 @@ choose:
   nothing else. The files a continuous-integration lane expects to take
   longest start first, so the lane finishes close to the time it was charged
   for. Files of equal expected time, and every file of a local run, which has
-  no such figures, start in the order the seed puts them in.
+  no such figures, start in the order the seed puts them in. A local run can
+  therefore start the files in a different order from a lane at the same
+  commit. That does not change what any test sees, because the steps inside
+  each file run in the same order under the same seed, so the seed still
+  reproduces a failure.
 
 #### Writing a task that runs tests
 
