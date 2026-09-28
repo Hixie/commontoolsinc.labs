@@ -1861,15 +1861,19 @@ describe("how many lanes the full run needs", () => {
     // The fewest lanes the raw work could fit in is not enough lanes,
     // because a lane loses part of its budget to the overhead of the
     // suite it opens. The search has to climb past that starting point,
-    // and this is the case that makes it: three lanes hold 1,440
-    // seconds of tests only if their overheads are free, and they are
-    // not.
+    // and this is the case that makes it: three lanes hold eight tests
+    // of a ninth of a budget each only if their overheads are free, and
+    // they are not.
     const manifest = sampleManifest({
-      entries: entries(24, () => ({ cost: 60 })),
+      entries: entries(24, () => ({ cost: FULL_LANE_BUDGET_SECONDS / 9 })),
       calibration: {
         setupCost: {},
         suites: {
-          "workspace-unit": { overhead: 150, correction: 1, unitOverhead: 0 },
+          "workspace-unit": {
+            overhead: FULL_LANE_BUDGET_SECONDS * 0.3,
+            correction: 1,
+            unitOverhead: 0,
+          },
         },
         prologue: 0,
       },
@@ -1936,10 +1940,12 @@ describe("how many lanes the full run needs", () => {
     // is what decides the count.
     const manifest = sampleManifest({
       entries: [
-        ...entries(40, () => ({ cost: 100 })),
+        ...entries(40, () => ({
+          cost: Math.floor(FULL_LANE_BUDGET_SECONDS / 5.3),
+        })),
         sampleEntry({ k: "unit", s: "memory", n: "vast" }, {
           unit: "packages/memory/test/vast.test.ts",
-          cost: 900,
+          cost: FULL_LANE_BUDGET_SECONDS * 1.7,
         }),
       ],
     });

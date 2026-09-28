@@ -42,12 +42,12 @@ export const LANE_BUDGET_SECONDS = LANE_BOUND_SECONDS -
   LANE_PROLOGUE_SECONDS - LANE_SAFETY_SECONDS;
 
 /**
- * What a lane of the full run on `main` is packed to finish inside. Ten
- * minutes: `main` makes no promise about a first answer the way a pull
- * request does, so this is chosen for how many jobs the run should take
- * rather than for how long anybody waits.
+ * What a lane of the full run on `main` is packed to finish inside.
+ * Thirty minutes: `main` makes no promise about a first answer the way a
+ * pull request does, so this is chosen for how many jobs the run should
+ * take rather than for how long anybody waits.
  */
-export const FULL_LANE_BOUND_SECONDS = 600;
+export const FULL_LANE_BOUND_SECONDS = 1800;
 
 /**
  * What the packer may fill in a lane of the full run, derived from that
