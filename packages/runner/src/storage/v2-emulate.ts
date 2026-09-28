@@ -1,18 +1,48 @@
+import { isFabricPlainObject } from "@commonfabric/data-model";
 import type { MemorySpace, Signer } from "@commonfabric/memory/interface";
 import * as MemoryV2Client from "@commonfabric/memory/v2/client";
 import * as MemoryV2Server from "@commonfabric/memory/v2/server";
+import {
+  type SessionOpenMessage,
+  verifySessionOpenAuthorization,
+  type VerifySessionOpenOptions,
+  wireAuthorizationOf,
+} from "@commonfabric/memory/v2/session-open-auth";
 import type { SpaceHostRegistration } from "../space-host.ts";
 import { type Options, type SessionFactory, StorageManager } from "./v2.ts";
 
 const emulatedMemoryAudience = "did:key:z6Mk-runner-emulated-memory";
 
 /**
- * Build a stock in-process memory server for loopback storage managers: the
- * principal-passthrough authorizer, an emulated audience, and optionally a
- * fan-out cadence — `"manual"` disables timer-driven fan-out entirely:
- * either explicit synchronization point (`flushSessions()`, or `idle()`,
- * which drains held fan-out to keep its quiescence contract) delivers it.
- * The controlled-staleness shape.
+ * Authorizes a `session.open` on an in-process memory server. A signed open
+ * is verified as a deployed memory server verifies it, and admitted as the
+ * signature's issuer. An unsigned open is admitted, unverified, as the
+ * principal its `authorization.principal` names, or with no principal when it
+ * names none. Trusting that unsigned claim confines this authorizer to
+ * in-process emulation, where every client shares the process: tests, and
+ * local emulated storage such as `cf dev`.
+ */
+export const authorizeLoopbackSessionOpen = (
+  message: SessionOpenMessage,
+  context: VerifySessionOpenOptions,
+): Promise<string> | string | undefined => {
+  const { authorization } = message;
+  if (wireAuthorizationOf(authorization) !== undefined) {
+    return verifySessionOpenAuthorization(message, context);
+  }
+  return isFabricPlainObject(authorization) &&
+      typeof authorization.principal === "string"
+    ? authorization.principal
+    : undefined;
+};
+
+/**
+ * Build a stock in-process memory server for loopback storage managers:
+ * {@link authorizeLoopbackSessionOpen} as its authorizer, an emulated
+ * audience, and optionally a fan-out cadence — `"manual"` disables
+ * timer-driven fan-out entirely: either explicit synchronization point
+ * (`flushSessions()`, or `idle()`, which drains held fan-out to keep its
+ * quiescence contract) delivers it. The controlled-staleness shape.
  */
 export const newLoopbackServer = (options?: {
   audience?: string;
@@ -28,11 +58,7 @@ export const newLoopbackServer = (options?: {
   sessions?: MemoryV2Server.SessionRegistry;
 }): MemoryV2Server.Server =>
   new MemoryV2Server.Server({
-    authorizeSessionOpen(message) {
-      const principal = (message.authorization as { principal?: unknown })
-        ?.principal;
-      return typeof principal === "string" ? principal : undefined;
-    },
+    authorizeSessionOpen: authorizeLoopbackSessionOpen,
     sessionOpenAuth: {
       audience: options?.audience ?? emulatedMemoryAudience,
     },
