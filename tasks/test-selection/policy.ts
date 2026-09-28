@@ -179,6 +179,9 @@ export const MIN_CORRECTION_SPAN_SECONDS = LANE_BUDGET_SECONDS / 10;
  * slope fitted too high only over-charges, where one fitted too low lets
  * a lane pack work it has no time for: two batches of one suite have
  * fitted a slope of zero, which says a second of its tests costs nothing.
+ *
+ * It is also how many of a suite's batches must carry a figure before the
+ * suite is fitted from those alone, which `fitSuite()` describes.
  */
 export const MIN_CORRECTION_SAMPLES = 3;
 
@@ -719,7 +722,9 @@ export const DIALS: readonly Dial[] = [
     setBy: "chosen",
     why:
       "Up when a slope is being fitted from too little and swinging about; " +
-      "down when a suite's real slope takes too long to be believed.",
+      "down when a suite's real slope takes too long to be believed. It " +
+      "is also how many of a suite's batches must carry a figure before " +
+      "the batches lacking it are left out of the suite's fit.",
   },
   {
     name: "FLAKE_EXCLUSION_RATE",
