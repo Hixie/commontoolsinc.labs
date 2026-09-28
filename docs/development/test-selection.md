@@ -940,13 +940,16 @@ Left out of everything scored, they are not discarded. The publisher
 keeps them in its rolling aggregate over `COST_WINDOW_DAYS`, the same
 window it measures a test's cost over, and fits `setupCost`,
 `suiteOverhead`, `correction` and `unitOverhead` from them for the next
-manifest. A lane writes one record per capability it opens and three per
-batch — what the batch spent, what its own tests took between them, and
-how many units it opened — and it is the second and third that make a fit
-possible. Neither can be recovered from the records the batch produced: a
-reader of a report cannot tell which of its records came from which
-batch, and a unit whose tests all recorded nothing leaves no trace of
-having been opened.
+manifest. A lane writes one record per capability it opens and four per
+batch — what the batch spent, what its own tests took between them, how
+many units it opened, and what its longest unit took over every run of
+it — and it is the second and third that make a fit possible. Neither can
+be recovered from the records the batch produced: a reader of a report
+cannot tell which of its records came from which batch, and a unit whose
+tests all recorded nothing leaves no trace of having been opened. The
+fourth bounds what the batch spent on its tests from below, for a suite
+that runs its units side by side; [the cost model](../plans/pull-request-test-selection.md#the-cost-model)
+says how.
 
 What its tests took, rather than what the packer expected them to take.
 The two differ by however wrong the manifest's costs are, and a unit
@@ -1019,9 +1022,9 @@ setup(s), and 3 of those suite(s) have a cost with coverage on
 ```
 
 The two halves are counted apart because they come from different
-records. A lane writes one per capability it opens and a pair per batch,
-and a lane killed part way through a batch leaves the pair unmatched, so
-a model can hold a capability setup and no suite at all.
+records. A lane writes one per capability it opens and several per batch,
+and a lane killed part way through a batch leaves those unmatched, so a
+model can hold a capability setup and no suite at all.
 
 A batch run with coverage on is fitted apart from what the suite's batches cost
 without coverage, because instrumenting a run costs it time and how much is a

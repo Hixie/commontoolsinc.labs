@@ -19,6 +19,7 @@ import {
 } from "../test-topology/suite.ts";
 import { memberScope } from "../test-topology/unit.ts";
 import type { Calibration, Manifest, ManifestEntry } from "./manifest.ts";
+import { ownTime } from "./plan.ts";
 import {
   COST_WINDOW_DAYS,
   EXCLUDED_FROM_COVERAGE_GATE,
@@ -189,8 +190,10 @@ export interface MeasuredCost {
 
   /**
    * The most any one entry charges the lane holding it, with its suite's
-   * and its unit's overheads. All of one entry's runs go in one lane, so
-   * no number of lanes holds an entry costing more than one lane does.
+   * and its unit's overheads: its own cost through the correction, or its
+   * `ownTime()` where that is more, as a lane holding nothing else is
+   * charged it. All of one entry's runs go in one lane, so no number of
+   * lanes holds an entry costing more than one lane does.
    */
   largest: number;
 }
@@ -222,7 +225,8 @@ export function measuredCost(
       cost.spread += own;
       cost.largest = Math.max(
         cost.largest,
-        fitted.overhead + fitted.unitOverhead + own,
+        fitted.overhead + fitted.unitOverhead +
+          Math.max(own, ownTime(entry, entry.repeats)),
       );
     }
     cost.overhead += fitted.overhead;
