@@ -5,21 +5,19 @@ import { readCoverageProfileUrls } from "./coverage-profiles.ts";
 
 describe("coverage-profiles", () => {
   describe("readCoverageProfileUrls()", () => {
-    it("returns the script URL of each profile in the directory", async () => {
+    it("returns the script URL of each profile in the directory, sorted", async () => {
       const dir = await Deno.makeTempDir();
       try {
-        await Deno.writeTextFile(
-          join(dir, "a.json"),
-          JSON.stringify({ url: "file:///a.ts", functions: [] }, null, 2),
-        );
-        await Deno.writeTextFile(
-          join(dir, "b.json"),
-          JSON.stringify({ url: "file:///b.ts", functions: [] }, null, 2),
-        );
+        for (const name of ["c", "a", "b"]) {
+          await Deno.writeTextFile(
+            join(dir, `${name}.json`),
+            JSON.stringify({ url: `file:///${name}.ts`, functions: [] }),
+          );
+        }
 
         const urls = await readCoverageProfileUrls(dir);
 
-        expect(urls.toSorted()).toEqual(["file:///a.ts", "file:///b.ts"]);
+        expect(urls).toEqual(["file:///a.ts", "file:///b.ts", "file:///c.ts"]);
       } finally {
         await Deno.remove(dir, { recursive: true });
       }

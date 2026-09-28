@@ -1,9 +1,9 @@
 import { join } from "@std/path";
 
 /**
- * The script URL of every V8 coverage profile in `dir`, one entry per profile,
- * as a test that runs a child Deno with `DENO_COVERAGE_DIR` pointed at `dir`
- * reads them afterwards.
+ * The script URL of every V8 coverage profile in `dir`, one entry per profile
+ * and sorted, as a test that runs a child Deno with `DENO_COVERAGE_DIR` pointed
+ * at `dir` reads them afterwards.
  *
  * @throws If a profile does not parse, naming the file. A process that exits
  *   partway through writing a profile leaves one like that, and `deno
@@ -24,5 +24,5 @@ export async function readCoverageProfileUrls(dir: string): Promise<string[]> {
     }
     urls.push(profile.url);
   }
-  return urls;
+  return urls.sort();
 }
