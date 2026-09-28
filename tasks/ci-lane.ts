@@ -161,8 +161,8 @@ export interface LaneOptions {
   at?: string;
 
   /**
-   * Where coverage profiles and the reports converted from them go,
-   * relative to the root. The job uploads what is under it.
+   * Where the reports converted from coverage profiles go, relative to
+   * the root. The job uploads what is under it. The profiles go beside it.
    */
   coverageDir?: string;
 
@@ -172,8 +172,14 @@ export interface LaneOptions {
 /** Where coverage goes when the command line names nowhere else. */
 export const DEFAULT_COVERAGE_DIR = "coverage";
 
-/** Where a lane puts the profiles it collects, under its coverage directory. */
-export const COVERAGE_PROFILE_DIR = "raw";
+/**
+ * What a lane appends to its coverage directory's name to name the
+ * directory it puts the profiles it collects in. The profiles sit beside
+ * the directory the job uploads, not in it: one directory of them can
+ * hold hundreds of thousands of files, and the upload walks every
+ * directory under the path it is given, excluded or not.
+ */
+export const COVERAGE_PROFILE_SUFFIX = "-raw";
 
 /**
  * Where a lane puts the reports the authored-pattern instrumentation
@@ -226,6 +232,11 @@ export function coverageRoot(options: LaneOptions): string {
     options.root,
     options.coverageDir ?? DEFAULT_COVERAGE_DIR,
   );
+}
+
+/** Where this lane's coverage profiles go, absolute. */
+export function profileRoot(options: LaneOptions): string {
+  return `${coverageRoot(options)}${COVERAGE_PROFILE_SUFFIX}`;
 }
 
 /** Reads the command line, or returns undefined for a malformed one. */
@@ -640,7 +651,7 @@ export function batchCoverage(
 ): BatchCoverage | undefined {
   if (!measuresSuite(gate, suiteId, options.full)) return undefined;
   const root = coverageRoot(options);
-  const dir = path.join(root, COVERAGE_PROFILE_DIR, suiteId);
+  const dir = path.join(profileRoot(options), suiteId);
   return options.full
     ? { dir, patternDir: path.join(root, PATTERN_COVERAGE_DIR, suiteId) }
     : { dir, members: measuredMembersOf(gate, suiteId) };
@@ -733,7 +744,7 @@ export async function convertCoverage(
   options: LaneOptions,
 ): Promise<{ ok: boolean; reports: string[] }> {
   const root = coverageRoot(options);
-  const profiles = path.join(root, COVERAGE_PROFILE_DIR);
+  const profiles = profileRoot(options);
   const reports: string[] = [];
   let ok = true;
   for (const suiteId of await directoriesIn(profiles)) {
