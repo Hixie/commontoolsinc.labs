@@ -2477,13 +2477,15 @@ out. Where the first fit is not to be believed, the second leaves out each
 batch whose floor took half or more of what the batch spent.
 
 `suiteOverhead(suite)` is the intercept: the ninetieth percentile of
-what each batch spent beyond what its processes' setup, the correction
-and the per-unit rate charge it, since a least-squares line sits in the
-middle of its observations and half the lanes would otherwise run past
-the budget they were packed against. With the setup measured and the
+what each batch spent beyond what everything else in its fit charges it,
+since a least-squares line sits in the middle of its observations and
+half the lanes would otherwise run past the budget they were packed
+against. In a process fit, with the setup measured and taken out and the
 longest unit bounding the tests, what it holds is small: what a batch
-spent that nothing else here explains, such as the setup of a process
-that marks nothing.
+spent that nothing else explains, such as the setup of a process that
+marks nothing. In the fit a packer reads where a suite has no process
+fit, it holds part of what the suite's processes spend on setup as well,
+and the correction and the per-unit rate hold the rest.
 
 The manifest carries each suite's fit twice, because the manifest a
 packer reads may be newer than the packer. The fields every packer
@@ -2494,10 +2496,11 @@ setup and started a process that marks, the fit also carries `process`:
 `setup`, `overhead`, `correction` and `unitOverhead`, fitted as described
 above from those batches alone. A packer that knows `process` charges it
 in place of the three figures beside it. The setup is one of the figures
-the paragraph on stored figures below describes: a batch stored without
-it does not say where its processes' setup ended, so the second fit never
-reads it, and the first reads it only where too few batches carry the
-setup. A suite no lane has measured is charged by the first fit alone.
+the paragraph on stored figures below describes. The second fit reads
+only the batches that carry the setup. The first fit reads no setup, so
+it reads a batch whether or not the batch carries one, and narrows only
+by the figures it does read. A suite no lane has measured is charged by
+the first fit alone.
 
 A lane also writes
 `ci-lane excused <identity>`, carrying no figure, for each identity whose

@@ -247,7 +247,8 @@ async function patternUnitSuite(root: string): Promise<Suite> {
     unavailable: [],
     // Each file is one identity, so a unit holds nothing to leave out.
     whole: units,
-    // Every file runs in one pool, which marks when its first file starts.
+    // Every file runs in one pool, which marks its units as begun before it
+    // compiles their programs.
     processes: new Map(units.map((unit) => [unit, "pool"])),
     locate(record): Location | undefined {
       if (record.test.v !== undefined) return undefined;
