@@ -15,7 +15,7 @@ import {
 } from "@commonfabric/runner";
 import { resolveLocalProgram } from "@commonfabric/runner/local-program.deno";
 import { debugVDOMSchema } from "@commonfabric/runner/schemas";
-import { authorizeLoopbackSessionOpen } from "@commonfabric/runner/storage/cache.deno";
+import { authorizeLoopbackSessionOpen } from "@commonfabric/memory/v2/session-open-auth";
 import {
   genesisAcl,
   LoopbackSessionFactory,

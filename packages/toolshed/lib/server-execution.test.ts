@@ -3,7 +3,7 @@ import { expect } from "@std/expect";
 import * as MemoryClient from "@commonfabric/memory/v2/client";
 import { Server as MemoryServer } from "@commonfabric/memory/v2/server";
 import { Identity } from "@commonfabric/identity";
-import { authorizeLoopbackSessionOpen } from "@commonfabric/runner/storage/cache.deno";
+import { authorizeLoopbackSessionOpen } from "@commonfabric/memory/v2/session-open-auth";
 import {
   DEFAULT_MAX_OUTSTANDING_EFFECTS,
   ensureSpaceRootsFromEnv,
