@@ -488,6 +488,19 @@ Deno.test("memory v2 add-unique adds only absent elements when adding many", () 
   assert(Object.is(out.value[out.value.length - 3], -0));
 });
 
+Deno.test("memory v2 add-unique adds a hole among the values as `undefined`", () => {
+  const out = applyPatch({ value: ["a"] }, [
+    // deno-lint-ignore no-sparse-arrays
+    { op: "add-unique", path: "/value", values: ["b", , "b"] },
+  ]) as { value: unknown[] };
+  assertEquals(out.value.length, 3);
+  assertEquals([out.value[1], 2 in out.value, out.value[2]], [
+    "b",
+    true,
+    undefined,
+  ]);
+});
+
 Deno.test("memory v2 add-unique on the weird numbers", () => {
   // `NaN` is the same value as `NaN`; `-0` and `+0` are different values.
   const nan = applyPatch({ value: [NaN] }, [

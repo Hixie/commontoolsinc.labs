@@ -364,7 +364,9 @@ const addUniqueAtPath = (
     );
   }
   const adding = new ValueSet();
-  const distinct = values.filter((value) => adding.add(value));
+  // `Array.from()` reads a hole in `values` as `undefined`, which is then
+  // added like any other value.
+  const distinct = Array.from(values).filter((value) => adding.add(value));
   // A few values are each compared against the array directly. Past that,
   // each element is looked up once in the set of values being added, which
   // costs a lookup per element instead of a comparison per element and value.

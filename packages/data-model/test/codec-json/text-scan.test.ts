@@ -46,6 +46,12 @@ describe("text-scan", () => {
       );
     });
 
+    it("counts nothing inside a string that is never closed", () => {
+      // Two members: `a`, and the string that runs to the end.
+      expect(writesMoreMembersThan('["a", "b, c, d', 2)).toBe(false);
+      expect(writesMoreMembersThan('["a", "b, c, d', 1)).toBe(true);
+    });
+
     it("returns `false` at the limit and `true` one below it", () => {
       expect(writesMoreMembersThan("[1, 2, 3]", 3)).toBe(false);
       expect(writesMoreMembersThan("[1, 2, 3]", 2)).toBe(true);
@@ -93,6 +99,16 @@ describe("text-scan", () => {
     it("returns `undefined` when the root is not a record", () => {
       expect(rootScalarOf('["requestId", "b"]', "requestId")).toBeUndefined();
       expect(rootScalarOf('"requestId"', "requestId")).toBeUndefined();
+    });
+
+    it("returns a member written last, with no space before the close", () => {
+      expect(rootScalarOf('{"a":[1],"n":1}', "n")).toBe(1);
+    });
+
+    it("returns `undefined` when the member itself is malformed", () => {
+      expect(rootScalarOf('{"a" 1}', "a")).toBeUndefined();
+      expect(rootScalarOf('{"a": tru}', "a")).toBeUndefined();
+      expect(rootScalarOf('{"a": "unterminated', "a")).toBeUndefined();
     });
 
     it("returns what was read before a malformation", () => {

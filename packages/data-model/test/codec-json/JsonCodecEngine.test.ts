@@ -311,6 +311,20 @@ describe("JsonCodecEngine", () => {
     });
   });
 
+  describe("nesting too deep to freeze", () => {
+    it("is refused as malformed JSON", () => {
+      const depth = 20_000;
+      const text = JsonCodecEngine.wrapEncodedValueForTesting(
+        "[".repeat(depth) + "]".repeat(depth),
+        true,
+      );
+
+      expect(() =>
+        newDefaultJsonCodecEngine().decode(text, new TestLiveEnvironment())
+      ).toThrow("Malformed JSON");
+    });
+  });
+
   describe("`slotLimit` constructor option", () => {
     /** Decodes one codec-value tree through an engine limited to `limit`. */
     function decodeLimited(
@@ -338,6 +352,25 @@ describe("JsonCodecEngine", () => {
     it("is `undefined` by default, and the limit when given", () => {
       expect(newDefaultJsonCodecEngine().slotLimit).toBeUndefined();
       expect(newDefaultJsonCodecEngine({ slotLimit: 7 }).slotLimit).toBe(7);
+      expect(newDefaultJsonCodecEngine({ slotLimit: 0 }).slotLimit).toBe(0);
+    });
+
+    it("throws given a limit that is not a non-negative integer", () => {
+      for (const slotLimit of [NaN, -1, 1.5, Infinity]) {
+        expect(() => newDefaultJsonCodecEngine({ slotLimit })).toThrow(
+          "must be a non-negative integer",
+        );
+      }
+    });
+
+    it("refuses when holes counted earlier carry an array's length past the limit", () => {
+      // The text writes seven slots, so the scan passes it at ten. The walk
+      // reaches the run of holes first, and the array after it takes the
+      // count to eleven.
+      const value = [[1, 2, 3], [{ "/hole": 5 }]] as JsonCodecValue;
+
+      expect(refusal(value, 10).slotLimit).toBe(10);
+      expect((decodeLimited(value, 11) as FabricValue[]).length).toBe(2);
     });
 
     it("decodes a value standing for exactly the limit, and refuses one more", () => {
