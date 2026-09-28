@@ -531,7 +531,8 @@ function span(
   of: (observation: BatchObservation) => number,
 ): number {
   const read = observations.map(of);
-  return Math.max(...read) - Math.min(...read);
+  return read.reduce((most, value) => Math.max(most, value), -Infinity) -
+    read.reduce((least, value) => Math.min(least, value), Infinity);
 }
 
 /**

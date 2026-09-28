@@ -141,7 +141,10 @@ function pad(text: string, width: number): string {
 /** Every dial, as the lines `dials` prints. */
 export function dialLines(): string[] {
   const lines: string[] = [];
-  const width = Math.max(...DIALS.map((dial) => dial.name.length));
+  const width = DIALS.reduce(
+    (most, dial) => Math.max(most, dial.name.length),
+    -Infinity,
+  );
   for (const dial of DIALS) {
     lines.push(
       `${pad(dial.name, width)}  ${dialValue(dial)} ${dial.unit} ` +
@@ -173,10 +176,9 @@ export function coverageLines(
   const ungated = members.filter((member) =>
     !sets.some((ref) => ref.set.member === member)
   );
-  const width = Math.max(
+  const width = [...names, ...ungated].reduce(
+    (most, name) => Math.max(most, name.length),
     1,
-    ...names.map((name) => name.length),
-    ...ungated.map((member) => member.length),
   );
   const baselines = new Map(
     (manifest?.coverageBaselines ?? []).map((

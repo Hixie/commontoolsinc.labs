@@ -101,7 +101,7 @@ export function drawTables(text: string): string {
       while (at < lines.length && isRow(lines[at]!)) {
         rows.push(cellsOf(lines[at++]!));
       }
-      drawn.push(...box(rows));
+      for (const line of box(rows)) drawn.push(line);
     } else {
       drawn.push(lines[at++]!);
     }
@@ -136,8 +136,12 @@ function box(rows: readonly string[][]): string[] {
   // one, and none for a mark combining with the one before it.
   const width = unicodeWidth;
   const widths = Array.from(
-    { length: Math.max(...rows.map((row) => row.length)) },
-    (_, column) => Math.max(...rows.map((row) => width(row[column] ?? ""))),
+    { length: rows.reduce((most, row) => Math.max(most, row.length), 0) },
+    (_, column) =>
+      rows.reduce(
+        (most, row) => Math.max(most, width(row[column] ?? "")),
+        0,
+      ),
   );
   const rule = (left: string, middle: string, right: string) =>
     left + widths.map((cells) => "─".repeat(cells + 2)).join(middle) + right;

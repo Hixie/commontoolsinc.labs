@@ -1171,7 +1171,10 @@ describe("how many lanes the full run asks for", () => {
       ["Lane", "Tests", "Projected work", "Projected job"],
       ...expected,
     ]);
-    const longest = Math.max(...laid.lanes.map((l) => l.projectedSeconds));
+    const longest = laid.lanes.reduce(
+      (most, l) => Math.max(most, l.projectedSeconds),
+      -Infinity,
+    );
     const told = err.join("\n");
     expect(told).toContain(`## The full run's ${lanes} lane(s)`);
     expect(told).toContain(

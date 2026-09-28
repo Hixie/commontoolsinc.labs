@@ -832,9 +832,9 @@ export function shownIdentity(test: TestIdentity): string {
     `[${test.k}] ${test.s}: ${test.n}` +
       (test.v === undefined ? "" : ` (${test.v})`),
   );
-  const longest = Math.max(
+  const longest = [...text.matchAll(/`+/g)].reduce(
+    (most, run) => Math.max(most, run[0].length),
     0,
-    ...[...text.matchAll(/`+/g)].map((run) => run[0].length),
   );
   const fence = "`".repeat(longest + 1);
   const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";

@@ -727,7 +727,8 @@ function countInto(samples: DaySamples, bucket: number, count: number): void {
   if (count === 0) return;
   if (samples.counts.length === 0) samples.lowest = bucket;
   if (bucket < samples.lowest) {
-    samples.counts.unshift(...new Array(samples.lowest - bucket).fill(0));
+    const gap = new Array<number>(samples.lowest - bucket).fill(0);
+    samples.counts = [...gap, ...samples.counts];
     samples.lowest = bucket;
   }
   const at = bucket - samples.lowest;
@@ -886,7 +887,11 @@ function readSlowest(held: StoredSlowest): DaySamples {
     return emptySamples();
   }
   const samples = samplesOf(kept);
-  countInto(samples, bucketOf(Math.min(...kept)), held.count - kept.length);
+  countInto(
+    samples,
+    bucketOf(kept.reduce((least, value) => Math.min(least, value), Infinity)),
+    held.count - kept.length,
+  );
   if (held.rule !== undefined) samples.rule = held.rule;
   return samples;
 }

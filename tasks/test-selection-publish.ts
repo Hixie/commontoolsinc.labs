@@ -319,7 +319,8 @@ async function listSubmissions(
   // one every lane obeys. The run ends instead, and the previous manifest
   // stays newest.
   for (const day of ciDays) {
-    names.push(...await store.list(`${ciSubmissionsPrefix()}/v1/${day}/`));
+    const listed = await store.list(`${ciSubmissionsPrefix()}/v1/${day}/`);
+    for (const name of listed) names.push(name);
   }
   const local = `${storePrefix()}/submissions/local/`;
   for (const name of await store.list(local)) {
@@ -523,8 +524,9 @@ function refusal(
     ahead === undefined ? [] : [ahead]
   );
   if (shapes.length > 0) {
+    const highest = shapes.reduce((most, shape) => Math.max(most, shape));
     lines.push(
-      `deploy a publisher that reads shape ${Math.max(...shapes)} or ` +
+      `deploy a publisher that reads shape ${highest} or ` +
         `above, which is the highest shape any of these is written in`,
     );
   }
@@ -1104,7 +1106,9 @@ function summarize(
     );
   }
   if (times.length > 0) {
-    const spread = Math.max(...times) - Math.min(...times);
+    const slowest = times.reduce((most, time) => Math.max(most, time));
+    const fastest = times.reduce((least, time) => Math.min(least, time));
+    const spread = slowest - fastest;
     console.log(
       `test selection: ${LANES} lanes, spread ${duration(spread)}`,
     );
