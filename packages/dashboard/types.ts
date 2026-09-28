@@ -32,11 +32,18 @@ export interface Route {
   live?: boolean;
 }
 
-export function runSource(repo: string, workflow: string) {
-  return { repo, workflow } as const;
+// Which of a workflow's runs a source follows: those on the main branch, or
+// those started for pull requests.
+export type RunScope = "main" | "pull requests";
+
+export function runSource(repo: string, workflow: string, scope: RunScope) {
+  return { repo, workflow, scope } as const;
 }
 
 export type RunSource = ReturnType<typeof runSource>;
+
+export const runSourceKey = (source: RunSource): string =>
+  `${source.repo} ${source.workflow} ${source.scope}`;
 
 export interface Tile {
   // The tile's header on every view (plain text; escaped by the renderer). It
@@ -61,10 +68,10 @@ export interface Tile {
 // Shared, memoized data sources handed to every collect().
 export interface Ctx {
   runs(): Promise<Run[]>; // labs deno.yml runs on main (shared across CI tiles, memoized)
-  // main-branch runs for any repo + workflow, memoized per (repo, workflow) so
-  // several tiles reading the same repo share one fetch (loom's CI tiles, and the
-  // combined recent-runs stream).
-  runsFor(repo: string, workflow: string): Promise<Run[]>;
+  // The runs of any source, memoized per source so several tiles reading the
+  // same one share one fetch (loom's CI tiles, and the combined recent-runs
+  // stream).
+  runsFor(source: RunSource): Promise<Run[]>;
   env(key: string): string | undefined;
 }
 

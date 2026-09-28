@@ -17,7 +17,7 @@ describe("registry", () => {
       "labs ci trust",
       "labs ci duration",
       "all benchmarks",
-      "your metric here",
+      "weaver ci duration",
       "loom ci trust",
       "loom ci duration",
       "key benchmarks",
@@ -29,7 +29,7 @@ describe("registry", () => {
       "discord online",
       "github users",
       "production",
-      "cubic spend",
+      "weaver ci trust",
       "github spend",
       "model spend",
       "cloud spend",
@@ -50,25 +50,5 @@ describe("registry", () => {
         href,
       });
     }
-  });
-
-  it("keeps a green slot open for a metric nobody has chosen yet", async () => {
-    const empty = TILES.find((tile) => tile.label === "your metric here");
-
-    expect(await empty?.collect(context)).toEqual({
-      status: "good",
-      value: "—",
-      sub: "do you have data to show?",
-    });
-  });
-
-  it("reports cubic spend as a named metric with no value", async () => {
-    const cubic = TILES.find((tile) => tile.label === "cubic spend");
-
-    expect(await cubic?.collect(context)).toEqual({
-      status: "good",
-      value: "—",
-      sub: "api does not expose value",
-    });
   });
 });
