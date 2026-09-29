@@ -57,13 +57,16 @@ the same fit (`canRenderLabelUnderPolicy`):
 
 Each decision is made again when what its read consumed changes, labels
 included, and when the membership those labels name changes, and only a
-change in the decision is emitted. A trusted host component that never reads a
-value through a binding, handing the reference to a worker operation and
-showing only what that operation answers, declares the binding in
+change in the decision is emitted. A trusted host component that never shows a
+value from a binding, handing the reference to a worker operation and showing
+only what that operation answers, declares the binding in
 `REFERENCE_BINDING_SINKS` beside the reconciler, and the ceiling does not gate
-it. `cf-custody-seal` is one: the seal's preparation decides what its dialog
-shows. The declaration is reviewed like the component itself, since a
-component that shows what such a binding holds releases it past the ceiling.
+it. A value it reads through such a binding serves only as a signal to ask the
+operation again. `cf-custody-seal` is one, whose dialog shows what the seal's
+preparation answers, and `cf-custody-answer` another, which shows the answer
+the seal published. The declaration is reviewed like the component itself,
+since a component that shows what such a binding holds releases it past the
+ceiling.
 Regression guards: `test/worker-reconciler-cfc-prop-ceiling.test.ts`.
 
 ## Text integrity (`requiredTextIntegrity` / `allowLiteralText`)

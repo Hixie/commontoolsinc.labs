@@ -99,10 +99,11 @@ const TEXT_INTEGRITY_PROP_SINKS: ReadonlyMap<string, ReadonlySet<string>> =
     ["cf-chat-message", new Set(["name", "content"])],
   ]);
 /**
- * `$` bindings a trusted host component never reads a value through. It hands
+ * `$` bindings a trusted host component never shows a value from. It hands
  * each reference to a worker operation and shows only what that operation
  * answers, so the operation, not the render policy, decides what the
- * component may show.
+ * component may show; a value it reads through one serves only as a signal
+ * to ask again.
  */
 const REFERENCE_BINDING_SINKS: ReadonlyMap<string, ReadonlySet<string>> =
   new Map([
@@ -110,6 +111,7 @@ const REFERENCE_BINDING_SINKS: ReadonlyMap<string, ReadonlySet<string>> =
       "cf-custody-seal",
       new Set(["draft", "terms", "policy", "sources", "box"]),
     ],
+    ["cf-custody-answer", new Set(["terms", "policy", "output"])],
   ]);
 
 /**

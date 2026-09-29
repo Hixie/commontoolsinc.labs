@@ -211,13 +211,25 @@ Deno.test("worker reconciler CFC ceiling over props and bindings", async (t) => 
       async () => {
         const page = await mount({
           type: "vnode",
-          name: "cf-custody-seal",
-          props: { $policy: secret as never, $value: secret as never },
-          children: [],
+          name: "div",
+          props: {},
+          children: [{
+            type: "vnode",
+            name: "cf-custody-seal",
+            props: { $policy: secret as never, $value: secret as never },
+            children: [],
+          }, {
+            type: "vnode",
+            name: "cf-custody-answer",
+            props: { $output: secret as never, $draft: secret as never },
+            children: [],
+          }],
         }, HOST_CEILING);
         try {
           expect(page.bindings("policy")).toBe(1);
+          expect(page.bindings("output")).toBe(1);
           expect(page.bindings("value")).toBe(0);
+          expect(page.bindings("draft")).toBe(0);
         } finally {
           page.cancel();
         }
