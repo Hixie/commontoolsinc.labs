@@ -92,10 +92,12 @@ export const recentRuns: Tile = {
   async collect(ctx): Promise<TileView> {
     // Two shared bases (labs + loom), merged newest-first and cut to the most
     // recent RECENT_DISPLAY across both.
-    const allRuns = (await Promise.all(sources.map((source) => ctx.runsFor(source)))).flat()
-      .sort((a, b) =>
-        Date.parse(b.run_started_at) - Date.parse(a.run_started_at)
-      );
+    const snapshots = await Promise.all(
+      sources.map((source) => ctx.runsFor(source)),
+    );
+    const allRuns = snapshots.flat().sort((a, b) =>
+      Date.parse(b.run_started_at) - Date.parse(a.run_started_at)
+    );
     const runs = allRuns.slice(0, RECENT_DISPLAY);
 
     const completedOutcomes = [...runs].filter((r) =>

@@ -599,7 +599,7 @@ function jobPage(total: number, conclusions: readonly string[]): GithubAnswer {
   };
 }
 
-Deno.test("weaver ci duration: a run that skipped every job but one did no work and is left out", async () => {
+Deno.test("weaver ci duration: a run that ran no job, or skipped every job but one, did no work and is left out", async () => {
   const now = Date.now();
   const minutes = (m: number) =>
     run({
@@ -608,6 +608,7 @@ Deno.test("weaver ci duration: a run that skipped every job but one did no work 
       updated_at: new Date(now).toISOString(),
     });
   const statusOnly = minutes(1);
+  const jobless = minutes(2);
   const oneJobWorkflow = minutes(8);
   const worked = minutes(12);
   const view = await withGithubAttempt(
@@ -616,15 +617,20 @@ Deno.test("weaver ci duration: a run that skipped every job but one did no work 
         jobPageUrl(statusOnly, 1, WEAVER_REPO),
         jobPage(3, ["skipped", "success", "skipped"]),
       ],
+      [jobPageUrl(jobless, 1, WEAVER_REPO), jobPage(0, [])],
       [jobPageUrl(oneJobWorkflow, 1, WEAVER_REPO), jobPage(1, ["success"])],
       [
         jobPageUrl(worked, 1, WEAVER_REPO),
         jobPage(3, ["skipped", "success", "success"]),
       ],
     ]),
-    () => weaverCiDuration.collect(ctx([statusOnly, oneJobWorkflow, worked])),
+    () =>
+      weaverCiDuration.collect(
+        ctx([statusOnly, jobless, oneJobWorkflow, worked]),
+      ),
   );
-  // The median of 8 and 12 minutes; the one-minute run is not counted.
+  // The median of 8 and 12 minutes; the one- and two-minute runs are not
+  // counted.
   assertEquals(view.value, "10m");
   assertStringIncludes(view.sub ?? "", "last 2 passing PR runs");
 });

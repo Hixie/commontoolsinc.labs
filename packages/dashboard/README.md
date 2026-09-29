@@ -233,7 +233,7 @@ deno test --allow-all favicon-raster.test.ts regenerate-favicons.test.ts
 1. Create `tiles/my-tile.ts`:
 
 ```ts
-import type { Status, Tile, TileView } from "../types.ts";
+import { runSource, type Status, type Tile, type TileView } from "../types.ts";
 
 export const myTile: Tile = {
   label: "my tile",       // the header on every view; unique among tiles
@@ -532,8 +532,9 @@ use pull request runs that succeeded on their first attempt. Each duration
 starts when GitHub creates the workflow run and ends when that run finishes, so
 it includes runner queueing. A run that passed only on a rerun is left out,
 because its span includes the wait before someone asked for the rerun. A run
-that skipped every job but one is left out too: it did nothing beyond reporting
-its status, as weaver's run for a draft pull request does. Telling those apart
+that ran no job is left out too, and so is one that skipped every job but one:
+it did nothing beyond reporting its status, as weaver's run for a draft pull
+request does. Telling those apart
 takes one request for each run's job listing, which is held while the run stays
 in the window. A job listing that cannot be read turns the tile gray, keeping
 its last value, until a later collection reads it. The runs counted are whichever lanes each pull request asked
@@ -676,8 +677,9 @@ organization member; other callers see only public memberships.
    personal account) — org ownership is what unlocks the billing permission.
 3. **Repository access** → **All repositories**, which is what lets the **ci**
    tile see the whole organization. **Only select repositories** with
-   `commonfabric/labs` and `commonfabric/loom` covers every other GitHub tile,
-   and narrows **ci** to those two.
+   `commonfabric/labs`, `commonfabric/loom`, and
+   `commonfabric/commonfabric-weaver` covers every other GitHub tile, and
+   narrows **ci** to those three.
 4. **Repository permissions**: set **Actions** and **Contents** to **Read-only**.
 5. **Organization permissions**: set **Members** to **Read-only** for GitHub
    users. Set **Administration** to **Read-only** for github spend. Only an org

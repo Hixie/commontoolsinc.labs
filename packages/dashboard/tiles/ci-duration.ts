@@ -676,9 +676,10 @@ interface PassedRun {
  * The runs among `runs` that succeeded on their first attempt and did work,
  * each with how long it took from creation to finish, in the order of `runs`.
  * A run that passed only on a rerun is left out, because its span includes
- * the wait before someone asked for the rerun. A run that skipped every job
- * but one did nothing beyond reporting its status, as weaver's run for a draft
- * pull request does, and is left out too. Rejects when a run's job listing
+ * the wait before someone asked for the rerun. A run that ran no job did
+ * nothing, and one that skipped every job but one did nothing beyond reporting
+ * its status, as weaver's run for a draft pull request does, so both are left
+ * out too. Rejects when a run's job listing
  * cannot be read.
  */
 async function passedRuns(
@@ -708,7 +709,7 @@ async function passedRuns(
     await Promise.all(
       spans.slice(at, at + JOB_LISTING_CONCURRENCY).map(async ({ run }) => {
         const { ran, skipped } = await attempts.jobCounts(run);
-        if (ran > 1 || skipped === 0) worked.add(run.id);
+        if (ran > 1 || (ran === 1 && skipped === 0)) worked.add(run.id);
       }),
     );
   }
