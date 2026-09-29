@@ -467,6 +467,8 @@ async function jobOf(
     path: workflow.path,
     pinned: isPinned(inventory.repo, workflow.path),
     href: workflowUrl(inventory.repo, workflow.path),
+    runningHref: listing.runs.find((run) => run.status === "in_progress")
+      ?.html_url,
   };
   const unreadable = (result: string): Judged => ({
     job: { ...job, status: "warn", failing: false, result },

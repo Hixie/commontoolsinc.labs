@@ -236,7 +236,7 @@ async function withGitHub(
         created_at: new Date(T0 - createdAgo * 60_000).toISOString(),
         run_started_at: new Date(T0 - createdAgo * 60_000).toISOString(),
         updated_at: new Date(T0 - endedAgo * 60_000).toISOString(),
-        html_url: `https://github.com/${repo}/actions/runs/${workflowNumber}`,
+        html_url: `https://github.com/${repo}/actions/runs/${id}`,
         head_commit: null,
       };
     };
@@ -1063,6 +1063,35 @@ Deno.test("ci: a run still going is not a verdict", async () => {
       const view = await collectSwept(createCiHealth());
       // The newest completed run decides; the one still going says nothing.
       assertEquals(view.value, "loom failing");
+    },
+  );
+});
+
+Deno.test("ci: the page links a job to its run in progress, and not to one queued", async () => {
+  await withGitHub(
+    standingOrg(green, [
+      { conclusion: null, status: "queued", minutesAgo: 1 },
+      { conclusion: null, status: "in_progress", minutesAgo: 5 },
+      { conclusion: "success", minutesAgo: 60 },
+    ]),
+    async () => {
+      const tile = createCiHealth();
+      const view = await tile.collect(ctx());
+      assertEquals(view.value, "passing");
+
+      const page = await (await tile.routes![0].handler(
+        new Request("http://dashboard/ci"),
+        new URL("http://dashboard/ci"),
+      )).text();
+      // The loom workflow's runs are numbered from the oldest, so the one in
+      // progress is its second.
+      const loomCiId = workflowId(LOOM_REPO, LOOM_CI_WORKFLOW) * 100 + 1;
+      assertStringIncludes(
+        page,
+        `>Tests (fast)</a><a class="dot run" href="https://github.com/${LOOM_REPO}/actions/runs/${loomCiId}"`,
+      );
+      // The labs job has nothing going, so only loom's carries the dot.
+      assertEquals(page.match(/class="dot run"/g)?.length, 1);
     },
   );
 });
