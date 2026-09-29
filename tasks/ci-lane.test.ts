@@ -2343,6 +2343,10 @@ describe("the lane's own housekeeping", () => {
         topology: () => Promise.resolve([bare]),
         manifest: ({ at }) =>
           Promise.resolve({ absent: `no manifest at ${at}: held out here` }),
+        // The lane ends red, and what it records about itself would
+        // otherwise land in the spool of the run testing it, as a failure
+        // of that run.
+        spool: () => undefined,
       });
     } finally {
       console.log = log;
