@@ -279,6 +279,30 @@ describe("health", () => {
       expect(health.tooLongBaseline).toBe(2);
     });
 
+    it("returns the charges the previous manifest recorded, where it recorded them", () => {
+      // What the manifest before said is what the dashboard showed then,
+      // whatever the topology now makes of it.
+      const previous = manifestOf(
+        { "workspace-unit": { overhead: 4, unitOverhead: 1 } },
+        { "workspace-unit": 2 },
+      );
+      previous.health = {
+        suites: { "workspace-unit": { fixed: 99, tooLong: 7, batches: 5 } },
+        lanes: { observed: 0, pastBound: 0, projectedInside: 0, overran: 0 },
+        alarms: [],
+      };
+      const health = calibrationHealth({
+        manifest,
+        previous,
+        capabilities: new Map(),
+        processes: new Map(),
+        observations: { charges: [], lanes: [] },
+      });
+      expect(health.previous?.suites).toEqual({
+        "workspace-unit": { fixed: 99, tooLong: 7 },
+      });
+    });
+
     describe("the count the tests too long for any lane are judged against", () => {
       /**
        * A previous manifest holding `count` tests too long for any lane,
@@ -454,14 +478,14 @@ describe("health", () => {
       it("returns an alarm for batches spending more than twice their charge", () => {
         expect(alarms(drifting(2.4))).toEqual([
           "pattern-unit: the ninetieth percentile of what its 10 batches " +
-          "spent over what they were charged is 2.4, more than 2",
+          "spent over what they were charged is 2.40, more than 2",
         ]);
       });
 
       it("returns an alarm for batches spending under half their charge", () => {
         expect(alarms(drifting(0.3))).toEqual([
           "pattern-unit: the ninetieth percentile of what its 10 batches " +
-          "spent over what they were charged is 0.3, less than 0.5",
+          "spent over what they were charged is 0.30, less than 0.5",
         ]);
       });
 
@@ -518,8 +542,8 @@ describe("health", () => {
         }, { observed: 40, pastBound: 3, projectedInside: 38, overran: 2 }),
       ));
       expect(lines).toEqual([
-        "runner-unit: a lane pays 6s to hold it; 12 batches spent 0.8 of " +
-        "what they were charged at the median and 1.1 at the ninetieth " +
+        "runner-unit: a lane pays 6s to hold it; 12 batches spent 0.80 of " +
+        "what they were charged at the median and 1.10 at the ninetieth " +
         "percentile",
         "3 of 40 lanes over the last 7 days ran past their bound, 2 of them " +
         "among the 38 projected to finish inside it",

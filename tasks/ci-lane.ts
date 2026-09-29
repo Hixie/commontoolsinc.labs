@@ -1939,28 +1939,6 @@ export async function runLane(
           measurementRecord(excusedMeasurementName(key), 0, true)
         ),
       );
-      // What the lane's work came to against what it was projected to
-      // come to and the most it could come to inside the lane's bound,
-      // which is the bound less the prologue the budget was derived with.
-      // The publisher counts from these how many lanes ran past their
-      // bound, and how many of those the packer had expected to.
-      spoolRecords(spool, [
-        timingRecord(
-          laneMeasurementName("spent"),
-          (performance.now() - startedAt) / 1000,
-          ok,
-        ),
-        timingRecord(
-          laneMeasurementName("projected"),
-          mine.projectedSeconds,
-          ok,
-        ),
-        timingRecord(
-          laneMeasurementName("bound"),
-          laid.boundSeconds - LANE_PROLOGUE_SECONDS,
-          ok,
-        ),
-      ]);
     }
   } catch (error) {
     // A lane whose loop threw has failed, whatever the batches it got
@@ -1988,6 +1966,31 @@ export async function runLane(
   const marked = await markMeasuredFailures(options, suites, failedUnits);
   if (compileCacheState !== undefined) {
     await writeCompileCacheState(options, compileCacheState);
+  }
+  // What the lane's work came to against what it was projected to come
+  // to and the most it could come to inside the lane's bound, which is the
+  // bound less the prologue the budget was derived with. Read last, so that
+  // it holds everything the lane did after its prologue. The publisher
+  // counts from these how many lanes ran past their bound, and how many of
+  // those the packer had expected to.
+  if (spool !== undefined) {
+    spoolRecords(spool, [
+      timingRecord(
+        laneMeasurementName("spent"),
+        (performance.now() - startedAt) / 1000,
+        ok,
+      ),
+      timingRecord(
+        laneMeasurementName("projected"),
+        mine.projectedSeconds,
+        ok,
+      ),
+      timingRecord(
+        laneMeasurementName("bound"),
+        laid.boundSeconds - LANE_PROLOGUE_SECONDS,
+        ok,
+      ),
+    ]);
   }
   describeCoverage(seen.coverage, converted.reports, marked);
   return ok;

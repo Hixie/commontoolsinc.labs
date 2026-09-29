@@ -17,6 +17,8 @@
  *
  * Every mode that reads a manifest reads the one the lanes testing this
  * checkout's commit read, or the one current at the moment `--at` names.
+ * `health` reads the newest one instead, since what it judges is the
+ * model the lanes are packing by now.
  * `plan` and `explain` pack the tree through the lanes' own code, for a
  * change that touches nothing, so what they say a lane would do is what
  * such a lane does.

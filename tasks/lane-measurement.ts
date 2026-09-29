@@ -143,8 +143,8 @@ const LANE_MEASUREMENT_NAMES: Record<LaneMeasurementKind, string> = {
 /**
  * What a lane's measurement of its own work is called.
  *
- * A lane writes three of these once its batches have run: the seconds
- * from opening its first capability to the end of its last batch, what
+ * A lane writes three of these once its work is done: the seconds from
+ * opening its first capability to the end of its own work, what
  * the packer projected those would come to, and the most they may come
  * to before the job is past the bound the lane was packed to finish
  * inside. Together they say whether the lane ran past its bound, and

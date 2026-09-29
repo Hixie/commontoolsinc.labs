@@ -60,12 +60,6 @@ export interface HealthInput {
   observations: Pick<Observations, "charges" | "lanes">;
 }
 
-/** Rounds a figure to the precision a person reads it at. */
-function rounded(value: number, places: number): number {
-  const scale = 10 ** places;
-  return Math.round(value * scale) / scale;
-}
-
 /**
  * Each suite's fixed charge and count of identities too long for any
  * lane, in one manifest. A suite with identities too long for any lane
@@ -87,7 +81,7 @@ export function suiteCharges(
   const suites: Record<string, PreviousSuiteHealth> = {};
   for (const suite of new Set([...Object.keys(fixed), ...tooLong.keys()])) {
     suites[suite] = {
-      fixed: rounded(fixed[suite] ?? 0, 1),
+      fixed: fixed[suite] ?? 0,
       tooLong: tooLong.get(suite) ?? 0,
     };
   }
@@ -137,8 +131,8 @@ function healthFigures(input: HealthInput): HealthFigures {
         ratio: {
           // The higher of the two middle readings where the count is
           // even, as the calibration takes it.
-          median: rounded(sorted[Math.floor(sorted.length / 2)]!, 2),
-          p90: rounded(percentile90(sorted), 2),
+          median: sorted[Math.floor(sorted.length / 2)]!,
+          p90: percentile90(sorted),
         },
       }),
     };
@@ -156,11 +150,29 @@ function healthFigures(input: HealthInput): HealthFigures {
     ...(input.previous === undefined ? {} : {
       previous: {
         generatedAt: input.previous.generatedAt,
-        suites: suiteCharges(input.previous, input),
+        suites: previousCharges(input.previous, input),
       },
       tooLongBaseline: tooLongBaseline(input.previous),
     }),
   };
+}
+
+/**
+ * The charges of the manifest before, as it recorded them where it carries
+ * health, and otherwise read from it with this topology.
+ */
+function previousCharges(
+  previous: Manifest,
+  topology: Pick<HealthInput, "capabilities" | "processes">,
+): Record<string, PreviousSuiteHealth> {
+  const recorded = previous.health?.suites;
+  if (recorded === undefined) return suiteCharges(previous, topology);
+  return Object.fromEntries(
+    Object.entries(recorded).map(([suite, { fixed, tooLong }]) => [
+      suite,
+      { fixed, tooLong },
+    ]),
+  );
 }
 
 /**
@@ -256,7 +268,7 @@ export function alarms(health: HealthFigures): string[] {
     if (!over && ratio.p90 >= 1 / HEALTH_DRIFT_FACTOR) continue;
     found.push(
       `${suite}: the ninetieth percentile of what its ${batches} batches ` +
-        `spent over what they were charged is ${ratio.p90}, ` +
+        `spent over what they were charged is ${ratio.p90.toFixed(2)}, ` +
         (over ? "more than" : "less than") +
         ` ${over ? HEALTH_DRIFT_FACTOR : 1 / HEALTH_DRIFT_FACTOR}`,
     );
@@ -292,8 +304,9 @@ export function healthLines(health: CalibrationHealth): string[] {
     }
     if (figures.ratio !== undefined) {
       parts.push(
-        `${figures.batches} batches spent ${figures.ratio.median} of what ` +
-          `they were charged at the median and ${figures.ratio.p90} at the ` +
+        `${figures.batches} batches spent ${figures.ratio.median.toFixed(2)} ` +
+          `of what they were charged at the median and ` +
+          `${figures.ratio.p90.toFixed(2)} at the ` +
           `ninetieth percentile`,
       );
     }

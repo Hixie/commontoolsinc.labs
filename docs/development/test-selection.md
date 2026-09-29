@@ -812,14 +812,14 @@ The publisher measures the model in the manifest it creates, under
 `health`, from the lanes' own records over `COST_WINDOW_DAYS`. Each batch
 records what the packer charged the lane for it, `ci-lane projected batch
 <suite>`, beside what it spent, and each lane records its work as a whole
-once its batches have run: `ci-lane lane`, from opening its first
-capability to ending its last batch; `ci-lane projected lane`, what the
-packer projected that to be; and `ci-lane bound lane`, the bound the lane
-was packed to finish inside less `LANE_PROLOGUE_SECONDS`. The work measured
-is the work the projection covers; the lane's planning before it and its
-coverage conversion after it fall to the prologue, as they do when the lane
-is packed. Only a lane that passed
-is read, since one that went red stopped early.
+once its work is done: `ci-lane lane`, from opening its first capability to
+the end of the lane's own work, coverage conversion included; `ci-lane
+projected lane`, what the packer projected that to be; and `ci-lane bound
+lane`, the bound the lane was packed to finish inside less
+`LANE_PROLOGUE_SECONDS`. The packer charges nothing for converting coverage,
+so a lane whose conversion is slow is one the model under-charges, and it
+counts as such. Only a lane that passed is read, since one that went red
+stopped early.
 
 Four things count as broken. Their dials are in [Every dial](#every-dial).
 

@@ -854,7 +854,11 @@ function parseHealth(value: unknown): CalibrationHealth | undefined {
   const { observed, pastBound, projectedInside, overran } = value.lanes;
   if (
     suites === undefined || !isCount(observed) || !isCount(pastBound) ||
-    !isCount(projectedInside) || !isCount(overran)
+    !isCount(projectedInside) || !isCount(overran) ||
+    // Lanes past their bound and lanes projected inside it are among the
+    // lanes observed, and lanes that overran are among both.
+    pastBound > observed || projectedInside > observed ||
+    overran > pastBound || overran > projectedInside
   ) {
     return undefined;
   }

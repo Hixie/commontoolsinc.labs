@@ -2583,8 +2583,9 @@ selection tile red.
 What the lanes record makes the comparison possible. Each batch records
 what the packer charged the lane for it, `ci-lane projected batch
 <suite>`, beside what it spent, and each lane records three figures about
-its work as a whole once its batches have run: `ci-lane lane`, the
-seconds from opening its first capability to ending its last batch;
+its work as a whole once that work is done: `ci-lane lane`, the seconds
+from opening its first capability to the end of its own work, coverage
+conversion included;
 `ci-lane projected lane`, what the packer projected those to come to;
 and `ci-lane bound lane`, the most they may come to before the job is
 past the bound the lane was packed to finish inside, which is that bound

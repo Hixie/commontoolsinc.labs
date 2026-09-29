@@ -274,7 +274,7 @@ export interface BatchCharge {
 
 /** One lane's work as a whole, as the lane measured it. */
 export interface LaneRun {
-  /** Seconds from opening its first capability to ending its last batch. */
+  /** Seconds from opening its first capability to the end of its work. */
   spent: number;
 
   /** Seconds the packer projected that work to take. */

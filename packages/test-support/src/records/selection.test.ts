@@ -116,7 +116,50 @@ describe("selection", () => {
             suites: { unit: { fixed: 3, tooLong: 0, batches: 1, ratio: 2 } },
           },
           { ...healthy, lanes: { observed: 1 } },
+          {
+            ...healthy,
+            lanes: {
+              observed: 1,
+              pastBound: 2,
+              projectedInside: 1,
+              overran: 0,
+            },
+          },
+          {
+            ...healthy,
+            lanes: {
+              observed: 1,
+              pastBound: 0,
+              projectedInside: 2,
+              overran: 0,
+            },
+          },
+          {
+            ...healthy,
+            lanes: {
+              observed: 3,
+              pastBound: 1,
+              projectedInside: 3,
+              overran: 2,
+            },
+          },
+          {
+            ...healthy,
+            lanes: {
+              observed: 3,
+              pastBound: 3,
+              projectedInside: 1,
+              overran: 2,
+            },
+          },
           { ...healthy, previous: { generatedAt: "yesterday", suites: {} } },
+          {
+            ...healthy,
+            previous: {
+              generatedAt: "2026-09-25T16:30:00.000Z",
+              suites: { unit: { fixed: 3 } },
+            },
+          },
           { ...healthy, alarms: "none" },
           { ...healthy, tooLongBaseline: -1 },
           { ...healthy, alarms: [3] },

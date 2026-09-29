@@ -350,8 +350,10 @@ on one has to be abbreviated.
 Where a tile has more than one candidate for its sub line, the one that explains
 the color it is wearing wins. The test selection tile carries the count of the
 corpus a pull request would run under its headline share, and gives that line
-up to whichever of two conditions is in force: the lane past its budget where
-there is one, and otherwise the count of tests no lane can hold. A stale
+up to whichever of three conditions is in force: the count of things the
+publisher found broken in the cost model where there is one, otherwise the lane
+past its budget where there is one, and otherwise the count of tests no lane can
+hold. A stale
 manifest colors the tile too and competes for neither line, because its own
 figure is the age badge in the header.
 
