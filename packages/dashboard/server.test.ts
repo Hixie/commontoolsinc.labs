@@ -1267,9 +1267,9 @@ boardTest("a tile that asks to be collected again is collected from the snapshot
 });
 
 boardTest("a tile asking to be collected again after the board is reset is not collected", async () => {
-  const source = { repo: "test/collect-again-reset", workflow: "ci.yml" };
+  const source = runSource("test/collect-again-reset", "ci.yml", "main");
   const sourceCtx: Ctx = {
-    runs: () => sourceCtx.runsFor(source.repo, source.workflow),
+    runs: () => sourceCtx.runsFor(source),
     runsFor: () => Promise.resolve([sourceRun(3, "run")]),
     env: () => undefined,
   };
