@@ -1830,6 +1830,79 @@ describe("CFC label view helpers", () => {
     }
   });
 
+  it("delivers an includeConsumedLabel sink the labels its read followed a link to", async () => {
+    const signer = await Identity.fromPassphrase(
+      "cfc consumed label sink",
+    );
+    const storageManager = StorageManager.emulate({ as: signer });
+    const runtime = new Runtime({
+      apiUrl: new URL(import.meta.url),
+      storageManager,
+    });
+    try {
+      const target = runtime.getCell<string>(
+        signer.did(),
+        "cfc-consumed-label-target",
+      );
+      const writeTarget = (atom: string) => {
+        const tx = runtime.edit();
+        writeSeedEnvelopeDoc(tx, signer.did());
+        seedStoredEnvelope(tx, {
+          space: signer.did(),
+          id: parseLink(target.getAsLink()).id!,
+          type: "application/json",
+          path: [],
+        }, {
+          value: "held",
+          cfc: {
+            version: 1,
+            schemaHash: SEED_ENVELOPE_SCHEMA_HASH,
+            labelMap: {
+              version: 1,
+              entries: [{ path: [], label: { confidentiality: [atom] } }],
+            },
+          },
+        });
+        runtime.prepareTxForCommit(tx);
+        return tx.commit();
+      };
+      await writeTarget("first-secret");
+      const holder = runtime.getCell<{ inner: string }>(
+        signer.did(),
+        "cfc-consumed-label-holder",
+      );
+      {
+        const tx = runtime.edit();
+        holder.withTx(tx).setRawUntyped({ inner: target.getAsLink() });
+        runtime.prepareTxForCommit(tx);
+        await tx.commit();
+      }
+      await runtime.idle();
+
+      const consumed: unknown[] = [];
+      const plain: unknown[] = [];
+      const cancel = holder.sink((_value, _label, read) => {
+        consumed.push(read?.confidentiality);
+      }, { includeConsumedLabel: true });
+      const cancelPlain = holder.sink((_value, _label, read) => {
+        plain.push(read);
+      });
+
+      // A label-only write to the linked document re-fires the sink.
+      await writeTarget("second-secret");
+      await runtime.idle();
+      cancel();
+      cancelPlain();
+
+      expect(consumed[0]).toEqual(["first-secret"]);
+      expect(consumed.at(-1)).toEqual(["second-secret"]);
+      expect(plain.every((read) => read === undefined)).toBe(true);
+    } finally {
+      await runtime.dispose();
+      await storageManager.close();
+    }
+  });
+
   it("delivers to an includeCfcLabel sink the label of the doc a mid-path link resolves to", async () => {
     // A value bound to a UI badge is often reached through a list whose
     // element links to another document, as a profile's `verifiedIdentities`
