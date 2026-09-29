@@ -59,10 +59,14 @@ function scan(
     readConsumesEntry(shape, entry) && !(machinery && template(entry)) &&
     !beneathProbe(entry)
   );
+  // A concrete structure entry and an enumerate entry label a container
+  // node, so they apply to a read of that node and not to a read beneath it.
+  const atItsNodeOnly = (entry: LabelMapEntry) =>
+    entry.observes === "enumerate" ||
+    (entry.origin === "structure" && !template(entry));
   const ancestors = selected.filter((entry) =>
     isPrefix(entry.path, path) &&
-    (entry.origin !== "structure" || template(entry) ||
-      entry.path.length === path.length)
+    (!atItsNodeOnly(entry) || entry.path.length === path.length)
   );
   const buckets = new Map<string, LabelMapEntry[]>();
   for (const entry of ancestors) {

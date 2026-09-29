@@ -460,9 +460,8 @@ describe("sqliteQuery's control state under a labeled parameter", () => {
 
   describe("a shared result", () => {
     // Space scope, where one materialization serves every reader of the
-    // space. A session-scoped result is per-reader, so its membership tells
-    // its own reader nothing they did not ask for, and the builtin declares
-    // nothing on it.
+    // space. `sqlite-query-row-set-members.test.ts` covers the same
+    // declaration on a session-scoped result.
 
     const runSharedPattern = async (
       db: SqliteDbRef,
@@ -552,7 +551,10 @@ describe("sqliteQuery's control state under a labeled parameter", () => {
     // control state stays there after the read that carried it stops. Three
     // issues of ONE query node, each parameterized out of a differently
     // labeled column of the same row, so each issue's transaction carries one
-    // clause and the accumulation is visible one clause at a time.
+    // clause and the accumulation is visible one clause at a time. Each
+    // column is projected by a query of its own: a row reached through a
+    // result carries the labels of every column the result projects, so one
+    // query over all three would put all three clauses on the first issue.
 
     const first = clauseFor(space, "first-class");
     const second = clauseFor(space, "second-class");
@@ -594,26 +596,28 @@ describe("sqliteQuery's control state under a labeled parameter", () => {
     );
 
     const { commonfabric: cf } = createTrustedBuilder(runtime);
-    // Reads ONE column, chosen by `pick`. A branch the lift does not take is
-    // a column it does not read, which is what keeps each issue's join down
-    // to the one clause this step is about.
+    // Reads ONE query's rows, chosen by `pick`. A branch the lift does not
+    // take is a result it does not read, which is what keeps each issue's
+    // join down to the one clause this step is about.
     const parameterOf = parameterLift((input) => {
       const { keys, pick } = input as {
-        keys?: QueryState<Record<string, string>>;
+        keys?: QueryState<Record<string, string>>[];
         pick?: number;
       };
-      const row = keys?.result?.[0];
-      const name = pick === 0 ? "k1" : pick === 1 ? "k2" : "k3";
-      return String(row?.[name] ?? "");
+      const index = pick === 0 ? 0 : pick === 1 ? 1 : 2;
+      const row = keys?.[index]?.result?.[0];
+      return String(row?.[`k${index + 1}`] ?? "");
     });
     const testPattern = cf.pattern<{ pick: number }>(({ pick }) => {
-      const keys = cf.sqliteQuery.asScope("session")(
-        {
-          db,
-          reactOn: db,
-          sql: "SELECT k1, k2, k3 FROM messages ORDER BY id",
-          // deno-lint-ignore no-explicit-any -- the builtin's input is untyped
-        } as any,
+      const keys = ["k1", "k2", "k3"].map((name) =>
+        cf.sqliteQuery.asScope("session")(
+          {
+            db,
+            reactOn: db,
+            sql: `SELECT ${name} FROM messages ORDER BY id`,
+            // deno-lint-ignore no-explicit-any -- the builtin's input is untyped
+          } as any,
+        )
       );
       const bodies = cf.sqliteQuery.asScope("session")(
         {

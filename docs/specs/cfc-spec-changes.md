@@ -1508,3 +1508,45 @@ for: a module of the program a release installs (SC-47), or the verified
 writer the stamp itself names (its module, source file and export). Proposed edit: state that adoption is a
 one-time authenticated migration of legacy claims, and that once stored claims
 are stamped the file-correspondence rules are retired.
+
+## From the row-set member build (2026-09-28)
+
+`sqliteQuery` implements §8.17.6 as
+[`sqlite-builtin/06-cfc.md`](./sqlite-builtin/06-cfc.md) describes ("Where a
+query's selection inputs are labeled"). Three points where the text and the
+runner differ, or where the text leaves a choice open:
+
+**SC-49 [normative] A secret in a member's address — §8.17.6 rule 4.**
+`open`. Rule 4 derives a member's address from its content and payload
+label, and so puts the payload label on the reference identity at each slot,
+since a reader could otherwise confirm a guess at a member by recomputing
+its address. The runner keys each member's address on a per-space secret as
+well (a runtime secret the transaction layer mints, labeled so that no
+ceiling admits a value derived from it), which makes the address say nothing
+about the member to code that cannot read the member. The slot then carries
+`S` alone, and a read of one member through the result carries that
+member's payload label and not another's. Proposed edit: allow a keyed
+derivation whose key untrusted code cannot use, say that the reference
+identity at a slot then need not carry the payload label, and record the
+residual that equal addresses stay observable under `S`: two slots holding
+equal members, and a member kept across a change of the selection, share an
+address.
+
+**SC-50 [normative] A reference built from an id — §8.17.6 rule 4, fifth
+item.** `open`. The item requires that untrusted code obtain a member
+reference only through a result, and offers a namespace untrusted code cannot
+write to as the means. A namespace stops a member's address from being
+received by writing the same content. It does not stop a reference from being
+constructed out of an address the code learned, where the runtime's link
+representation lets code write one as data. With a secret in the address
+(SC-49), an address can no longer be computed from a guess, so what remains
+is an address learned through a result, which is a retained reference.
+Proposed edit: state the requirement over both routes, and allow a secret
+in the address as the means for the second.
+
+**SC-51 [clarify] The existence entry of a member with labels at two levels —
+§8.17.6 rule 4, last item.** `open`. The item says the existence entry
+carries the member's payload label. A member can carry a label at its root
+and further labels on its fields. The runner's existence observation of such
+a member consumes the root label. Proposed edit: say whether the payload
+label here is the root's or the join over the member's fields.

@@ -251,6 +251,43 @@ const transformedByProbePath = (
     ? entry.path.slice(0, -1)
     : entry.path;
 
+/**
+ * Returns whether `entry` applies to a read at exactly its own path and not
+ * to a read below it: a concrete `structure` entry, which labels a container
+ * node's shape, and an `enumerate` entry, which labels a container's
+ * membership. A recursive read of an ancestor still consumes either, since it
+ * materializes the container. `template` says whether the entry is a
+ * runtime-minted `*` template, which is consumed at the children it matches.
+ */
+const appliesAtItsPathOnly = (
+  entry: Pick<LabelMapEntry, "origin" | "observes">,
+  template: boolean,
+): boolean =>
+  entry.observes === "enumerate" ||
+  (entry.origin === "structure" && !template);
+
+/**
+ * Returns the raw path of the array whose native `length` a read at
+ * `rawPath` observes, or `undefined` when the read is not of an array's
+ * `length`. The journal records such a read beneath the array, so it is
+ * measured as a shape read of the array as well, which is what consumes the
+ * array's membership. A verifier probe of the parent tells an array from an
+ * object with a field named `length`, without consuming the parent's
+ * payload, as `assertCfcReadCeiling` does.
+ */
+const nativeLengthParent = (
+  tx: IExtendedStorageTransaction,
+  read: Pick<IMemorySpaceAddress, "space" | "id" | "type" | "scope" | "path">,
+): readonly string[] | undefined => {
+  if (read.path.at(-1) !== "length") return undefined;
+  const parentPath = read.path.slice(0, -1);
+  const parent = tx.read({ ...read, path: parentPath }, {
+    meta: internalVerifierRead,
+    nonRecursive: true,
+  }).ok?.value;
+  return Array.isArray(parent) ? parentPath : undefined;
+};
+
 const labelForEntriesAtPath = (
   entries: readonly LabelMapEntry[],
   path: readonly string[],
@@ -278,8 +315,11 @@ const labelForEntriesAtPath = (
     // preserve. `*`-path templates are the opposite by construction
     // (template-population §3.2): their whole point is consumption at
     // matching child paths, so the exact-path rule does not apply to them.
+    // An `enumerate` entry, whatever its origin, takes the same rule: it
+    // labels the container's membership, order and count, which a read of
+    // one addressed child does not observe.
     if (
-      entry.origin === "structure" && !template &&
+      appliesAtItsPathOnly(entry, template) &&
       entry.path.length !== path.length
     ) {
       continue;
@@ -3693,6 +3733,33 @@ const forEachFlowObservation = (
           machinery: isMachineryRead(read.meta),
           writeDestination: isWriteDestinationRead(read.meta),
           followedSlot: followsSlot,
+        },
+      )
+    ) {
+      return true;
+    }
+    // A machinery read keeps exactly the consumption it has unmarked, which
+    // for a `length` read is the entries at `length`.
+    const lengthOf = shape === "followRef" || isMachineryRead(read.meta)
+      ? undefined
+      : nativeLengthParent(tx, read);
+    if (
+      lengthOf !== undefined &&
+      consume(
+        space,
+        id,
+        scope,
+        (read.type ?? "application/json") as MediaType,
+        canonicalizeLogicalPath(lengthOf),
+        {
+          shape: "shape",
+          nonRecursive: true,
+          get coveredByTrace() {
+            return coveredByTrace();
+          },
+          machinery: false,
+          writeDestination: isWriteDestinationRead(read.meta),
+          followedSlot: false,
         },
       )
     ) {
@@ -8781,54 +8848,68 @@ const collectConsumedLabelImpl = (
     }
     const labels = labelIndexes.get(metadataKey);
     if (labels === undefined) continue;
-    const path = canonicalizeLogicalPath(read.path);
-    // A recursive read at `path` observes the value at `path` and everything
-    // below it, so its confidentiality is the union of every labelMap entry
-    // that is an ancestor-or-equal of `path` (a label that applies to it) OR a
-    // DESCENDANT of `path` (a label on a field inside the value just read).
-    // labelAtPath alone would only see the ancestor — so reading a whole object
-    // and sending one confidential field would slip the ceiling (review on
-    // #3993). A nonRecursive read sees ONLY the value at `path`, so it counts
-    // ancestor-or-equal entries but NOT descendants — counting those would
-    // false-reject valid commits (review round 2 on #3993).
-    for (const { entry, path: entryPath } of labels.overlapping(path)) {
-      // CONCRETE structure entries label only the container node's shape:
-      // an ancestor structure entry does not apply to a read strictly
-      // below it (same exact-path rule as `labelAtPath`); as a descendant
-      // of a recursive read it does apply (the read materializes the
-      // shape). `*`-path templates (template-population §3.2) exist to be
-      // consumed at matching child paths, so they take the generic
-      // ancestor-or-equal arm — this collector stays additive; templates
-      // just participate.
-      const overlapsRead = entry.origin === "structure" &&
-          !isRuntimeMintedTemplate({ origin: entry.origin, path: entryPath })
-        ? (entryPath.length === path.length
-          ? isPrefix(entryPath, path)
-          : read.nonRecursive !== true && isPrefix(path, entryPath))
-        : (isPrefix(entryPath, path) ||
-          (read.nonRecursive !== true && isPrefix(path, entryPath)));
-      if (!overlapsRead) continue;
-      const contributed = entry.label.confidentiality ?? [];
-      atoms.push(...contributed);
-      for (const atom of contributed) {
-        noteSource(atom, {
-          space: read.space,
-          id: read.id,
-          scope: normalizeCellScope(read.scope),
-          path,
-        } as CfcAddress, entryPath);
+    const collectAt = (
+      path: readonly string[],
+      nonRecursive: boolean | undefined,
+    ): void => {
+      // A recursive read at `path` observes the value at `path` and everything
+      // below it, so its confidentiality is the union of every labelMap entry
+      // that is an ancestor-or-equal of `path` (a label that applies to it) OR a
+      // DESCENDANT of `path` (a label on a field inside the value just read).
+      // labelAtPath alone would only see the ancestor — so reading a whole object
+      // and sending one confidential field would slip the ceiling (review on
+      // #3993). A nonRecursive read sees ONLY the value at `path`, so it counts
+      // ancestor-or-equal entries but NOT descendants — counting those would
+      // false-reject valid commits (review round 2 on #3993).
+      for (const { entry, path: entryPath } of labels.overlapping(path)) {
+        // CONCRETE structure entries label only the container node's shape:
+        // an ancestor structure entry does not apply to a read strictly
+        // below it (same exact-path rule as `labelAtPath`); as a descendant
+        // of a recursive read it does apply (the read materializes the
+        // shape). `*`-path templates (template-population §3.2) exist to be
+        // consumed at matching child paths, so they take the generic
+        // ancestor-or-equal arm — this collector stays additive; templates
+        // just participate. An `enumerate` entry takes the exact-path rule
+        // too, as it does in `labelAtPath`.
+        const overlapsRead = appliesAtItsPathOnly(
+            entry,
+            isRuntimeMintedTemplate({ origin: entry.origin, path: entryPath }),
+          )
+          ? (entryPath.length === path.length
+            ? isPrefix(entryPath, path)
+            : nonRecursive !== true && isPrefix(path, entryPath))
+          : (isPrefix(entryPath, path) ||
+            (nonRecursive !== true && isPrefix(path, entryPath)));
+        if (!overlapsRead) continue;
+        const contributed = entry.label.confidentiality ?? [];
+        atoms.push(...contributed);
+        for (const atom of contributed) {
+          noteSource(atom, {
+            space: read.space,
+            id: read.id,
+            scope: normalizeCellScope(read.scope),
+            path,
+          } as CfcAddress, entryPath);
+        }
+        for (
+          const reference of modulePolicyReferencesIn(
+            entry.label.confidentiality,
+          )
+        ) {
+          const key = modulePolicyArtifactKey(reference);
+          const spaces = modulePolicySpaces.get(key) ?? new Set<MemorySpace>();
+          spaces.add(read.space);
+          modulePolicySpaces.set(key, spaces);
+        }
+        integrityAtoms.push(...(entry.label.integrity ?? []));
       }
-      for (
-        const reference of modulePolicyReferencesIn(
-          entry.label.confidentiality,
-        )
-      ) {
-        const key = modulePolicyArtifactKey(reference);
-        const spaces = modulePolicySpaces.get(key) ?? new Set<MemorySpace>();
-        spaces.add(read.space);
-        modulePolicySpaces.set(key, spaces);
-      }
-      integrityAtoms.push(...(entry.label.integrity ?? []));
+    };
+    collectAt(canonicalizeLogicalPath(read.path), read.nonRecursive);
+    const lengthOf = isLinkResolutionProbe(read.meta)
+      ? undefined
+      : nativeLengthParent(tx, read);
+    if (lengthOf !== undefined) {
+      collectAt(canonicalizeLogicalPath(lengthOf), true);
     }
   }
   // Label-metadata observations (inv-12 Stage 2): the introspection

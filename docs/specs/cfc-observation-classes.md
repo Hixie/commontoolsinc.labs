@@ -283,6 +283,16 @@ normative from C1 on:
   redirect checks) are row-3 followRef observations. A list coordinator's
   scaffolding probes carry the machinery marker (§6.2) and consume nothing,
   so a coordinator's J does not join every slot's transport label.
+- **An `enumerate` entry applies at its container only.** It labels a
+  container's membership, order and count, so it is consumed by a read of
+  the container. A read of an array's native `length`, which the journal
+  records beneath the array, is also measured as a shape read of the array;
+  a verifier probe of the parent tells an array from an object with a field
+  named `length`, and a machinery-marked read is left as it is. It is not
+  consumed by a read of one child, which observes that child: longest-prefix
+  resolution would otherwise put the membership of every element on a read
+  of any one of them. A concrete `structure` entry takes the same exact-path
+  rule, and a recursive read of an ancestor consumes either.
 - **followRef observations contribute confidentiality only.** The §8.9.3
   hereditary integrity meet quantifies over the transformation's *content*
   inputs; standalone probes rarely resolve any label, and admitting them
