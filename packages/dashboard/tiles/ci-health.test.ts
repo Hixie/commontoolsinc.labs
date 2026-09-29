@@ -1262,10 +1262,11 @@ Deno.test("ci: a job with no run carrying a verdict is not counted as failing", 
         runs: [{ conclusion: "cancelled", minutesAgo: 10, startedJobs: 0 }],
       }],
     }]),
-    async () => {
+    async (wire) => {
       const tile = createCiHealth();
-      // The second collection starts from what the first one settled.
+      // The second sweep starts from what the first one settled.
       for (const collection of [1, 2]) {
+        if (collection === 2) wire.sweepAgain();
         const view = await collectSwept(tile);
 
         assertEquals(view.status, "good", `collection ${collection}`);
