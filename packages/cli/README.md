@@ -188,8 +188,11 @@ uses this fixture mechanism at both postures.
 
 `cf view [file]` is an interactive pager for transformed TypeScript, source
 files, and unified diffs. Named Markdown, JSON, JSONC, JSON Lines, YAML, Python,
-Swift, Kotlin, TOML, Java properties, ProGuard, and XML files use their own
-syntax highlighting. A Swift package manifest is Swift source under its `.swift`
+Swift, Kotlin, TOML, shell, Java properties, ProGuard, and XML files use their
+own syntax highlighting. Shell covers Bash and POSIX shell scripts named `.sh`,
+`.bash`, or `.command`, and Bash's startup files, such as `.bashrc` and
+`.profile`. A heredoc's body is colored as a string, with the expansions its
+delimiter allows. A Swift package manifest is Swift source under its `.swift`
 extension, and a module's `.swiftinterface` is Swift as well. Gradle build and
 settings scripts are Kotlin scripts under the `.kts` extension. Gradle version
 catalogs and Cargo manifests are TOML, as are Cargo lock files. The ProGuard
@@ -206,14 +209,16 @@ its name alone leaves it as plain text. Transformed compiler output piped
 without a filename keeps TypeScript highlighting when its module header
 identifies it. Python interpreter shebangs select Python for otherwise
 unrecognized names, `swift` and `xcrun swift` shebangs select Swift, and
-`kotlin` shebangs select Kotlin. Node, Deno, and Bun shebangs select the
-TypeScript and JavaScript language family. Other filename-free source and named
-files with unrecognized syntax are shown as plain text. For piped source,
-`--filename` selects syntax as though the input had that name. `--language`
-selects a language by its stable identifier or alias. Both options keep the pipe
-read-only and suppress unified-diff auto-detection. An explicit language takes
-priority when both options are present. Use `--diff` instead when the pipe is a
-unified diff.
+`kotlin` shebangs select Kotlin. `sh`, `bash`, `dash`, and `ash` shebangs select
+shell, which covers Git hooks and other extensionless programs. Node, Deno, and
+Bun shebangs select the TypeScript and JavaScript language family. A diff
+selects each file's language from its path alone, so a shebang selects nothing
+there. Other filename-free source and named files with unrecognized syntax are
+shown as plain text. For piped source, `--filename` selects syntax as though the
+input had that name. `--language` selects a language by its stable identifier or
+alias. Both options keep the pipe read-only and suppress unified-diff
+auto-detection. An explicit language takes priority when both options are
+present. Use `--diff` instead when the pipe is a unified diff.
 
 The binary language handles known binary filenames, input containing a NUL byte,
 and input that is not valid UTF-8. It starts in a read-only rendered view with
