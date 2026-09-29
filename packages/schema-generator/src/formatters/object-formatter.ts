@@ -18,6 +18,8 @@ import {
   cloneSchemaDefinition,
   getNativeTypeSchema,
   getPropertyNameText,
+  instantiatedPropertyType,
+  instantiatedValueType,
   isFunctionLike,
   safeGetPropertyType,
 } from "../type-utils.ts";
@@ -335,6 +337,7 @@ export class ObjectFormatter implements TypeFormatter {
         resolvedPropType,
         context,
         propTypeNode,
+        instantiatedPropertyType(context.instantiatedAs, propName, checker),
       );
       if (isObjectOrArray(generated)) {
         attachDeprecatedStreamMark(
@@ -373,6 +376,7 @@ export class ObjectFormatter implements TypeFormatter {
         chosenIndex,
         context,
         undefined,
+        instantiatedValueType(context.instantiatedAs, checker),
       );
       // Attempt to read JSDoc from index signature declarations
       const sym = type.getSymbol?.();
