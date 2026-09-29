@@ -451,6 +451,12 @@ function hasVisibleClose(
   return quote !== "" && tokenInsideCurrentQuote;
 }
 
+/** Whether `offset` lies inside a `((` that `text` has not closed before it. */
+function insideArithmetic(text: string, offset: number): boolean {
+  const before = text.slice(0, offset);
+  return before.split("((").length > before.split("))").length;
+}
+
 function isHeredocEnd(text: string, heredoc: HeredocState): boolean {
   const candidate = heredoc.stripTabs ? text.replace(/^\t+/u, "") : text;
   return candidate === heredoc.end;
@@ -571,8 +577,11 @@ function stripCommonComments(
       i = after;
       continue;
     }
-    if (syntax.heredocs) {
-      const match = /^<<(-)?\s*(['"]?)([A-Za-z_]\w*)\2/u.exec(text.slice(i));
+    // `<<<` is a here-string, and `<<` inside `((` is a shift.
+    if (syntax.heredocs && text[i - 1] !== "<" && !insideArithmetic(text, i)) {
+      const match = /^<<(-)?\s*\\?(['"]?)([A-Za-z_]\w*)\2/u.exec(
+        text.slice(i),
+      );
       if (match) {
         heredocs.push({ end: match[3], stripTabs: match[1] === "-" });
       }
