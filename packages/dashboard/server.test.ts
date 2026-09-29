@@ -35,7 +35,14 @@ import {
 } from "./config.ts";
 import { TILES } from "./registry.ts";
 import { github } from "./lib.ts";
-import type { Ctx, Run, RunSource, Tile, TileView } from "./types.ts";
+import {
+  type Ctx,
+  type Run,
+  runSource,
+  type RunSource,
+  type Tile,
+  type TileView,
+} from "./types.ts";
 import { DASHBOARD_MESSAGE_LIFETIME_MS } from "./dashboard-message.ts";
 import { dashboardCacheFile } from "./history-files.ts";
 import {
@@ -103,7 +110,7 @@ function sourceTile(
     runSources,
     wide,
     async collect(ctx): Promise<TileView> {
-      const snapshots = await Promise.all(runSources.map((source) => ctx.runsFor(source.repo, source.workflow)));
+      const snapshots = await Promise.all(runSources.map((source) => ctx.runsFor(source)));
       const titles = snapshots.flat().map((run) => run.display_title);
       return { status: "good", value: titles.join(", ") || "empty" };
     },
@@ -546,9 +553,9 @@ boardTest("a stale source log names its active GitHub operation", async () => {
     return response.promise;
   };
   Deno.env.set("GH_TOKEN", "test-token");
-  const source = { repo: "test/github-diagnostic", workflow: "ci.yml" };
+  const source = runSource("test/github-diagnostic", "ci.yml", "main");
   const sourceCtx: Ctx = {
-    runs: () => sourceCtx.runsFor(source.repo, source.workflow),
+    runs: () => sourceCtx.runsFor(source),
     async runsFor() {
       const body = await github<{ workflow_runs: Run[] }>(
         "repos/test/github-diagnostic/actions/runs?branch=main",
@@ -699,8 +706,8 @@ boardTest("overlapping ticks skip a tile already updating and collect other due 
 });
 
 boardTest("overlapping ticks skip an updating run source and refresh another source", async () => {
-  const slowSource = { repo: "test/overlap-slow", workflow: "ci.yml" };
-  const fastSource = { repo: "test/overlap-fast", workflow: "ci.yml" };
+  const slowSource = runSource("test/overlap-slow", "ci.yml", "main");
+  const fastSource = runSource("test/overlap-fast", "ci.yml", "main");
   const slowRuns = deferred<Run[]>();
   let slowFetches = 0;
   let fastFetches = 0;
@@ -708,7 +715,7 @@ boardTest("overlapping ticks skip an updating run source and refresh another sou
   let fastCollections = 0;
   const sourceCtx: Ctx = {
     runs: () => slowRuns.promise,
-    runsFor: (repo) => {
+    runsFor: ({ repo }) => {
       if (repo === slowSource.repo) {
         slowFetches++;
         return slowRuns.promise;
@@ -781,7 +788,7 @@ boardTest("an unexpected standalone collection failure releases the tile for its
 });
 
 boardTest("an unexpected source collection failure releases its source and tiles", async () => {
-  const source = { repo: "test/source-cleanup", workflow: "ci.yml" };
+  const source = runSource("test/source-cleanup", "ci.yml", "main");
   let fetches = 0;
   let collections = 0;
   const unreadable: TileView = {
@@ -825,8 +832,8 @@ boardTest("a multi-source tile stays active until every source update completes"
   const realNow = Date.now;
   let now = realNow() + 20_000;
   Date.now = () => now;
-  const slowSource = { repo: "test/multi-source-slow", workflow: "ci.yml" };
-  const fastSource = { repo: "test/multi-source-fast", workflow: "ci.yml" };
+  const slowSource = runSource("test/multi-source-slow", "ci.yml", "main");
+  const fastSource = runSource("test/multi-source-fast", "ci.yml", "main");
   const slowRuns = deferred<Run[]>();
   const fastRuns = deferred<Run[]>();
   let slowFetches = 0;
@@ -834,7 +841,7 @@ boardTest("a multi-source tile stays active until every source update completes"
   let collections = 0;
   const sourceCtx: Ctx = {
     runs: () => slowRuns.promise,
-    runsFor: (repo) => {
+    runsFor: ({ repo }) => {
       if (repo === slowSource.repo) {
         slowFetches++;
         return slowRuns.promise;
@@ -924,13 +931,13 @@ boardTest("each completed collection is published while slower tiles are still r
   clients.add(client);
   const collection = tick([
     fake("ci", () => ({ status: "good", value: "fast" })),
-    fake("your metric here", () => slow.promise),
+    fake("dau", () => slow.promise),
   ]);
   try {
     const first = updateFromEvent(await firstUpdate).gridHtml;
     assertEquals(messages.length, 1);
     assertStringIncludes(tileHtml("ci", first), "fast");
-    assert(!tileHtml("your metric here", first).includes("slow"));
+    assert(!tileHtml("dau", first).includes("slow"));
     slow.resolve({ status: "good", value: "slow" });
     await collection;
   } finally {
@@ -939,23 +946,23 @@ boardTest("each completed collection is published while slower tiles are still r
     await collection;
   }
   assertEquals(messages.length, 2);
-  assertStringIncludes(tileHtml("your metric here", updateFromEvent(messages[1]).gridHtml), "slow");
+  assertStringIncludes(tileHtml("dau", updateFromEvent(messages[1]).gridHtml), "slow");
 });
 
 boardTest("each run source publishes its dependent tiles as one batch", async () => {
-  const labsSource = { repo: "test/labs-incremental", workflow: "ci.yml" };
-  const loomSource = { repo: "test/loom-incremental", workflow: "ci.yml" };
+  const labsSource = runSource("test/labs-incremental", "ci.yml", "main");
+  const loomSource = runSource("test/loom-incremental", "ci.yml", "main");
   const labs = deferred<Run[]>();
   const loom = deferred<Run[]>();
   const sourceCtx: Ctx = {
     runs: () => labs.promise,
-    runsFor: (repo) => repo === labsSource.repo ? labs.promise : loom.promise,
+    runsFor: ({ repo }) => repo === labsSource.repo ? labs.promise : loom.promise,
     env: () => undefined,
   };
   const tiles = [
     sourceTile("ci", [labsSource]),
     sourceTile("labs ci trust", [labsSource]),
-    sourceTile("your metric here", [loomSource]),
+    sourceTile("dau", [loomSource]),
     sourceTile("loom ci trust", [loomSource]),
     sourceTile("recent main runs", [labsSource, loomSource], true),
   ];
@@ -978,7 +985,7 @@ boardTest("each run source publishes its dependent tiles as one batch", async ()
     const first = updateFromEvent(await firstMessage);
     assertStringIncludes(tileHtml("ci", first.gridHtml), "labs new");
     assertStringIncludes(tileHtml("labs ci trust", first.gridHtml), "labs new");
-    assert(!tileHtml("your metric here", first.gridHtml).includes("loom new"));
+    assert(!tileHtml("dau", first.gridHtml).includes("loom new"));
     assertStringIncludes(tileHtml("recent main runs", first.wideHtml), "labs new");
     assertStringIncludes(first.wideHtml, "loom-incremental pending");
     assertEquals(messages.length, 1, "one source arrival produces one broadcast");
@@ -986,7 +993,7 @@ boardTest("each run source publishes its dependent tiles as one batch", async ()
     const secondMessage = nextMessage();
     loom.resolve([sourceRun(2, "loom new")]);
     const second = updateFromEvent(await secondMessage);
-    assertStringIncludes(tileHtml("your metric here", second.gridHtml), "loom new");
+    assertStringIncludes(tileHtml("dau", second.gridHtml), "loom new");
     assertStringIncludes(tileHtml("loom ci trust", second.gridHtml), "loom new");
     assertStringIncludes(second.wideHtml, "labs new, loom new");
     assert(!second.wideHtml.includes("pending"));
@@ -1003,8 +1010,8 @@ boardTest("each run source publishes its dependent tiles as one batch", async ()
 boardTest("a ready source publishes while an older combined collection is still running", async () => {
   const realNow = Date.now;
   let now = realNow() + 30_000;
-  const labsSource = { repo: "test/labs-independent", workflow: "ci.yml" };
-  const loomSource = { repo: "test/loom-independent", workflow: "ci.yml" };
+  const labsSource = runSource("test/labs-independent", "ci.yml", "main");
+  const loomSource = runSource("test/loom-independent", "ci.yml", "main");
   const labs = deferred<Run[]>();
   const loom = deferred<Run[]>();
   const oldCollection = deferred<void>();
@@ -1013,7 +1020,7 @@ boardTest("a ready source publishes while an older combined collection is still 
   let publishOld = (_view: TileView) => {};
   const sourceCtx: Ctx = {
     runs: () => labs.promise,
-    runsFor: (repo) => repo === labsSource.repo ? labs.promise : loom.promise,
+    runsFor: ({ repo }) => repo === labsSource.repo ? labs.promise : loom.promise,
     env: () => undefined,
   };
   const combined: Tile = {
@@ -1023,8 +1030,8 @@ boardTest("a ready source publishes while an older combined collection is still 
     wide: true,
     async collect(ctx, publish): Promise<TileView> {
       const [labsRuns, loomRuns] = await Promise.all([
-        ctx.runsFor(labsSource.repo, labsSource.workflow),
-        ctx.runsFor(loomSource.repo, loomSource.workflow),
+        ctx.runsFor(labsSource),
+        ctx.runsFor(loomSource),
       ]);
       if (!loomRuns.length) {
         publishOld = publish ?? publishOld;
@@ -1037,7 +1044,7 @@ boardTest("a ready source publishes while an older combined collection is still 
   };
   const tiles = [
     sourceTile("ci", [labsSource]),
-    sourceTile("your metric here", [loomSource]),
+    sourceTile("dau", [loomSource]),
     combined,
   ];
   const messages: string[] = [];
@@ -1070,7 +1077,7 @@ boardTest("a ready source publishes while an older combined collection is still 
     const loomUpdate = nextMessage();
     loom.resolve([sourceRun(5, "loom ready")]);
     const first = updateFromEvent(await loomUpdate);
-    assertStringIncludes(tileHtml("your metric here", first.gridHtml), "loom ready");
+    assertStringIncludes(tileHtml("dau", first.gridHtml), "loom ready");
     const firstRecent = tileHtml("recent main runs", first.wideHtml);
     assertStringIncludes(firstRecent, "labs ready, loom ready");
     assert(firstRecent.startsWith(`unknown wide"`));
@@ -1102,12 +1109,12 @@ boardTest("a ready source publishes while an older combined collection is still 
 });
 
 boardTest("a shared run source preserves each dependent tile's per-source interval", async () => {
-  const source = { repo: "test/source-cadence", workflow: "ci.yml" };
+  const source = runSource("test/source-cadence", "ci.yml", "main");
   let fetches = 0;
   let fastCollections = 0;
   let slowCollections = 0;
   const sourceCtx: Ctx = {
-    runs: () => sourceCtx.runsFor(source.repo, source.workflow),
+    runs: () => sourceCtx.runsFor(source),
     runsFor: () => {
       fetches++;
       return Promise.resolve([]);
@@ -1144,10 +1151,10 @@ boardTest("a shared run source preserves each dependent tile's per-source interv
 });
 
 boardTest("a failed run source keeps its last good snapshot", async () => {
-  const source = { repo: "test/stale-source", workflow: "ci.yml" };
+  const source = runSource("test/stale-source", "ci.yml", "main");
   let failing = false;
   const sourceCtx: Ctx = {
-    runs: () => sourceCtx.runsFor(source.repo, source.workflow),
+    runs: () => sourceCtx.runsFor(source),
     runsFor: () => failing
       ? Promise.reject(new Error("error sending request for url"))
       : Promise.resolve([sourceRun(3, "last good run")]),
@@ -1167,12 +1174,12 @@ boardTest("a failed run source keeps its last good snapshot", async () => {
 });
 
 boardTest("a run source that reads backwards in time keeps its last good snapshot", async () => {
-  const source = { repo: "test/backwards-source", workflow: "ci.yml" };
+  const source = runSource("test/backwards-source", "ci.yml", "main");
   // sourceRun times a run from its id, so run 5000 is weeks behind run 3. A
   // fetch answering with the older one read a stale view of the workflow.
   let stale = false;
   const sourceCtx: Ctx = {
-    runs: () => sourceCtx.runsFor(source.repo, source.workflow),
+    runs: () => sourceCtx.runsFor(source),
     runsFor: () =>
       Promise.resolve([sourceRun(stale ? 5000 : 3, stale ? "weeks-old run" : "current run")]),
     env: () => undefined,
@@ -1254,7 +1261,7 @@ boardTest("a tile can publish cached data while its collection is still running"
 });
 
 boardTest("a source-backed tile can publish cached data while its collection is still running", async () => {
-  const source = { repo: "test/intermediate-source", workflow: "ci.yml" };
+  const source = runSource("test/intermediate-source", "ci.yml", "main");
   const sourceCtx: Ctx = {
     runs: () => Promise.resolve([]),
     runsFor: () => Promise.resolve([]),

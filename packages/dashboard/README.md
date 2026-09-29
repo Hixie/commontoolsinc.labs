@@ -87,13 +87,14 @@ the server replaces it with the empty string. A new edit starts the timing
 again.
 
 The trust, duration and recent-run tiles declare the workflow snapshots they
-read in `runSources`. The scheduler fetches each workflow independently. When a
-workflow fetch completes, the scheduler collects every due tile that reads it
+read in `runSources`. A snapshot holds either a workflow's runs on main or its
+runs for pull requests. The scheduler fetches each snapshot independently. When a
+snapshot fetch completes, the scheduler collects every due tile that reads it
 from the same stored snapshot and publishes those tile updates together. Each
-workflow can trigger a tile once per collection interval. A tile with several
-workflows can update once for each workflow as they arrive. This keeps a
-repository's trust, duration, and recent-run views in agreement when their
-intervals coincide. The ci tile reads no snapshot: it takes its own inventory
+snapshot can trigger a tile once per collection interval. A tile with several
+snapshots can update once for each snapshot as they arrive. This keeps a
+repository's trust and recent-run views, which both read its runs on main, in
+agreement when their intervals coincide. The ci tile reads no snapshot: it takes its own inventory
 of every repository's workflows on its own interval.
 
 A workflow snapshot is read a page at a time, and the pages have to describe
@@ -232,13 +233,13 @@ deno test --allow-all favicon-raster.test.ts regenerate-favicons.test.ts
 1. Create `tiles/my-tile.ts`:
 
 ```ts
-import type { Status, Tile, TileView } from "../types.ts";
+import { runSource, type Status, type Tile, type TileView } from "../types.ts";
 
 export const myTile: Tile = {
   label: "my tile",       // the header on every view; unique among tiles
   intervalMs: 60_000,     // how often collect() runs
   // wide: true,           // optional full-width placement
-  // runSources: [{ repo: "owner/repo", workflow: "ci.yml" }],
+  // runSources: [runSource("owner/repo", "ci.yml", "main")], // or "pull requests"
   async collect(ctx): Promise<TileView> {
     // ctx.runs() -> shared CI runs; ctx.env("KEY") -> env var.
     // If a required env var is missing, return a gray "unknown" view — don't throw.
@@ -377,12 +378,12 @@ to the next; a view supplies everything under it.
 |---|---|---|
 | ci | every job the organization runs outside pull requests, in every repository the token can see that is not archived: for each active workflow, the newest run on that repository's own default branch that passed or failed, however many runs that judged nothing came after it. The headline is `passing` when every one of them passes, the repository's name when a single job is failing, as in `loom failing`, and a count when more than one is, as in `3 failing`. The header carries how many jobs the headline speaks for and how many repositories they came from. The body lists every failing job with its conclusion and how long ago it ran; while the tile is not red it also lists the labs and loom main builds, so the two builds the team watches stay visible, and a red tile lists only its failing jobs. A failure older than `CI_FAILURE_FRESH_HOURS` is orange rather than red: it is still failing and still counted, and it is no longer the thing that just broke. A failure made before the workflow's file last changed does not count at all, since that is what a job someone stopped rather than fixed looks like. A repository whose workflow listing cannot be read is listed too, and turns the tile orange rather than being passed over. The rows carry no links of their own, because the tile itself opens the page below | `GH_TOKEN` (or `GITHUB_TOKEN`) with Actions read across the organization |
 | CI jobs → `/ci` | every job the ci tile read, at full width: the repository and workflow, what started the deciding run (`push`, `schedule`, `workflow_dispatch`, and the rest, as GitHub names them), what that run concluded, how long it took, when it started, and how long ago that was. Every column sorts, once up and once down, on the value behind the cell rather than on what the cell says, so durations and times order as the measurements they are; the page opens worst first and a column of equal values keeps that order beneath it. Workflows with no verdict are listed under the table rather than through it, each with why: no completed run on the default branch, which is what a workflow only a pull request triggers looks like; runs that all judged nothing; or a workflow changed since it failed. So are repositories whose workflow listing could not be read. It renders the tile's own last collection rather than asking GitHub again, so opening it costs no requests and shows exactly what the tile shows. The page is live: an open copy shows each collection within a serving tick of the tile finishing it, without reloading, and in whatever order the reader sorted it | none |
-| labs ci trust, labs ci duration | GitHub Actions (`deno.yml` on main in `commonfabric/labs`), via the REST API | `GH_TOKEN` (or `GITHUB_TOKEN`) |
-| loom ci trust, loom ci duration | the same two tiles for `commonfabric/loom` (`test-fast.yml` on main) | `GH_TOKEN` (read access to loom); optional `DASHBOARD_LOOM_REPO` |
-| your metric here | a place in the grid for a metric nobody has chosen yet. It reads nothing, so it carries no figure, and it is green because there is nothing wrong with an empty slot | none |
+| labs ci trust, labs ci duration | GitHub Actions (`deno.yml` in `commonfabric/labs`), via the REST API. Trust reads the runs on main; duration reads the pull request runs | `GH_TOKEN` (or `GITHUB_TOKEN`) |
+| loom ci trust, loom ci duration | the same two tiles for `commonfabric/loom` (`test-fast.yml`) | `GH_TOKEN` (read access to loom); optional `DASHBOARD_LOOM_REPO` |
+| weaver ci trust, weaver ci duration | the same two tiles for `commonfabric/commonfabric-weaver` (`ci.yml`). The duration tile is not a link, because the history views cover only labs and loom | `GH_TOKEN` (read access to weaver); optional `DASHBOARD_WEAVER_REPO` |
 | recent main runs | Labs and Loom main-run snapshots, refreshed independently and merged chronologically whenever either arrives; each row is tagged with its repo | `GH_TOKEN` |
 | commit CI Gantt → `/ci-gantt` | job and step timing for every successful main workflow run attached to one commit, linked from run durations in recent main runs | `GH_TOKEN` |
-| CI duration history → `/bench?view=ci` | labs and loom job, shard-group, and end-to-end workflow duration trends. The duration tiles open their matching repository view | `GH_TOKEN` |
+| CI duration history → `/bench?view=ci` | labs and loom job, shard-group, and end-to-end workflow duration trends. The labs and loom duration tiles open their repository's view, which charts runs on main rather than the pull request runs the tiles measure | `GH_TOKEN` |
 | CI run Gantt → `/bench?view=gantt` | detailed labs or loom job phases from `scripts/ci-gantt.ts`, backed by the CI history cache | `GH_TOKEN` |
 | flaky tests | how many tests the test-selection publisher measured disagreeing with themselves often enough to keep off pull requests, read from the newest selection manifest. The headline names what it counts, so it reads `25 flaky tests`, or `no flaky tests` when there are none. The line under it says what the count was drawn from: the span of history a flake share is measured over, which the manifest's `FLAKE_WINDOW_DAYS` dial names, and how long ago the publisher measured. The sparkline plots the count across every available manifest. Which tests they are is on the page behind it. Amber from one, red from ten. Gray with a dash when no manifest is available, the newest readable manifest has an empty corpus, or none of the manifests it looked at can be read, naming the shape it found in that last case. Readable history remains visible when the newest object cannot be read | optional `GH_TOKEN` for publisher activity |
 | test selection | what share of the corpus the newest selection manifest would have a pull request run, read from the same manifest. The manifest's packing is built with nothing mandatory, so the share is the one a pull request touching no test would get; a real one re-packs against its own diff and spends part of the same budget on what that diff makes mandatory. Amber once that manifest is over eight hours old, because selection quality decays with it, and amber too while the corpus holds a test costing more on its own than a whole lane's budget, since no packing can place one and a pull request then runs it only where its own diff makes it mandatory. Red when a lane's projected work is past the budget the manifest was packed to. Both of the last two take the sub line off the corpus count, the red one first. The sparkline plots the selected percentage across every available manifest, using each manifest's own corpus size. Gray on the same conditions as the flaky tests tile, including an empty latest corpus | optional `GH_TOKEN` for publisher activity |
@@ -392,7 +393,6 @@ to the next; a view supplies everything under it.
 | prod errors | SigNoz trace error rate for one service (errored spans / all spans): last-12h headline, with a per-hour sparkline over the retained trace history (~2 weeks) and the last-12h slice that feeds the headline highlighted. Scoped to `PROD_SERVICE` — the same SigNoz holds staging and one-off perf runs, whose rates are not production's. Gray (not red) when SigNoz is unreachable. Pops out to the SigNoz logs explorer | `SIGNOZ_URL`, `SIGNOZ_API_KEY`; optional `PROD_SERVICE`, `SIGNOZ_UI_URL` for the pop-out |
 | cloud spend | BigQuery billing export, after credits, projected to month-end from the available part of a 14-day daily-cost window early in the month. The header shows actual MTD spend. The highlighted part of the 45-day chart shows the days used for the estimate | `GCP_BILLING_TABLE` (+ Workload Identity, or `GCP_SA_KEY` locally), optional `GCP_DAILY_BUDGET` |
 | github spend | the organization's whole metered GitHub bill, projected to month-end in USD: every product its billing report carries, added into one figure. The 45-day chart labels the line with MTD spend, and the header shows the same total. A report that stopped being written more than four days ago is unavailable rather than a run of $0 days. A month whose report cannot be read breaks the line across those days rather than charting them as $0. "What the GitHub figure covers" below says which spend reaches the API | `GH_TOKEN` (with org billing read); optional `GH_BILLING_ORG` |
-| cubic spend | the spend row's slot for Cubic, the code review service. Cubic's API reports no billing figure, so the tile stays green and says why it shows none | none |
 | all benchmarks | a scale-invariant index of benchmark performance on `benchmarks.yml` main runs, trended over ~45 days (each run vs the last, geometric mean of per-benchmark changes, so every benchmark weighs the same, divided by the same run's machine calibration so a busy host does not read as a code change): red when the most recent run failed or produced no valid data (the main signal), with a `failed (was <trend>)` headline when cached measurements are available and `failed` otherwise; orange only on a broad across-the-board rise from a CPU measured in the preceding twelve hours. Adding or removing a benchmark is a non-event. Drills through to the per-benchmark history | `GH_TOKEN` |
 | key benchmarks | the same index and status rules as all benchmarks, restricted to `topic board/journey` and `topic board scale/100`. Machine calibration still uses the run's calibration measurements. Counts and data availability refer to the selected benchmarks. Opens the per-benchmark history with "key only" checked | `GH_TOKEN` |
 | performance history → `/bench?view=runtime` | runtime benchmark trends, labs or loom CI duration history, and a detailed CI run Gantt. Historical views support windows from 1 through 45 days, date axes, and duration sorting. CI includes end-to-end workflow time, every job, and slowest-shard group lines | `GH_TOKEN` |
@@ -516,7 +516,7 @@ the hundred newest default-branch runs to conclude that way came from
 of them, so ending a job's verdict at a skipped run would drop a conditional
 job's real failure the next time it skipped.
 
-The **labs ci trust** and **loom ci trust** percentages pass over each attempt
+The **labs ci trust**, **loom ci trust**, and **weaver ci trust** percentages pass over each attempt
 that was cancelled before it started a job. A run is first-try green when
 exactly one of its attempts is left and it succeeded. It is red when that
 attempt did not succeed, and red when more than one is left, since the run
@@ -527,10 +527,22 @@ decided, each at most once, and holds them while the run stays in the trust
 window. An earlier attempt or a job count that cannot be read turns the tile
 gray, keeping its last value, until a later collection reads it.
 
-The **labs ci duration** and **loom ci duration** tiles use successful main push
-runs. Each duration starts when GitHub creates the workflow run for the landed
-commit and ends when that run finishes, so it includes runner queueing and
-reruns.
+The **labs ci duration**, **loom ci duration**, and **weaver ci duration** tiles
+use pull request runs that succeeded on their first attempt. Each duration
+starts when GitHub creates the workflow run and ends when that run finishes, so
+it includes runner queueing. A run that passed only on a rerun is left out,
+because its span includes the wait before someone asked for the rerun. A run
+that ran no job is left out too, and so is one that ran one job and skipped the
+rest: it did nothing beyond reporting its status, as weaver's run for a draft
+pull request does. A workflow whose only job ran is counted. Telling those apart
+takes one request for each run's job listing, which is held while the run stays
+in the window. A job listing that cannot be read turns the tile gray, keeping
+its last value, until a later collection reads it. The runs counted are whichever lanes each pull request asked
+for, so in labs a pull request labelled for the full run takes longer than one
+running its selected tests, and the median follows the mix of the two. The
+duration tiles collect every five minutes rather than every thirty seconds,
+since each pull request snapshot costs its own requests and a median of runs
+that take several minutes moves slowly.
 
 ### Test selection history
 
@@ -641,12 +653,13 @@ if you lose it you have to regenerate.
 
 ### `GH_TOKEN` (or `GITHUB_TOKEN`)
 
-Powers **ci**, **labs ci trust**, **labs ci duration**, the **loom**
-counterparts, **recent main runs**, **github spend**, and
+Powers **ci**, **labs ci trust**, **labs ci duration**, the **loom** and
+**weaver** counterparts, **recent main runs**, **github spend**, and
 **github users**. It also powers the optional publisher-activity indicators on
 **flaky tests** and **test selection**; their public measurements need no token.
 Needs
-repo **Actions: read** on both `commonfabric/labs` and `commonfabric/loom`;
+repo **Actions: read** on `commonfabric/labs`, `commonfabric/loom`, and
+`commonfabric/commonfabric-weaver`;
 the github-ci-spend tile additionally needs org **Administration: read** on
 `commonfabric`. The **github users** tile needs org **Members: read**. The
 **ci** tile covers every repository the token can see, so a token selecting only
@@ -664,8 +677,9 @@ organization member; other callers see only public memberships.
    personal account) — org ownership is what unlocks the billing permission.
 3. **Repository access** → **All repositories**, which is what lets the **ci**
    tile see the whole organization. **Only select repositories** with
-   `commonfabric/labs` and `commonfabric/loom` covers every other GitHub tile,
-   and narrows **ci** to those two.
+   `commonfabric/labs`, `commonfabric/loom`, and
+   `commonfabric/commonfabric-weaver` covers every other GitHub tile, and
+   narrows **ci** to those three.
 4. **Repository permissions**: set **Actions** and **Contents** to **Read-only**.
 5. **Organization permissions**: set **Members** to **Read-only** for GitHub
    users. Set **Administration** to **Read-only** for github spend. Only an org

@@ -33,7 +33,15 @@ import { escapeHtml, friendlyError, githubOperationsInProgress } from "./lib.ts"
 import { faviconPng, faviconStatus } from "./favicon.ts";
 import type { FaviconStatus } from "./favicon.ts";
 import { renderTile, shell } from "./render.ts";
-import type { Ctx, Run, RunSource, Tile, TileView } from "./types.ts";
+import {
+  type Ctx,
+  type Run,
+  runSource,
+  type RunSource,
+  runSourceKey,
+  type Tile,
+  type TileView,
+} from "./types.ts";
 import { livePages } from "./live-page.ts";
 import { SERVING_VERSION } from "./version.ts";
 import {
@@ -162,7 +170,6 @@ export const broadcast = (update: DashboardUpdate) => send(encodeUpdate(update))
 let beats = 0;
 export const heartbeat = () => send(enc.encode(`event: ping\ndata: ${++beats}\n\n`));
 
-const runSourceKey = (source: RunSource): string => `${source.repo} ${source.workflow}`;
 const runSourceTileKey = (source: RunSource, tile: Tile): string => `${runSourceKey(source)} ${tile.label}`;
 
 function beginTileUpdate(tile: Tile, startedAt: number): void {
@@ -245,10 +252,10 @@ function groupRunSources(tiles: Tile[]): RunSourceGroup[] {
 }
 
 function snapshotCtx(base: Ctx, snapshots: ReadonlyMap<string, Run[]>): Ctx {
-  const runsFor = (repo: string, workflow: string) =>
-    Promise.resolve(snapshots.get(runSourceKey({ repo, workflow })) ?? []);
+  const runsFor = (source: RunSource) =>
+    Promise.resolve(snapshots.get(runSourceKey(source)) ?? []);
   return {
-    runs: () => runsFor(REPO, CI_WORKFLOW),
+    runs: () => runsFor(runSource(REPO, CI_WORKFLOW, "main")),
     runsFor,
     env: base.env,
   };
@@ -426,17 +433,17 @@ export async function tick(tiles: Tile[] = TILES, sourceCtx: Ctx = ctx) {
       let runs: Run[] | undefined;
       let error: string | undefined;
       try {
-        runs = await sourceCtx.runsFor(group.source.repo, group.source.workflow);
+        runs = await sourceCtx.runsFor(group.source);
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
         console.error(`run source ${runSourceKey(group.source)} failed:`, error);
       }
 
       const key = runSourceKey(group.source);
-      // A repository's newest run on main only ever moves forward. A fetch that
-      // comes back with an older newest run than the one already held read a
-      // stale view of the workflow, and publishing it would age the whole tile
-      // family backwards without saying so. Keep what is held and name the
+      // A source's newest run only ever moves forward. A fetch that comes back
+      // with an older newest run than the one already held read a stale view
+      // of the workflow, and publishing it would age the whole tile family
+      // backwards without saying so. Keep what is held and name the
       // source stale; the next fetch that reaches a current view clears it.
       if (runs && newestRunAt(runs) < newestRunAt(runSnapshots.get(key))) {
         error = "newest run older than the one already collected";
