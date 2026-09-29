@@ -1266,6 +1266,45 @@ boardTest("a tile that asks to be collected again is collected from the snapshot
   assertEquals(fetches, 2, "the snapshot was not fetched again");
 });
 
+boardTest("a tile asking to be collected again after the board is reset is not collected", async () => {
+  const source = { repo: "test/collect-again-reset", workflow: "ci.yml" };
+  const sourceCtx: Ctx = {
+    runs: () => sourceCtx.runsFor(source.repo, source.workflow),
+    runsFor: () => Promise.resolve([sourceRun(3, "run")]),
+    env: () => undefined,
+  };
+  let collections = 0;
+  let asked: Ctx | undefined;
+  const tile: Tile = {
+    label: "ci",
+    intervalMs: 60_000,
+    runSources: [source],
+    collect(ctx): Promise<TileView> {
+      collections++;
+      asked ??= ctx;
+      return Promise.resolve({ status: "good", value: "collected" });
+    },
+  };
+
+  await tick([tile], sourceCtx);
+  resetBoardForTest();
+  // A request left over from before the reset, as a background task of the
+  // tile's might make, collects nothing from what the reset cleared.
+  const logged: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  try {
+    asked!.collectAgain!();
+    await Promise.resolve();
+  } finally {
+    console.error = error;
+  }
+  assertEquals(collections, 1);
+  assertEquals(logged, []);
+  // The board can be reset again, so no collection is under way.
+  resetBoardForTest();
+});
+
 boardTest("a tile asking to be collected again while its snapshot's tiles are being collected waits for their views", async () => {
   const source = runSource("test/collect-again-wait", "ci.yml", "main");
   let fetches = 0;

@@ -775,19 +775,13 @@ export function createCiHealth(): CiHealthTile {
           const problem = ctx.runSourceProblem?.(source);
           const listing: Listing = problem !== undefined
             ? { inventory: repo, workflow, runs: [], error: problem }
-            : await ctx.runsFor(source).then(
-              (runs) => ({
-                inventory: repo,
-                workflow,
-                runs: runs.filter((run) => !PULL_REQUEST_EVENTS.has(run.event)),
-              }),
-              (error) => ({
-                inventory: repo,
-                workflow,
-                runs: [],
-                error: messageOf(error),
-              }),
-            );
+            : {
+              inventory: repo,
+              workflow,
+              runs: (await ctx.runsFor(source)).filter((run) =>
+                !PULL_REQUEST_EVENTS.has(run.event)
+              ),
+            };
           const { job } = await judge(listing, from.redefined, token);
           // A snapshot's own problem is logged where the snapshot is read.
           if (problem === undefined && isUnreadable(job)) {
