@@ -1504,6 +1504,34 @@ export class SchemaGenerator {
   }
 
   /**
+   * `type` as the formatters after `CommonFabricFormatter` read it: for a type
+   * that formatter claims for the labels it adds, whose value is the type as
+   * the checker builds it (`Readonly<Sec<X>>`). Called within the type's own
+   * `#formatType()`, which names and stores what it returns.
+   */
+  public formatStructure(
+    type: ts.Type,
+    context: GenerationContext,
+  ): MutableJSONSchema {
+    return this.#formatters.find((formatter) =>
+      formatter !== this.#commonFabricFormatter &&
+      formatter.supportsType(type, context)
+    )?.formatType(type, context) ?? {};
+  }
+
+  /**
+   * The labels `carrier`, a CFC metadata carrier an object holds as one of its
+   * members, attaches, each read in full, or `undefined` where any is not
+   * (`CommonFabricFormatter.labelsCarriedBy()`).
+   */
+  public labelsCarriedBy(
+    carrier: ts.Symbol,
+    context: GenerationContext,
+  ): Record<string, unknown>[] | undefined {
+    return this.#commonFabricFormatter.labelsCarriedBy(carrier, context);
+  }
+
+  /**
    * Formats `type` with `read`, the reading of a CFC alias chain entered from
    * `entry`, where the checker instantiates `instantiated`: a written reference
    * to the chain, or, for a chain reached with none, as through an index
@@ -3398,11 +3426,20 @@ export class SchemaGenerator {
         if (second === undefined) return undefined;
         const keys = literalKeys(second);
         if (keys === undefined) return undefined;
-        return pickedView(
-          analyze(first, instantiatedAs),
+        // The picked members are the labelled value's, so its label stays.
+        const operand = analyze(first, instantiatedAs);
+        const { ifc, ...payload } = isObjectOrArray(operand) &&
+            !Array.isArray(operand)
+          ? operand as Record<string, unknown>
+          : { ifc: undefined };
+        const picked = pickedView(
+          ifc === undefined ? operand : payload as MutableJSONSchema,
           context,
           name === "Pick" ? { pick: keys } : { omit: keys },
         );
+        return picked && isObjectOrArray(ifc) && !Array.isArray(ifc)
+          ? withIfcLabels(picked, ifc as Record<string, unknown>)
+          : picked;
       }
       case "Record": {
         if (second === undefined) return undefined;

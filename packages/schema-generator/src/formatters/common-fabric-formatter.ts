@@ -54,6 +54,7 @@ import {
   wrapperKindToBrand,
 } from "../typescript/cell-brand.ts";
 import { hasDefaultMarker } from "../typescript/default-brand.ts";
+import { isDefaultLibrarySourceFile } from "../typescript/default-library.ts";
 import { isDefaultAliasSymbol } from "../typescript/property-optionality.ts";
 import {
   getScopeBrand,
@@ -392,12 +393,41 @@ const soleConditionalBranch = (
 };
 
 /**
+ * The member a CFC metadata carrier holds (`Cfc` in `packages/api/cfc.ts`).
+ * It is a phantom: no value holds it.
+ */
+export const CFC_CARRIER_PROPERTY = "__ct_cfc__";
+
+/**
+ * The default-library aliases that map an object's members, which fold a
+ * labelled operand's carrier into the object they build as one more member.
+ */
+const MEMBER_MAPPING_LIBRARY_ALIASES: ReadonlySet<string> = new Set([
+  "Readonly",
+  "Partial",
+  "Required",
+  "Pick",
+  "Omit",
+]);
+
+/**
+ * The member-mapping aliases that leave a primitive as it is, as TypeScript's
+ * homomorphic mapped types do: `Readonly<string>` is `string`.
+ */
+const PRIMITIVE_KEEPING_LIBRARY_ALIASES: ReadonlySet<string> = new Set([
+  "Readonly",
+  "Partial",
+  "Required",
+]);
+
+/**
  * The `__ct_cfc__` member of `member` when that is all `member` holds: a CFC
  * metadata carrier, which a CFC alias intersects its payload with.
  */
 const cfcCarrierProperty = (member: ts.Type): ts.Symbol | undefined => {
   const properties = member.getProperties();
-  return properties.length === 1 && properties[0]!.name === "__ct_cfc__"
+  return properties.length === 1 &&
+      properties[0]!.name === CFC_CARRIER_PROPERTY
     ? properties[0]
     : undefined;
 };
@@ -723,6 +753,10 @@ export class CommonFabricFormatter implements TypeFormatter {
       return true;
     }
 
+    if (this.#libraryView(type, context)) {
+      return true;
+    }
+
     // Check via typeNode for Default (erased at type-level)
     const wrapperViaNode = detectWrapperViaNode(
       context.typeNode,
@@ -822,6 +856,30 @@ export class CommonFabricFormatter implements TypeFormatter {
         resolvedCfcAlias,
         () => this.#formatResolvedCfcAlias(resolvedCfcAlias, context),
       );
+    }
+
+    // A default-library alias mapping a labelled type's members builds its
+    // type from the operand's, carrier and all, as TypeScript builds any
+    // mapped type: over an object it folds the carrier into the object as one
+    // more member, which `Pick` may leave out, and over a primitive it builds
+    // an object of the primitive's methods. So the value is that type as the
+    // formatters after this one read it, or, where `Readonly`, `Partial` and
+    // `Required` leave a primitive as it is, the primitive; and its labels
+    // are the operand's, read from its carriers in full or not at all.
+    const view = this.#libraryView(type, context);
+    if (view) {
+      const shape = view.primitive
+        ? this.#schemaGenerator.formatChildType(
+          view.payload,
+          context,
+          undefined,
+        )
+        : this.#schemaGenerator.formatStructure(type, context);
+      // The structure may carry the same labels, from the carrier folded into
+      // it; labelling it again with them changes nothing.
+      return (this.#labelsOf(view.metadata, context) ?? []).reduce<
+        MutableJSONSchema
+      >((labelled, label) => withIfcLabels(labelled, label), shape);
     }
 
     // With no alias name left to follow, and no reference naming the policy,
@@ -1729,6 +1787,103 @@ export class CommonFabricFormatter implements TypeFormatter {
     }
 
     return valueSchema;
+  }
+
+  /**
+   * The labels `carrier`, a CFC metadata carrier an object holds as one of its
+   * members, attaches: one per metadata type, an intersection holding one per
+   * label that was folded into it (`#labelsOf()`).
+   */
+  labelsCarriedBy(
+    carrier: ts.Symbol,
+    context: GenerationContext,
+  ): Record<string, unknown>[] | undefined {
+    const checker = context.typeChecker;
+    const value = memberValueType(
+      carrier,
+      checker.getTypeOfSymbol(carrier),
+      checker,
+    );
+    return this.#labelsOf(
+      value.isIntersection() ? value.types : [value],
+      context,
+    );
+  }
+
+  /**
+   * The labels each of `metadata`, a carrier's metadata type, spells, or
+   * `undefined` where any is not read in full. Read in part, a policy could
+   * claim what its author never wrote together, so it is read in full or not
+   * at all, as the carriers of an intersection are.
+   */
+  #labelsOf(
+    metadata: readonly ts.Type[],
+    context: GenerationContext,
+  ): Record<string, unknown>[] | undefined {
+    const labels = metadata.map((part) =>
+      this.#extractLiteralLikeValue(part, undefined, context)
+    );
+    return labels.every((label) =>
+        isObjectOrArray(label) && !Array.isArray(label) && readInFull(label)
+      )
+      ? labels as Record<string, unknown>[]
+      : undefined;
+  }
+
+  /**
+   * Where `type` is a default-library alias mapping a labelled type's members
+   * (`Readonly<Sec<X>>`), the operand's payload and carriers' metadata, and
+   * whether the value is that payload: a primitive, which `Readonly`,
+   * `Partial` and `Required` leave as it is; `undefined` for any other type.
+   * A labelled operand is an intersection holding carriers, or such an alias
+   * in turn. The checker reports the outermost alias, and a `Pick` or an
+   * `Omit` over literal keys builds an object that a user's alias of it
+   * names, so an alias whose whole body is a reference to one of these is
+   * followed to it, its operand the type the reference writes.
+   */
+  #libraryView(
+    type: ts.Type,
+    context: GenerationContext,
+  ):
+    | { payload: ts.Type; metadata: readonly ts.Type[]; primitive: boolean }
+    | undefined {
+    const checker = context.typeChecker;
+    const { aliasSymbol, aliasTypeArguments } = type as TypeWithInternals;
+    const library = (symbol: ts.Symbol) =>
+      MEMBER_MAPPING_LIBRARY_ALIASES.has(symbol.name) &&
+      !!symbol.declarations?.length &&
+      symbol.declarations.every((declaration) =>
+        isDefaultLibrarySourceFile(declaration.getSourceFile(), context)
+      );
+    let name = aliasSymbol && library(aliasSymbol)
+      ? aliasSymbol.name
+      : undefined;
+    let operand = name === undefined ? undefined : aliasTypeArguments?.[0];
+    if (name === undefined && aliasSymbol) {
+      const body = resolveAliasedSymbol(aliasSymbol, checker).declarations
+        ?.find(ts.isTypeAliasDeclaration)?.type;
+      const reference = body && unwrapTypeParentheses(body);
+      const named = reference && ts.isTypeReferenceNode(reference) &&
+        checker.getSymbolAtLocation(reference.typeName);
+      const written = named && reference.typeArguments?.[0];
+      const declared = named && resolveAliasedSymbol(named, checker);
+      if (written && declared && library(declared)) {
+        name = declared.name;
+        operand = checker.getTypeFromTypeNode(written);
+      }
+    }
+    if (name === undefined || !operand) return undefined;
+    const carried = cfcCarriedParts(operand, checker);
+    const inner = carried
+      ? {
+        ...carried,
+        primitive: (carried.payload.flags & ts.TypeFlags.Object) === 0,
+      }
+      : this.#libraryView(operand, context);
+    return inner && {
+      ...inner,
+      primitive: inner.primitive && PRIMITIVE_KEEPING_LIBRARY_ALIASES.has(name),
+    };
   }
 
   /**
