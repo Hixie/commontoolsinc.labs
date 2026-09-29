@@ -1173,6 +1173,270 @@ boardTest("a failed run source keeps its last good snapshot", async () => {
   assertStringIncludes(stale, "stale-source source unreachable");
 });
 
+boardTest("a tile that reports its sources' problems is handed them rather than grayed", async () => {
+  const source = runSource("test/reported-source", "ci.yml", "main");
+  let failing = false;
+  const sourceCtx: Ctx = {
+    runs: () => sourceCtx.runsFor(source),
+    runsFor: () => failing
+      ? Promise.reject(new Error("error sending request for url"))
+      : Promise.resolve([sourceRun(3, "last good run")]),
+    env: () => undefined,
+  };
+  const tile: Tile = {
+    label: "ci",
+    intervalMs: 0,
+    runSources: [source],
+    reportsSourceProblems: true,
+    async collect(ctx): Promise<TileView> {
+      const runs = await ctx.runsFor(source);
+      const problem = ctx.runSourceProblem?.(source);
+      return {
+        status: "bad",
+        value: `${runs.map((run) => run.display_title).join(", ")} · ${problem ?? "current"}`,
+      };
+    },
+  };
+
+  await tick([tile], sourceCtx);
+  assert(tileHtml("ci").startsWith(`bad"`));
+  assertStringIncludes(tileHtml("ci"), "last good run · current");
+
+  failing = true;
+  await tick([tile], sourceCtx);
+  const reported = tileHtml("ci");
+  assert(reported.startsWith(`bad"`), reported);
+  assertStringIncludes(reported, "last good run · error sending request for url");
+});
+
+boardTest("a tile that asks to be collected again is collected from the snapshots it was last published from", async () => {
+  const source = runSource("test/collect-again", "ci.yml", "main");
+  let fetches = 0;
+  const sourceCtx: Ctx = {
+    runs: () => sourceCtx.runsFor(source),
+    runsFor: () => {
+      fetches++;
+      return Promise.resolve([sourceRun(3, `fetch ${fetches}`)]);
+    },
+    env: () => undefined,
+  };
+  let collections = 0;
+  let asked: Ctx | undefined;
+  const tile: Tile = {
+    label: "ci",
+    intervalMs: 60_000,
+    runSources: [source],
+    async collect(ctx): Promise<TileView> {
+      collections++;
+      asked ??= ctx;
+      const runs = await ctx.runsFor(source);
+      return { status: "good", value: `${runs[0].display_title} · ${collections}` };
+    },
+  };
+  // The neighbour is due more often, and its second collection is slow, so a
+  // second fetch is held before any tile is published from it.
+  const held = deferred<void>();
+  const release = deferred<void>();
+  let neighbourCollections = 0;
+  const neighbour: Tile = {
+    label: "labs ci trust",
+    intervalMs: 0,
+    runSources: [source],
+    async collect(ctx): Promise<TileView> {
+      if (++neighbourCollections === 2) {
+        held.resolve();
+        await release.promise;
+      }
+      const runs = await ctx.runsFor(source);
+      return { status: "good", value: runs[0].display_title };
+    },
+  };
+
+  await tick([tile, neighbour], sourceCtx);
+  const second = tick([tile, neighbour], sourceCtx);
+  await held.promise;
+  // The tile has data of its own to show while that fetch is held.
+  using published = observeUpdate(() => tileHtml("ci").includes(" · 2"));
+  asked!.collectAgain!();
+  await published.promise;
+  assertStringIncludes(tileHtml("ci"), "fetch 1 · 2");
+  assertStringIncludes(tileHtml("labs ci trust"), "fetch 1");
+  release.resolve();
+  await second;
+  assertEquals(fetches, 2, "the snapshot was not fetched again");
+});
+
+boardTest("a tile asking to be collected again after the board is reset is not collected", async () => {
+  const source = runSource("test/collect-again-reset", "ci.yml", "main");
+  const sourceCtx: Ctx = {
+    runs: () => sourceCtx.runsFor(source),
+    runsFor: () => Promise.resolve([sourceRun(3, "run")]),
+    env: () => undefined,
+  };
+  let collections = 0;
+  let asked: Ctx | undefined;
+  const tile: Tile = {
+    label: "ci",
+    intervalMs: 60_000,
+    runSources: [source],
+    collect(ctx): Promise<TileView> {
+      collections++;
+      asked ??= ctx;
+      return Promise.resolve({ status: "good", value: "collected" });
+    },
+  };
+
+  await tick([tile], sourceCtx);
+  resetBoardForTest();
+  // A request left over from before the reset, as a background task of the
+  // tile's might make, collects nothing from what the reset cleared.
+  const logged: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+  try {
+    asked!.collectAgain!();
+    await Promise.resolve();
+  } finally {
+    console.error = error;
+  }
+  assertEquals(collections, 1);
+  assertEquals(logged, []);
+  // The board can be reset again, so no collection is under way.
+  resetBoardForTest();
+});
+
+boardTest("a tile asking to be collected again while its snapshot's tiles are being collected waits for their views", async () => {
+  const source = runSource("test/collect-again-wait", "ci.yml", "main");
+  let fetches = 0;
+  const sourceCtx: Ctx = {
+    runs: () => sourceCtx.runsFor(source),
+    runsFor: () => {
+      fetches++;
+      return Promise.resolve([sourceRun(3, `fetch ${fetches}`)]);
+    },
+    env: () => undefined,
+  };
+  let collections = 0;
+  const asked = deferred<void>();
+  const tile: Tile = {
+    label: "ci",
+    intervalMs: 0,
+    runSources: [source],
+    async collect(ctx): Promise<TileView> {
+      const collection = ++collections;
+      // In its second collection, the tile has data of its own to show.
+      if (collection === 2) {
+        ctx.collectAgain?.();
+        asked.resolve();
+      }
+      const runs = await ctx.runsFor(source);
+      return { status: "good", value: `${runs[0].display_title} · ${collection}` };
+    },
+  };
+  // The neighbour sharing the snapshot is slow the second time.
+  const release = deferred<void>();
+  let neighbourCollections = 0;
+  const neighbour: Tile = {
+    label: "labs ci trust",
+    intervalMs: 0,
+    runSources: [source],
+    async collect(ctx): Promise<TileView> {
+      if (++neighbourCollections === 2) await release.promise;
+      const runs = await ctx.runsFor(source);
+      return { status: "good", value: runs[0].display_title };
+    },
+  };
+
+  await tick([tile, neighbour], sourceCtx);
+  const second = tick([tile, neighbour], sourceCtx);
+  await asked.promise;
+  assertEquals(collections, 2, "nothing is collected ahead of the neighbour");
+  assertStringIncludes(tileHtml("ci"), "fetch 1 · 1");
+  using again = observeUpdate(() => tileHtml("ci").includes(" · 3"));
+  release.resolve();
+  await second;
+  await again.promise;
+  assertStringIncludes(tileHtml("ci"), "fetch 2 · 3");
+  assertStringIncludes(tileHtml("labs ci trust"), "fetch 2");
+  assertEquals(fetches, 2);
+});
+
+boardTest("a tile still being collected when its source is due stays on the source's schedule", async () => {
+  const labs = runSource("test/schedule-labs", "ci.yml", "main");
+  const loom = runSource("test/schedule-loom", "ci.yml", "main");
+  using time = new FakeTime(Date.now());
+  const loomReady = deferred<void>();
+  let labsFetches = 0;
+  const sourceCtx: Ctx = {
+    runs: () => sourceCtx.runsFor(labs),
+    runsFor: async (source) => {
+      if (source.repo === loom.repo) {
+        await loomReady.promise;
+        return [sourceRun(3, "loom run")];
+      }
+      labsFetches++;
+      return [sourceRun(3, `labs fetch ${labsFetches}`)];
+    },
+    env: () => undefined,
+  };
+  // The tile reads both sources, and its first collection from a loom
+  // snapshot is slow.
+  const blocked = deferred<void>();
+  const release = deferred<void>();
+  let slow = true;
+  const both: Tile = {
+    label: "ci",
+    intervalMs: 30_000,
+    runSources: [labs, loom],
+    async collect(ctx): Promise<TileView> {
+      const loomRuns = await ctx.runsFor(loom);
+      const labsRuns = await ctx.runsFor(labs);
+      if (loomRuns.length && slow) {
+        slow = false;
+        blocked.resolve();
+        await release.promise;
+      }
+      return { status: "good", value: labsRuns[0]?.display_title ?? "none" };
+    },
+  };
+  const tiles = [
+    both,
+    { ...sourceTile("labs ci trust", [labs]), intervalMs: 30_000 },
+  ];
+
+  const first = tick(tiles, sourceCtx);
+  {
+    using labsDone = observeUpdate(() =>
+      tileHtml("labs ci trust").includes("labs fetch 1")
+    );
+    await labsDone.promise;
+  }
+  loomReady.resolve();
+  await blocked.promise;
+
+  // The labs source is due while the tile is still being collected from
+  // loom, so the trust tile is collected from it without the tile.
+  time.tick(30_000);
+  await tick(tiles, sourceCtx);
+  assertEquals(labsFetches, 2);
+  assertStringIncludes(tileHtml("labs ci trust"), "labs fetch 2");
+  // Once its slow collection is out, the tile is collected from the snapshot
+  // it missed, and shows what the trust tile shows.
+  using caughtUp = observeUpdate(() => tileHtml("ci").includes("labs fetch 2"));
+  release.resolve();
+  await first;
+  await caughtUp.promise;
+
+  // The tile counts as collected with that fetch, so nothing fetches labs
+  // for it alone, and it shares the next fetch with the trust tile.
+  time.tick(15_000);
+  await tick(tiles, sourceCtx);
+  assertEquals(labsFetches, 2, "labs was not fetched for the tile alone");
+  time.tick(15_000);
+  await tick(tiles, sourceCtx);
+  assertEquals(labsFetches, 3);
+});
+
 boardTest("a run source that reads backwards in time keeps its last good snapshot", async () => {
   const source = runSource("test/backwards-source", "ci.yml", "main");
   // sourceRun times a run from its id, so run 5000 is weeks behind run 3. A

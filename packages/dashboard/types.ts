@@ -58,6 +58,10 @@ export interface Tile {
   // GitHub workflow snapshots that drive this tile. The scheduler refreshes
   // each source independently and publishes its due dependent tiles together.
   runSources?: readonly RunSource[];
+  // The tile reports a problem with one of its sources itself, through
+  // ctx.runSourceProblem, and the scheduler leaves its view as it is rather
+  // than turning it gray.
+  reportsSourceProblems?: boolean;
   // Optional workflow activity, refreshed independently on the tile's interval.
   // true lights the running badge; false or undefined clears it.
   collectActivity?(ctx: Ctx): Promise<boolean | undefined>;
@@ -72,6 +76,14 @@ export interface Ctx {
   // same one share one fetch (loom's CI tiles, and the combined recent-runs
   // stream).
   runsFor(source: RunSource): Promise<Run[]>;
+  // For a tile collected from run-source snapshots: why the snapshot of that
+  // source is missing or out of date, or undefined when it is current.
+  runSourceProblem?(source: RunSource): string | undefined;
+  // For a tile collected from run-source snapshots: asks for the tile to be
+  // collected again from the snapshots it was last published from, for when
+  // data of its own has arrived since its last collection. Each ask brings
+  // one more collection, so a tile asks only when such data arrives.
+  collectAgain?(): void;
   env(key: string): string | undefined;
 }
 

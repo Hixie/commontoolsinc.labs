@@ -94,8 +94,28 @@ from the same stored snapshot and publishes those tile updates together. Each
 snapshot can trigger a tile once per collection interval. A tile with several
 snapshots can update once for each snapshot as they arrive. This keeps a
 repository's trust and recent-run views, which both read its runs on main, in
-agreement when their intervals coincide. The ci tile reads no snapshot: it takes its own inventory
-of every repository's workflows on its own interval.
+agreement when their intervals coincide. The ci tile reads the labs and loom
+main-branch snapshots for its two main-build rows, on the same interval as the
+trust tiles, so the scheduler publishes its verdict on a main build with the
+trust grid drawn from the same snapshot. It reads every other workflow in a
+sweep of its own, described below, which runs in the background so that no
+snapshot's tiles wait for it. A problem with either snapshot turns only that
+main build's row unreadable, rather than graying the whole tile.
+
+A tile that reads snapshots can ask, through `ctx.collectAgain()`, to be
+collected again, for when it has data of its own that arrived after its last
+collection. The scheduler collects it from the snapshots it was last published
+from beside its neighbours, without fetching them again, so the tile still
+describes the same runs as they do. A tile that asks while it is being
+collected is collected again once that collection's views are published, so it
+never gets ahead of the tiles sharing its snapshot.
+
+A tile still being collected when one of its sources falls due is left out of
+that source's collection, and counts as collected with it. Once its own
+collection is published, it is collected again from the snapshot it missed.
+It then shares the source's next fetch with the other tiles, rather than
+falling due on its own and fetching the source for itself, which would leave it
+describing different runs from its neighbours from then on.
 
 A workflow snapshot is read a page at a time, and the pages have to describe
 one moment. A page after the first asks GitHub for the runs created at or
@@ -240,6 +260,7 @@ export const myTile: Tile = {
   intervalMs: 60_000,     // how often collect() runs
   // wide: true,           // optional full-width placement
   // runSources: [runSource("owner/repo", "ci.yml", "main")], // or "pull requests"
+  // reportsSourceProblems: true, // read ctx.runSourceProblem(); never grayed
   async collect(ctx): Promise<TileView> {
     // ctx.runs() -> shared CI runs; ctx.env("KEY") -> env var.
     // If a required env var is missing, return a gray "unknown" view — don't throw.
@@ -473,12 +494,24 @@ The set of repositories and the workflows in them is read once an hour and the
 results behind it every five minutes, because the inventory changes far more
 slowly than a job's result does. Reading it costs one request for the
 organization's repository listing, one per repository for its workflows, and
-usually one per active workflow for that workflow's newest runs.
+usually one per active workflow for that workflow's newest runs. A sweep that
+fails is tried again when the next one is due, five minutes later, and the
+tile is gray until one succeeds. Until the first sweep finishes the tile is
+gray and says it is reading every repository. After that each collection shows
+the last sweep that finished while the next one runs. When a sweep ends, the
+tile asks the scheduler to collect it again straight away, so what the sweep
+found is on the board within moments rather than at the next snapshot. The
+labs and loom main builds are the exception. Their runs come from the
+snapshots the ci trust tiles read, so the tile judges them again each time one
+of those snapshots arrives, which is every thirty seconds, and publishes the
+result with the trust tiles. The request that asks whether a failing job's
+workflow file has changed is made at most once per failing run in each sweep,
+however often the main builds are judged.
 
-The tile keeps that collection, and the **CI jobs** page renders it rather than
-collecting again, so the page costs no requests however often it is opened and
-never disagrees with the tile above it. It is as old as the tile is, which its
-heading says.
+The tile keeps its last collection, and the **CI jobs** page renders it rather
+than collecting again, so the page costs no requests however often it is opened
+and never disagrees with the tile above it. Its heading gives the time of the
+last sweep, which is the oldest part of what it shows.
 
 A failure is red for `CI_FAILURE_FRESH_HOURS` and orange after that. Both are
 failures, both are named and counted as failing, and both are listed; the color
