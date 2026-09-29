@@ -599,7 +599,7 @@ function jobPage(total: number, conclusions: readonly string[]): GithubAnswer {
   };
 }
 
-Deno.test("weaver ci duration: a run that ran no job, or skipped every job but one, did no work and is left out", async () => {
+Deno.test("weaver ci duration: a run that ran no job, or ran one job and skipped the rest, did no work and is left out", async () => {
   const now = Date.now();
   const minutes = (m: number) =>
     run({

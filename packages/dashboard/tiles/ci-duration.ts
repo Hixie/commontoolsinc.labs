@@ -677,10 +677,9 @@ interface PassedRun {
  * each with how long it took from creation to finish, in the order of `runs`.
  * A run that passed only on a rerun is left out, because its span includes
  * the wait before someone asked for the rerun. A run that ran no job did
- * nothing, and one that skipped every job but one did nothing beyond reporting
- * its status, as weaver's run for a draft pull request does, so both are left
- * out too. Rejects when a run's job listing
- * cannot be read.
+ * nothing, and one that ran one job and skipped the rest did nothing beyond
+ * reporting its status, as weaver's run for a draft pull request does, so
+ * both are left out too. Rejects when a run's job listing cannot be read.
  */
 async function passedRuns(
   runs: readonly Run[],

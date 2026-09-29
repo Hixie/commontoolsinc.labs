@@ -532,9 +532,9 @@ use pull request runs that succeeded on their first attempt. Each duration
 starts when GitHub creates the workflow run and ends when that run finishes, so
 it includes runner queueing. A run that passed only on a rerun is left out,
 because its span includes the wait before someone asked for the rerun. A run
-that ran no job is left out too, and so is one that skipped every job but one:
-it did nothing beyond reporting its status, as weaver's run for a draft pull
-request does. Telling those apart
+that ran no job is left out too, and so is one that ran one job and skipped the
+rest: it did nothing beyond reporting its status, as weaver's run for a draft
+pull request does. A workflow whose only job ran is counted. Telling those apart
 takes one request for each run's job listing, which is held while the run stays
 in the window. A job listing that cannot be read turns the tile gray, keeping
 its last value, until a later collection reads it. The runs counted are whichever lanes each pull request asked
