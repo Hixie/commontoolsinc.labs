@@ -405,11 +405,12 @@ export function ciJobsPage(
     );
   }
 
-  // A workflow with no run on the default branch has nothing to report in any
-  // of the table's columns, and a workflow only a pull request triggers is
+  // A workflow with no verdict has nothing to report in the table's trigger,
+  // result, and timing columns, and a workflow only a pull request triggers is
   // one of these. They go under the table rather than through it, where
   // thirteen rows of dashes would sit between the failures and everything
-  // that passed.
+  // that passed. One with a run in progress carries the running dot there as
+  // it would in the table.
   const judged = collected.jobs.filter((job) => job.status !== "unknown");
   const silent = ordered(collected.jobs.filter((job) => job.status === "unknown"));
   const rows = ordered(judged).map((job) => jobRow(job, now)).join("");
