@@ -486,8 +486,10 @@ function shouldScanFallback(
 function fallbackSyntaxFor(
   path: string | undefined,
 ): CommentSyntax | undefined {
+  // Shell's highlighting colors each hunk on its own, and this scanner carries
+  // a heredoc across the lines between hunks.
   const language = languageForFile(path).id;
-  if (language !== "plain-text" && language !== "markdown") return undefined;
+  if (!["plain-text", "markdown", "shell"].includes(language)) return undefined;
   const syntax = commentSyntaxFor(path ?? "");
   return syntax.lines.length > 0 || syntax.blocks.length > 0
     ? syntax
