@@ -113,33 +113,6 @@ const REFERENCE_BINDING_SINKS: ReadonlyMap<string, ReadonlySet<string>> =
   ]);
 
 /**
- * The labels two reads consumed together, or undefined when either could
- * not be labeled.
- */
-function joinConsumedLabels(
-  first: SinkConsumedLabel | undefined,
-  second: SinkConsumedLabel | undefined,
-): SinkConsumedLabel | undefined {
-  if (first === undefined || second === undefined) return undefined;
-  const modulePolicySpaces = new Map(
-    [...first.modulePolicySpaces].map((
-      [key, spaces],
-    ) => [key, new Set(spaces)]),
-  );
-  for (const [key, spaces] of second.modulePolicySpaces) {
-    const joined = modulePolicySpaces.get(key) ?? new Set();
-    for (const space of spaces) joined.add(space);
-    modulePolicySpaces.set(key, joined);
-  }
-  return {
-    confidentiality: [...first.confidentiality, ...second.confidentiality],
-    integrity: [...first.integrity, ...second.integrity],
-    modulePolicySpaces,
-    sources: [...first.sources, ...second.sources],
-  };
-}
-
-/**
  * The label a render decision was made on, as a denial reports it: a cell's
  * stored label, its schema's, a read's consumed labels, or none it could
  * read.
@@ -953,13 +926,16 @@ export class WorkerReconciler {
    * consumed changes, labels included, and whenever the membership those
    * labels name changes, and the binding is removed while the policy refuses
    * it. `replacing` says whether the element may hold a binding for
-   * `propName` from before.
+   * `propName` from before. `read` is the cell whose read decides, when the
+   * binding was reached through a slot whose labels the choice of `cell`
+   * carries.
    */
   #bindCell(
     state: NodeState,
     propName: string,
     cell: Cell<unknown>,
     replacing: boolean,
+    read: Cell<unknown> = cell,
   ): Cancel {
     const bind = () =>
       this.#queueOps([{
@@ -984,8 +960,8 @@ export class WorkerReconciler {
       shown = this.#admitProp(
         state,
         propName,
-        cell,
-        consumed,
+        read,
+        [consumed],
         shown,
         first,
         bind,
@@ -993,8 +969,8 @@ export class WorkerReconciler {
       );
       first = false;
     };
-    addCancel(this.#sinkCell(cell, (_value, read) => {
-      consumed = read;
+    addCancel(this.#sinkCell(read, (_value, labels) => {
+      consumed = labels;
       watch.reeval();
     }, true));
     return cancel;
@@ -1002,8 +978,8 @@ export class WorkerReconciler {
 
   /**
    * Decides whether the node's render policy admits a prop or binding whose
-   * value was read from `source`, consuming the labels in `consumed`, and
-   * emits only what the decision changes. `shown` says whether the prop may
+   * value was read from `source` by `reads`, each consuming the labels it
+   * reports, and emits only what the decision changes. `shown` says whether the prop may
    * be showing before the decision, or is undefined when nothing has been
    * shown for it; the result says whether it may be showing after. `show`
    * runs when the prop is admitted and either its value `changed` or it was
@@ -1015,7 +991,7 @@ export class WorkerReconciler {
     state: NodeState,
     key: string,
     source: Cell<unknown>,
-    consumed: SinkConsumedLabel | undefined,
+    reads: readonly (SinkConsumedLabel | undefined)[],
     shown: boolean | undefined,
     changed: boolean,
     show: () => void,
@@ -1028,10 +1004,13 @@ export class WorkerReconciler {
     }
     // A read the sink could not label is treated as consuming the marker no
     // policy admits.
-    const confidentiality = consumed?.confidentiality ??
-      [CFC_LABEL_READ_FAILED_ATOM];
-    const spaces = [...(consumed?.modulePolicySpaces.values() ?? [])]
-      .flatMap((set) => [...set]);
+    const confidentiality = reads.flatMap((read) =>
+      read?.confidentiality ?? [CFC_LABEL_READ_FAILED_ATOM]
+    );
+    const integrity = reads.flatMap((read) => read?.integrity ?? []);
+    const spaces = reads.flatMap((read) =>
+      [...(read?.modulePolicySpaces.values() ?? [])].flatMap((set) => [...set])
+    );
     this.#watchLabelMembership(
       confidentiality,
       spaces,
@@ -1046,7 +1025,7 @@ export class WorkerReconciler {
         )
         : this.#canRenderLabelUnderPolicy(
           confidentiality,
-          consumed?.integrity ?? [],
+          integrity,
           () => spaces,
           policy,
         )
@@ -1058,7 +1037,7 @@ export class WorkerReconciler {
       this.#reportRenderDenial(() => ({
         labelSource: "consumed",
         confidentiality,
-        integrity: consumed?.integrity ?? [],
+        integrity,
       }), policy);
       if (shown) {
         this.#queueOps([{ op: "remove-prop", nodeId: state.nodeId, key }]);
@@ -2180,41 +2159,36 @@ export class WorkerReconciler {
    * declaration made it.
    *
    * `deliver` receives each value with the cell it was read from and the
-   * labels that read consumed.
+   * labels each read behind it consumed.
    */
   #sinkPropValue(
     cell: Cell<unknown>,
     deliver: (
       value: unknown,
       source: Cell<unknown>,
-      consumed: SinkConsumedLabel | undefined,
+      reads: readonly (SinkConsumedLabel | undefined)[],
     ) => void,
     includeConsumedLabel: boolean,
   ): Cancel {
     type Referenced = {
       cell: Cell<unknown>;
       cancel: Cancel;
-      latest?: { value: unknown; consumed: SinkConsumedLabel | undefined };
+      value: unknown;
+      consumed: SinkConsumedLabel | undefined;
     };
     let referenced: Referenced | undefined;
     // The labels the read of the reference consumed: a dereference retains
     // them, since which target it names can depend on them (spec §4.6.3).
     let outer: SinkConsumedLabel | undefined;
-    const deliverReferenced = (current: Referenced) => {
-      if (current.latest === undefined) return;
-      deliver(
-        current.latest.value,
-        current.cell,
-        joinConsumedLabels(outer, current.latest.consumed),
-      );
-    };
+    const deliverReferenced = (current: Referenced) =>
+      deliver(current.value, current.cell, [outer, current.consumed]);
     const cancelOuter = this.#sinkCell(cell, (value, consumed) => {
       outer = consumed;
       const named = cellOfOpaqueReference(value);
       if (named === undefined) {
         referenced?.cancel();
         referenced = undefined;
-        deliver(value, cell, consumed);
+        deliver(value, cell, [consumed]);
         return;
       }
       // The reference's position outlives the read that projected it, so the
@@ -2225,10 +2199,16 @@ export class WorkerReconciler {
         return;
       }
       referenced?.cancel();
-      const current: Referenced = { cell: scalar, cancel: () => {} };
+      const current: Referenced = {
+        cell: scalar,
+        cancel: () => {},
+        value: undefined,
+        consumed: undefined,
+      };
       referenced = current;
       current.cancel = this.#sinkCell(scalar, (value, consumed) => {
-        current.latest = { value, consumed };
+        current.value = value;
+        current.consumed = consumed;
         deliverReferenced(current);
       }, includeConsumedLabel);
     }, includeConsumedLabel);
@@ -2261,15 +2241,15 @@ export class WorkerReconciler {
     let latest: {
       value: unknown;
       source: Cell<unknown>;
-      consumed: SinkConsumedLabel | undefined;
-    } = { value: undefined, source: cell, consumed: undefined };
+      reads: readonly (SinkConsumedLabel | undefined)[];
+    } = { value: undefined, source: cell, reads: [] };
     const decide = (changed: boolean) => {
-      const { value, source, consumed } = latest;
+      const { value, source, reads } = latest;
       shown = this.#admitProp(
         state,
         key,
         source,
-        consumed,
+        reads,
         shown,
         changed,
         () => deliver(value),
@@ -2277,8 +2257,8 @@ export class WorkerReconciler {
       );
     };
     watch.reeval = () => decide(false);
-    addCancel(this.#sinkPropValue(cell, (value, source, consumed) => {
-      latest = { value, source, consumed };
+    addCancel(this.#sinkPropValue(cell, (value, source, reads) => {
+      latest = { value, source, reads };
       decide(true);
     }, !this.#admitsEverything(state.renderPolicy)));
     return cancel;
@@ -2809,25 +2789,16 @@ export class WorkerReconciler {
     propsCell: Cell<WorkerProps>,
     keys: readonly string[],
   ): ReadonlySet<string> {
-    let raw: unknown;
-    try {
-      raw = propsCell.getRawUntyped();
-    } catch {
-      return new Set(keys);
-    }
+    const raw = this.#readCellPolicyValue(propsCell);
     if (
       !isObjectNotArray(raw) ||
       !this.#canRenderCellUnderPolicy(propsCell, state.renderPolicy)
     ) {
       return new Set(keys);
     }
-    return new Set(keys.filter((key) => {
-      try {
-        return parseLink(raw[key], propsCell) !== undefined;
-      } catch {
-        return false;
-      }
-    }));
+    return new Set(
+      keys.filter((key) => parseLink(raw[key], propsCell) !== undefined),
+    );
   }
 
   /**
@@ -2986,6 +2957,11 @@ export class WorkerReconciler {
               getBindingPropName(key),
               resolvedTarget,
               existingState !== undefined,
+              // Read through the props' slot, whose labels govern which cell
+              // is bound, as the host's handle reads the target.
+              propsCell.key(key).asSchema(
+                resolvedTarget.getAsNormalizedFullLink().schema,
+              ),
             ),
           });
         } else if (

@@ -348,18 +348,21 @@ Deno.test("worker reconciler CFC ceiling over props and bindings", async (t) => 
     await t.step(
       "withholds props linked from a document the ceiling refuses",
       async () => {
+        // A binding in the refused document names an admitted cell; which
+        // cell it names is the refused document's choice.
         const secretProps = await write(
           "prop-ceiling-secret-props",
-          { title: SECRET, class: "secret-class" },
+          { title: SECRET, class: "secret-class", $value: link(plain) },
           [secretAtom],
         );
         const plainProps = await write("prop-ceiling-plain-props", {
           title: PUBLIC,
+          $value: link(plain),
         });
         const view = (id: string, props: Cell<string>) =>
           stored(id, {
             type: "vnode",
-            name: "span",
+            name: "cf-input",
             props: link(props),
             children: [],
           });
@@ -376,6 +379,7 @@ Deno.test("worker reconciler CFC ceiling over props and bindings", async (t) => 
           expect(page.emitted()).not.toContain(SECRET);
           expect(page.emitted()).not.toContain("secret-class");
           expect(page.propsSet("title")).toEqual([PUBLIC]);
+          expect(page.bindings("value")).toBe(1);
         } finally {
           page.cancel();
         }
@@ -441,21 +445,26 @@ Deno.test("worker reconciler CFC ceiling over props and bindings", async (t) => 
         const record = await write("prop-ceiling-reference-record", {
           key: PUBLIC,
         });
-        const view = async (id: string, labels?: readonly CfcAtom[]) => {
-          await write(`${id}-argument`, {
+        const choose = (id: string, labels?: readonly CfcAtom[]) =>
+          write(`${id}-argument`, {
             element: referenceTo(record, { type: "unknown" }),
           }, labels);
+        const view = async (
+          id: string,
+          prop: string,
+          labels?: readonly CfcAtom[],
+        ) => {
+          await choose(id, labels);
           const argument = runtime.getCell(signer.did(), `${id}-argument`);
           return stored(`${id}-view`, {
             type: "vnode",
             name: "span",
             props: {
-              [labels === undefined ? "data-public" : "data-chosen"]:
-                referenceTo(
-                  argument.key("element").key("key"),
-                  { type: "string" },
-                  "redirect",
-                ),
+              [prop]: referenceTo(
+                argument.key("element").key("key"),
+                { type: "string" },
+                "redirect",
+              ),
             },
             children: [],
           });
@@ -465,13 +474,61 @@ Deno.test("worker reconciler CFC ceiling over props and bindings", async (t) => 
           name: "div",
           props: {},
           children: [
-            await view("prop-ceiling-reference-secret", [secretAtom]) as never,
-            await view("prop-ceiling-reference-plain") as never,
+            await view("prop-ceiling-reference-secret", "data-chosen", [
+              secretAtom,
+            ]) as never,
+            await view("prop-ceiling-reference-plain", "data-public") as never,
+            await view(
+              "prop-ceiling-reference-relabeled",
+              "data-relabeled",
+            ) as never,
           ],
         }, HOST_CEILING);
         try {
           expect(page.propsSet("data-chosen")).toEqual([]);
           expect(page.propsSet("data-public")).toEqual([PUBLIC]);
+          expect(page.propsSet("data-relabeled")).toEqual([PUBLIC]);
+
+          // The choice is relabeled refused and still names the same record.
+          await choose("prop-ceiling-reference-relabeled", [secretAtom]);
+          await t.settle();
+          expect(page.removed("data-relabeled")).toBe(1);
+          expect(page.removed("data-public")).toBe(0);
+        } finally {
+          page.cancel();
+        }
+      },
+    );
+
+    await t.step(
+      "withdraws a binding moved to a refused cell and restores it when moved back",
+      async () => {
+        const other = await write("prop-ceiling-other-plain", "another value");
+        const view = runtime.getCell(signer.did(), "prop-ceiling-moving-view");
+        const point = async (target: Cell<string>) => {
+          const tx = runtime.edit();
+          view.withTx(tx).setRawUntyped({
+            type: "vnode",
+            name: "cf-input",
+            props: { $value: link(target) },
+            children: [],
+          } as never);
+          expect((await tx.commit()).ok).toBeDefined();
+          await t.settle();
+        };
+        await point(plain);
+        const page = await mount(
+          view.asSchema(rendererVDOMSchema),
+          HOST_CEILING,
+        );
+        try {
+          expect(page.bindings("value")).toBe(1);
+          await point(secret);
+          expect(page.removed("value")).toBe(1);
+          expect(page.bindings("value")).toBe(1);
+          await point(other);
+          expect(page.bindings("value")).toBe(2);
+          expect(page.removed("value")).toBe(1);
         } finally {
           page.cancel();
         }
