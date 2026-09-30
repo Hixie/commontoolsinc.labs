@@ -14,6 +14,7 @@ import {
   performanceGitHubRateLimit,
 } from "./github-rate-limit.ts";
 import {
+  ciDurationSub,
   compactSpan,
   daysLabel,
   DURATION_LABEL_HEIGHT,
@@ -29,6 +30,7 @@ import {
 } from "./tile-render-values.ts";
 
 export {
+  ciDurationSub,
   compactSpan,
   daysLabel,
   DURATION_LABEL_HEIGHT,
