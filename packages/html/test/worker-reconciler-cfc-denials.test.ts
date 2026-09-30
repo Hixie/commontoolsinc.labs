@@ -217,7 +217,7 @@ Deno.test("worker reconciler CFC denials", async (t) => {
           debug: true,
         });
         expect(said).toContain("OncologyReferralLetter");
-        expect(said).toContain("stored");
+        expect(said).toContain("consumed");
       },
     );
 
