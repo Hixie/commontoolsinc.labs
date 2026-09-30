@@ -1,6 +1,6 @@
 /**
  * Pure utility functions for checking array-index property names and
- * array index-only-ness.
+ * array index-only-ness, and for splicing a collection into an array.
  */
 
 /** Character code for digit `0`. */
@@ -216,4 +216,25 @@ export function isInertArray(array: unknown): boolean {
   }
 
   return true;
+}
+
+/**
+ * Replaces `deleteCount` elements of `array`, starting at `start`, with the
+ * elements of `items`, and returns the removed elements. The result is the same
+ * as `array.splice(start, deleteCount, ...items)`, but `items` is not passed as
+ * separate arguments, so it can hold more elements than a call's argument list
+ * allows. As with `splice`, `items` is read in full before `array` changes.
+ */
+export function spliceAll<T>(
+  array: T[],
+  start: number,
+  deleteCount: number,
+  items: Iterable<T>,
+): T[] {
+  const inserted = [...items];
+  const tail = array.splice(start);
+  const removed = tail.splice(0, deleteCount);
+  for (const item of inserted) array.push(item);
+  for (const item of tail) array.push(item);
+  return removed;
 }
