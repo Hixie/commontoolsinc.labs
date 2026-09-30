@@ -117,23 +117,40 @@ It then shares the source's next fetch with the other tiles, rather than
 falling due on its own and fetching the source for itself, which would leave it
 describing different runs from its neighbours from then on.
 
-A workflow snapshot is read a page at a time, and the pages have to describe
+A workflow snapshot is joined from three reads of the workflow's runs. The
+newest page of the unfiltered listing, whatever branch or event its runs were
+for, is current; GitHub serves that listing from the moment of the request, and
+fetches of a workflow's two snapshots within twenty seconds of each other share
+one read of it. The filtered listing, narrowed to the snapshot's branch or
+event, carries the rest of the window, but GitHub serves it from an index that
+is often hours or days behind. The third read is the window the snapshot held
+before. When the snapshot has runs on the newest page, either the filtered
+listing or the held window has to reach the oldest of them, so that no run
+falls between them. Each run is taken from whichever read last saw it updated,
+so a lagging read never turns a finished run back into a running one, and a run
+a lagging read missed joins the window once a current listing carries it. A
+filtered listing that fails is logged.
+
+The filtered listing is read a page at a time, and the pages have to describe
 one moment. A page after the first asks GitHub for the runs created at or
 before the run the page before it ended on, rather than for an offset into a
 list that shifts as runs land. That run is one the window already holds, so the
 page has to carry it; a page that comes back without it was cut from a moment
-that never held that run, and the fetch fails rather than joining the two. This
-reads the same whichever side went stale. The cost is the one run each page
-repeats, which is why the window is up to the configured maximum rather than
-exactly it. The runs that do come back are ordered newest-first by the
-collection, not by the order the pages arrived in. A fetch whose newest run is
-older than the newest run already held read a stale view of the workflow: the
-scheduler keeps the snapshot it has, and each tile reading it turns gray and
-names the source's run list as out of date, apart from the ci tile, which marks
-the affected build unreadable. The server log records how many runs that fetch
-returned and its newest run, beside the same for the snapshot held, which tells
-an empty reply from a lagging one. The next fetch that reaches a current view
-clears the gray.
+that never held that run, and the listing is refused rather than joining the
+two. This reads the same whichever side went stale. The cost is the one run
+each page repeats, which is why the window is up to the configured maximum
+rather than exactly it. The runs that do come back are ordered newest-first by
+the collection, not by the order the pages arrived in.
+
+A fetch fails when neither the filtered listing nor the held window reaches the
+run it has to, which happens when the dashboard starts while the filtered
+listing is behind. When the listing failed outright, the fetch then fails with
+the listing's own error; when it came back without the run, the server log
+names that run and the listing's newest run. The scheduler keeps the snapshot
+it has, and each
+tile reading it turns gray and names the source's run list as out of date,
+apart from the ci tile, which marks the affected build unreadable. The next
+fetch that reaches the newest runs clears the gray.
 Together these keep a stale read from putting a run from weeks back at the head
 of a window, where every CI tile takes the state of the tree from.
 
@@ -620,7 +637,11 @@ latest manifest is readable, before historical collection finishes.
 Both tiles refresh their measurements and activity independently every 30 seconds.
 With `GH_TOKEN` or `GITHUB_TOKEN` set, a
 **running** badge lights while the Test Selection workflow on main is queued or
-running, including reruns of older workflow runs. The tiles share the workflow
+running, including reruns of older workflow runs. Runs on the workflow's
+newest page are read from its unfiltered run list, which GitHub serves current.
+Reruns of older runs are found by status, which GitHub answers from an index
+that can be days behind, so each one counts only once a read of the run itself
+says it has not finished. The tiles share the workflow
 lookup and keep the last known badge while that lookup is pending. A failed
 lookup shows **activity unknown** alongside the available measurements. Public
 manifest reads work without GitHub credentials. Each refresh checks for newly
@@ -1107,6 +1128,10 @@ Notes:
   settles. A completed fetch whose runs carry no readable data shows
   **benchmark data unavailable**, and one with no runs at all shows **no
   benchmark runs**.
+  The tile reads the workflow's unfiltered run list and keeps the runs on main
+  itself, since GitHub answers a list filtered by branch from an index that is
+  often days behind; nearly every run of this workflow is on main, so this
+  reads no more pages.
   A run list whose newest run is older than the newest run already collected,
   an empty list included, comes from a stale view of the workflow. The tile
   refuses it, keeps its last trends gray, and reads **run list out of date**
@@ -1257,6 +1282,17 @@ Notes:
     checks wait through the same window after GitHub rejects a collection.
     Moving the window slider starts or joins the matching collection without
     cancelling wider-window work already in progress.
+    CI history finds its builds by searching the workflow's successful pushes
+    to main over the window, and then reads the newest page of the workflow's
+    unfiltered run list. GitHub serves that list current, and answers a search
+    from an index that is often hours or days behind it. The search has to
+    reach the oldest successful first attempt of a main push in the window on
+    that page, so that no build falls between the search and the page; a
+    collection whose search does not is refused and reads **run list out of
+    date**. The builds on the newest page
+    are taken from it. A Gantt of every run, or of every main push whatever it
+    concluded, walks the unfiltered list and picks the runs out itself,
+    stopping at 150 runs or at the start of the 45-day window.
   - Every GitHub API request made by the three performance views reserves rate
     capacity before it starts. Each guarded request batch reads GitHub's current
     rate-limit status before reserving. Collection stops before projected

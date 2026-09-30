@@ -33,8 +33,6 @@ import {
   escapeHtml,
   friendlyError,
   githubOperationsInProgress,
-  isStaleRunList,
-  STALE_RUNS_ERROR,
 } from "./lib.ts";
 import { faviconPng, faviconStatus } from "./favicon.ts";
 import type { FaviconStatus } from "./favicon.ts";
@@ -553,15 +551,6 @@ export async function tick(tiles: Tile[] = TILES, sourceCtx: Ctx = ctx) {
       }
 
       const key = runSourceKey(group.source);
-      // A source's newest run only ever moves forward. A fetch that comes back
-      // with an older newest run than the one already held read a stale view
-      // of the workflow, and publishing it would age the whole tile family
-      // backwards without saying so. Keep what is held and name the
-      // source stale; the next fetch that reaches a current view clears it.
-      if (runs && isStaleRunList(key, runs, runSnapshots.get(key))) {
-        error = STALE_RUNS_ERROR;
-        runs = undefined;
-      }
       if (runs) {
         runSnapshots.set(key, runs);
         runSourceErrors.delete(key);
