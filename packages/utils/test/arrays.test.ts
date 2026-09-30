@@ -509,6 +509,17 @@ describe("arrays", () => {
       expect(array).toEqual([1, 5, 6, 2]);
     });
 
+    it("keeps the holes of a sparse array, like splice()", () => {
+      // deno-lint-ignore no-sparse-arrays
+      const array = [1, , 3, , 5];
+      // deno-lint-ignore no-sparse-arrays
+      const native = [1, , 3, , 5];
+      expect(spliceAll(array, 1, 1, [7, 8])).toEqual(native.splice(1, 1, 7, 8));
+      expect(array.length).toBe(native.length);
+      expect(Object.keys(array)).toEqual(Object.keys(native));
+      expect(Object.keys(array)).toEqual(["0", "1", "2", "3", "5"]);
+    });
+
     it("reads all of the items before changing the array, like splice()", () => {
       const array = [1, 2, 3];
       spliceAll(array, 1, 0, array);

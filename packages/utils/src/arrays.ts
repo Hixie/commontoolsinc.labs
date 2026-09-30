@@ -235,6 +235,12 @@ export function spliceAll<T>(
   const tail = array.splice(start);
   const removed = tail.splice(0, deleteCount);
   for (const item of inserted) array.push(item);
-  for (const item of tail) array.push(item);
+  // `forEach` skips holes, so moving the rest back this way keeps them, as
+  // `splice` does.
+  const tailStart = array.length;
+  array.length += tail.length;
+  tail.forEach((item, index) => {
+    array[tailStart + index] = item;
+  });
   return removed;
 }
