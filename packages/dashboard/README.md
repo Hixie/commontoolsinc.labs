@@ -1104,7 +1104,15 @@ Notes:
   artifact refresh have both settled. A collection that takes more than a
   minute says **refresh still pending** without changing that color. A newly
   loaded dashboard keeps its neutral placeholder until its first collection
-  settles. An empty completed fetch shows **benchmark data unavailable**.
+  settles. A completed fetch whose runs carry no readable data shows
+  **benchmark data unavailable**, and one with no runs at all shows **no
+  benchmark runs**.
+  A run list whose newest run is older than the newest run already collected,
+  an empty list included, comes from a stale view of the workflow. The tile
+  refuses it, keeps its last trends gray, and reads **run list out of date**
+  until a current list arrives. Until the server has kept a list since it started, the
+  runs recorded in the benchmark history cache on disk count as collected, so
+  a stale list is refused after a restart as well.
   Adding or removing a benchmark does not move an index. The benchmark is
   absent from one side of that adjacent comparison, so it drops out of the
   geometric mean. When two runs share no selected positive measurements, the
