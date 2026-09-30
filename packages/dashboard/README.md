@@ -1108,9 +1108,9 @@ Notes:
   **benchmark data unavailable**, and one with no runs at all shows **no
   benchmark runs**.
   A run list whose newest run is older than the newest run already collected,
-  an empty list included, read a stale view of the workflow. The tile refuses
-  it, keeps its last trends gray, and reads **run list out of date** until a
-  current list arrives. Until the server has kept a list since it started, the
+  an empty list included, comes from a stale view of the workflow. The tile
+  refuses it, keeps its last trends gray, and reads **run list out of date**
+  until a current list arrives. Until the server has kept a list since it started, the
   runs recorded in the benchmark history cache on disk count as collected, so
   a stale list is refused after a restart as well.
   Adding or removing a benchmark does not move an index. The benchmark is
