@@ -56,6 +56,20 @@ function definerOf(target: object | null, key: string): object | null {
 }
 
 /**
+ * Returns the element that `document` parses from the markup of `element`. It
+ * has the attributes and descendants that `element` has, but none of the state
+ * that script or user input gave them, such as a text field's typed text or a
+ * list's chosen option. An element the template parser drops, such as `body`,
+ * comes back as a new, empty element of the same kind.
+ */
+function fromMarkup(element: Element, document: Document): Element {
+  const template = document.createElement("template");
+  template.innerHTML = element.outerHTML;
+  return template.content.firstElementChild ??
+    document.createElement(element.localName);
+}
+
+/**
  * Options for creating a DOM applicator.
  */
 export interface DomApplicatorOptions {
@@ -362,11 +376,15 @@ export class DomApplicator {
    * in if `key` had never been set on it.
    *
    * For a property that `node` inherits from the browser's own element
-   * classes, such as `.title`, this writes the current value to a copy of
-   * `node` and records which attributes that write sets. It then removes those
-   * attributes from `node`. When the write sets no attribute, as with `.value`
-   * on a text input, `node` takes the value that a new element with the same
-   * tag and attributes has.
+   * classes, this writes the current value to a copy of `node` and records
+   * what that write changes on the copy:
+   *
+   * - When it sets attributes, as `.title` does, this removes those attributes
+   *   from `node`.
+   * - When it replaces the copy's children, as `.textContent` does, `node`
+   *   takes the value that a new, empty element of the same kind has.
+   * - When it changes neither, as with `.value` on a text input, `node` takes
+   *   the value that an element parsed from the markup of `node` has.
    *
    * For any other property, such as one a custom element class defines, this
    * sets the property to `undefined`.
@@ -378,20 +396,19 @@ export class DomApplicator {
       return;
     }
     const observer = new MutationObserver(() => {});
-    observer.observe(probe, { attributes: true });
+    observer.observe(probe, { attributes: true, childList: true });
     Reflect.set(probe, key, Reflect.get(node, key));
-    const reflected = observer.takeRecords().flatMap((record) =>
-      record.attributeName ?? []
-    );
+    const records = observer.takeRecords();
     observer.disconnect();
-    if (reflected.length === 0) {
-      const pristine = probe.ownerDocument.createElement(node.localName);
-      for (const { name, value } of node.attributes) {
-        pristine.setAttribute(name, value);
-      }
-      Reflect.set(node, key, Reflect.get(pristine, key));
+    const written = records.flatMap((record) => record.attributeName ?? []);
+    if (records.length === 0) {
+      const parsed = fromMarkup(node, probe.ownerDocument);
+      Reflect.set(node, key, Reflect.get(parsed, key));
+    } else if (written.length === 0) {
+      const empty = probe.ownerDocument.createElement(node.localName);
+      Reflect.set(node, key, Reflect.get(empty, key));
     }
-    for (const name of reflected) node.removeAttribute(name);
+    for (const name of written) node.removeAttribute(name);
   }
 
   /**

@@ -41,15 +41,17 @@ class LabeledBox extends HTMLElement {
 customElements.define("x-labeled-box", LabeledBox);
 
 /**
- * Creates a `tagName` element through a new `DomApplicator`, gives it
- * `attributes`, and sets `props` on it through the applicator. Then removes the
- * property `removedKey` through the applicator, and returns the element.
+ * Creates a `tagName` element through a new `DomApplicator`, and gives it
+ * `attributes` and the child markup `children`. Then sets `props` on it through
+ * the applicator, removes the property `removedKey` through the applicator, and
+ * returns the element.
  */
 function removeAfterSetting(
   tagName: string,
   attributes: Record<string, string>,
   props: Record<string, string | number | boolean>,
   removedKey: string,
+  children = "",
 ): HTMLElement {
   const applicator = new DomApplicator({
     onEvent: () => {},
@@ -65,6 +67,7 @@ function removeAfterSetting(
   for (const [name, value] of Object.entries(attributes)) {
     element.setAttribute(name, value);
   }
+  element.innerHTML = children;
   applicator.applyBatch({
     batchId: 2,
     ops: Object.entries(props).map(([key, value]): VDomOp => ({
@@ -83,31 +86,37 @@ function removeAfterSetting(
 
 /**
  * Asserts that `element` has the same markup, and the same value for the
- * property `key`, as a newly created element with the same tag and
- * `attributes`.
+ * property `key`, as a newly created element with the same tag, `attributes`,
+ * and child markup `children`.
  */
 function assertPristine(
   element: HTMLElement,
   attributes: Record<string, string>,
   key: string,
+  children: string,
 ): void {
   const pristine = document.createElement(element.localName);
   for (const [name, value] of Object.entries(attributes)) {
     pristine.setAttribute(name, value);
   }
+  pristine.innerHTML = children;
   assertEquals(element.outerHTML, pristine.outerHTML);
   assertStrictEquals(Reflect.get(element, key), Reflect.get(pristine, key));
 }
 
 /**
  * Built-in properties to remove, each as the tag, the attributes the element
- * starts with, the property, and the value it is set to first.
+ * starts with, the property, the value it is set to first, and optionally the
+ * child markup the element starts with.
  */
+const selectOptions =
+  '<option>a</option><option selected="">b</option><option>c</option>';
 const builtInCases: [
   string,
   Record<string, string>,
   string,
   string | number | boolean,
+  string?,
 ][] = [
   ["input", {}, "title", "Hint"],
   ["input", {}, "placeholder", "Name"],
@@ -124,6 +133,9 @@ const builtInCases: [
   ["input", { type: "text" }, "value", "typed"],
   ["input", { type: "text", value: "default" }, "value", "typed"],
   ["textarea", {}, "value", "typed"],
+  ["textarea", {}, "value", "typed", "default"],
+  ["select", {}, "value", "c", selectOptions],
+  ["select", {}, "selectedIndex", 2, selectOptions],
   ["input", { type: "checkbox" }, "value", "yes"],
   ["input", { type: "checkbox" }, "checked", true],
   ["input", { type: "checkbox", checked: "" }, "checked", false],
@@ -131,15 +143,21 @@ const builtInCases: [
   ["div", {}, "textContent", "text"],
 ];
 
-for (const [tagName, attributes, key, value] of builtInCases) {
+for (const [tagName, attributes, key, value, children = ""] of builtInCases) {
   const markup = `<${tagName}${
     Object.entries(attributes).map(([name, v]) => ` ${name}="${v}"`).join("")
-  }>`;
+  }>${children && `${children}</${tagName}>`}`;
   Deno.test(`removing ${key}, set to ${JSON.stringify(value)}, from ${markup} leaves it as though never set`, () => {
-    const element = removeAfterSetting(tagName, attributes, {
-      [key]: value,
-    }, key);
-    assertPristine(element, attributes, key);
+    const element = removeAfterSetting(
+      tagName,
+      attributes,
+      {
+        [key]: value,
+      },
+      key,
+      children,
+    );
+    assertPristine(element, attributes, key, children);
   });
 }
 

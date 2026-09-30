@@ -36,6 +36,12 @@ const createMockRuntimeClient = () => {
   } as any;
 };
 
+/** Stand-in for `MutationRecord`. */
+interface MockMutationRecord {
+  /** Name of the attribute written, or `null` when children were replaced. */
+  attributeName: string | null;
+}
+
 /**
  * Defines `property` on `prototype` in the way a browser defines a property
  * that reads and writes the attribute `attribute`.
@@ -55,6 +61,20 @@ function reflect(prototype: object, property: string, attribute: string) {
 const mockElementPrototype = {};
 reflect(mockElementPrototype, "title", "title");
 reflect(mockElementPrototype, "className", "class");
+Object.defineProperty(mockElementPrototype, "textContent", {
+  get(this: { text?: string }) {
+    return this.text ?? "";
+  },
+  set(
+    this: { text?: string; mutationRecords: Set<MockMutationRecord[]> },
+    value: unknown,
+  ) {
+    this.text = String(value);
+    for (const records of this.mutationRecords) {
+      records.push({ attributeName: null });
+    }
+  },
+});
 
 /**
  * Stand-in for `HTMLInputElement.prototype`. On a checkbox, `.value` reads and
@@ -93,23 +113,26 @@ Object.defineProperty(mockCfInputPrototype, "placeholder", {
   },
 });
 
-/** Stand-in for `MutationObserver`, recording attribute writes. */
+/**
+ * Stand-in for `MutationObserver`, recording attribute writes and replaced
+ * children. A record of replaced children has no `attributeName`.
+ */
 class MockMutationObserver {
-  readonly #records: { attributeName: string }[] = [];
+  readonly #records: MockMutationRecord[] = [];
   readonly #targets = new Set<any>();
 
   observe(target: any): void {
-    target.attributeObservers.add(this.#records);
+    target.mutationRecords.add(this.#records);
     this.#targets.add(target);
   }
 
-  takeRecords(): { attributeName: string }[] {
+  takeRecords(): MockMutationRecord[] {
     return this.#records.splice(0);
   }
 
   disconnect(): void {
     for (const target of this.#targets) {
-      target.attributeObservers.delete(this.#records);
+      target.mutationRecords.delete(this.#records);
     }
   }
 }
@@ -127,11 +150,11 @@ function createMockDocument({ upgrade = true } = {}) {
     const attributes = new Map<string, string>();
     const eventListeners = new Map<string, ((event: unknown) => void)[]>();
     const childNodes: any[] = [];
-    const attributeObservers = new Set<{ attributeName: string }[]>();
+    const mutationRecords = new Set<MockMutationRecord[]>();
 
     const element: Record<string, any> = {
       ownerDocument: doc,
-      attributeObservers,
+      mutationRecords,
       tagName: tagName.toUpperCase(),
       localName: tagName,
       _id: `mock-${idCounter++}`,
@@ -155,7 +178,7 @@ function createMockDocument({ upgrade = true } = {}) {
 
       setAttribute(name: string, value: string) {
         attributes.set(name, value);
-        for (const records of attributeObservers) {
+        for (const records of mutationRecords) {
           records.push({ attributeName: name });
         }
       },
@@ -165,6 +188,12 @@ function createMockDocument({ upgrade = true } = {}) {
       hasAttribute(name: string) {
         return attributes.has(name);
       },
+      get outerHTML() {
+        const serialized = [...attributes].map(([name, value]) =>
+          ` ${name}="${value}"`
+        );
+        return `<${tagName}${serialized.join("")}>`;
+      },
       getAttributeNames() {
         return [...attributes.keys()];
       },
@@ -173,7 +202,7 @@ function createMockDocument({ upgrade = true } = {}) {
       },
       removeAttribute(name: string) {
         if (!attributes.delete(name)) return;
-        for (const records of attributeObservers) {
+        for (const records of mutationRecords) {
           records.push({ attributeName: name });
         }
       },
@@ -237,6 +266,15 @@ function createMockDocument({ upgrade = true } = {}) {
       },
     };
 
+    if (tagName === "template") {
+      element.content = { firstElementChild: null };
+      Object.defineProperty(element, "innerHTML", {
+        set: (markup: string) => {
+          element.content.firstElementChild = parseStartTag(markup);
+        },
+      });
+    }
+
     Object.setPrototypeOf(
       element,
       tagName === "input"
@@ -256,6 +294,17 @@ function createMockDocument({ upgrade = true } = {}) {
       textContent: text,
       parentNode: null,
     };
+  };
+
+  // Parses the start tag that `markup` opens with, which is all of the markup
+  // that a mock element's `.outerHTML` holds.
+  const parseStartTag = (markup: string) => {
+    const [, tagName, rest] = /^<([\w-]+)([^>]*)>/.exec(markup)!;
+    const element = createElement(tagName);
+    for (const [, name, value] of rest.matchAll(/([\w-]+)="([^"]*)"/g)) {
+      element.setAttribute(name, value);
+    }
+    return element;
   };
 
   const importNode = (node: Element) => {
@@ -399,6 +448,17 @@ describe("DomApplicator", () => {
           );
           expect(element.value).toBe("");
           expect(element.getAttributeNames()).toStrictEqual(["type"]);
+        });
+
+        it("clears the children that a property wrote", () => {
+          const element = removeAfterSetting(
+            "div",
+            { title: "Hint" },
+            { textContent: "text" },
+            "textContent",
+          );
+          expect(element.textContent).toBe("");
+          expect(element.getAttributeNames()).toStrictEqual(["title"]);
         });
 
         it("returns a property that writes no attribute to the default the element's attributes give", () => {
