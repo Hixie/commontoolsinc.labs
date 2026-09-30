@@ -19,6 +19,8 @@ import {
   writeSeedEnvelopeDoc,
 } from "../../runner/test/cfc-seed-envelope.ts";
 import type { CellLinkRefPayload } from "../../runner/src/sigil-types.ts";
+import type { IExtendedStorageTransaction } from "../../runner/src/storage/interface.ts";
+import { interceptTransaction } from "../../runner/test/support/intercept-transaction.ts";
 import type { VDomOp } from "../src/vdom-ops.ts";
 import { WorkerReconciler } from "../src/worker/reconciler.ts";
 import type {
@@ -516,30 +518,32 @@ Deno.test("worker reconciler CFC ceiling over props and bindings", async (t) => 
       const { canRenderCellUnderPolicy, rootRenderPolicy } =
         new WorkerReconciler({ onOps: () => {}, ...HOST_CEILING })
           .accessForTestingOnly;
-      /** A cell with no schema whose label metadata reads as `readOrThrow` does. */
-      const cellReading = (readOrThrow: () => unknown) => {
-        const cell = {
-          getAsNormalizedFullLink: () => ({
-            id: "of:prop-ceiling-label-read",
-            space: signer.did(),
-            type: "application/json",
-            path: [],
+      /** A cell with no schema whose every read returns as `readOrThrow` does. */
+      const cellReading = (
+        tx: IExtendedStorageTransaction,
+        readOrThrow: () => unknown,
+      ) =>
+        runtime.getCell<unknown>(signer.did(), "prop-ceiling-label-read")
+          .withTx(interceptTransaction(
+            tx,
+            (method, _args, proceed) =>
+              method === "readOrThrow" ? readOrThrow() : proceed(),
+          ));
+      const tx = runtime.edit();
+      try {
+        expect(canRenderCellUnderPolicy(
+          cellReading(tx, () => undefined),
+          rootRenderPolicy,
+        )).toBe(true);
+        expect(canRenderCellUnderPolicy(
+          cellReading(tx, () => {
+            throw new Error("metadata read failed");
           }),
-          runtime: { readTx: () => ({ readOrThrow }) },
-          resolveAsCell: () => cell,
-        };
-        return cell as unknown as Cell<unknown>;
-      };
-      expect(canRenderCellUnderPolicy(
-        cellReading(() => undefined),
-        rootRenderPolicy,
-      )).toBe(true);
-      expect(canRenderCellUnderPolicy(
-        cellReading(() => {
-          throw new Error("metadata read failed");
-        }),
-        rootRenderPolicy,
-      )).toBe(false);
+          rootRenderPolicy,
+        )).toBe(false);
+      } finally {
+        tx.abort();
+      }
     });
 
     await t.step(

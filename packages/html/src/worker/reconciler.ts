@@ -26,6 +26,7 @@ import {
   type Cell,
   type CellLinkInput,
   cellOfOpaqueReference,
+  cellRuntime,
   ContextualFlowControl,
   convertCellsToLinks,
   isCell,
@@ -3183,7 +3184,7 @@ export class WorkerReconciler {
       ? parseLink(rawValue, base) ?? parseLink(value, base)
       : parseLink(rawValue) ?? parseLink(value);
     if (link?.id && link.space) {
-      return propsCell.runtime.getCellFromLink(link);
+      return cellRuntime(propsCell).getCellFromLink(link);
     }
     if (isCell(value)) {
       return value as Cell<unknown>;

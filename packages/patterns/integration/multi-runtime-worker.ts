@@ -35,6 +35,7 @@ import {
 import type { FabricKeyPair } from "@commonfabric/data-model/fabric-primitives";
 import type { Cell } from "@commonfabric/runner";
 import {
+  cellRuntime,
   convertCellsToLinks,
   isCell,
   markUiInputBlindWriteTx,
@@ -347,7 +348,7 @@ function componentBinding(
   const raw = props.getRawUntyped({ frozen: false }) as Record<string, unknown>;
   const link = parseLink(raw[name], props.getAsNormalizedFullLink());
   return link?.id && link.space
-    ? props.runtime.getCellFromLink(link)
+    ? cellRuntime(props).getCellFromLink(link)
     : prop.resolveAsCell();
 }
 
