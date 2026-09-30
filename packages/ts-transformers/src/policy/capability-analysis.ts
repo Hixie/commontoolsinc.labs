@@ -60,15 +60,16 @@ export interface CapabilityAnalysisOptions {
 
   /**
    * Optional sink for the read-then-mergeable-`push` misuse check. When set,
-   * the analysis reports each `Cell.push` whose receiver collection path the
-   * same function also reads explicitly (a `.get()` or an iteration), classified
-   * by how that read relates to the push (see
-   * {@link MergeablePushMisuse.kind}): a push that depends on the read through
-   * a guard or its value is the dedup-then-push shape, better expressed as an
-   * identity-addressed `addUnique` or a read-modify-write `set`; a read that
-   * instead feeds an independent write to the same collection keeps the append
-   * conflict-prone and belongs in its own handler. A read unrelated to both is
-   * not reported. Left unset (the default), the analysis records no push sites.
+   * the analysis reports each mergeable append, a `Cell.push` or a
+   * `Cell.pushAll`, whose receiver collection path the same function also reads
+   * explicitly (a `.get()` or an iteration), classified by how that read
+   * relates to the push (see {@link MergeablePushMisuse.kind}): a push that
+   * depends on the read through a guard or its value is the dedup-then-push
+   * shape, better expressed as an identity-addressed `addUnique` or a
+   * read-modify-write `set`; a read that instead feeds an independent write to
+   * the same collection keeps the append conflict-prone and belongs in its own
+   * handler. A read unrelated to both is not reported. Left unset (the
+   * default), the analysis records no push sites.
    */
   readonly mergeablePushMisuseSink?: (finding: MergeablePushMisuse) => void;
 }
