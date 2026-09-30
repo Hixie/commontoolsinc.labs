@@ -2307,6 +2307,28 @@ describe("mergeable op guards and single-session branches", () => {
     expect(() => cell.pushAll(["x"])).toThrow();
   });
 
+  it("pushAll given something other than an array throws", () => {
+    const tx = rt.edit();
+    const cell = rt.getCell<string[]>(space, CAUSE, stringListSchema, tx);
+    expect(() => cell.pushAll("abc" as unknown as string[])).toThrow(
+      /requires an array of values/,
+    );
+    expect(() => cell.pushAll(["abc"])).not.toThrow();
+  });
+
+  it("push and pushAll append to a cell typed as a readonly array", () => {
+    const tx = rt.edit();
+    const cell = rt.getCell<readonly string[]>(
+      space,
+      "readonly-list",
+      stringListSchema,
+      tx,
+    );
+    cell.push("a");
+    cell.pushAll(["b", "c"]);
+    expect(cell.get()).toEqual(["a", "b", "c"]);
+  });
+
   it("pushAll commits its list as one append of every member", async () => {
     const tx0 = rt.edit();
     rt.getCell<string[]>(space, CAUSE, stringListSchema, tx0).set(["a"]);

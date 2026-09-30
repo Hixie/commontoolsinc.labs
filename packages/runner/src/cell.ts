@@ -10,6 +10,7 @@ import type {
 import {
   assertValidFabricValueLayer,
   cloneIfNecessary,
+  debugStr,
   deepFreeze,
   type FabricConvertibleJsValue,
   fabricFromConvertibleJsValue,
@@ -2662,20 +2663,26 @@ export class CellImpl<T extends FabricValue>
 
   /** @inheritDoc */
   push(
-    ...value: T extends (infer U)[] ? (U | AnyCellWrapping<U>)[] : never
+    ...value: T extends readonly (infer U)[] ? (U | AnyCellWrapping<U>)[]
+      : never
   ): void {
     this.pushAll(value);
   }
 
   /** @inheritDoc */
   pushAll(
-    values: T extends (infer U)[] ? readonly (U | AnyCellWrapping<U>)[]
+    values: T extends readonly (infer U)[] ? readonly (U | AnyCellWrapping<U>)[]
       : never,
   ): void {
     if (!this.#tx) {
       throw new Error(
         "Cell.push() or Cell.pushAll() requires transaction and array " +
           "value\nhelp: use in handlers only, ensure cell is typed as array",
+      );
+    }
+    if (!Array.isArray(values)) {
+      throw new TypeError(
+        debugStr`Cell.pushAll() requires an array of values, not $quote${values}`,
       );
     }
 

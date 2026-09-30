@@ -993,8 +993,9 @@ it in a loop, `for (const record of more) records.push(record);`, and take its
 largest or smallest value with `maxOf` or `minOf` from
 `@commonfabric/utils/math`, which walk the collection and otherwise return what
 `Math.max` and `Math.min` would. An array cell is the exception to the loop:
-each `push()` on a cell rewrites the whole array, so pass the list to
-`pushAll()` instead, which appends it as one mergeable write.
+each `push()` on a cell rebuilds the cell's local copy of the array and records
+an append of its own, so pass the list to `pushAll()` instead, which does that
+once for the whole list.
 
 The scripts under `tasks/` read collections that grow with the number of tests
 a run has, so there the `cf-tasks/no-spread-arguments` lint rule

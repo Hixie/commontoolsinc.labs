@@ -1204,7 +1204,8 @@ export interface IWritable<T, C extends AnyBrandedCell<any>> {
    */
   push(
     this: IsThisArray,
-    ...value: T extends (infer U)[] ? (U | AnyCellWrapping<U>)[] : never
+    ...value: T extends readonly (infer U)[] ? (U | AnyCellWrapping<U>)[]
+      : never
   ): void;
 
   /**
@@ -1215,7 +1216,7 @@ export interface IWritable<T, C extends AnyBrandedCell<any>> {
    */
   pushAll(
     this: IsThisArray,
-    values: T extends (infer U)[] ? readonly (U | AnyCellWrapping<U>)[]
+    values: T extends readonly (infer U)[] ? readonly (U | AnyCellWrapping<U>)[]
       : never,
   ): void;
 

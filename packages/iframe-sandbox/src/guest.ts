@@ -233,6 +233,11 @@ export class RemoteCell<T = FabricValue> {
    * the list can be of any length.
    */
   pushAll<U>(this: RemoteCell<U[]>, values: readonly U[]): Promise<void> {
+    if (!Array.isArray(values)) {
+      return Promise.reject(
+        new TypeError("`pushAll()` requires an array of members."),
+      );
+    }
     let snapshots: U[];
     try {
       snapshots = cloneIfNecessary(values as FabricValue, {
