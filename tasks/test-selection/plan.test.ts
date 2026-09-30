@@ -2012,15 +2012,6 @@ describe("a unit its runner runs whole", () => {
     expect(reasons).toEqual(["full", "full", "full"]);
   });
 
-  it("runs a test the manifest carries twice once", () => {
-    const manifest = corpus();
-    manifest.entries.push({ ...manifest.entries[0]! });
-    const result = run(manifest, { wholeUnits: WHOLE, policy: "everything" });
-    expect(
-      selected(result).filter((s) => s.entry.test.n === "half 0").length,
-    ).toBe(1);
-  });
-
   it("keeps two suites' units of one name apart", () => {
     // Both units are whole, and their tests share a kind and a scope. Each
     // merged entry has to be named for its suite as well as its unit, so that
@@ -2059,35 +2050,20 @@ describe("a unit its runner runs whole", () => {
 });
 
 describe("an identity a manifest carries twice", () => {
-  it("runs it once, rather than placing it in two lanes", () => {
-    // A duplicated entry is one identity however many rows describe it,
-    // and running it twice would charge a lane for work it did not do.
-    const twice = sampleEntry({ k: "unit", s: "memory", n: "case 0" }, {
-      unit: "packages/memory/test/case-0.test.ts",
-    });
-    const manifest = sampleManifest({
-      entries: [...entries(3), twice],
-    });
-    const key = testIdentityKey(twice.test);
-    const placed = keysOf(run(manifest)).filter((k) => k === key);
-    expect(placed.length).toBe(1);
-  });
-
-  it("places it as the last of its rows, whatever the first one scores", () => {
-    // The value pass orders by score, so a first row scoring far above
-    // the last would be the one it reached, where the density pass would
-    // reach the last.
-
+  it("refuses to plan, rather than choosing between its rows", () => {
+    // Two rows of one identity can disagree about what it costs or
+    // scores, and which of them a plan followed would depend on where the
+    // manifest listed them.
     const first = sampleEntry({ k: "unit", s: "memory", n: "case 0" }, {
       unit: "packages/memory/test/case-0.test.ts",
       score: 0.9,
     });
-    const last = { ...first, score: 0.01 };
-    const placed = selected(
-      run(sampleManifest({ entries: [first, ...entries(3).slice(1), last] })),
-    ).filter((s) => s.entry.test.n === "case 0");
-    expect(placed.length).toBe(1);
-    expect(placed[0]!.entry).toBe(last);
+    const rest = entries(3).slice(1);
+    expect(() =>
+      run(sampleManifest({ entries: [first, ...rest, { ...first }] }))
+    ).toThrow(`${testIdentityKey(first.test)} is listed more than once`);
+    expect(() => run(sampleManifest({ entries: [first, ...rest] })))
+      .not.toThrow();
   });
 });
 
