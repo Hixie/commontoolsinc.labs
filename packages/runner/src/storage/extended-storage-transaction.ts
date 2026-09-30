@@ -4724,16 +4724,17 @@ const assignTrustState = (
 
 /**
  * Returns whether `value` is a transaction the runtime created: an
- * `ExtendedStorageTransaction`, or a `TransactionWrapper` around a transaction.
- * The check is a private brand, which no object pattern code builds or
- * reshapes carries.
+ * `ExtendedStorageTransaction`, or a `TransactionWrapper` around such a
+ * transaction. The check is a private brand, which no object pattern code
+ * builds or reshapes carries, and it holds all the way down a chain of
+ * wrappers, since a wrapper can be built around anything.
  */
 export function isStorageTransaction(
   value: unknown,
 ): value is IExtendedStorageTransaction {
   return typeof value === "object" && value !== null &&
     (isExtendedStorageTransaction(value) ||
-      unwrapTransaction(value) !== undefined);
+      isStorageTransaction(unwrapTransaction(value)));
 }
 
 /**

@@ -600,44 +600,6 @@ const mintedRuntimeInjectedEventKeys = (
  */
 declare module "@commonfabric/api" {
   /**
-   * Augment Writable to add runtime-specific write methods with onCommit callbacks
-   */
-  interface IWritable<T, C extends AnyBrandedCell<any>> {
-    set(
-      value: AnyCellWrapping<T> | T,
-      onCommit?: (tx: IExtendedStorageTransaction) => void,
-      sendOptions?: StreamSendOptions,
-    ): C;
-  }
-
-  /**
-   * Augment Streamable to add onCommit callback and internal send-options
-   * support ({@link StreamSendOptions} — the caller's event id and session,
-   * and the runtime-injected key marker). Event is optional only when T is
-   * void (matching public API).
-   */
-  interface IStreamable<T> {
-    send(
-      ...args: T extends void ? [] | [AnyCellWrapping<T> | T] | [
-          AnyCellWrapping<T> | T,
-          (tx: IExtendedStorageTransaction) => void,
-        ] | [
-          AnyCellWrapping<T> | T,
-          ((tx: IExtendedStorageTransaction) => void) | undefined,
-          StreamSendOptions,
-        ]
-        : [AnyCellWrapping<T> | T] | [
-          AnyCellWrapping<T> | T,
-          (tx: IExtendedStorageTransaction) => void,
-        ] | [
-          AnyCellWrapping<T> | T,
-          ((tx: IExtendedStorageTransaction) => void) | undefined,
-          StreamSendOptions,
-        ]
-    ): void;
-  }
-
-  /**
    * Augment Cell to add all internal/system methods that are available
    * on Cell in the runner runtime.
    */

@@ -27,6 +27,7 @@ import { StorageManager } from "../src/storage/cache.deno.ts";
 import {
   ExtendedStorageTransaction,
   isStorageTransaction,
+  TransactionWrapper,
 } from "../src/storage/extended-storage-transaction.ts";
 import type { IExtendedStorageTransaction } from "../src/storage/interface.ts";
 import { runAttacker } from "./support/sandbox-attacker.ts";
@@ -521,10 +522,22 @@ describe("cell-authority", () => {
           .toThrow("A cell's transaction must be one the runtime created");
       });
 
+      it("throws given a wrapper around a transaction the runtime did not create", () => {
+        const forged = new TransactionWrapper(
+          {} as IExtendedStorageTransaction,
+        );
+
+        expect(() => new CellImpl(runtime, forged)).toThrow(
+          "A cell's transaction must be one the runtime created",
+        );
+      });
+
       it("constructs a cell given a runtime and a transaction it created", () => {
         const tx = runtime.edit();
 
         expect(isCell(new CellImpl(runtime, tx))).toBe(true);
+        expect(isCell(new CellImpl(runtime, new TransactionWrapper(tx))))
+          .toBe(true);
         tx.abort();
       });
     });

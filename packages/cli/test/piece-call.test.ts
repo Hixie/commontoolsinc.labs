@@ -11,6 +11,7 @@ import {
   type MemorySpace,
   type NormalizedFullLink,
   Runtime,
+  type sendEvent,
 } from "@commonfabric/runner";
 import {
   createLLMFriendlyLink,
@@ -68,13 +69,13 @@ import type { ExecutedPieceCallable } from "../lib/piece.ts";
 import { cf, sendThroughStandIn, stripAnsi } from "./utils.ts";
 
 /**
- * The runner's own stream-send options, derived from `Cell["send"]` rather
+ * The runner's own stream-send options, derived from `sendEvent()` rather
  * than restated by hand — so a runner-side rename (`session`, `eventId`)
  * fails `deno task check` on this file instead of leaving these doubles
  * green while production breaks: the #5505/#5582 drift class, one layer
  * down.
  */
-type CellSendOptions = NonNullable<Parameters<Cell<unknown>["send"]>[2]>;
+type CellSendOptions = NonNullable<Parameters<typeof sendEvent>[3]>;
 
 // The session an invocation id is chosen within, for the calls whose subject
 // is something else: a call names the pair or it names no invocation.

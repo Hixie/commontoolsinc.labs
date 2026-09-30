@@ -16,8 +16,8 @@ import { runtimeWritePolicyAuthorization } from "./types.ts";
  * identity authored the application.
  *
  * Host-only: the runtime's authorization marks the application, and pattern
- * code, which reaches cells and their transactions but not this module,
- * cannot supply it. `Cell.applyCfcSchemaToExistingValue()` records the
+ * code, which holds cells but reaches neither their transactions nor this
+ * module, cannot supply it. `Cell.applyCfcSchemaToExistingValue()` records the
  * schema alone and waives nothing.
  */
 export function applyCfcPolicyToExistingValue<T>(cell: Cell<T>): void {

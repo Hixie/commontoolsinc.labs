@@ -5660,8 +5660,9 @@ export async function setCellValue(
 
 /**
  * What a {@link callPieceHandler} call supplies: the connection its
- * resolution runs over, and the three execution deps a handling can observe
- * through a call that returns nothing.
+ * resolution runs over, the three execution deps a handling can observe
+ * through a call that returns nothing, and the `sendEvent` a test stands in
+ * for the dispatch.
  *
  * Narrower than {@link PieceCallableDependencies} by the fields this path
  * cannot keep. The input readers and the help prefix have no bearing on it —
