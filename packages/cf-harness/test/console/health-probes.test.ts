@@ -1249,10 +1249,18 @@ describe("health-probes", () => {
     it("asks a daemon that has replaced the one it last asked at once", async () => {
       await withStore(async (directory) => {
         const probe = consoleVmHealthProbe(store(directory));
-        const first = fakeVmDaemon(directory, () => JSON.stringify(STATUS));
+        // The probe tells sockets apart by inode and modification time, and a
+        // file system may give a new socket the inode just freed, within the
+        // same clock tick. The second socket is bound while the first's file
+        // still holds its inode, so the two cannot match.
+        const first = fakeVmDaemon(directory, () => JSON.stringify(STATUS), {
+          leaveSocket: true,
+        });
         await readRow(probe);
         await first.close();
-        const second = fakeVmDaemon(directory, () => "error: busy");
+        const second = fakeVmDaemon(directory, () => "error: busy", {
+          leaveSocket: true,
+        });
         try {
           expect(await readRow(probe)).toMatchObject({
             state: "failed",
