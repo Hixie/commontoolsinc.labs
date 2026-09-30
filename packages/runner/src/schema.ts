@@ -9,6 +9,7 @@ import {
   FabricInstance,
   FabricPrimitive,
   type FabricValue,
+  hashStringOf,
   isDeepFrozen,
   isWalkableObjectOrArray,
   shallowMutableClone,
@@ -1664,14 +1665,6 @@ export function createOpaqueReference(
 }
 
 /**
- * One link on the route a traversal took, with the label view in effect at
- * its target.
- */
-/**
- * One link on the route a traversal took, with the label view in effect at
- * its target.
- */
-/**
  * One link on the route a traversal took, or one value it copied into a
  * document of its own, with the label view in effect at the target.
  */
@@ -2157,9 +2150,12 @@ class TransformObjectCreator
    * view carrying the same labels from the same spaces, and empty for none.
    */
   #viewKey(view: CfcLabelView | undefined): string {
-    return view === undefined
-      ? ""
-      : this.#internKey(JSON.stringify([view, cfcLabelViewOriginSpaces(view)]));
+    return view === undefined ? "" : this.#internKey(
+      JSON.stringify([
+        hashStringOf(cloneCfcLabelView(view)),
+        cfcLabelViewOriginSpaces(view),
+      ]),
+    );
   }
 
   /**

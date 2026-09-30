@@ -8,6 +8,7 @@ import {
   type CfcLabelView,
   type CfcLabelViewEntry,
   cfcLabelViewOriginSpaces,
+  cfcLabelViewPathKey,
   cloneCfcLabelView,
   mergeCfcLabelViews,
   rebaseCfcLabelView,
@@ -116,7 +117,7 @@ const documentLabelIndex = (metadata: CfcMetadata): CfcDocumentLabels => {
   const paths = new PathPrefixIndex();
   entries.forEach((entry, position) => {
     const path = canonicalizeCfcLogicalPath(entry.path);
-    const key = JSON.stringify(path);
+    const key = cfcLabelViewPathKey(path);
     const positions = positionsByPath.get(key);
     if (positions === undefined) {
       positionsByPath.set(key, [position]);
@@ -168,7 +169,7 @@ export const cfcLabelViewInDocument = (
   const logicalPath = canonicalizeCfcLogicalPath(path);
   const positions = labels.paths.overlapping(logicalPath)
     .flatMap((entryPath) =>
-      labels.positionsByPath.get(JSON.stringify(entryPath)) ?? []
+      labels.positionsByPath.get(cfcLabelViewPathKey(entryPath)) ?? []
     )
     .sort((left, right) => left - right);
   return withCfcLabelViewOrigins(
