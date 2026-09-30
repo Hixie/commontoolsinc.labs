@@ -4747,6 +4747,67 @@ export type SpaceAccessFunction = (
 
 export declare const spaceAccess: SpaceAccessFunction;
 
+/** The level `grantSpaceAccess()` sets an access-list entry to. */
+export type SpaceGrantLevel = "READ" | "WRITE" | "OWNER";
+
+/**
+ * Sets `principal`'s entry in the access list of the space `target`'s value
+ * lives in to exactly `level`, raising or lowering it. Granting a level the
+ * principal already holds changes nothing, so a handler run again for the same
+ * event converges.
+ *
+ * A grant exposes to `principal` everything the space already holds, not only
+ * what is written after it, since adding a member changes no value's label.
+ *
+ * The acting principal, the event's actor, must hold `OWNER` in the space, and
+ * the event must be a trusted gesture: a person's action on a rendered UI.
+ * `principal` must be a DID other than the actor's own, the space's own, and
+ * `"*"`. The space may not be the actor's own Home space. Lowering the space's
+ * last concrete `OWNER` is refused. A runtime
+ * cannot know the deployment's service DIDs, or the identities its serving
+ * runtimes act through, so it does not refuse one of those as `principal`.
+ *
+ * The change commits as a commit of its own, before the handler's other
+ * writes commit. If the handler's writes then fail, the change stands.
+ *
+ * Available only in a handler on a client runtime, and throws anywhere else:
+ * a serving runtime cannot yet check that the event's actor holds `OWNER`.
+ * Every refusal throws. One the handler lets escape drops its whole
+ * transaction; the call throws before staging anything, so one the handler
+ * catches leaves nothing staged for that call.
+ */
+export declare function grantSpaceAccess(
+  target: AnyCell<unknown>,
+  principal: DID,
+  level: SpaceGrantLevel,
+): void;
+
+/**
+ * Removes `principal`'s entry from the access list of the space `target`'s
+ * value lives in. Revoking an entry that is not there changes nothing, so a
+ * handler run again for the same event converges. A principal the list's
+ * `"*"` entry covers keeps what that entry grants.
+ *
+ * The acting principal, the event's actor, must hold `OWNER` in the space, and
+ * the event must be a trusted gesture. `principal` must be a DID other than
+ * the actor's own, the space's own, and `"*"`. The space may not be the
+ * actor's own Home space. Revoking the space's last concrete `OWNER` is
+ * refused.
+ *
+ * The change commits as a commit of its own, before the handler's other
+ * writes commit. If the handler's writes then fail, the change stands.
+ *
+ * Available only in a handler on a client runtime, and throws anywhere else:
+ * a serving runtime cannot yet check that the event's actor holds `OWNER`.
+ * Every refusal throws. One the handler lets escape drops its whole
+ * transaction; the call throws before staging anything, so one the handler
+ * catches leaves nothing staged for that call.
+ */
+export declare function revokeSpaceAccess(
+  target: AnyCell<unknown>,
+  principal: DID,
+): void;
+
 /**
  * Convert an entity-id reference — as produced by {@link getEntityId} or a
  * cell's `entityId` — to its tagged-hash string, in whichever form the active
