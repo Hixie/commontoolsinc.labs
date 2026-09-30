@@ -674,9 +674,9 @@ export class ExtendedStorageTransaction implements IExtendedStorageTransaction {
    * and ambient read metadata. A hit never crosses read classifications.
    * Replaced wholesale on any write (see `#invalidateReadResultCache()`), so a
    * hit is only ever served when nothing has been written since the cached
-   * read. This is a `Map` rather than a `WeakMap`, but the transaction owns it
-   * and writes drop it wholesale, bounding retention to reads-without-writes in
-   * one tx.
+   * read. This is a `Map` rather than a `WeakMap`, but the transaction owns it,
+   * and writes and settling drop it wholesale, bounding retention to
+   * reads-without-writes in one open tx.
    */
   #readResultCache = new Map<string, Map<string, { value: unknown }>>();
 
@@ -692,6 +692,7 @@ export class ExtendedStorageTransaction implements IExtendedStorageTransaction {
    * `getSnapshotMemo()` picks between them. Dropped on any write alongside
    * the read cache above, unless a reader holds the instant it describes, in
    * which case `#retireSnapshotMemos()` files it under that reader's epoch.
+   * Dropped as well when the transaction settles.
    */
   #snapshotMemo = new Map<string, unknown>();
 
@@ -3614,6 +3615,11 @@ export class ExtendedStorageTransaction implements IExtendedStorageTransaction {
     // callback's closure, and through those closures the cells and registries
     // of the action that committed it.
     this.#commitCallbacks.clear();
+    // A settled transaction admits no reads, so its read memos serve nothing
+    // further, and holding them would retain every value its reads returned.
+    this.#readResultCache = new Map();
+    this.#snapshotMemo = new Map();
+    this.#scopedSnapshotMemos = new Map();
   }
 
   #runVerdictCallbacks(result: Result<Unit, CommitError>): void {

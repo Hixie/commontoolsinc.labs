@@ -1527,7 +1527,7 @@ export class CellImpl<T extends FabricValue>
   }
 
   get(options?: { traverseCells?: boolean }): Readonly<StripDefaultBrand<T>> {
-    if (!this.#synced) this.sync(); // No await, just kicking this off
+    if (!this.#synced) this.#startLoad(); // No await, just kicking this off
 
     // Per-transaction read cache: within one ready transaction, repeatedly
     // reading the same cell with no intervening write recomputes an identical
@@ -1606,7 +1606,7 @@ export class CellImpl<T extends FabricValue>
    * to trigger re-execution of the current reactive context.
    */
   sample(): Readonly<StripDefaultBrand<T>> {
-    if (!this.#synced) this.sync(); // No await, just kicking this off
+    if (!this.#synced) this.#startLoad(); // No await, just kicking this off
 
     // Wrap the transaction to make all reads non-reactive. Child cells created
     // during validateAndTransform will use the original transaction (via
@@ -1656,7 +1656,7 @@ export class CellImpl<T extends FabricValue>
       // passed against a local toolshed). Failures are swallowed like
       // link-resolution's kicks: the read still resolves from the replica.
       this.runtime.storageManager.trackUntilSettled(
-        this.sync().catch(() => {}),
+        this.#startLoad().catch(() => {}),
       );
     }
 
@@ -2449,7 +2449,7 @@ export class CellImpl<T extends FabricValue>
 
       // No await for the sync, just kicking this off, so we have the data to
       // retry on conflict.
-      if (!this.#synced) this.sync();
+      if (!this.#synced) this.#startLoad();
 
       const writeLink = resolveLink(
         this.runtime,
@@ -2616,7 +2616,7 @@ export class CellImpl<T extends FabricValue>
 
     // No await for the sync, just kicking this off, so we have the data to
     // retry on conflict.
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     // Get current value, following aliases and references
     // The read half of this read-modify-write is a content read: labeled
@@ -2686,7 +2686,7 @@ export class CellImpl<T extends FabricValue>
 
     // No await for the sync, just kicking this off, so we have the data to
     // retry on conflict.
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     // Follow aliases and references, since we want to get to an assumed
     // existing array.
@@ -2795,7 +2795,7 @@ export class CellImpl<T extends FabricValue>
     for (const candidate of value) {
       refuseElementReadBack("addUnique", candidate);
     }
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     // The read half of this read-modify-write is a content read: labeled
     // crossings mark (the write half's policy input is recorded separately).
@@ -2922,7 +2922,7 @@ export class CellImpl<T extends FabricValue>
           "help: a zero or non-finite increment is not a meaningful change",
       );
     }
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     // The read half of this read-modify-write is a content read: labeled
     // crossings mark (the write half's policy input is recorded separately).
@@ -2976,7 +2976,7 @@ export class CellImpl<T extends FabricValue>
       );
     }
     refuseElementReadBack("removeByValue", ref);
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     // The read half of this read-modify-write is a content read: labeled
     // crossings mark (the write half's policy input is recorded separately).
@@ -3305,7 +3305,7 @@ export class CellImpl<T extends FabricValue>
    * @returns Cell with schema from links
    */
   asSchemaFromLinks<T = unknown>(): Cell<T> {
-    if (!this.#synced) this.sync(); // Auto-sync like .get() - matches framework pattern
+    if (!this.#synced) this.#startLoad(); // Auto-sync like .get() - matches framework pattern
 
     const { schema } = resolveLink(
       this.runtime,
@@ -3368,7 +3368,7 @@ export class CellImpl<T extends FabricValue>
         // cell as synced and will not start a second load of its own, so keep
         // this promise in the shared settled pool until the first load lands.
         this.runtime.storageManager.trackUntilSettled(
-          this.sync().catch(() => {}),
+          this.#startLoad().catch(() => {}),
         );
       }
       return subscribeToReferencedDocs(
@@ -3398,11 +3398,36 @@ export class CellImpl<T extends FabricValue>
    * still race the deferred sync.
    */
   sync(): Promise<Cell<T>> {
+    return this.#load(false);
+  }
+
+  /**
+   * Starts loading this cell's backing doc for a read that does not wait for
+   * the load, and returns the load's promise.
+   */
+  #startLoad(): Promise<unknown> {
+    return this.#load(true);
+  }
+
+  /**
+   * Helper for `sync()` and `#startLoad()`, which marks this cell synced and
+   * has the storage manager load its backing doc. The promise resolves to the
+   * cell the storage manager was handed, once the doc is confirmed. A cell
+   * whose transaction reads only local state loads nothing, stays unsynced,
+   * and resolves to itself.
+   *
+   * The storage manager holds that cell until the load lands. When `detached`
+   * is true, that cell is `#linkOnlyCopy()`, so a load still in flight keeps no
+   * reading transaction reachable, nor anything such a transaction holds, such
+   * as the values its reads returned.
+   */
+  #load(detached: boolean): Promise<Cell<T>> {
     if (usesLocalReads(this.tx)) {
       return Promise.resolve(this as unknown as Cell<T>);
     }
     this.#synced = true;
     logger.info("sync", this.#link);
+    const view = detached ? this.#linkOnlyCopy() : this;
     // The runner's explicit-instance read (server-execution v2 stage A —
     // OW17's tx→replica seam): a cell read inside a SERVED per-instance
     // run — its transaction carries the demand-supplied identity — loads
@@ -3413,9 +3438,22 @@ export class CellImpl<T extends FabricValue>
     // nothing).
     const identity = this.tx?.tx?.scopeKeyIdentity;
     return this.runtime.storageManager.syncCell<T>(
-      this as unknown as Cell<T>,
+      view as unknown as Cell<T>,
       identity !== undefined ? { scopeKeyIdentity: identity } : undefined,
     );
+  }
+
+  /**
+   * Returns a new cell carrying this cell's link and nothing else: no
+   * transaction, and not a sibling, which would share the root cell of this
+   * cell's family. It also has no frame, which inside an action carries the
+   * action's transaction. Its link is full, so it never consults a frame for
+   * a cause or an id.
+   */
+  #linkOnlyCopy(): CellImpl<T> {
+    const copy = new CellImpl<T>(this.runtime, undefined, this.#link);
+    copy.#frame = undefined;
+    return copy;
   }
 
   sinkMeta(
@@ -3425,7 +3463,7 @@ export class CellImpl<T extends FabricValue>
   ): Cancel {
     if (!this.#synced) {
       this.runtime.storageManager.trackUntilSettled(
-        this.sync().catch(() => {}),
+        this.#startLoad().catch(() => {}),
       );
     }
 
@@ -3474,7 +3512,7 @@ export class CellImpl<T extends FabricValue>
     path?: Readonly<Path>,
     tx?: IExtendedStorageTransaction,
   ): CellResult<DeepKeyLookup<T, Path>> {
-    if (!this.#synced) this.sync(); // No await, just kicking this off
+    if (!this.#synced) this.#startLoad(); // No await, just kicking this off
     const subPath = path || [];
     return createQueryResultProxy(
       this.runtime,
@@ -3564,7 +3602,7 @@ export class CellImpl<T extends FabricValue>
     options?: RawCellReadOptions & { frozen?: boolean },
   ): FabricValue {
     const { frozen = true, lastNode = "top", ...readOptions } = options ?? {};
-    if (!this.#synced) this.sync(); // No await, just kicking this off
+    if (!this.#synced) this.#startLoad(); // No await, just kicking this off
     const tx = this.runtime.readTx(this.tx);
     // Resolve all links ON THE WAY to the target, but don't resolve the final
     // link.
@@ -3595,7 +3633,7 @@ export class CellImpl<T extends FabricValue>
 
     // No await for the sync, just kicking this off, so we have the data to
     // retry on conflict.
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     const inlined = findAndInlineDataUriLinks(value);
 
@@ -3639,7 +3677,7 @@ export class CellImpl<T extends FabricValue>
         "Transaction required for applyCfcSchemaToExistingValue",
       );
     }
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
 
     const writeLink = resolveLink(
       this.runtime,
@@ -3675,7 +3713,7 @@ export class CellImpl<T extends FabricValue>
     metaField: MetaField,
     options?: IReadOptions,
   ): FabricValue | undefined {
-    if (!this.#synced) this.sync(); // No await, just kicking this off
+    if (!this.#synced) this.#startLoad(); // No await, just kicking this off
     const metaAddr = {
       space: this.#link.space,
       id: this.#link.id,
@@ -3705,7 +3743,7 @@ export class CellImpl<T extends FabricValue>
     if (!this.tx) throw new Error("Transaction required for setMetaRaw");
     // No await for the sync, just kicking this off, so we have the data to
     // retry on conflict.
-    if (!this.#synced) this.sync();
+    if (!this.#synced) this.#startLoad();
     const metaAddr = {
       space: this.#link.space,
       id: this.#link.id,
