@@ -489,6 +489,10 @@ function makeHost(
   };
 
   const compilerOptions: ts.CompilerOptions = {
+    // Program roots include scripts whose names carry no TypeScript extension,
+    // such as a `#!/usr/bin/env -S deno run` script named `tool`, which the
+    // compiler reads as TypeScript.
+    allowNonTsExtensions: true,
     allowJs: true,
     checkJs: false,
     target: ts.ScriptTarget.ES2023,
