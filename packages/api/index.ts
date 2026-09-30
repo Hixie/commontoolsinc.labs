@@ -3762,13 +3762,28 @@ export type ValueEqualFunction = (a: unknown, b: unknown) => boolean;
  * `{ label: "name" }` / `{ await: "name" }` entries in their `tests` arrays.
  * Use `{ pattern, user: "other" }` to run a second session of an existing
  * user's identity.
+ *
+ * The shared space is born with an access list. The first participant's user
+ * is its OWNER, and every other user holds the level its participants declare
+ * with `{ pattern, access }`, or `"WRITE"` when none declares one; `"none"`
+ * leaves the user out of the list. It is what `spaceAccess()` reads. The
+ * storage server does not enforce it: a participant reads and writes the space
+ * whatever its level.
+ *
+ * The run fails before any participant starts when a participant of the first
+ * participant's user declares a level other than `"OWNER"`, or when two
+ * participants of one user declare different levels.
  */
 export interface MultiUserTestDescriptor {
   setup?: (...args: never[]) => unknown;
   participants: Record<
     string,
     | ((...args: never[]) => unknown)
-    | { pattern: (...args: never[]) => unknown; user?: string }
+    | {
+      pattern: (...args: never[]) => unknown;
+      user?: string;
+      access?: SpaceAccessLevel;
+    }
   >;
 }
 
