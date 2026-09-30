@@ -1,10 +1,13 @@
 /**
  * Tests how a diff view decides the language of each side of each file: from
  * the side's path, and for a path no language claims, from the side's content
- * in the workspace, in Git, or in a hunk that starts at its first line.
+ * in the workspace, in Git, or in a hunk that starts at its first line. Also
+ * tests that the semantic service answers only for the files a diff reads as
+ * TypeScript.
  */
 
 import { expect } from "@std/expect";
+import { join } from "@std/path";
 import { describe, it } from "@std/testing/bdd";
 
 import { parseDiff } from "../lib/view/diff.ts";
@@ -15,7 +18,10 @@ import {
   type DiffWorkspace,
 } from "../lib/view/diffdoc.ts";
 import { createDiffHighlighter, diffSource } from "../lib/view/diffedit.ts";
-import { prepareLanguages } from "../lib/view/languages/language.ts";
+import {
+  diffSemanticsFor,
+  prepareLanguages,
+} from "../lib/view/languages/language.ts";
 import { plainTextLanguage } from "../lib/view/languages/plain-text/language.ts";
 import { pythonLanguage } from "../lib/view/languages/python/language.ts";
 import { shellLanguage } from "../lib/view/languages/shell/language.ts";
@@ -498,6 +504,74 @@ describe("diff file languages", () => {
         { oldLanguage: shellLanguage, newLanguage: shellLanguage },
         { oldLanguage: shellLanguage, newLanguage: shellLanguage },
       ]);
+    });
+  });
+
+  describe("semantic service", () => {
+    /** Two scripts whose bodies are the same TypeScript and whose shebangs
+     * select TypeScript and shell. */
+    const SCRIPTS = new Map([
+      ["tool", "#!/usr/bin/env -S deno run"],
+      ["hook", "#!/usr/bin/env bash"],
+    ]);
+    const BODY = ["const answer = 42;", "console.log(answer);", ""];
+    const SCRIPTS_DIFF = [...SCRIPTS].flatMap(([path, shebang]) => [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      "@@ -1,3 +1,3 @@",
+      ` ${shebang}`,
+      "-const answer = 41;",
+      "+const answer = 42;",
+      " console.log(answer);",
+    ]).concat("").join("\n");
+
+    /** The diff offsets of `answer` in the binding and the use in `path`. */
+    function answerOffsets(path: string): { binding: number; use: number } {
+      const header = SCRIPTS_DIFF.indexOf(`diff --git a/${path} `);
+      const answerAfter = (text: string) =>
+        SCRIPTS_DIFF.indexOf("answer", SCRIPTS_DIFF.indexOf(text, header));
+      return {
+        binding: answerAfter("+const answer"),
+        use: answerAfter("console.log("),
+      };
+    }
+
+    it("serves the extensionless files it reads as TypeScript, and no others", () => {
+      const root = Deno.makeTempDirSync();
+      try {
+        Deno.writeTextFileSync(join(root, "deno.json"), "{}");
+        for (const [path, shebang] of SCRIPTS) {
+          Deno.writeTextFileSync(
+            join(root, path),
+            [shebang, ...BODY].join("\n"),
+          );
+        }
+        const { maps } = buildDiffDocument(
+          SCRIPTS_DIFF,
+          parseDiff(SCRIPTS_DIFF)!,
+          {
+            resolve: (path) => join(root, path),
+            read: (absPath) => Deno.readTextFileSync(absPath),
+          },
+        );
+        expect([...maps.rootFiles.values()]).toEqual([
+          typeScriptLanguage,
+          shellLanguage,
+        ]);
+        const semantics = diffSemanticsFor(SCRIPTS_DIFF, maps, { cwd: root })!;
+
+        const tool = answerOffsets("tool");
+        expect(semantics.typeAt(tool.binding)).toBe("42");
+        expect(semantics.definitionOf(tool.use).map((d) => d.blobOffset))
+          .toEqual([tool.binding]);
+
+        const hook = answerOffsets("hook");
+        expect(semantics.typeAt(hook.binding)).toBeNull();
+        expect(semantics.definitionOf(hook.use)).toEqual([]);
+      } finally {
+        Deno.removeSync(root, { recursive: true });
+      }
     });
   });
 });
