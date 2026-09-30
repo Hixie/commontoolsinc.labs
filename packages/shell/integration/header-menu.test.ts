@@ -163,7 +163,9 @@ describe("header menu tests", () => {
         const results = Array.from(root.querySelectorAll(selector));
         for (const el of root.querySelectorAll("*")) {
           if (el.shadowRoot) {
-            results.push(...findInShadow(el.shadowRoot, selector));
+            for (const result of findInShadow(el.shadowRoot, selector)) {
+              results.push(result);
+            }
           }
         }
         return results;

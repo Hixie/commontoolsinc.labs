@@ -383,11 +383,11 @@ const soleConditionalBranch = (
       if (bare.kind !== ts.SyntaxKind.NeverKeyword) leaves.push(bare);
       return;
     }
-    unreadable.push(
-      ...parameters.filter((parameter) =>
-        holdsTypeParameter(bare.checkType, checker, new Set([parameter]))
-      ),
-    );
+    for (const parameter of parameters) {
+      if (holdsTypeParameter(bare.checkType, checker, new Set([parameter]))) {
+        unreadable.push(parameter);
+      }
+    }
     collectInferred(bare.extendsType);
     visit(bare.trueType);
     visit(bare.falseType);
@@ -1202,7 +1202,9 @@ export class CommonFabricFormatter implements TypeFormatter {
           undefined,
         );
       } else {
-        context.uninterpretedTypeNodes?.push(...uninterpreted);
+        for (const node of uninterpreted) {
+          context.uninterpretedTypeNodes?.push(node);
+        }
       }
     }
 
@@ -1302,7 +1304,9 @@ export class CommonFabricFormatter implements TypeFormatter {
           undefined,
         );
       } else {
-        context.uninterpretedTypeNodes?.push(...uninterpreted);
+        for (const node of uninterpreted) {
+          context.uninterpretedTypeNodes?.push(node);
+        }
       }
     }
 
