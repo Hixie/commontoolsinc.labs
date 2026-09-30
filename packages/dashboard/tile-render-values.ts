@@ -44,9 +44,10 @@ export function groupDigits(value: number): string {
  */
 export function ciDurationSub(count: number, hours?: number): string {
   if (count === 0) return "no passing PR runs";
+  const runs = `${count} PR run${count === 1 ? "" : "s"}`;
   return hours === undefined
-    ? `median of last ${count} PR run${count === 1 ? "" : "s"}`
-    : `median of ${count} PR runs in ${hours}h`;
+    ? `median of last ${runs}`
+    : `median of ${runs} in ${hours}h`;
 }
 
 // How a sparkline caption spells a day span, consistently across tiles.

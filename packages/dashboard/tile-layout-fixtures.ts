@@ -1,6 +1,11 @@
 import type { Status, TileView } from "./types.ts";
 import { ciDurationSub, SPARKLINE_HEIGHT } from "./tile-render-values.ts";
 import { detailList } from "./detail-list.ts";
+import {
+  CI_RUNS_MAX,
+  DUR_MAX_AGE_HOURS,
+  DUR_MIN_RUNS,
+} from "./ci-run-limits.ts";
 
 export interface TileLayoutFixture {
   label: string;
@@ -109,7 +114,7 @@ const TILE_LAYOUT_FIXTURE_INPUTS: readonly TileLayoutFixture[] = [
     view: {
       status: "good",
       value: "17m",
-      sub: ciDurationSub(200, 6),
+      sub: ciDurationSub(CI_RUNS_MAX, DUR_MAX_AGE_HOURS),
       extra: history(),
       duration: 30 * DAY,
       hint: "jobs ↗",
@@ -121,7 +126,7 @@ const TILE_LAYOUT_FIXTURE_INPUTS: readonly TileLayoutFixture[] = [
     view: {
       status: "good",
       value: "6m",
-      sub: ciDurationSub(20),
+      sub: ciDurationSub(DUR_MIN_RUNS),
       extra: history(),
       duration: 30 * DAY,
       hint: "jobs ↗",
@@ -133,7 +138,7 @@ const TILE_LAYOUT_FIXTURE_INPUTS: readonly TileLayoutFixture[] = [
     view: {
       status: "good",
       value: "4m",
-      sub: ciDurationSub(20),
+      sub: ciDurationSub(DUR_MIN_RUNS),
       extra: history(),
       duration: 3 * DAY,
     },
