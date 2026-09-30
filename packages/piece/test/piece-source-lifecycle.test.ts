@@ -15,12 +15,14 @@ import {
   setPieceReconciliation,
 } from "@commonfabric/runner";
 import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
+import { patchableCell } from "../../runner/test/support/patchable-cell.ts";
+import { watchMetaReads } from "../../runner/test/support/watch-meta-reads.ts";
 import {
   readPieceSourceRevision,
   readPieceSourceState,
   reconcilePieceSource,
 } from "../src/ops/piece-origin.ts";
-import type { PieceController } from "../src/ops/piece-controller.ts";
+import { PieceController } from "../src/ops/piece-controller.ts";
 import { PiecesController } from "../src/ops/pieces-controller.ts";
 import { rawMetaWriteAuthorization } from "@commonfabric/runner/meta-seam";
 
@@ -1650,7 +1652,7 @@ describe("piece source lifecycle", () => {
       .history.find((entry) =>
         (entry.origin?.recorded ?? entry.origin?.url) === origin
       )!;
-    const argument = pieces.getArgument(piece.getCell());
+    const argument = patchableCell(pieces.getArgument(piece.getCell()));
     const getArgument = pieces.getArgument;
     const getRawUntyped = argument.getRawUntyped;
     pieces.getArgument = (() => argument) as typeof pieces.getArgument;
@@ -2083,10 +2085,6 @@ describe("piece source lifecycle", () => {
     };
     const syncPattern = pieces.syncPattern;
     const runSyncedWithCommit = runtime.runSyncedWithCommit.bind(runtime);
-    const cellPrototype = Object.getPrototypeOf(piece.getCell()) as {
-      getMetaRaw: (field: string, options?: unknown) => unknown;
-    };
-    const getMetaRaw = cellPrototype.getMetaRaw;
     let receiptIssued = false;
     let sourceHistoryReadsAfterReceipt = 0;
     mutablePieces.syncPattern = () => {
@@ -2100,15 +2098,14 @@ describe("piece source lifecycle", () => {
       receiptIssued = true;
       return result;
     }) as typeof runtime.runSyncedWithCommit;
-    cellPrototype.getMetaRaw = function (field, options) {
-      if (receiptIssued && field === "pieceSourceHistory") {
+    const unwatch = watchMetaReads("pieceSourceHistory", () => {
+      if (receiptIssued) {
         sourceHistoryReadsAfterReceipt++;
         throw new Error(
           "the commit receipt must not be verified by rereading source history",
         );
       }
-      return getMetaRaw.call(this, field, options);
-    };
+    });
     try {
       const result = await piece.changeSource({
         kind: "restore",
@@ -2124,7 +2121,7 @@ describe("piece source lifecycle", () => {
     } finally {
       mutablePieces.syncPattern = syncPattern;
       runtime.runSyncedWithCommit = runSyncedWithCommit;
-      cellPrototype.getMetaRaw = getMetaRaw;
+      unwatch();
     }
 
     // Read after the guard has proved the restore itself did not.
@@ -2136,9 +2133,10 @@ describe("piece source lifecycle", () => {
   });
 
   it("reports a committed detach after a concurrent refresh fails", async () => {
-    const piece = await pieces.create(versionProgram("v1"), { input: {} });
+    const created = await pieces.create(versionProgram("v1"), { input: {} });
+    const cell = patchableCell(created.getCell());
+    const piece = new PieceController(pieces, cell);
     await stampOrigin(piece, "system:detach-refresh.tsx");
-    const cell = piece.getCell();
     const mutableCell = cell as unknown as { sync: typeof cell.sync };
     const originalSync = cell.sync.bind(cell);
     const originalEditWithRetry = runtime.editWithRetry.bind(runtime);
@@ -2148,23 +2146,18 @@ describe("piece source lifecycle", () => {
     // Only awaited, never read: this test is about what the newer edit does
     // to the detach beside it, not about what it returns.
     let newerEdit: Promise<unknown> | undefined;
-    const cellPrototype = Object.getPrototypeOf(cell) as {
-      getMetaRaw: (field: string, options?: unknown) => unknown;
-    };
-    const getMetaRaw = cellPrototype.getMetaRaw;
     // Armed at the refresh failure: from there to the verdict is exactly
     // where a read-back would run.
     let refreshFailed = false;
     let sourceHistoryReadsAfterFailure = 0;
-    cellPrototype.getMetaRaw = function (field, options) {
-      if (refreshFailed && field === "pieceSourceHistory") {
+    const unwatch = watchMetaReads("pieceSourceHistory", () => {
+      if (refreshFailed) {
         sourceHistoryReadsAfterFailure++;
         throw new Error(
           "a committed detach must not be verified by rereading source history",
         );
       }
-      return getMetaRaw.call(this, field, options);
-    };
+    });
 
     runtime.editWithRetry = (async (action, maxRetries) => {
       const result = await originalEditWithRetry(action, maxRetries);
@@ -2197,7 +2190,7 @@ describe("piece source lifecycle", () => {
       mutableCell.sync = originalSync;
       runtime.editWithRetry = originalEditWithRetry;
       refreshFailed = false;
-      cellPrototype.getMetaRaw = getMetaRaw;
+      unwatch();
       releaseHeldSync.resolve();
     }
     await newerEdit;
