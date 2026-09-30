@@ -2729,6 +2729,20 @@ The second argument is always the literal `true` — the runtime's `allowIfSet`
 flag: the synthetic cause is a *suggestion*, silently ignored if the cell
 already has a cause or link, whereas authored one-argument `.for(cause)`
 throws in that case (`packages/runner/src/cell.ts`, `for(cause, allowIfSet?)`).
+
+The access is optional, `?.for(<cause>, true)`, when the tagged expression may
+be nullish when it runs (`mayBeNullish`): an optional chain, or an identifier
+(§13.4) or a call that `detectCallKind` does not classify whose type admits
+`undefined`, `null`, or `void`. The type is read both inside and outside any
+`as`, `satisfies`, or `!` around the expression, and either admitting one is
+enough unless a `!` asserts the value present. There is no cell to name in that
+case, and a plain `.for()` would throw on the absent value. A call the runtime
+provides keeps the plain access, since it returns a cell whatever type the
+value in that cell has (`ast-transform/handler-nullable-cell-const.expected.jsx`:
+`const a = state.profile?.resolveAsCell()?.for("a", true)` in a handler,
+`{ profile: a?.for(["d", "profile"], true) }` re-rooting it, and
+`(maybeCell(state.profile) as unknown)?.for("e", true)`).
+
 Source-map ranges are
 preserved from the original initializer (`preserveNodeSourceMap`).
 
