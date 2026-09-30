@@ -560,10 +560,11 @@ export function clampInt(v: string | null, def: number, lo: number, hi: number):
 }
 
 /**
- * The error a run list is refused with when its newest run is older than the
- * newest run already collected from the same workflow.
+ * The error a run list is refused with when it is behind the workflow's newest
+ * runs: its newest run is older than one already collected, or none of a run
+ * source's reads reaches the runs on the workflow's newest page.
  */
-export const STALE_RUNS_ERROR = "newest run older than the one already collected";
+export const STALE_RUNS_ERROR = "run list behind the workflow's newest runs";
 
 /** A workflow run as far as telling which of two runs was created last. */
 export interface DatedRun {
