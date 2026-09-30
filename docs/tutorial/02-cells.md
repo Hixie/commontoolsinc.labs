@@ -51,6 +51,7 @@ value.set(next)          // replace (last-write-wins)
 value.update({ k: v })   // shallow merge into an object
 value.increment(1)       // add to a number — mergeable: concurrent increments sum
 items.push(item)         // append — mergeable: disjoint appends merge
+items.pushAll(list)      // append every element of a list, as one push
 items.addUnique(item)    // append if not already present — mergeable
 items.remove(item)       // remove the first matching element
 items.removeByValue(item) // remove elements equal to a value — mergeable

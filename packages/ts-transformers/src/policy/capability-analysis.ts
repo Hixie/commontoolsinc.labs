@@ -177,10 +177,10 @@ function extendSourceRef(
 
 const PARAMETER_SUMMARY_PREFIX = "__param";
 
-// The mergeable-op writer methods (increment, push, addUnique, removeByValue)
-// come from the canonical catalog in @commonfabric/api, so a new mergeable op is
-// classified by registering it there — no edit here. The non-mergeable Cell
-// writers stay listed explicitly.
+// The mergeable-op writer methods (increment, push, pushAll, addUnique,
+// removeByValue) come from the canonical catalog in @commonfabric/api, so a new
+// mergeable op is classified by registering it there — no edit here. The
+// non-mergeable Cell writers stay listed explicitly.
 const mergeableMethods = (kind: MergeableOpMethodKind): string[] =>
   MERGEABLE_OP_METHODS.filter((op) => op.kind === kind).map((op) => op.method);
 
@@ -208,12 +208,17 @@ const ARRAY_IDENTITY_WRITER_METHODS = new Set([
   ...mergeableMethods("array-identity-writer"),
 ]);
 const ARRAY_IDENTITY_PRESERVING_CHAIN_METHODS = new Set(["slice"]);
-// The mergeable tail-append op. Only `push` commits as a mergeable `append`
-// that drops the op's own array read from conflict detection; a handler that
-// also reads the same collection then has a fragile read-then-push shape. The
-// other identity writers either dedup/remove by value (the recommended
-// replacements) or are ordinary read-modify-writes, so they are not flagged.
-const MERGEABLE_APPEND_METHODS = new Set(["push"]);
+// The mergeable tail-append ops: the catalog methods that commit as a mergeable
+// `append`, which drops the op's own array read from conflict detection. A
+// handler that also reads the same collection then has a fragile read-then-push
+// shape. The other identity writers either dedup/remove by value (the
+// recommended replacements) or are ordinary read-modify-writes, so they are not
+// flagged.
+const MERGEABLE_APPEND_METHODS = new Set(
+  MERGEABLE_OP_METHODS.filter((op) => op.wireOp === "append").map((op) =>
+    op.method
+  ),
+);
 const READER_METHODS = new Set(["get"]);
 const OPAQUE_DERIVATION_METHODS = new Set([
   "map",
@@ -1165,14 +1170,30 @@ function isArrayIdentityWriterValueArgument(
   call: ts.CallExpression,
   usage: ts.Expression,
 ): boolean {
-  if (!methodName || !ARRAY_IDENTITY_WRITER_METHODS.has(methodName)) {
-    return false;
+  return !!methodName && ARRAY_IDENTITY_WRITER_METHODS.has(methodName) &&
+    arrayIdentityWriterElementArguments(methodName, call.arguments).includes(
+      usage,
+    );
+}
+
+/**
+ * The arguments of a call to the array identity writer `methodName` that are
+ * themselves elements the write stores: all of them, except the position and
+ * count that open a `splice`, and the list a `pushAll` takes. That list is not
+ * an element, so it is read as an ordinary value, in full.
+ */
+function arrayIdentityWriterElementArguments(
+  methodName: string,
+  args: readonly ts.Expression[],
+): readonly ts.Expression[] {
+  switch (methodName) {
+    case "splice":
+      return args.slice(2);
+    case "pushAll":
+      return [];
+    default:
+      return args;
   }
-  const index = call.arguments.findIndex((argument) => argument === usage);
-  if (index < 0) {
-    return false;
-  }
-  return methodName === "splice" ? index >= 2 : true;
 }
 
 function isOptionalAliasInitializerMemberUsage(usage: ts.Expression): boolean {
@@ -3460,9 +3481,10 @@ export function analyzeFunctionCapabilities(
         ) {
           recordLocalArrayIdentityWrite(
             localReceiverName,
-            localMethodName === "splice"
-              ? node.arguments.slice(2)
-              : node.arguments,
+            arrayIdentityWriterElementArguments(
+              localMethodName,
+              node.arguments,
+            ),
           );
         } else if (localReceiverName && localMethodName === "set") {
           recordLocalMapSet(localReceiverName, node.arguments[1]);
@@ -3673,7 +3695,12 @@ export function analyzeFunctionCapabilities(
                 }
               }
               let hasIdentityArgument = false;
-              for (const argument of node.arguments) {
+              for (
+                const argument of arrayIdentityWriterElementArguments(
+                  methodName,
+                  node.arguments,
+                )
+              ) {
                 const argumentRef = resolveSourceRef(argument);
                 const rawArgument = unwrapExpression(argument);
                 const rawAlias = ts.isIdentifier(rawArgument)
