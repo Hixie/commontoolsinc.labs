@@ -16,10 +16,7 @@ import {
   createSemantics,
 } from "../lib/view/languages/typescript/semantics.ts";
 import { buildDiffDocument } from "../lib/view/diffdoc.ts";
-import {
-  diffSemanticsFor,
-  distinctLanguages,
-} from "../lib/view/languages/language.ts";
+import { diffSemanticsFor } from "../lib/view/languages/language.ts";
 import type { DiffMaps, DiffWorkspace } from "../lib/view/diffdoc.ts";
 import { parseDiff } from "../lib/view/diff.ts";
 import type { Document } from "../lib/view/model.ts";
@@ -601,9 +598,7 @@ Deno.test("diff semantics: a diff file read in another language types to null", 
       parseDiff(diff)!,
       diffWorkspace(root),
     );
-    const sem = diffSemanticsFor(distinctLanguages(paths), diff, maps, {
-      cwd: root,
-    })!;
+    const sem = diffSemanticsFor(diff, maps, { cwd: root })!;
     const [code, notes] = paths.map((path) =>
       diff.indexOf("+const answer", diff.indexOf(`+++ b/${path}`)) + 7
     );
