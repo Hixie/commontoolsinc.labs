@@ -106,6 +106,22 @@ describe("preload-path", () => {
     }
   });
 
+  it("refuses a root it cannot resolve for any reason but its absence", async () => {
+    // A root that does not exist is granted as given, since there is no
+    // other path to it. Any other failure to resolve one leaves the path
+    // the preload climbs unknown.
+
+    const file = await Deno.makeTempFile({ prefix: "preload-path-" });
+    try {
+      expect(() => recordingArguments([], { ...paths, root: `${file}/repo` }))
+        .toThrow(Deno.errors.NotADirectory);
+      expect(recordingArguments(["-W"], { ...paths, root: "/r/repo" }))
+        .toEqual([preload, "--allow-read=/r/repo/.git"]);
+    } finally {
+      await Deno.remove(file);
+    }
+  });
+
   it("refuses a path that is not absolute", () => {
     // An empty list ends the run, and a relative path names a different
     // place in each package the invocations run in.
