@@ -409,21 +409,95 @@ describe("diff file languages", () => {
       expect(classesOf(reparsed.lines, '"howdy"')).toEqual(["string"]);
     });
 
-    it("recolor a diff whose files changed in the languages the edited diff decides", () => {
-      const added = TOP_DIFF.replaceAll(SCRIPT_PATH, "bin/other").replace(
-        '+echo "hello"',
-        '+echo "welcome"',
-      );
-      const highlighter = createDiffHighlighter(
-        BODY_DIFF,
-        undefined,
-        undefined,
-        diffLanguages(BODY_DIFF, parseDiff(BODY_DIFF)!, scriptWorkspace()),
+    it("recolor each section of one file in the language that section decides", () => {
+      // The workspace file's shebang names no language, so each section's new
+      // side takes the language of its own old blob: Python, then shell.
+
+      const ws: DiffWorkspace = {
+        resolve: (path) => `/workspace/${path}`,
+        read: () => '#!/usr/bin/perl\nx\necho "one"\ny\necho "two"\n',
+        readBlobs: (objects) =>
+          new Map(
+            objects.map((object) => [
+              object,
+              object === "1111111"
+                ? "#!/usr/bin/env python3\n"
+                : "#!/usr/bin/env bash\n",
+            ]),
+          ),
+      };
+      const section = (
+        index: string,
+        line: number,
+        from: string,
+        to: string,
+      ) => [
+        `diff --git a/${SCRIPT_PATH} b/${SCRIPT_PATH}`,
+        `index ${index} 100755`,
+        `--- a/${SCRIPT_PATH}`,
+        `+++ b/${SCRIPT_PATH}`,
+        `@@ -${line} +${line} @@`,
+        `-echo "${from}"`,
+        `+echo "${to}"`,
+      ];
+      const diff = [
+        ...section("1111111..2222222", 3, "zero", "one"),
+        ...section("3333333..4444444", 5, "old", "two"),
+        "",
+      ].join("\n");
+      const model = parseDiff(diff)!;
+      expect(
+        diffLanguages(diff, model, ws).map(({ newLanguage }) => newLanguage),
+      )
+        .toEqual([pythonLanguage, shellLanguage]);
+      const { doc, edit } = buildDiffDocument(diff, model, ws);
+      const highlighter = diffSource(ws, edit).createHighlighter!(
+        diff,
+        doc.lines,
       );
 
-      const lines = highlighter.update(BODY_DIFF + added);
+      highlighter.update(diff.replace('+echo "one"', '+echo "uno"'));
+      const lines = highlighter.update(
+        diff.replace('+echo "one"', '+echo "uno"').replace(
+          '+echo "two"',
+          '+echo "dos"',
+        ),
+      );
+
+      const edited = lines.find((line) => line.text === '+echo "dos"')!;
+      expect(edited.spans.find((span) => span.text === "echo")?.cls).toBe(
+        "callName",
+      );
+    });
+
+    it("recolor and count a diff whose files changed in the languages the edited diff and workspace decide", () => {
+      // Only the workspace shows the added section's shebang, since its hunk
+      // does not start at the file's first line.
+
+      const ws: DiffWorkspace = {
+        resolve: (path) => `/workspace/${path}`,
+        read: () => SCRIPT,
+      };
+      const { doc, edit } = buildDiffDocument(
+        BODY_DIFF,
+        parseDiff(BODY_DIFF)!,
+        ws,
+      );
+      const source = diffSource(ws, edit);
+      const edited = BODY_DIFF + BODY_DIFF.replaceAll(SCRIPT_PATH, "bin/other")
+        .replace('+  echo "hello" "$1"', '+  echo "welcome" "$1"');
+
+      const lines = source.createHighlighter!(BODY_DIFF, doc.lines).update(
+        edited,
+      );
 
       expect(classesOf(lines, '"welcome"')).toEqual(["string"]);
+      expect(
+        source.diffCountContexts!(edited)?.map(({ languages }) => languages),
+      ).toEqual([
+        { oldLanguage: shellLanguage, newLanguage: shellLanguage },
+        { oldLanguage: shellLanguage, newLanguage: shellLanguage },
+      ]);
     });
   });
 });

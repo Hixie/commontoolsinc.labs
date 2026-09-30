@@ -800,21 +800,6 @@ function displayedFileLines(
 }
 
 /** Load and highlight the complete old side represented by one diff file. */
-/**
- * The text of the old Git blob `object`, or null when it is not a blob name or
- * the workspace cannot read it.
- */
-function oldBlobText(
-  object: string,
-  oldBlobs: ReadonlyMap<string, string> | undefined,
-  ws: DiffWorkspace,
-): string | null {
-  if (!validGitObject(object)) return null;
-  return oldBlobs
-    ? oldBlobs.get(object) ?? null
-    : ws.readBlob?.(object) ?? null;
-}
-
 function loadOldFile(
   file: DiffFile,
   fileIndex: number,
@@ -893,6 +878,21 @@ function loadOldFile(
   );
   cache?.set(key, entry);
   return entry;
+}
+
+/**
+ * The text of the old Git blob `object`, or null when it is not a blob name or
+ * the workspace cannot read it.
+ */
+function oldBlobText(
+  object: string,
+  oldBlobs: ReadonlyMap<string, string> | undefined,
+  ws: DiffWorkspace,
+): string | null {
+  if (!validGitObject(object)) return null;
+  return oldBlobs
+    ? oldBlobs.get(object) ?? null
+    : ws.readBlob?.(object) ?? null;
 }
 
 /** The languages the two sides of one diff file are read in. */
