@@ -143,6 +143,23 @@ describe("ipc", () => {
       })).toBe(false);
     });
 
+    it("returns false for a request that is not typed, numbered, and named", () => {
+      const describe = { ...HEADER, type: "request", id: 0 };
+      expect(isBridgeRequest({ ...describe, operation: "describe" })).toBe(
+        true,
+      );
+      expect(isBridgeRequest({
+        ...describe,
+        type: "response",
+        operation: "describe",
+      })).toBe(false);
+      expect(isBridgeRequest({ ...describe, id: 0.5, operation: "describe" }))
+        .toBe(false);
+      expect(isBridgeRequest({ ...describe, id: "0", operation: "describe" }))
+        .toBe(false);
+      expect(isBridgeRequest({ ...describe, operation: 1 })).toBe(false);
+    });
+
     it("accepts complete responses and subscription events", () => {
       expect(isBridgeHostMessage({
         ...HEADER,
@@ -170,6 +187,17 @@ describe("ipc", () => {
       })).toBe(false);
     });
 
+    it("returns false for a response without a whole-number id and a boolean ok", () => {
+      const response = { ...HEADER, type: "response", id: 0, ok: true };
+      expect(isBridgeHostMessage(response)).toBe(true);
+      expect(isBridgeHostMessage({ ...response, id: 0.5 })).toBe(false);
+      expect(isBridgeHostMessage({ ...response, id: undefined })).toBe(false);
+      expect(isBridgeHostMessage({ ...response, ok: "true" })).toBe(false);
+      expect(isBridgeHostMessage({ ...response, type: "request" })).toBe(
+        false,
+      );
+    });
+
     it("accepts a flush acknowledgement only with its nonce", () => {
       expect(isBridgeHostMessage({
         ...HEADER,
@@ -191,6 +219,14 @@ describe("ipc", () => {
       })).toBe(true);
       expect(isIPCGuestMessage({ type: IPCGuestMessageType.OuterError }))
         .toBe(false);
+    });
+
+    it("returns false for a message with no type or an unknown one", () => {
+      expect(isIPCGuestMessage(undefined)).toBe(false);
+      expect(isIPCGuestMessage("ready")).toBe(false);
+      expect(isIPCGuestMessage({})).toBe(false);
+      expect(isIPCGuestMessage({ type: "load-document" })).toBe(false);
+      expect(isIPCGuestMessage({ type: "port-request" })).toBe(false);
     });
 
     it("recognizes only complete guest alarms", () => {
