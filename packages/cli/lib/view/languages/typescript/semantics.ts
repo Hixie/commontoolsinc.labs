@@ -179,7 +179,7 @@ export function createDiffSemantics(
   const { importMap, root } = safe(() => discoverConfig(options.cwd)) ??
     { importMap: {}, root: options.cwd };
   const libDir = safe(() => defaultLibDir());
-  const rootFiles = maps.rootFiles.filter((p) => within(p, root));
+  const rootFiles = [...maps.rootFiles.keys()].filter((p) => within(p, root));
   if (rootFiles.length === 0) return undefined;
 
   let service: ts.LanguageService | undefined;

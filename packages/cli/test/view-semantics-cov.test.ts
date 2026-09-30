@@ -737,7 +737,7 @@ Deno.test("diff semantics: returns null when no root file is in the workspace", 
   const noWs: DiffWorkspace = { resolve: () => null, read: () => null };
   const model = parseDiff(DIFF)!;
   const { maps } = buildDiffDocument(DIFF, model, noWs);
-  assertEquals(maps.rootFiles.length, 0);
+  assertEquals(maps.rootFiles.size, 0);
   const sem = createDiffSemantics(DIFF, maps, { cwd: CWD });
   assertEquals(
     sem,
