@@ -48,6 +48,7 @@ import {
   commitMoment,
   pinShuffleSeed,
 } from "@commonfabric/test-support/shuffle";
+import { maxOf } from "@commonfabric/utils/math";
 import {
   type CapabilityId,
   COMPILE_CACHE_FILE,
@@ -939,10 +940,7 @@ export async function runBatch(
     for (const request of asked) {
       if (!heard.has(request.unit)) silent.add(request.unit);
     }
-    longest += [...unitSeconds.values()].reduce(
-      (most, seconds) => Math.max(most, seconds),
-      0,
-    );
+    longest += Math.max(0, maxOf(unitSeconds.values()));
   }
   if (spool !== undefined) {
     spoolRecords(spool, [
@@ -1652,9 +1650,9 @@ export async function fullLanes(
  * what a lane is projected to take here is what it projects for itself.
  */
 export function describeFullLanes(laid: Plan, prologue: number): void {
-  const longest = laid.lanes.reduce(
-    (most, lane) => Math.max(most, lane.projectedSeconds),
+  const longest = Math.max(
     0,
+    maxOf(laid.lanes.map((lane) => lane.projectedSeconds)),
   );
   say([
     `## The full run's ${laid.lanes.length} lane(s)`,

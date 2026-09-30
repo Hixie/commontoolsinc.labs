@@ -37,10 +37,10 @@ const MESSAGE =
   "Spreading a collection into this call passes each element as a separate " +
   "argument, and V8 throws `RangeError: Maximum call stack size exceeded` " +
   "once a call has more than about a hundred thousand of them. Append in a " +
-  "loop (`for (const item of items) out.push(item);`), or fold with " +
-  "`reduce` (`items.reduce((most, item) => Math.max(most, item), " +
-  '-Infinity)`). See docs/development/DEVELOPMENT.md, "Spreading a ' +
-  'collection into a call".';
+  "loop (`for (const item of items) out.push(item);`), and take the " +
+  "largest or smallest with `maxOf` or `minOf` from " +
+  "`@commonfabric/utils/math`. See docs/development/DEVELOPMENT.md, " +
+  '"Spreading a collection into a call".';
 
 /** The name of an identifier, or undefined for any other node. */
 function nameOf(node: Deno.lint.Node): string | undefined {

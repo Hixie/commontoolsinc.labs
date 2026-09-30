@@ -10,6 +10,7 @@
  */
 
 import { testIdentityKey } from "@commonfabric/test-support/records";
+import { maxOf } from "@commonfabric/utils/math";
 import {
   FILL_DENSITY_SHARE,
   FILL_EXPLORATION_SHARE,
@@ -553,14 +554,8 @@ export function foldWholeUnits(
     const caught = latest(group.map((entry) => entry.inputs.lastCatch));
     const inputs: ScoreInputs = {
       catches: group.reduce((total, entry) => total + entry.inputs.catches, 0),
-      sources: group.reduce(
-        (most, entry) => Math.max(most, entry.inputs.sources),
-        -Infinity,
-      ),
-      churn: group.reduce(
-        (most, entry) => Math.max(most, entry.inputs.churn),
-        -Infinity,
-      ),
+      sources: maxOf(group.map((entry) => entry.inputs.sources)),
+      churn: maxOf(group.map((entry) => entry.inputs.churn)),
       ...(caught === undefined ? {} : { lastCatch: caught }),
     };
     // The unit last ran when its stalest test did, and never where one of
@@ -580,14 +575,8 @@ export function foldWholeUnits(
       cost: group.reduce((total, member) => total + member.cost, 0),
       score: value(inputs, today),
       inputs,
-      flakeRate: group.reduce(
-        (most, member) => Math.max(most, member.flakeRate),
-        -Infinity,
-      ),
-      repeats: group.reduce(
-        (most, member) => Math.max(most, member.repeats),
-        -Infinity,
-      ),
+      flakeRate: maxOf(group.map((member) => member.flakeRate)),
+      repeats: maxOf(group.map((member) => member.repeats)),
       ...(ran === undefined ? {} : { lastRun: ran }),
     };
     const key = testIdentityKey(entry.test);

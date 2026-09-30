@@ -48,6 +48,7 @@ import {
   testIdentityKey,
   testIdentityOfKey,
 } from "@commonfabric/test-support/records";
+import { maxOf, minOf } from "@commonfabric/utils/math";
 import {
   ciSubmissionsPrefix,
   storeBucket,
@@ -524,7 +525,7 @@ function refusal(
     ahead === undefined ? [] : [ahead]
   );
   if (shapes.length > 0) {
-    const highest = shapes.reduce((most, shape) => Math.max(most, shape));
+    const highest = maxOf(shapes);
     lines.push(
       `deploy a publisher that reads shape ${highest} or ` +
         `above, which is the highest shape any of these is written in`,
@@ -1106,9 +1107,7 @@ function summarize(
     );
   }
   if (times.length > 0) {
-    const slowest = times.reduce((most, time) => Math.max(most, time));
-    const fastest = times.reduce((least, time) => Math.min(least, time));
-    const spread = slowest - fastest;
+    const spread = maxOf(times) - minOf(times);
     console.log(
       `test selection: ${LANES} lanes, spread ${duration(spread)}`,
     );

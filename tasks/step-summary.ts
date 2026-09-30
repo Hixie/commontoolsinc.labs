@@ -10,6 +10,8 @@
 
 import { unicodeWidth } from "@std/cli/unicode-width";
 
+import { maxOf } from "@commonfabric/utils/math";
+
 /** The largest summary GitHub accepts. */
 export const SUMMARY_LIMIT = 1024 * 1024;
 
@@ -136,12 +138,8 @@ function box(rows: readonly string[][]): string[] {
   // one, and none for a mark combining with the one before it.
   const width = unicodeWidth;
   const widths = Array.from(
-    { length: rows.reduce((most, row) => Math.max(most, row.length), 0) },
-    (_, column) =>
-      rows.reduce(
-        (most, row) => Math.max(most, width(row[column] ?? "")),
-        0,
-      ),
+    { length: maxOf(rows.map((row) => row.length)) },
+    (_, column) => maxOf(rows.map((row) => width(row[column] ?? ""))),
   );
   const rule = (left: string, middle: string, right: string) =>
     left + widths.map((cells) => "─".repeat(cells + 2)).join(middle) + right;

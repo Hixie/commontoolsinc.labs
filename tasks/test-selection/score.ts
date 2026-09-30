@@ -16,6 +16,7 @@ import type {
   TestIdentity,
 } from "@commonfabric/test-support/records";
 import { testIdentityKey } from "@commonfabric/test-support/records";
+import { minOf } from "@commonfabric/utils/math";
 import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import {
   BREADTH_SATURATION,
@@ -889,7 +890,7 @@ function readSlowest(held: StoredSlowest): DaySamples {
   const samples = samplesOf(kept);
   countInto(
     samples,
-    bucketOf(kept.reduce((least, value) => Math.min(least, value), Infinity)),
+    bucketOf(minOf(kept)),
     held.count - kept.length,
   );
   if (held.rule !== undefined) samples.rule = held.rule;
