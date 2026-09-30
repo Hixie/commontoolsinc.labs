@@ -102,6 +102,13 @@ Deno.test("worker reconciler - cell child optimization", async (t) => {
   class MockCell extends (CellImplConstructor as any) {
     value: any;
     #subscribers = new Set<(value: any) => void>();
+    /** A mock's read consumes no labels, which a sink may ask to be told. */
+    static readonly consumed = {
+      confidentiality: [],
+      integrity: [],
+      modulePolicySpaces: new Map(),
+      sources: [],
+    };
 
     constructor(value: any) {
       // Pass dummy args to super to satisfy it
@@ -110,13 +117,22 @@ Deno.test("worker reconciler - cell child optimization", async (t) => {
       this.value = value;
     }
 
-    sink(callback: (value: any) => void) {
-      this.#subscribers.add(callback);
+    sink(
+      callback: (value: any, label?: undefined, consumed?: unknown) => void,
+      options?: { includeConsumedLabel?: boolean },
+    ) {
+      const deliver = (value: any) =>
+        callback(
+          value,
+          undefined,
+          options?.includeConsumedLabel ? MockCell.consumed : undefined,
+        );
+      this.#subscribers.add(deliver);
       // A real cell's `sink()` publishes the current value synchronously at
       // subscription, and the reconciler renders from that first delivery.
-      callback(this.value);
+      deliver(this.value);
       return () => {
-        this.#subscribers.delete(callback);
+        this.#subscribers.delete(deliver);
       };
     }
 
