@@ -12,6 +12,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { defer } from "@commonfabric/utils/defer";
+import { terminateWorker } from "@commonfabric/utils/worker-lifetime";
 
 import type { FabricValue } from "@";
 import {
@@ -86,7 +87,7 @@ function stateOf(encoded: RealmEncodedValue): RealmCodecValue {
 /**
  * Encodes `value`, sends it to a real `Worker`, and returns what that worker
  * made of it. Waits on the worker's own message rather than polling, and
- * terminates it however the wait ends.
+ * terminates it however the wait ends, settling once it has been torn down.
  */
 async function crossRealm(value: FabricValue): Promise<EchoReport> {
   const worker = new Worker(
@@ -98,11 +99,14 @@ async function crossRealm(value: FabricValue): Promise<EchoReport> {
   worker.onmessage = (ev) => report.resolve(ev.data as EchoReport);
   worker.onerror = (ev) => report.reject(new Error(ev.message));
 
+  let lifetimeLock: string | undefined;
   try {
     worker.postMessage(realmFromFabricValue(value));
-    return await report.promise;
+    const echoed = await report.promise;
+    lifetimeLock = echoed.lifetimeLock;
+    return echoed;
   } finally {
-    worker.terminate();
+    await terminateWorker(worker, lifetimeLock);
   }
 }
 
