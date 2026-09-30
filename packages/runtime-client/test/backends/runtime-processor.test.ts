@@ -2198,16 +2198,14 @@ describe("runtime-processor", () => {
       });
 
       it("leaves a forged `FabricPrimitive` for the encode to refuse", () => {
-        // An object on a `FabricPrimitive`'s prototype passes every membership
-        // check and has no encoding: `isValidFabricValue()` says true and the
-        // encode refuses. Producing one takes deliberate effort, so it is not
-        // worth a second walk of every console argument to find early; it is
-        // left to fail where the encoding is actually done.
+        // An object on a `FabricPrimitive`'s prototype is a counterfeit with no
+        // encoding. Producing one takes deliberate effort, so it is not worth
+        // a second walk of every console argument to find early; it is passed
+        // through unchanged and left to fail where the encoding is done.
 
         const forged = Object.create(FabricBytes.prototype);
-        expect(isValidFabricValue(toConsoleDebugValue(forged))).toBe(true);
-        expect(() => realmFromFabricValue(toConsoleDebugValue(forged)))
-          .toThrow();
+        expect(toConsoleDebugValue(forged)).toBe(forged);
+        expect(() => realmFromFabricValue(forged)).toThrow();
       });
 
       it("returns a unique symbol as its marker", () => {

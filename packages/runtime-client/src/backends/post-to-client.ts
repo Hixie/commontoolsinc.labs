@@ -46,7 +46,7 @@ export function postThrough(
     return true;
   } catch (error) {
     // Defense in depth, and the mirror of the two decodes. Both steps above
-    // can refuse: a value can pass every `FabricValue` check and still have
+    // can refuse: a value can be typed as a `FabricValue` and still have
     // no encoding -- an object forged onto a `FabricPrimitive`'s prototype is
     // one -- and the post can fail for reasons no encoding anticipates. One
     // guard covers both because the answer is the same either way.
