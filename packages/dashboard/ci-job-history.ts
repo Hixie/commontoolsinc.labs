@@ -639,9 +639,10 @@ async function fetchWorkflowRuns(
   return [...unique.values()];
 }
 
-// Up to GANTT_MAX_RUNS of a workflow's newest runs, or of its pushes to main.
-// Main's pushes are picked out of the unfiltered listing here, since GitHub
-// serves that listing current. The walk ends at the history window.
+// Up to GANTT_MAX_RUNS of a workflow's newest runs in the history window, or of
+// its pushes to main. Main's pushes are picked out of the unfiltered listing
+// here, since GitHub serves that listing current. A run that pages repeat as
+// runs land is kept once, at its latest attempt.
 async function fetchRecentWorkflowRuns(
   token: string,
   source: CiHistorySource,
@@ -650,18 +651,21 @@ async function fetchRecentWorkflowRuns(
   now: number,
 ): Promise<WorkflowRun[]> {
   const cutoff = now - CI_HISTORY_DAYS * DAY_MS;
-  const runs: WorkflowRun[] = [];
-  for (let page = 1; runs.length < GANTT_MAX_RUNS; page++) {
+  const runs = new Map<number, WorkflowRun>();
+  for (let page = 1; runs.size < GANTT_MAX_RUNS; page++) {
     const batch = await fetchUnfilteredWorkflowRuns(token, source, request, page);
     for (const run of batch) {
-      if (!mainOnly || (run.event === "push" && run.head_branch === "main")) {
-        runs.push(run);
-      }
+      if (
+        runTime(run) < cutoff ||
+        (mainOnly && (run.event !== "push" || run.head_branch !== "main"))
+      ) continue;
+      const kept = runs.get(run.id);
+      if (!kept || run.run_attempt > kept.run_attempt) runs.set(run.id, run);
     }
     const last = batch.at(-1);
     if (batch.length < 100 || !last || runTime(last) < cutoff) break;
   }
-  return runs.slice(0, GANTT_MAX_RUNS);
+  return [...runs.values()].slice(0, GANTT_MAX_RUNS);
 }
 
 interface TimedApiJob {

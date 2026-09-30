@@ -144,9 +144,10 @@ the collection, not by the order the pages arrived in.
 
 A fetch fails when neither the filtered listing nor the held window reaches the
 run it has to, which happens when the dashboard starts while the filtered
-listing is behind; when the listing failed outright, the fetch fails with the
-listing's own error. The server log names the run the listing did not reach
-and the listing's newest run. The scheduler keeps the snapshot it has, and each
+listing is behind. When the listing failed outright, the fetch then fails with
+the listing's own error; when it came back without the run, the server log
+names that run and the listing's newest run. The scheduler keeps the snapshot
+it has, and each
 tile reading it turns gray and names the source's run list as out of date,
 apart from the ci tile, which marks the affected build unreadable. The next
 fetch that reaches the newest runs clears the gray.

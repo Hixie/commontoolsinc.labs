@@ -139,8 +139,10 @@ async function fetchRuns(
       return undefined;
     }),
   ]);
-  const recent = page.filter((run) => inScope(run, source.scope))
-    .map((run) => tileRun(run, source.repo));
+  const cutoff = Date.now() - CI_RUNS_MAX_AGE_DAYS * 86_400_000;
+  const recent = page.filter((run) =>
+    inScope(run, source.scope) && !startedBefore(run, cutoff)
+  ).map((run) => tileRun(run, source.repo));
   const joint = recent.at(-1);
   const reaches = (runs: readonly Run[] | undefined) =>
     runs !== undefined && (!joint || runs.some((run) => run.id === joint.id));
@@ -164,7 +166,6 @@ async function fetchRuns(
       runs.set(run.id, run);
     }
   }
-  const cutoff = Date.now() - CI_RUNS_MAX_AGE_DAYS * 86_400_000;
   return [...runs.values()]
     .filter((run) => !startedBefore(run, cutoff))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))

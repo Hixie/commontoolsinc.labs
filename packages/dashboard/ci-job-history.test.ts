@@ -5632,6 +5632,71 @@ Deno.test("CI Gantt picks main's pushes out of the unfiltered run list", async (
   }
 });
 
+Deno.test("CI Gantt leaves out runs past the history window on the last page it reads", async () => {
+  const test = await temporaryCollector();
+  const recent = workflowRun(9_341, NOW);
+  const old = workflowRun(9_340, NOW - (CI_HISTORY_DAYS + 5) * DAY);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.includes(`/actions/workflows/${CI_WORKFLOW}/runs`)) {
+      return Promise.resolve(Response.json({ workflow_runs: [recent, old] }));
+    }
+    if (url.pathname.includes("/jobs")) {
+      return Promise.resolve(Response.json({ jobs: [apiJob("Check", 90)] }));
+    }
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  };
+  try {
+    const gantt = await test.collector.gantt(
+      "window-edge-token",
+      CI_HISTORY_SOURCES.labs,
+      { limit: 10, mainOnly: true, allConclusions: true },
+      NOW,
+    );
+    assertEquals(gantt.runs.map(({ run }) => run.databaseId), [recent.id]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await test.cleanup();
+  }
+});
+
+Deno.test("CI Gantt counts a run two pages repeat once toward its limit", async () => {
+  // A run landing between the two reads pushes page one's last run onto page
+  // two as well.
+  const test = await temporaryCollector();
+  const runs = Array.from(
+    { length: 200 },
+    (_, index) => workflowRun(40_000 - index, NOW - index * 60_000),
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.includes(`/actions/workflows/${CI_WORKFLOW}/runs`)) {
+      const page = Number(url.searchParams.get("page"));
+      return Promise.resolve(Response.json({
+        workflow_runs: page === 1 ? runs.slice(0, 100) : runs.slice(99, 199),
+      }));
+    }
+    if (url.pathname.includes("/jobs")) {
+      return Promise.resolve(Response.json({ jobs: [apiJob("Check", 90)] }));
+    }
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  };
+  try {
+    const gantt = await test.collector.gantt(
+      "repeat-token",
+      CI_HISTORY_SOURCES.labs,
+      { limit: 150, mainOnly: true, allConclusions: true },
+      NOW,
+    );
+    assertEquals(gantt.runs.length, 150);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await test.cleanup();
+  }
+});
+
 Deno.test("CI Gantt stops walking the unfiltered run list at the history window", async () => {
   const test = await temporaryCollector();
   const pages: number[] = [];

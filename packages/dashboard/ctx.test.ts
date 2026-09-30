@@ -563,6 +563,18 @@ Deno.test("runs(): a listing that reaches the newest page cannot turn a held run
   );
 });
 
+Deno.test("runs(): a listing is held only to newest-page runs inside the age cutoff", async () => {
+  // A quiet workflow's newest page reaches back past the window; the listing
+  // stops at the window, so it cannot be asked to reach that run.
+  await withGithub(
+    () => [],
+    async (ctx) => {
+      assertEquals(await ctx.runs(), []);
+    },
+    () => [listedOn("main", aged(1, (CI_RUNS_MAX_AGE_DAYS + 5) * DAY_MS))],
+  );
+});
+
 Deno.test("runs(): with no run of its own on the newest page, a source joins every read it gets", async () => {
   using time = new FakeTime(Date.now());
   let listing: Run[] = [aged(1, 3_600_000), aged(2, 2 * 3_600_000)];
