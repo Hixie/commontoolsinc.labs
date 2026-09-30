@@ -11,6 +11,7 @@ import {
   isGuestAlarm,
   isGuestError,
   isGuestFlush,
+  isGuestPortRequest,
   isIPCGuestMessage,
 } from "../src/ipc.ts";
 
@@ -204,6 +205,12 @@ describe("ipc", () => {
       expect(isGuestFlush({ type: "flush" })).toBe(false);
       expect(isGuestFlush({ type: "error", nonce: "n1" })).toBe(false);
       expect(isGuestFlush("flush")).toBe(false);
+    });
+
+    it("recognizes port requests", () => {
+      expect(isGuestPortRequest({ type: "port-request" })).toBe(true);
+      expect(isGuestPortRequest({ type: "flush", nonce: "n1" })).toBe(false);
+      expect(isGuestPortRequest("port-request")).toBe(false);
     });
   });
 });
