@@ -1172,11 +1172,11 @@ export interface IReadable<T> {
 /**
  * Writable cells can update their value.
  *
- * **Frozenness contract:** Values passed into `set()`, `update()`, and `push()`
- * flow through a write-boundary normalization step that shallowly freezes any
- * plain unfrozen Object/Array levels it visits. Inputs that are already
- * deep-frozen valid `FabricValue` trees are accepted identity-preservingly with
- * no further cloning.
+ * **Frozenness contract:** Values passed into `set()`, `update()`, `push()`,
+ * and `pushAll()` flow through a write-boundary normalization step that
+ * shallowly freezes any plain unfrozen Object/Array levels it visits. Inputs
+ * that are already deep-frozen valid `FabricValue` trees are accepted
+ * identity-preservingly with no further cloning.
  */
 export interface IWritable<T, C extends AnyBrandedCell<any>> {
   /**
