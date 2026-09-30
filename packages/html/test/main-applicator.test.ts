@@ -188,12 +188,7 @@ function createMockDocument({ upgrade = true } = {}) {
       hasAttribute(name: string) {
         return attributes.has(name);
       },
-      get outerHTML() {
-        const serialized = [...attributes].map(([name, value]) =>
-          ` ${name}="${value}"`
-        );
-        return `<${tagName}${serialized.join("")}>`;
-      },
+      innerHTML: "",
       getAttributeNames() {
         return [...attributes.keys()];
       },
@@ -266,15 +261,6 @@ function createMockDocument({ upgrade = true } = {}) {
       },
     };
 
-    if (tagName === "template") {
-      element.content = { firstElementChild: null };
-      Object.defineProperty(element, "innerHTML", {
-        set: (markup: string) => {
-          element.content.firstElementChild = parseStartTag(markup);
-        },
-      });
-    }
-
     Object.setPrototypeOf(
       element,
       tagName === "input"
@@ -294,17 +280,6 @@ function createMockDocument({ upgrade = true } = {}) {
       textContent: text,
       parentNode: null,
     };
-  };
-
-  // Parses the start tag that `markup` opens with, which is all of the markup
-  // that a mock element's `.outerHTML` holds.
-  const parseStartTag = (markup: string) => {
-    const [, tagName, rest] = /^<([\w-]+)([^>]*)>/.exec(markup)!;
-    const element = createElement(tagName);
-    for (const [, name, value] of rest.matchAll(/([\w-]+)="([^"]*)"/g)) {
-      element.setAttribute(name, value);
-    }
-    return element;
   };
 
   const importNode = (node: Element) => {

@@ -56,17 +56,18 @@ function definerOf(target: object | null, key: string): object | null {
 }
 
 /**
- * Returns the element that `document` parses from the markup of `element`. It
- * has the attributes and descendants that `element` has, but none of the state
- * that script or user input gave them, such as a text field's typed text or a
- * list's chosen option. An element the template parser drops, such as `body`,
- * comes back as a new, empty element of the same kind.
+ * Returns a new element in `document` with the tag, the attributes, and the
+ * parsed child markup of `element`. It has none of the state that script or
+ * user input gave `element` or its descendants, such as a text field's typed
+ * text or a list's chosen option.
  */
 function fromMarkup(element: Element, document: Document): Element {
-  const template = document.createElement("template");
-  template.innerHTML = element.outerHTML;
-  return template.content.firstElementChild ??
-    document.createElement(element.localName);
+  const parsed = document.createElement(element.localName);
+  for (const { name, value } of element.attributes) {
+    parsed.setAttribute(name, value);
+  }
+  parsed.innerHTML = element.innerHTML;
+  return parsed;
 }
 
 /**
