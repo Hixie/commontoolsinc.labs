@@ -127,7 +127,8 @@ is often hours or days behind. The third read is the window the snapshot held
 before. Either the held window or the filtered listing has to join the newest
 page, so that no run falls between them. The held window joins it when the page
 still carries the newest run, of any branch or event, of the page the held
-window was joined to, which at a refresh every thirty seconds it always does.
+window was joined to, which it does unless a hundred runs start between two
+refreshes.
 The filtered listing joins it when it carries the oldest of the snapshot's runs
 on the page. When neither joins, which is what a dashboard that has just
 started sees while the filtered listing is behind, the unfiltered listing is
