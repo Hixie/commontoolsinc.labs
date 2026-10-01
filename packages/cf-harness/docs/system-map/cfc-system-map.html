@@ -671,7 +671,7 @@
     // map is re-verified; the stamp is drawn in the canvas's top-left corner.
     const SNAPSHOT = {
       date: "2026-10-01",
-      sha: "ae403241b3",
+      sha: "28544790e8",
     };
     const W = 2760, H = 1840;
     const bands = [
@@ -2129,7 +2129,8 @@
       g_return: {
         body:
           `<p>A child's return is a new observation, not a continuation of the parent's token stream, and it brings the child's model-context label into the parent's. It is validated against the delegation's return schema, sanitized, sealed strings become parent-resolvable tokens, and any token-shaped text still standing is scrubbed to inert text. Raw child evidence stays in artifacts, off the parent's return channel.</p>`,
-        why: "Structure only: no label information crosses with the return.",
+        why:
+          "The child's model-context label crosses with the return, so what the child observed bounds what the parent may do with whatever crosses.",
         close: [
           "CT-2036 tracks the numeric inert-field channel, which can encode a sealed string across this boundary.",
           "Treat program text and diagnostics as a labeled side channel across delegation (CT-2199).",
