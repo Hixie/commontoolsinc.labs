@@ -1560,7 +1560,8 @@ run and pass `--dry-run`, which posts nothing.
 ## Units that run whole
 
 An invocation unit is usually one test file. A lane that wants part of
-one registers the rest of the file's tests as ignored.
+one registers the rest of the file's tests as ignored, and ships no
+record of them.
 
 Some units hold more than one test and cannot be split. These are a
 workspace member whose test task takes no file list, a member's browser
