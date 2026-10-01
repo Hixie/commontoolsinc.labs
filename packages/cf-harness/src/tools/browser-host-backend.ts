@@ -22,6 +22,13 @@ import {
   type HarnessBrowserHost,
   isBrowserHostResult,
 } from "../contracts/browser-host.ts";
+import { CFC_CONCEPT_KIND, cfcAtom } from "@commonfabric/api/cfc";
+import {
+  cfcObservationFitsCeiling,
+  type IFCLabel,
+} from "@commonfabric/runner/cfc";
+import { isObjectNotArray } from "@commonfabric/utils/types";
+
 import { REFERENT_HANDLE_TOKEN_PREFIX } from "../contracts/handle-table.ts";
 import { createHarnessImageAttachmentFromBase64 } from "../image-attachments.ts";
 import type {
@@ -452,6 +459,32 @@ const truncateTitle = (title: string): string => {
     : `${characters.slice(0, MAX_TITLE_CHARS).join("")}…`;
 };
 
+/**
+ * The label of what a page at `url` shows: the unscreened prompt-injection
+ * caveat, sourced to the page's origin, since a page's text and pixels may
+ * carry instructions.
+ */
+const pageLabel = (url: string): IFCLabel => ({
+  confidentiality: [
+    cfcAtom.caveat(
+      CFC_CONCEPT_KIND.PromptInjectionRiskUnscreened,
+      cfcAtom.resource("WebPage", httpOriginOf(url) ?? url),
+    ),
+  ],
+});
+
+/**
+ * The label of a browser host's successful result, or `undefined` for an
+ * output that is not one.
+ */
+export const browserHostResultLabel = (
+  output: unknown,
+): IFCLabel | undefined =>
+  isObjectNotArray(output) && output.status === "ok" &&
+    isObjectNotArray(output.page) && typeof output.page.url === "string"
+    ? pageLabel(output.page.url)
+    : undefined;
+
 /** Whether the run enforces CFC rather than observing it or not at all. */
 const enforcing = (context: HarnessToolContext): boolean =>
   context.cfcEnforcementMode === "enforce-explicit" ||
@@ -552,6 +585,19 @@ export const invokeBrowserOnHost = async (
     return errorOutput(
       REFUSAL_CODES[result.status],
       truncate(withHandles(host, result.message), "message"),
+    );
+  }
+  // A run whose read ceiling admits nothing a web page shows is told the
+  // action ran, and given none of the page.
+  if (
+    !cfcObservationFitsCeiling(
+      pageLabel(result.page.url).confidentiality ?? [],
+      context.cfcReadMaxConfidentiality,
+    )
+  ) {
+    return errorOutput(
+      "command_failed",
+      "the action ran, but this run's read ceiling admits nothing a web page shows: a page's text and pixels may carry instructions",
     );
   }
   if (operation.action === "handoff" && result.handoff === "done") {

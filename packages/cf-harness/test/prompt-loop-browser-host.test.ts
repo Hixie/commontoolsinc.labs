@@ -166,6 +166,17 @@ describe("prompt-loop with a browser host", () => {
       "https://shop.example/item/7",
     );
     expect(result.finalAssistantText).toBe("Found the **item**.");
+    // The parent read no page, but its child did, and what the child returned
+    // was derived from that page.
+    expect(result.runState.cfcModelContext?.label.confidentiality).toEqual([{
+      type: CFC_ATOM_TYPE.Caveat,
+      kind: CFC_CONCEPT_KIND.PromptInjectionRiskUnscreened,
+      source: {
+        type: CFC_ATOM_TYPE.Resource,
+        class: "WebPage",
+        subject: "https://shop.example",
+      },
+    }]);
   });
 
   it("shows a browser child its screenshot as an image, and never where the harness keeps it", async () => {

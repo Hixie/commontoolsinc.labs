@@ -2776,12 +2776,14 @@ is a fresh browser with no sign-in, so what it shows is the public web: text and
 pixels a page wrote, which may carry instructions. Each result enters the
 model's context under the unscreened prompt-injection caveat
 (`prompt-injection-risk-unscreened`), sourced to the page's origin, under any
-enforcement mode, and whatever the run derives from it — a child's return, a
-referent, the parent's answer — carries the caveat on. Once the owner finishes a
-hand-off, a page may show their account, which no label describes, so a run
-under `enforce-explicit` or `enforce-strict` learns only how the hand-off ended
-and on which origin, refuses every action but another `handoff`, and observes
-nothing more of the page.
+enforcement mode, and a run whose read ceiling does not admit it is told the
+action ran and given none of the page. A child's return brings the child's label
+into its parent's model context, as every child's does, so the caveat reaches
+the parent with whatever crosses — a scalar, a summary, a referent. Once the
+owner finishes a hand-off, a page may show their account, which no label
+describes, so a run under `enforce-explicit` or `enforce-strict` learns only how
+the hand-off ended and on which origin, refuses every action but another
+`handoff`, and observes nothing more of the page.
 
 A page can show what it was given back — in its text, its title, its address, or
 a screenshot. Wherever a host's later answer carries a value it was sent, the

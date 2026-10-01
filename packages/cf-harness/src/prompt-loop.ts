@@ -6,7 +6,6 @@ import {
   evaluateHarnessWriteFileAuthorization,
   type IFCLabel,
 } from "@commonfabric/runner/cfc";
-import { CFC_CONCEPT_KIND, cfcAtom } from "@commonfabric/api/cfc";
 import { maxOf } from "@commonfabric/utils/math";
 import {
   isObjectNotArray,
@@ -187,7 +186,10 @@ import {
   BROWSER_HOST_PARENT_GUIDANCE,
   BROWSER_HOST_SUBAGENT_GUIDANCE,
 } from "./browser-host-guidance.ts";
-import { browserHostHandedOff } from "./tools/browser-host-backend.ts";
+import {
+  browserHostHandedOff,
+  browserHostResultLabel,
+} from "./tools/browser-host-backend.ts";
 import { PIECE_OUTPUT_GUIDANCE } from "./piece-output.ts";
 import { isClosedResearchTask } from "./research/closed-task.ts";
 import { collapseSupersededRunPatternDiagnostics } from "./run-pattern-diagnostic-collapse.ts";
@@ -207,7 +209,7 @@ import {
   loadHarnessSkillContextFromText,
 } from "./skills/registry.ts";
 import { isSealedOpaqueLinkObject } from "./structured-result.ts";
-import { httpOriginOf, resolveHandleValue } from "./tools/handle-values.ts";
+import { resolveHandleValue } from "./tools/handle-values.ts";
 import {
   parseSubagentReturnJson,
   parseSubagentReturnSchema,
@@ -2154,40 +2156,6 @@ const researchCfcFromOutput = (
     Array.isArray(output.cfc.missingLabels)
     ? output.cfc as unknown as HarnessResearchCfcProjection
     : undefined;
-
-/**
- * The model-context observation of a browser host's successful result: the
- * unscreened prompt-injection caveat, sourced to the page's origin.
- */
-const browserHostObservation = (
-  output: unknown,
-  outputId: ToolOutputId,
-  toolCallId: string,
-): HarnessCfcModelContextObservationInput | undefined => {
-  if (
-    !isObjectNotArray(output) || output.status !== "ok" ||
-    !isObjectNotArray(output.page) || typeof output.page.url !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    toolCallId,
-    toolId: "browser",
-    outputId,
-    channels: ["output"],
-    label: {
-      confidentiality: [
-        cfcAtom.caveat(
-          CFC_CONCEPT_KIND.PromptInjectionRiskUnscreened,
-          cfcAtom.resource(
-            "WebPage",
-            httpOriginOf(output.page.url) ?? output.page.url,
-          ),
-        ),
-      ],
-    },
-  };
-};
 
 const researchModelContextObservation = (
   output: unknown,
@@ -5138,6 +5106,10 @@ export class CfHarnessPromptLoop {
         ReturnType<CfHarnessEngine["invokeBuiltinTool"]>
       >["output"];
       resultRef: ToolResultRef;
+
+      /** What a child's return brings into this run's model context. */
+      cfcModelContextObservations?:
+        readonly HarnessCfcModelContextObservationInput[];
     } | undefined;
     try {
       signal?.throwIfAborted();
@@ -5229,6 +5201,10 @@ export class CfHarnessPromptLoop {
       toolCall.id,
       recordPolicyEvent,
     );
+    const observations = [
+      ...(modelOutputResult.cfcModelContextObservations ?? []),
+      ...(result.cfcModelContextObservations ?? []),
+    ];
     // The raw output is already persisted by the tool invocation above, so
     // artifacts keep the raw addresses; only this model-bound rendering
     // carries tokens.
@@ -5295,11 +5271,8 @@ export class CfHarnessPromptLoop {
     return {
       toolMessage,
       ...(taskOutcome !== undefined ? { taskOutcome } : {}),
-      ...(modelOutputResult.cfcModelContextObservations !== undefined
-        ? {
-          cfcModelContextObservations:
-            modelOutputResult.cfcModelContextObservations,
-        }
+      ...(observations.length > 0
+        ? { cfcModelContextObservations: observations }
         : {}),
     };
   }
@@ -5315,18 +5288,22 @@ export class CfHarnessPromptLoop {
       ((event) => this.engine.recordPolicyEvent(event));
     const mode = this.engine.getRunState().cfcEnforcementMode;
     const cfcResult = cfcResultFromOutput(output);
-    if (toolId === "browser" && this.engine.browserHost !== undefined) {
+    if (toolId === "browser") {
       // What a host shows is the web's: text and pixels a page wrote, which
       // may carry instructions. It enters the model's context under the
       // unscreened prompt-injection caveat, sourced to the page's origin, so
       // whatever the run derives from it carries the caveat on.
-      const observation = browserHostObservation(
-        output,
-        resultRef.outputId,
-        toolCallId,
-      );
-      const observations = observation === undefined ? {} : {
-        cfcModelContextObservations: [observation],
+      const label = this.engine.browserHost !== undefined
+        ? browserHostResultLabel(output)
+        : undefined;
+      const observations = label === undefined ? {} : {
+        cfcModelContextObservations: [{
+          toolCallId,
+          toolId,
+          outputId: resultRef.outputId,
+          channels: ["output" as const],
+          label,
+        }],
       };
       if (isBrowserScreenshotOutput(output)) {
         // The attachment names where the harness keeps the pixels, which is
@@ -5334,7 +5311,9 @@ export class CfHarnessPromptLoop {
         const { imageAttachment: _attached, ...rest } = output;
         return { output: { ...rest, imageAttached: true }, ...observations };
       }
-      return { output: stripInternalToolFields(output), ...observations };
+      if (label !== undefined) {
+        return { output: stripInternalToolFields(output), ...observations };
+      }
     }
     if (toolId === "view_image" && isViewImageToolSuccessOutput(output)) {
       return {
@@ -6411,9 +6390,24 @@ export class CfHarnessPromptLoop {
       ...subagentRun,
       outputId: output.outputId,
     });
+    // Whatever of the child's work crosses to this run — a scalar it
+    // returned, a summary, a referent — was derived from what the child
+    // observed, so this run's model context observes the child's label.
+    const childLabel = childRunState.cfcModelContext?.label;
     return {
       output: result.output,
       resultRef: result.resultRef,
+      ...(childLabel !== undefined
+        ? {
+          cfcModelContextObservations: [{
+            toolCallId: options.toolCall.id,
+            toolId: "delegate_task",
+            outputId: output.outputId,
+            channels: ["output"],
+            label: childLabel,
+          }],
+        }
+        : {}),
     };
   }
 }

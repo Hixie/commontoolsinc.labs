@@ -2128,7 +2128,7 @@
       },
       g_return: {
         body:
-          `<p>A child's return is a new observation, not a continuation of the parent's token stream. It is validated against the delegation's return schema, sanitized, sealed strings become parent-resolvable tokens, and any token-shaped text still standing is scrubbed to inert text. Raw child evidence stays in artifacts, off the parent's return channel.</p>`,
+          `<p>A child's return is a new observation, not a continuation of the parent's token stream, and it brings the child's model-context label into the parent's. It is validated against the delegation's return schema, sanitized, sealed strings become parent-resolvable tokens, and any token-shaped text still standing is scrubbed to inert text. Raw child evidence stays in artifacts, off the parent's return channel.</p>`,
         why: "Structure only: no label information crosses with the return.",
         close: [
           "CT-2036 tracks the numeric inert-field channel, which can encode a sealed string across this boundary.",
