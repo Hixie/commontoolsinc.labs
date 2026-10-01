@@ -8,6 +8,7 @@ import type {
   HarnessBrowserHost,
 } from "../src/contracts/browser-host.ts";
 import { CfHarnessEngine } from "../src/engine.ts";
+import { createCliPromptSlotBinding } from "../src/contracts/prompt-slot.ts";
 import { CfHarnessPromptLoop } from "../src/prompt-loop.ts";
 import type {
   SandboxCommandRequest,
@@ -411,26 +412,60 @@ describe("prompt-loop with a browser host", () => {
     expect(unnamed).not.toHaveProperty("reason");
   });
 
-  it("refuses to start a run under CFC enforcement that has a browser host", async () => {
+  it("under CFC enforcement, browses the public web, and after the owner finishes a hand-off only hands the page back", async () => {
+    const host = new RecordingBrowserHost();
     const loop = new CfHarnessPromptLoop({
       apiKey: "test-key",
       engine: new CfHarnessEngine({
         sandboxRuntime: new FakeSandboxRuntime(),
         runId: "run-browser-host-enforced",
         model: "gpt-5.4",
-        cfcEnforcementMode: "enforce-explicit",
-        browserHost: new RecordingBrowserHost(),
+        cfcEnforcementMode: "enforce-strict",
+        browserHost: host,
       }),
-      allowedToolIds: ["delegate_task"],
-      allowedSubagentProfiles: ["browser"],
-      fetchFn: () => {
-        throw new Error("no model request is made");
-      },
+      allowedToolIds: ["browser"],
+      fetchFn: scriptedFetch([
+        toolCallTurn("call-open", "browser", {
+          action: "open",
+          url: "https://bank.example/",
+        }),
+        toolCallTurn("call-hand", "browser", {
+          action: "handoff",
+          reason: "sign-in",
+        }),
+        toolCallTurn("call-read", "browser", { action: "snapshot" }),
+        toolCallTurn("call-again", "browser", {
+          action: "handoff",
+          reason: "choice",
+        }),
+        finalTurn("Done."),
+      ], []),
     });
 
-    await expect(loop.runPrompt({ prompt: "Look at the page." })).rejects
-      .toThrow(
-        "a browser host gives no CFC labels, so a run under enforce-explicit cannot use one",
-      );
+    const result = await loop.runPrompt({
+      prompt: "Check my balance.",
+      promptSlotBinding: createCliPromptSlotBinding({
+        kernelName: "cf-harness",
+        subject: "browser-host-enforced",
+      }),
+    });
+
+    const outputs = result.transcript
+      .filter((message) => message.role === "tool")
+      .map((message) => JSON.parse(message.content));
+    expect(outputs.map((output) => output.status)).toEqual([
+      "ok",
+      "ok",
+      "error",
+      "ok",
+    ]);
+    expect(outputs[2].message).toBe(
+      "the owner finished a hand-off on https://shop.example, so the page may show their account, which no CFC label describes; a run under enforce-strict can only hand the page back to them",
+    );
+    expect(host.operations.map((operation) => operation.action)).toEqual([
+      "open",
+      "handoff",
+      "handoff",
+    ]);
   });
 });

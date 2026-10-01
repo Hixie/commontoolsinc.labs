@@ -105,13 +105,17 @@ describe("browser-host-backend", () => {
     await Deno.remove(artifactRoot, { recursive: true });
   });
 
-  const createEngine = (host: HarnessBrowserHost) =>
+  const createEngine = (
+    host: HarnessBrowserHost,
+    cfcEnforcementMode: "observe" | "enforce-strict" = "observe",
+  ) =>
     new CfHarnessEngine({
       sandboxRuntime: new FakeSandboxRuntime(),
       runId: `browser-host-test-${crypto.randomUUID()}`,
       workspaceHostPath: "/tmp/cf-harness-workspace",
       artifactRoot,
       browserHost: host,
+      cfcEnforcementMode,
     });
 
   const invoke = async (
@@ -579,6 +583,36 @@ describe("browser-host-backend", () => {
         "handoff",
         "open",
         "snapshot",
+      ]);
+    });
+
+    it("under enforcement, refuses every action but another hand-off once the owner finishes one", async () => {
+      const host = new FakeBrowserHost([
+        {
+          status: "ok",
+          page: { url: "https://bank.example/account", title: "Account" },
+          handoff: "done",
+        },
+      ]);
+      const engine = createEngine(host, "enforce-strict");
+
+      await invoke(engine, { action: "handoff", reason: "sign-in" });
+      const read = await invoke(engine, { action: "snapshot" });
+      const again = await invoke(engine, {
+        action: "handoff",
+        reason: "choice",
+      });
+
+      expect(read).toMatchObject({
+        status: "error",
+        code: "invalid_input",
+        message:
+          "the owner finished a hand-off on https://bank.example, so the page may show their account, which no CFC label describes; a run under enforce-strict can only hand the page back to them",
+      });
+      expect(again.status).toBe("ok");
+      expect(host.operations.map((operation) => operation.action)).toEqual([
+        "handoff",
+        "handoff",
       ]);
     });
 

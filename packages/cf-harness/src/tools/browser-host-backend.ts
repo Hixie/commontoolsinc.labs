@@ -480,6 +480,22 @@ export const invokeBrowserOnHost = async (
       "timeoutMs does not apply to this run's browser: an action ends when the page does what was asked, or the owner answers",
     );
   }
+  // Before a hand-off, the host is a fresh browser with no sign-in, and what
+  // it shows is the public web, whose label is public. Once the owner
+  // finishes one, a page may show their account, which no CFC label
+  // describes, so a run under enforcement gives the page back to the owner
+  // and observes nothing more of it.
+  const handedOffAt = sessionOf(host).handedOffAt;
+  if (
+    handedOffAt !== undefined && action !== "handoff" &&
+    (context.cfcEnforcementMode === "enforce-explicit" ||
+      context.cfcEnforcementMode === "enforce-strict")
+  ) {
+    return errorOutput(
+      "invalid_input",
+      `the owner finished a hand-off on ${handedOffAt}, so the page may show their account, which no CFC label describes; a run under ${context.cfcEnforcementMode} can only hand the page back to them`,
+    );
+  }
   // The whole call is planned before anything is read, so a call that cannot
   // execute never reads a handle's value.
   const planned = planHostOperation(host, input, action);

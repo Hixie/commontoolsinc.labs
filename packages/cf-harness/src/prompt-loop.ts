@@ -3744,18 +3744,6 @@ export class CfHarnessPromptLoop {
         "a model must be configured before running the prompt loop",
       );
     }
-    // A browser host gives no CFC labels, so under enforcement every page it
-    // shows would be an observation nothing mediates: refused as text and let
-    // through as pixels. The run fails at its start rather than run that way.
-    const enforcement = initialRunState.cfcEnforcementMode;
-    if (
-      this.engine.browserHost !== undefined &&
-      (enforcement === "enforce-explicit" || enforcement === "enforce-strict")
-    ) {
-      throw new Error(
-        `a browser host gives no CFC labels, so a run under ${enforcement} cannot use one`,
-      );
-    }
     this.engine.bindRunModel(model);
     const transcript: HarnessTranscriptMessage[] = [...options.transcript];
     // Keep audit history intact while excluding this loop's own control messages

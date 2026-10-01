@@ -2769,9 +2769,15 @@ Nothing asks the owner whether a value may go to a page, or whether a click may
 commit them to something: a question at every step teaches a person to agree
 without reading. Until release rules over a value's CFC label decide it, the
 owner's task and the guidance below are the only limit on what an agent enters
-or clicks. A run under `enforce-explicit` or `enforce-strict` cannot have a
-host: a host gives no labels, so its pages would be observations nothing
-mediates, and such a run fails at its start.
+or clicks.
+
+What a host shows is labeled by where the session stands. Before any hand-off it
+is a fresh browser with no sign-in, so what it shows is the public web, and its
+label is public: it enters the model's context under any enforcement mode,
+pixels and text alike. Once the owner finishes a hand-off, a page may show their
+account, which no label describes, so a run under `enforce-explicit` or
+`enforce-strict` refuses every action but another `handoff`, and observes
+nothing more of the page.
 
 A page can show what it was given back — in its text, its title, its address, or
 a screenshot. Wherever a host's later answer carries a value it was sent, the
