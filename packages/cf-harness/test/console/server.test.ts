@@ -3907,6 +3907,12 @@ describe("console/server", () => {
     });
 
     it("returns 400 for a host route body that is not JSON or names no turn", async () => {
+      const empty = await server.handle(
+        new Request("http://127.0.0.1:8100/api/browser-host/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        }),
+      );
       const notJson = await server.handle(
         new Request("http://127.0.0.1:8100/api/browser-host/stream", {
           method: "POST",
@@ -3918,6 +3924,8 @@ describe("console/server", () => {
         jsonRequest("/api/browser-host/result", { token: "t", id: "1" }),
       );
 
+      expect(empty.status).toBe(400);
+      expect(await empty.json()).toEqual({ error: "request body is not JSON" });
       expect(notJson.status).toBe(400);
       expect(await notJson.json()).toEqual({
         error: "request body is not JSON",

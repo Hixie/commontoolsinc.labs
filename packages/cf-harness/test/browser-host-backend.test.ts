@@ -716,11 +716,22 @@ describe("browser-host-backend", () => {
             base64: "A".repeat(Math.ceil(20 * 1024 * 1024 / 3) * 4 + 4),
           },
         },
+        {
+          status: "ok",
+          page: PAGE,
+          image: {
+            mediaType: "image/png",
+            // Unpadded, the longest encoding admitted decodes to one byte
+            // more than an attachment may hold.
+            base64: "A".repeat(Math.ceil(20 * 1024 * 1024 / 3) * 4),
+          },
+        },
       ]);
       const engine = createEngine(host);
 
       const empty = await invoke(engine, { action: "screenshot" });
       const large = await invoke(engine, { action: "screenshot" });
+      const over = await invoke(engine, { action: "screenshot" });
 
       expect(empty).toMatchObject({
         status: "error",
@@ -732,6 +743,35 @@ describe("browser-host-backend", () => {
         code: "command_failed",
         message:
           "the screenshot could not be kept: the image is too large (max 20971520 bytes)",
+      });
+      expect(over).toMatchObject({
+        status: "error",
+        code: "command_failed",
+        message:
+          "the screenshot could not be kept: the image is too large (20971521 bytes, max 20971520)",
+      });
+    });
+
+    it("refuses a screenshot in a run that keeps no artifacts", async () => {
+      const host = new FakeBrowserHost([{
+        status: "ok",
+        page: PAGE,
+        image: { mediaType: "image/png", base64: encodeBase64(PNG_BYTES) },
+      }]);
+      const engine = new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId: `browser-host-test-${crypto.randomUUID()}`,
+        workspaceHostPath: "/tmp/cf-harness-workspace",
+        browserHost: host,
+      });
+
+      const output = await invoke(engine, { action: "screenshot" });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "command_failed",
+        message:
+          "this run keeps no artifacts, so a screenshot has nowhere to be held",
       });
     });
 

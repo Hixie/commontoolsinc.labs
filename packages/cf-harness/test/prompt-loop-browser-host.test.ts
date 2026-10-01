@@ -297,7 +297,7 @@ describe("prompt-loop with a browser host", () => {
             action: "open",
             urlHandle: token,
           }),
-          finalTurn("Opened it."),
+          finalTurn(`Opened ${token}.`),
           finalTurn("The item's page is open."),
         ];
         const payload = payloads[requests++];
@@ -309,8 +309,17 @@ describe("prompt-loop with a browser host", () => {
       },
     });
 
-    await loop.runPrompt({ prompt: "Open the item's page." });
+    const result = await loop.runPrompt({ prompt: "Open the item's page." });
 
+    // The second child names the referent it was given, and its answer
+    // reaches the parent naming the parent's own token for it.
+    const [referent] = result.runState.handleTable?.referents ?? [];
+    const answered =
+      result.transcript.findLast((message) =>
+        message.role === "tool" && message.toolName === "delegate_task"
+      )?.content ?? "";
+    expect(answered).toContain(`Opened ${referent?.token}.`);
+    expect(answered).not.toContain("https://shop.example/item/7");
     expect(host.operations).toEqual([{
       action: "open",
       url: {

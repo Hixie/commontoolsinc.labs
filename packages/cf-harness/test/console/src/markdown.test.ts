@@ -116,11 +116,23 @@ describe("console/src/markdown", () => {
       );
     });
 
-    it("returns a task list's boxes showing their state, and taking no input", () => {
-      const text = rendered("- [x] done\n- [ ] to do");
+    it("returns a task list's boxes showing their state, and taking no input, in a tight list and a loose one", () => {
+      for (
+        const source of ["- [x] done\n- [ ] to do", "- [x] done\n\n- [ ] to do"]
+      ) {
+        const text = rendered(source);
 
-      expect(text).toContain('<input type="checkbox" disabled checked>');
-      expect(text).toContain('<input type="checkbox" disabled>');
+        expect(text).toContain('<input type="checkbox" disabled checked>');
+        expect(text).toContain('<input type="checkbox" disabled>');
+      }
+    });
+
+    it("returns inline markup as nothing, keeping the words around it", () => {
+      const text = rendered('a <b onclick="x()">bold</b> b');
+
+      expect(text).toContain("a bold b");
+      expect(text).not.toContain("<b");
+      expect(text).not.toContain("onclick");
     });
 
     it("returns a link whose destination is not a URL as its label alone", () => {

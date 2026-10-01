@@ -1560,7 +1560,10 @@ export class ConsoleServer {
    * all.
    */
   broadcast(envelope: HarnessChatEventEnvelope): Promise<void> {
-    if (TERMINAL_TURN_EVENT_KINDS.has(envelope.event.kind)) {
+    if (
+      TERMINAL_TURN_EVENT_KINDS.has(envelope.event.kind) &&
+      envelope.turnId !== undefined
+    ) {
       this.#closeBrowserHost(envelope.turnId);
     }
     if (
@@ -2230,10 +2233,7 @@ export class ConsoleServer {
     }
   }
 
-  #closeBrowserHost(turnId: string | undefined): void {
-    if (turnId === undefined) {
-      return;
-    }
+  #closeBrowserHost(turnId: string): void {
     this.#browserHosts.get(turnId)?.close();
     this.#browserHosts.delete(turnId);
   }
