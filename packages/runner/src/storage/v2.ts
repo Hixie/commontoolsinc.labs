@@ -2043,9 +2043,19 @@ export class StorageManager implements IStorageManager {
 
   async pullOpenSpacesToHead(): Promise<void> {
     await Promise.all(
-      [...this.#providers.values()].map((provider) =>
-        provider.pullToServerHead()
-      ),
+      [...this.#providers.values()].map(async (provider) => {
+        try {
+          await provider.pullToServerHead();
+        } catch (error) {
+          // The server fans nothing out on a space it refuses this session,
+          // so a denied space has nothing to catch up on. The denial may be
+          // this round trip's own, arriving before the space records it.
+          if (
+            provider.authorizationError() === undefined &&
+            !MemoryV2Client.isPermanentAuthorizationError(error)
+          ) throw error;
+        }
+      }),
     );
   }
 
