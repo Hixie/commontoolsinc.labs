@@ -3113,11 +3113,29 @@ encloses the original expression, wrappers included:
     `void`, and unions/intersections thereof (`isPrimitiveSnapshotCall`,
     `isPrimitiveLikeType`);
   - any call whose callee is a property access (`receiver.method(...)`).
-- **`new` expressions.** Only `new Map(...)` and `new Set(...)`
-  (`CF_DATA_CONSTRUCTOR_NAMES`). Notably `new Proxy(...)` is left unwrapped —
-  "Proxy snapshots stay unsupported until Proxy is re-enabled in SES
-  compartments" (`test/transform.test.ts`, "wraps top-level data candidates
-  with __cfHelpers.__cf_data").
+- **`new` expressions.** `new Map(...)` and `new Set(...)`
+  (`CF_DATA_CONSTRUCTOR_NAMES`, by name), and a construction of a
+  `FabricPrimitive` such as `new FabricDurationNsec(600n)`, which the runtime
+  freezer keeps as it is (`SES_SANDBOXING_SPEC.md` §4.2.3). The class has to
+  be one `commonfabric` declares — under any import name, as a namespace
+  member (`cf.FabricDurationNsec`), or through a `const` bound to a bare
+  reference to one (`constructorNamedBy`, `isCommonFabricSymbol`) — and its
+  instance type has to carry the
+  `FabricPrimitive` brand (`constructsFabricPrimitive`;
+  `declaresFabricPrimitiveBrand` from
+  `@commonfabric/schema-generator/fabric-primitive-brand`, which reads the
+  brand by the name of its key and so is not enough alone). A class of the
+  author's own is not wrapped, whether it shares a primitive's name, declares
+  a member under a symbol named `FABRIC_PRIMITIVE_BRAND` or under the real
+  one, or extends a primitive, nor is a `const` bound to one, so the verifier refuses it before its
+  constructor runs (tests: "wraps a top-level fabric primitive construction
+  with __cfHelpers.__cf_data", "does not wrap a construction that only looks
+  like a fabric primitive"; `packages/runner/test/engine-ses.test.ts`, "keeps
+  a fabric primitive constructed at top level as it is", "refuses a top-level
+  construction that only looks like a fabric primitive"). Notably `new Proxy(...)` is left
+  unwrapped — "Proxy snapshots stay unsupported until Proxy is re-enabled in
+  SES compartments" (`test/transform.test.ts`, "wraps top-level data
+  candidates with __cfHelpers.__cf_data").
 - **Literals.** Regular-expression literals, object literals, and array
   literals are always wrapped.
 - Everything else — identifier references, primitive literals, template
