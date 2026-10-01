@@ -1379,6 +1379,24 @@ export function plan(given: PlanInput): Plan {
   };
 }
 
+/** The reasons the three discretionary passes place an identity for. */
+const DISCRETIONARY: ReadonlySet<SelectionReason> = new Set([
+  "value",
+  "density",
+  "exploration",
+]);
+
+/**
+ * Whether a budgeted plan placed nothing beyond its mandatory identities,
+ * which is what a plan does once the mandatory work leaves no room in any
+ * lane for anything else.
+ */
+export function placedOnlyMandatory(laid: Pick<Plan, "lanes">): boolean {
+  return !laid.lanes.some((lane) =>
+    lane.selections.some((selection) => DISCRETIONARY.has(selection.reason))
+  );
+}
+
 /**
  * The identities a flake rate excuses: too noisy to judge a change by. A
  * pull request holds these back; the default branch runs them and does

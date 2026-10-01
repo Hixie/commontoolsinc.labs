@@ -7,6 +7,7 @@ import {
   fixedCharges,
   foldWholeUnits,
   fullLaneCount,
+  placedOnlyMandatory,
   plan,
   type PlanInput,
   seededOrder,
@@ -247,6 +248,20 @@ describe("plan", () => {
       });
       expect(result.overBudgetSeconds).toBeCloseTo(90, 6);
       expect(selected(result).length).toBe(4);
+    });
+
+    it("says whether the mandatory set left room for anything else", () => {
+      const manifest = sampleManifest({
+        entries: entries(5, () => ({ cost: 10 })),
+      });
+      const key = testIdentityKey(manifest.entries[0]!.test);
+      const mandatory = new Map([[key, "changed" as const]]);
+      const roomy = run(manifest, { mandatory, budgetSeconds: 230 });
+      expect(selected(roomy).some((s) => s.reason !== "changed")).toBe(true);
+      expect(placedOnlyMandatory(roomy)).toBe(false);
+      const full = run(manifest, { mandatory, budgetSeconds: 10, lanes: 1 });
+      expect(selected(full).map((s) => s.reason)).toEqual(["changed"]);
+      expect(placedOnlyMandatory(full)).toBe(true);
     });
 
     it("says a lane is past its budget where the run's total fits", () => {

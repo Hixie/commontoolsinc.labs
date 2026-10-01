@@ -4108,9 +4108,10 @@ observation about it:
   team, or per anything. No history. The comment exists on the pull
   request and nowhere else, and no tile, report, or query rolls them up.
 - **It is not a judgement, because the system chose not to run the test.**
-  When a test was not selected, the honest statement is that this design
-  traded that coverage away, and the comment says so in those words. The
-  author did not miss anything; the selector did.
+  When a test was not selected, the comment says what the plan the lanes
+  computed says about leaving it out: no lane can hold it, the tests that
+  had to run left no room for anything else, or the lanes filled the room
+  with other tests. The author did not miss anything; the selector decided.
 - **It is accurate about flakes.** A test the store has seen disagreeing
   with itself is labelled as one, with the counts behind the label, so
   nobody is told they broke something that breaks on its own and nobody

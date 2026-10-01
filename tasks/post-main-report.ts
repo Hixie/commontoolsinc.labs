@@ -86,6 +86,7 @@ import type { Suite } from "./test-topology/suite.ts";
 import { planOver } from "./ci-lane.ts";
 import { isLaneMeasurement } from "./lane-measurement.ts";
 import { coverageGateFor, measuredSetName } from "./test-selection/coverage.ts";
+import { placedOnlyMandatory } from "./test-selection/plan.ts";
 import { LANES } from "./test-selection/policy.ts";
 import { fetchManifest, type ManifestFetch } from "./test-selection/store.ts";
 import type { Manifest, WithheldReason } from "./test-selection/manifest.ts";
@@ -529,6 +530,9 @@ export function manifestView(
   for (const entry of packed.withheld) {
     withheld.set(testIdentityKey(entry.test), entry.reason);
   }
+  const unschedulable = new Set(
+    packed.unschedulable.map((entry) => testIdentityKey(entry.test)),
+  );
   const flakes = new Map<string, FlakeEvidence | undefined>();
   const catches = new Map<string, number>();
   const units = new Map<string, string>();
@@ -538,7 +542,16 @@ export function manifestView(
     catches.set(key, entry.inputs.catches);
     units.set(key, `${entry.suite}\t${entry.unit}`);
   }
-  return { manifest: true, selected, withheld, flakes, catches, units };
+  return {
+    manifest: true,
+    selected,
+    withheld,
+    unschedulable,
+    crowded: placedOnlyMandatory(packed),
+    flakes,
+    catches,
+    units,
+  };
 }
 
 /**
