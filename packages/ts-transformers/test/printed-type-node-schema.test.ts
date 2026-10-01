@@ -1610,6 +1610,43 @@ export default pattern<{ a: Outer<readonly ["c", "d"]> }>(({ a }) => ({ a }));`,
         expect((input.properties as Schema).a).toEqual(expected);
         expect((output.properties as Schema).a).toEqual(expected);
       });
+
+      for (
+        const [a, confidentiality] of [
+          ['Tail<readonly ["c", "d"]>', ["c", "d", "b"]],
+          ['Lead<readonly ["c", "d"]>', ["b", "c", "d"]],
+          ['Named<readonly ["c", "d"]>', ["c", "d", "b"]],
+          ['ForwardMore<readonly ["c", "d"]>', ["c", "d", "e", "b"]],
+          ['Alternatives<readonly ["c", "d"]>', [{ anyOf: ["c", "d", "b"] }]],
+        ] as const
+      ) {
+        it(`reads the spread in the label of \`${a}\` as the elements of the list it spreads, on both sides`, async () => {
+          const files = await transformFiles({
+            "/main.tsx": `/// <cts-enable />
+import { Confidential, pattern } from "commonfabric";
+import type { AnyOf } from "commonfabric/cfc";
+type Tail<L extends readonly unknown[]> = Confidential<{ x: string }, readonly [...L, "b"]>;
+type Lead<L extends readonly unknown[]> = Confidential<{ x: string }, readonly ["b", ...L]>;
+type Named<L extends readonly unknown[]> =
+  Confidential<{ x: string }, readonly [...rest: L, last: "b"]>;
+type ForwardMore<L extends readonly unknown[]> = Tail<readonly [...L, "e"]>;
+type Alternatives<L extends readonly unknown[]> =
+  Confidential<{ x: string }, readonly [AnyOf<readonly [...L, "b"]>]>;
+export default pattern<{ a: ${a} }>(({ a }) => ({ a }));`,
+          }, { types: COMMONFABRIC_TYPES, typeCheck: true });
+          const { input, output } = patternSchemas(
+            parseModule(files["/main.tsx"]!),
+          );
+          const expected = {
+            type: "object",
+            properties: { x: { type: "string" } },
+            required: ["x"],
+            ifc: { confidentiality },
+          };
+          expect((input.properties as Schema).a).toEqual(expected);
+          expect((output.properties as Schema).a).toEqual(expected);
+        });
+      }
     });
 
     describe("an object label with a member the syntax reader cannot name", () => {
@@ -1908,6 +1945,67 @@ export default pattern<{ a: Outer<string> }>(({ a }) => ({ a }));`,
           );
         }
       });
+    });
+
+    describe("an authored alias that shares a label operator's name", () => {
+      // Both sides read such an alias as the type its author declared, not as
+      // the library's `AnyOf` or `PolicyOf`, with or without a spread beside
+      // it.
+
+      for (
+        const [declarations, a, confidentiality] of [
+          [
+            'type AnyOf<T> = "original";',
+            'Confidential<{ x: string }, readonly [...CD, AnyOf<readonly ["reader"]>]>',
+            ["c", "d", "original"],
+          ],
+          [
+            'type AnyOf<T> = "original";',
+            'Confidential<{ x: string }, readonly [AnyOf<readonly ["reader"]>]>',
+            ["original"],
+          ],
+          [
+            'type PolicyOf<T> = "plain";',
+            "Confidential<{ x: string }, readonly [PolicyOf<typeof rules>]>",
+            ["plain"],
+          ],
+          [
+            `type AnyOf<T> = "original";
+type Tail<L extends readonly unknown[]> =
+  Confidential<{ x: string }, readonly [...L, AnyOf<readonly ["reader"]>]>;`,
+            'Tail<readonly ["c"]>',
+            ["c", "original"],
+          ],
+        ] as const
+      ) {
+        it(`reads \`${a}\` with the alias its author declared, on both sides`, async () => {
+          const pipelineDiagnostics: TransformationDiagnostic[] = [];
+          const files = await transformFiles({
+            "/main.tsx": `/// <cts-enable />
+import { Confidential, pattern } from "commonfabric";
+type CD = readonly ["c", "d"];
+const rules = { name: "r" } as const;
+${declarations}
+export default pattern<{ a: ${a} }>(({ a }) => ({ a }));`,
+          }, {
+            types: COMMONFABRIC_TYPES,
+            typeCheck: true,
+            pipelineDiagnostics,
+          });
+          const { input, output } = patternSchemas(
+            parseModule(files["/main.tsx"]!),
+          );
+          const expected = {
+            type: "object",
+            properties: { x: { type: "string" } },
+            required: ["x"],
+            ifc: { confidentiality },
+          };
+          expect((input.properties as Schema).a).toEqual(expected);
+          expect((output.properties as Schema).a).toEqual(expected);
+          expect(pipelineDiagnostics).toEqual([]);
+        });
+      }
     });
 
     describe("an annotation whose syntax the label reader does not evaluate", () => {
