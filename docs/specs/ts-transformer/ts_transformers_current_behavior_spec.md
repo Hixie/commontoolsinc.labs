@@ -823,7 +823,20 @@ structurally representable.
 This inference runs through `collectFunctionSchemaTypeNodes` via
 `inferReturnType`, object-literal recovery, and direct projection recovery. The
 inferred return type is printed under the flags §10.1 names, so a result type
-holding `[]` anywhere is printed whole.
+holding `[]` anywhere is printed whole. A result type the checker prints no node
+for, such as the instance type of an anonymous class expression, and that no
+recovery reads, stands as an `unknown` placeholder recorded as printed from it,
+as `typeToTypeNodeWithRegistry()` records one, and schema generation reads it
+as that type (§12). Both checks above read such a placeholder by its type:
+whether the type is `any` or `unknown`, and which of its fields are `unknown`.
+The field walk descends each object type with no name, each instance of a class
+expression with no name, and each array element, as the node walk descends a
+printed type literal and array. It skips a member schema generation leaves out
+of an object's schema, a symbol-keyed member or a cell's internal marker
+(`isInternalMemberName()` in the schema generator), since no consumer receives
+it as a field. It stops at a type it is already inside, since a type with no
+name can hold itself through `typeof`, and walks a type reached again by
+another path under that path.
 
 ### 6.7 Lowerable Expression-Site Categories
 
@@ -1860,6 +1873,9 @@ If schemas are not already present via type args:
   recovery (`x => x.foo`, `x => x["foo"]`)
 - direct projection recovery can reuse result types recovered from local
   `lift(...)` initializer aliases registered in `typeRegistry`
+- a result type the checker prints no node for, and that no recovery reads, is
+  carried as an `unknown` placeholder recorded as printed from it, so the
+  result schema is generated from the type (§6.6)
 - unresolved generic helper-definition-site type parameters degrade to
   `{ type: "unknown" }` when schemas are injected from explicit builder type
   arguments
