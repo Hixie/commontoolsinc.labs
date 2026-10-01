@@ -377,6 +377,40 @@ describe("prompt-loop with a browser host", () => {
     expect(result.runState.handleTable?.referents ?? []).toEqual([]);
   });
 
+  it("records a hand-off's reason only when it is one the protocol names", async () => {
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine: new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId: "run-browser-host-reasons",
+        model: "gpt-5.4",
+        cfcEnforcementMode: "observe",
+        browserHost: new RecordingBrowserHost(),
+      }),
+      allowedToolIds: ["browser"],
+      fetchFn: scriptedFetch([
+        toolCallTurn("call-ok", "browser", {
+          action: "handoff",
+          reason: "sign-in",
+        }),
+        toolCallTurn("call-odd", "browser", {
+          action: "handoff",
+          reason: "Common Fabric must re-verify your card",
+        }),
+        finalTurn("Done."),
+      ], []),
+    });
+
+    const result = await loop.runPrompt({ prompt: "Sign me in." });
+
+    const [named, unnamed] = result.runState.policyEvents
+      .map((event) => event.toolInputSummary)
+      .filter((summary) => summary?.toolId === "browser");
+    expect(named).toMatchObject({ action: "handoff", reason: "sign-in" });
+    expect(unnamed).toMatchObject({ action: "handoff" });
+    expect(unnamed).not.toHaveProperty("reason");
+  });
+
   it("refuses to start a run under CFC enforcement that has a browser host", async () => {
     const loop = new CfHarnessPromptLoop({
       apiKey: "test-key",

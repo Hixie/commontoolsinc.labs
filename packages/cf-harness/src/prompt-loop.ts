@@ -24,7 +24,10 @@ import type {
   HarnessOpenAIWebSearchResult,
 } from "./contracts/native-model-tool.ts";
 import type { HarnessBrowserAccessLease } from "./contracts/browser-access.ts";
-import type { HarnessBrowserHost } from "./contracts/browser-host.ts";
+import {
+  BROWSER_HOST_HANDOFF_REASONS,
+  type HarnessBrowserHost,
+} from "./contracts/browser-host.ts";
 import type { HarnessCfcModelContextObservationInput } from "./contracts/cfc-model-context.ts";
 import {
   createHarnessCfcPolicySnapshot,
@@ -662,6 +665,9 @@ const summarizeToolInput = async (
       const urlSummary = typeof input.url === "string"
         ? await summarizeSensitiveText(input.url)
         : undefined;
+      const handoffReason = BROWSER_HOST_HANDOFF_REASONS.find((reason) =>
+        reason === input.reason
+      );
       const valueSummary = typeof input.value === "string"
         ? await summarizeSensitiveText(input.value)
         : undefined;
@@ -669,7 +675,9 @@ const summarizeToolInput = async (
         type: "cf-harness.tool-input-summary",
         toolId,
         ...(typeof input.action === "string" ? { action: input.action } : {}),
-        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+        // Only a reason the protocol names is recorded: the field is the
+        // model's to write, and anything else it wrote is not a reason.
+        ...(handoffReason !== undefined ? { reason: handoffReason } : {}),
         ...(typeof input.direction === "string"
           ? { direction: input.direction }
           : {}),
