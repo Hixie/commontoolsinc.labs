@@ -327,7 +327,7 @@ unknown rather than claiming a failure.
 Configuration rows name the active console address, port, space, store, model,
 sandbox runtime, and skill-script switch. The launcher passes its decision
 report directly into the server: connector rows retain every accepted or refused
-grant, its CFC class or refusal reason, and the injection receipt and piece
+grant, its CFC classes or refusal reason, and the injection receipt and piece
 declaration that decided it. Changing those files requires a console restart to
 establish new grants. A server flag takes precedence over the inherited launch
 value and its source. A directly configured server reports its explicit grants
@@ -1235,10 +1235,11 @@ what each one's reference is, and records no class. `pieces.json` declares each
 connector piece's `sqlite_sources`, whose table contract carries the per-column
 `ifc` the daemon seeded, and that is where the class is written down. They join
 on the piece, connection, and optional companion key Loom names in both.
-Repeated receipts for the same connection/store, reference, and class set yield
-one grant. Conflicting references or classes for that store are reported and
-withheld. Grants carry the class list as `cfcClasses`; persisted grants with a
-singular `cfcClass` or a class as their name remain readable.
+Repeated receipts for the same connection/store and reference yield one grant,
+described with every class any declaring piece's contract names. Conflicting
+references for that store are reported and withheld. Grants carry the class list
+as `cfcClasses`; persisted grants with a singular `cfcClass` or a class as their
+name remain readable.
 
 The session description carries the receipt's account identity, physical row
 count, and newest record observation time. Counts come from linked `sources`
@@ -1279,10 +1280,17 @@ trusted-side, `describe_handle` answers shape from the cell, and reading
 anything behind the token means running a pattern over it, where CFC rules as it
 does for every other flow.
 
-Three cases the launch printout states rather than resolving silently:
+Four cases the launch printout states rather than resolving silently:
 
-- A handle whose declared contract carries no CFC class is printed as
-  `grant <connection>  (none: <reason>)` and is not granted.
+- A handle whose declared contract declares no confidentiality (no per-column
+  `ifc.confidentiality` and no `rowLabel` confidentiality; integrity alone does
+  not count) is printed as `grant <connection>  (none: <reason>)` and is not
+  granted. A contract that declares confidentiality but names no `Resource`
+  class is granted under its connection, described with no class.
+- A handle whose declared contract carries an invalid `rowLabel` (one the
+  runner's `validateRowLabelSpec` rejects) is printed the same way, with the
+  validator's reason, and is not granted, even when another table declares
+  confidentiality: the runner refuses every read of such a database.
 - An ambiguous store identity or invalid connection name, companion key, or
   class is reported with the deciding record and a remedy.
 - A receipt that does not parse refuses the launch. A console that came up
