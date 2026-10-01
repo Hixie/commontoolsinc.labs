@@ -23,7 +23,12 @@ import {
   type HarnessImageAttachment,
 } from "../contracts/image.ts";
 import { invokeBrowserOnHost } from "./browser-host-backend.ts";
-import { httpOriginOf, resolveHandleValue } from "./handle-values.ts";
+import {
+  httpOriginOf,
+  NO_HANDLE_VALUE_DESTINATION_MESSAGE,
+  originNotAllowedMessage,
+  resolveHandleValue,
+} from "./handle-values.ts";
 import { createClearedHostProcessEnv } from "./host-process-env.ts";
 import type { HarnessToolContext, HarnessToolDefinition } from "./types.ts";
 
@@ -35,7 +40,6 @@ const MAX_WAIT_MS = 30_000;
 const AGENT_BROWSER_COMMAND = "agent-browser";
 
 /** The operator flag that names an origin a handle's value may reach. */
-const HANDLE_VALUE_ORIGIN_FLAG = "--handle-value-origin";
 
 /**
  * The verbs the tool can drive a browser with. There is no free-form escape —
@@ -642,8 +646,6 @@ const readPageOrigin = async (
  * path, query, and value that would have gone there are none of the model's
  * business.
  */
-const originNotAllowedMessage = (origin: string): string =>
-  `${origin} is not an allowlisted destination for a handle's value; an operator allows one with ${HANDLE_VALUE_ORIGIN_FLAG} <origin>`;
 
 type BrowserHandleResolution =
   | { input: BrowserToolInput; error?: undefined }
@@ -822,7 +824,7 @@ export const browserTool: HarnessToolDefinition<
       if (allowedOrigins.length === 0) {
         return errorOutput(
           "destination_not_allowed",
-          `this run allows no destination for a handle's value; an operator allows one with ${HANDLE_VALUE_ORIGIN_FLAG} <origin>`,
+          NO_HANDLE_VALUE_DESTINATION_MESSAGE,
         );
       }
       if (input.valueHandle !== undefined) {

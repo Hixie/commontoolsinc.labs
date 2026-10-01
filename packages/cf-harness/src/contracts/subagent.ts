@@ -65,6 +65,10 @@ export const BROWSER_SUBAGENT_ALLOWED_TOOL_IDS = [
   "read_skill_resource",
   "run_skill_script",
 ] as const satisfies readonly BuiltinToolId[];
+/** A browser child's surface when a browser host carries its actions. */
+export const BROWSER_HOST_SUBAGENT_ALLOWED_TOOL_IDS = [
+  "browser",
+] as const satisfies readonly BuiltinToolId[];
 export const WEB_FETCH_SUBAGENT_ALLOWED_TOOL_IDS = [
   "web_fetch",
 ] as const satisfies readonly BuiltinToolId[];
@@ -433,7 +437,7 @@ export const BROWSER_HOST_SUBAGENT_PROFILE_CONFIG:
   HarnessSubagentProfileConfig = {
     type: "cf-harness.subagent-profile-config",
     profile: BROWSER_SUBAGENT_PROFILE,
-    allowedToolIds: ["browser"],
+    allowedToolIds: BROWSER_HOST_SUBAGENT_ALLOWED_TOOL_IDS,
     hostToolIds: NO_HOST_TOOL_IDS,
     maxModelTurns: DEFAULT_SUBAGENT_MAX_MODEL_TURNS,
     returnPolicy: DEFAULT_SUBAGENT_RETURN_POLICY,

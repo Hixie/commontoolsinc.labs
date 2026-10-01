@@ -1,1 +1,0 @@
-{"date":"2026-09-29","from":{"k":"unit","s":"cf-harness","n":"CfHarnessPromptLoop validates structured subagent returns and linkifies free-form strings"},"to":{"k":"unit","s":"cf-harness","n":"CfHarnessPromptLoop validates structured subagent returns and holds free-form strings as return referents"}}

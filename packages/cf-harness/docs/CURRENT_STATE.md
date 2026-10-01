@@ -928,8 +928,8 @@ host.
 Loom also has an opt-in adapter for the interactive NDJSON protocol. It is not
 the default interactive harness, and browser automation is not yet wired into
 that interactive product path. The console's interactive path does browse: a
-task that declares a browser host, as every Weaver `/cf-harness` task does, has
-its browser children drive the page that host shows the owner.
+task that declares a browser host has its browser children drive the page that
+host shows the owner.
 
 Loom currently forces autonomous `cf-harness` runs to `observe` mode while
 trusted `runsc-cfc` observation metadata is not wired through every local tool

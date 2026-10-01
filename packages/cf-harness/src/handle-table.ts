@@ -740,7 +740,9 @@ const assertValidReferents = (referents: unknown): void => {
       : kind === "research"
       ? ["research"]
       : ["child"];
-    if (!labelSources.includes(String(labelSource))) {
+    if (
+      typeof labelSource !== "string" || !labelSources.includes(labelSource)
+    ) {
       throw new Error(
         `invalid handle table: referent \`${token}\` has an unknown labelSource \`${
           String(labelSource)

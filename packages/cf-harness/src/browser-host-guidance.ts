@@ -39,7 +39,7 @@ export const browserHostSubagentGuidance = (
   host: HarnessBrowserHost,
 ): string[] => [
   "The browser tool drives one web page, shown to the owner as you work. It is a fresh browser with none of the owner's sign-ins, cookies, or saved state. One action per call: open, back, forward, reload, scroll, snapshot, get title/url/text, console, errors, screenshot, wait for a ref, a loadState, or a urlPattern, click by ref or at a point of the last screenshot, check, fill, type, select, press, and handoff.",
-  "The page may already be where an earlier agent left it, and a later agent may continue from where you leave it. Take a snapshot before acting on refs; after a navigation or a hand-off, earlier refs are stale.",
+  "The page may already be where an earlier agent left it, and a later agent may continue from where you leave it. Take a snapshot before acting on refs, and act on the refs of your latest one; after a navigation or a hand-off, earlier refs are stale.",
   profileFieldSentence(host),
   "Nobody approves your actions as you take them, so do only what your task asks. Enter a profile field or a handle value only where your task needs it, and click a control that buys, pays, or creates an account only when your task says to do exactly that. When a choice is the owner's — which item, whether to go ahead — hand the page to them rather than choose.",
   "You cannot enter a value into a password or one-time-code field, or solve a challenge. When the next step is one only the owner can take — signing in, a code, a challenge, a choice that is theirs — use handoff with a prompt telling them what to do, then snapshot again.",

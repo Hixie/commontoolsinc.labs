@@ -85,6 +85,8 @@ const inlineToken = (token: MarkedToken, context: Context): unknown => {
       return html`<code>${revealing(token.text, context)}</code>`;
     case "br":
       return html`<br>`;
+    case "checkbox":
+      return checkbox(token);
     // A link's label shows no found string: the owner would read it as where
     // the link goes, and the parent wrote the destination.
     case "link": {
@@ -105,6 +107,12 @@ const inlineToken = (token: MarkedToken, context: Context): unknown => {
       return nothing;
   }
 };
+
+/** A task list's box, showing its state; the pane changes nothing. */
+const checkbox = (token: Tokens.Checkbox): unknown =>
+  token.checked
+    ? html`<input type="checkbox" disabled checked>`
+    : html`<input type="checkbox" disabled>`;
 
 const textToken = (token: Tokens.Text, context: Context): unknown =>
   token.tokens === undefined
@@ -164,6 +172,8 @@ const block = (token: MarkedToken, context: Context): unknown => {
       `;
     case "hr":
       return html`<hr>`;
+    case "checkbox":
+      return checkbox(token);
     case "text":
       return textToken(token, context);
     // Raw markup in the source is not rendered, and what remains — a blank

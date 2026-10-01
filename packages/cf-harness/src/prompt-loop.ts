@@ -1812,10 +1812,10 @@ const summarizeSubagentRunState = (
  * structured return and the raw value it was sanitized from in tandem,
  * replacing each sealed opaque-link object whose raw counterpart is a string
  * with a minted token: an address handle when the string names an entity
- * address, and otherwise a return referent holding the string under the
- * child's label, which the parent can pass on and never read. A sealed
- * position whose raw counterpart is not a string — a whole record — keeps its
- * opaque `@link` object. Returns the updated table, the reworked value, and
+ * address, and otherwise, for a child whose strings came from the web, a
+ * return referent holding the string under the child's label, which the parent
+ * can pass on and never read. Any other sealed position — a whole record, or a
+ * string a child read anywhere else — keeps its opaque `@link` object. Returns the updated table, the reworked value, and
  * the number of sealed string positions that became tokens, which the caller
  * subtracts from the sanitizer's `linkedStringCount`.
  */
@@ -1823,7 +1823,7 @@ const swapSealedStringsForTokens = async (
   table: HarnessHandleTable,
   sanitized: unknown,
   raw: unknown,
-  child: { source: string; label: IFCLabel },
+  child: { source: string; label: IFCLabel; returnReferents: boolean },
 ): Promise<{ table: HarnessHandleTable; value: unknown; replaced: number }> => {
   if (isSealedOpaqueLinkObject(sanitized)) {
     if (typeof raw !== "string") {
@@ -1834,6 +1834,12 @@ const swapSealedStringsForTokens = async (
       return { table: minted.table, value: minted.token, replaced: 1 };
     } catch {
       // Not an entity address: the string itself is what the child found.
+    }
+    // A return referent can go into a page, so only a string the web gave
+    // a child becomes one; a string read out of the owner's space stays
+    // sealed rather than reaching a page past its destination check.
+    if (!child.returnReferents) {
+      return { table, value: sanitized, replaced: 0 };
     }
     const minted = await mintReferentHandle(table, {
       kind: "return",
@@ -1892,6 +1898,9 @@ const createStructuredSubagentReturn = async (
      * back as `handleTable` when minting added an entry.
      */
     handleTable?: HarnessHandleTable;
+
+    /** Whether a sealed string that names no address becomes a referent. */
+    returnReferents: boolean;
   },
 ): Promise<{
   structuredReturn: HarnessSubagentStructuredReturn;
@@ -1970,6 +1979,7 @@ const createStructuredSubagentReturn = async (
           source: `delegate_task:${options.childRunId}`,
           label: options.childEngine.getRunState().cfcModelContext?.label ??
             {},
+          returnReferents: options.returnReferents,
         },
       );
       returnValue = swapped.value;
@@ -3744,15 +3754,18 @@ export class CfHarnessPromptLoop {
     const turnNotices = new Set<HarnessTranscriptMessage>();
     const resumableTranscript = () =>
       transcript.filter((message) => !turnNotices.has(message));
-    const browserHost = this.engine.browserHost;
+    // A host the run cannot delegate to has nothing to brief the parent on.
+    const browserHost = this.#allowedSubagentProfiles.has(
+        BROWSER_SUBAGENT_PROFILE,
+      )
+      ? this.engine.browserHost
+      : undefined;
     if (this.#requirePieceOutput || browserHost !== undefined) {
       const guidance: HarnessTranscriptMessage = {
         role: "user",
         content: [
           ...(this.#requirePieceOutput ? [PIECE_OUTPUT_GUIDANCE] : []),
-          ...(browserHost !== undefined && this.#allowedSubagentProfiles.has(
-              BROWSER_SUBAGENT_PROFILE,
-            )
+          ...(browserHost !== undefined
             ? [browserHostParentGuidance(browserHost)]
             : []),
         ].join("\n\n"),
@@ -5781,10 +5794,14 @@ export class CfHarnessPromptLoop {
     );
     // Whether skill scripts run is the run's decision and the tool surface is
     // the profile's, so a child given an acquired skill needs both brought to
-    // it or it holds a mounted skill it cannot run a script of.
+    // it or it holds a mounted skill it cannot run a script of. A browser
+    // child driving a host runs `browser` and nothing else, skill or not.
     const acquiredScripts = acquiredSkillScriptSurface(
       this.engine.config.allowedSkillScripts,
-      childAcquiredSkill,
+      delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
+        this.engine.browserHost !== undefined
+        ? undefined
+        : childAcquiredSkill,
       this.engine.config.allowSkillScripts === true,
     );
     const childAllowedSkillScripts = [
@@ -6237,6 +6254,7 @@ export class CfHarnessPromptLoop {
           rawFinalAssistantText: childFinalText,
           schema: delegateInput.returnSchema,
           handleTable,
+          returnReferents: delegateInput.profile === BROWSER_SUBAGENT_PROFILE,
         });
         summary = options.resolvedSkill === undefined
           ? structured.summary

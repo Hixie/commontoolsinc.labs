@@ -93,7 +93,8 @@ export const parseBrowserHostDeclaration = (
     }
     if (
       typeof label !== "string" || label.trim() === "" ||
-      label.length > MAX_PROFILE_FIELD_LABEL || /[\p{Cc}]/u.test(label)
+      label.length > MAX_PROFILE_FIELD_LABEL ||
+      /[\p{Cc}\p{Zl}\p{Zp}]/u.test(label)
     ) {
       return {
         error:

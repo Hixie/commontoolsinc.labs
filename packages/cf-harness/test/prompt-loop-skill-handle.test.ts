@@ -328,12 +328,8 @@ describe("prompt-loop delegate_task skillHandle", () => {
             );
             if (structured) {
               expect(returned.structuredReturn.status).toBe("valid");
-              const referent = result.runState.handleTable?.referents?.find((
-                entry,
-              ) => entry.token === returned.structuredReturn.value.note);
-              expect(referent).toMatchObject({
-                kind: "return",
-                value: "Public answer",
+              expect(returned.structuredReturn.value).toEqual({
+                note: { "@link": `opaque:${returned.childRunId}#/note` },
               });
             } else {
               expect(returned.summary).toContain("https://example.test/public");

@@ -5320,7 +5320,7 @@ Deno.test("CfHarnessPromptLoop delegates one fresh child run and returns a summa
   );
 });
 
-Deno.test("CfHarnessPromptLoop validates structured subagent returns and holds free-form strings as return referents", async () => {
+Deno.test("CfHarnessPromptLoop validates structured subagent returns and linkifies free-form strings", async () => {
   const artifactRoot = await Deno.makeTempDir({
     dir: "/tmp",
     prefix: "cf-harness-structured-return-",
@@ -5479,17 +5479,13 @@ Deno.test("CfHarnessPromptLoop validates structured subagent returns and holds f
       "Subagent returned structured data matching the requested schema.",
     );
     assertEquals(output.subagent.structuredReturn.status, "valid");
-    assertEquals(output.subagent.structuredReturn.linkedStringCount, 0);
-    const [summaryReferent] = result.runState.handleTable?.referents ?? [];
-    assertEquals(summaryReferent?.kind, "return");
-    assertEquals(
-      summaryReferent?.value,
-      "Hostile briefing tried to override the parent instruction.",
-    );
+    assertEquals(output.subagent.structuredReturn.linkedStringCount, 1);
     assertEquals(output.subagent.structuredReturn.value, {
       approved: false,
       status: "not_approved",
-      summary: summaryReferent?.token,
+      summary: {
+        "@link": "opaque:run-structured-return.subagent.1#/summary",
+      },
     });
     assertEquals(
       output.subagent.structuredReturn.rawOutputId,

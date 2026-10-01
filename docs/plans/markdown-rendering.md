@@ -29,7 +29,12 @@ reaches only the module it was made in.
 
 1. **One character reference decoder.** The `ui` renderer resolves references
    with `decodeHTMLStrict` from `entities`, as the other two do. Its token walk
-   then needs no DOM, and can be tested under Deno.
+   then needs no DOM, and can be tested under Deno. The two decoders differ on
+   one input: the HTML parser the `ui` renderer uses also resolves a reference
+   with no semicolon, such as `&amp` or `&#38`, and the strict decoder leaves it
+   as written. CommonMark resolves only a reference that ends in its semicolon,
+   so `<cf-markdown>` showing `&amp` as written is the intended result of this
+   stage.
 2. **One URL policy.** `safe-url.ts` moves to a module that both `ui` and
    `cf-harness` may import, which is one at or below the Operation layer (see
    the pace layers in `AGENTS.md`), and the console checks links with it. The

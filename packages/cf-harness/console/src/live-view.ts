@@ -431,15 +431,14 @@ export const consoleLiveEntries = (
       }
       case "turn_completed": {
         // A finish_task answer, question, or reason lives in a tool result, so
-        // the closing block renders that sentence alongside any piece links. A
-        // completed turn that named no piece and gave no finish_task answer is
-        // answered in its final text, which the closing block renders in place
-        // of the assistant block it streamed as: the block holds the parent's
-        // words, the answer holds them as the owner reads them.
+        // the closing block renders that sentence alongside any piece links.
+        // Any other completed turn is answered in its final text, which the
+        // closing block renders in place of the assistant block it streamed
+        // as: the block holds the parent's words, the answer holds them as
+        // the owner reads them.
         const answered = event.result.outcome !== "question" &&
           event.result.outcome !== "gave-up" &&
           event.result.answer === undefined &&
-          event.result.pieces.length === 0 &&
           event.result.finalText.trim() !== "";
         if (answered) {
           const streamed = entries.findLastIndex((entry) =>

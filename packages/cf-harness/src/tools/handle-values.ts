@@ -78,6 +78,17 @@ export const httpOriginOf = (url: string): string | undefined => {
   return parsed.origin;
 };
 
+/** The flag with which an operator allows a destination for a handle's value. */
+export const HANDLE_VALUE_ORIGIN_FLAG = "--handle-value-origin";
+
+/** Why a run that allows no destination sends a handle's value nowhere. */
+export const NO_HANDLE_VALUE_DESTINATION_MESSAGE =
+  `this run allows no destination for a handle's value; an operator allows one with ${HANDLE_VALUE_ORIGIN_FLAG} <origin>`;
+
+/** Why a handle's value does not go to `origin`. */
+export const originNotAllowedMessage = (origin: string): string =>
+  `${origin} is not an allowlisted destination for a handle's value; an operator allows one with ${HANDLE_VALUE_ORIGIN_FLAG} <origin>`;
+
 /**
  * The string value behind `handle`, or an explanation of why the run cannot
  * read one. `label` names the field being resolved — "browser valueHandle",

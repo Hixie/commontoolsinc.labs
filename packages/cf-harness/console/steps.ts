@@ -776,8 +776,8 @@ export const consoleRunSteps = (
         ? { ok: false as const }
         : parseJson(call.function.arguments);
       const parsedOutput = parseJson(message.content);
+      // Reasoning is not read back by the model, so it adds nothing to scope.
       const handlesIntroduced = admit([
-        thoughts.get(message.toolCallId) ?? "",
         call?.function.arguments ?? "",
         message.content,
       ]);
@@ -849,10 +849,7 @@ export const consoleRunSteps = (
       });
       continue;
     }
-    const handlesIntroduced = admit([
-      message.role === "assistant" ? message.reasoning ?? "" : "",
-      message.content,
-    ]);
+    const handlesIntroduced = admit([message.content]);
     steps.push({
       index,
       kind: message.role,

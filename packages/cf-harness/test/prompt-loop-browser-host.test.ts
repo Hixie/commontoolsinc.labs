@@ -49,6 +49,9 @@ class FakeSandboxRuntime implements SandboxRuntime {
   }
 }
 
+/** The eight-byte signature every PNG opens with, and one byte of body. */
+const PNG_BASE64 = "iVBORw0KGgoA";
+
 class RecordingBrowserHost implements HarnessBrowserHost {
   readonly operations: BrowserHostOperation[] = [];
   readonly profileFields = [{ name: "name.full", label: "Full name" }];
@@ -58,6 +61,9 @@ class RecordingBrowserHost implements HarnessBrowserHost {
     return Promise.resolve({
       status: "ok",
       page: { url: "https://shop.example/", title: "Shop" },
+      ...(operation.action === "screenshot"
+        ? { image: { mediaType: "image/png" as const, base64: PNG_BASE64 } }
+        : {}),
     });
   }
 }
@@ -160,6 +166,51 @@ describe("prompt-loop with a browser host", () => {
       "https://shop.example/item/7",
     );
     expect(result.finalAssistantText).toBe("Found the **item**.");
+  });
+
+  it("shows a browser child its screenshot as an image, and never where the harness keeps it", async () => {
+    const artifactRoot = await Deno.makeTempDir({
+      prefix: "cf-harness-host-loop-",
+    });
+    try {
+      const requestBodies: unknown[] = [];
+      const loop = new CfHarnessPromptLoop({
+        apiKey: "test-key",
+        engine: new CfHarnessEngine({
+          sandboxRuntime: new FakeSandboxRuntime(),
+          runId: "run-browser-host-screenshot",
+          model: "gpt-5.4",
+          cfcEnforcementMode: "disabled",
+          artifactRoot,
+          browserHost: new RecordingBrowserHost(),
+        }),
+        allowedToolIds: ["delegate_task"],
+        allowedSubagentProfiles: ["browser"],
+        fetchFn: scriptedFetch([
+          toolCallTurn("call-look", "delegate_task", {
+            profile: "browser",
+            goal: "Look at the page.",
+          }),
+          toolCallTurn("call-shot", "browser", { action: "screenshot" }),
+          finalTurn("It shows a shop."),
+          finalTurn("The page shows a shop."),
+        ], requestBodies),
+      });
+
+      await loop.runPrompt({ prompt: "What does the page show?" });
+
+      const afterShot = chatViewOfRequest(requestBodies[2]).messages;
+      const shot = afterShot.find((message) => message.role === "tool");
+      const image = JSON.stringify(afterShot.at(-1));
+      expect(JSON.parse(String(shot?.content))).toMatchObject({
+        status: "ok",
+        imageAttached: true,
+      });
+      expect(String(shot?.content)).not.toContain(artifactRoot);
+      expect(image).toContain(`data:image/png;base64,${PNG_BASE64}`);
+    } finally {
+      await Deno.remove(artifactRoot, { recursive: true });
+    }
   });
 
   it("accepts a text answer after a browser child that did not return what was asked, since the owner may have declined", async () => {

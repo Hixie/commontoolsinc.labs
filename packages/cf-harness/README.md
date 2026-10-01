@@ -2730,18 +2730,24 @@ at a point of that screenshot, and `handoff`, which gives the page to the owner
 with a prompt and returns whether they finished or declined. It offers less in
 one respect: a host waits for a ref, a load state, or a URL, never for a time,
 and takes no `timeoutMs` — an operation waits as long as the page or the owner
-takes, and the run's abort signal is what ends it. A browser child in such a run
-holds the `browser` tool alone, with no skill scripts and no host execution.
-Every result carries the page the host committed, which is the host's statement
-of where an observation came from rather than anything the page wrote.
+takes. It ends when the host answers, when the host's stream or the turn ends
+(settling it as `session-ended`), or when the run's abort signal fires. A
+browser child in such a run holds the `browser` tool alone, with no skill
+scripts and no host execution. Every result carries the page the host committed,
+which is the host's statement of where an observation came from rather than
+anything the page wrote.
 
 A value reaches a page in one of three ways, and the host is told which:
 
 - text the agent wrote is entered as given;
 - a value a handle resolves to — from the owner's space for an address handle,
-  or a string a child returned for a `cfh:v:` return referent — goes as a
-  `handle-value` with a description of where it came from, and the host enters
-  it and leaves it out of later snapshots, since no model that saw it chose it;
+  or a string a browser child returned for a `cfh:v:` return referent — goes as
+  a `handle-value` with a description of where it came from, and the host enters
+  it and leaves it out of later snapshots, since no model that saw it chose it.
+  A value from the owner's space goes only to an origin `--handle-value-origin`
+  allows, as on the lease path: the page it is typed into is read first, and an
+  address is checked by its own origin. A string a browser child found on the
+  web goes to any page;
 - `profileField` names a field of the owner's profile, which the host alone
   holds: the harness never resolves it, and the host enters the value itself and
   leaves it out of later snapshots.
@@ -2752,10 +2758,11 @@ without reading. Until release rules over a value's CFC label decide it, the
 owner's task and the guidance below are the only limit on what an agent enters
 or clicks.
 
-None of this keeps a value from a model once it is on a page. A page can show
-what it was given back — in its text, its title, its address, or a screenshot —
-and a later observation carries what the page shows. What the host withholds is
-the field itself; the rest is the page's.
+A page can show what it was given back — in its text, its title, its address, or
+a screenshot. Wherever a host's later answer carries a value from the owner's
+space as it was sent, the harness puts the value's handle in its place before a
+model reads the answer. What the page shows in pixels, or after changing it, is
+the page's.
 
 The host decides which fields only the owner may fill and which hosts a page may
 reach. Its refusals come back under their own codes — `stale_ref`,

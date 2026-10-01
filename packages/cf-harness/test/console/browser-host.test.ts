@@ -42,6 +42,8 @@ describe("console/browser-host", () => {
         { profileFields: [{ name: "Name", label: "Name" }] },
         { profileFields: [{ name: "name", label: "" }] },
         { profileFields: [{ name: "name", label: "a\nb" }] },
+        { profileFields: [{ name: "name", label: "a\u2028b" }] },
+        { profileFields: [{ name: "name", label: "a\u2029b" }] },
         { profileFields: [{ name: "name", label: "x".repeat(81) }] },
         {
           profileFields: [

@@ -145,16 +145,17 @@ advertised capability as dependency readiness.
   not the source of label meaning.
 - Host execution: no parent-run shell reaches the host. Bounded host-side
   surfaces exist beside the sandbox: the browser child profile's typed `browser`
-  tool and allowlisted skill scripts, bound to an explicit local CDP lease the
-  harness attaches itself, and the `run_pattern` tool, which compiles
-  model-authored pattern source and runs it against the configured Fabric space
-  over a lazy authorized session. The Fabric identity remains outside the
-  sandbox. The session runs pieces in the configured space and admits input
-  references from that space or foreign DIDs the operator lists with their
-  hosts. The separate `assign_slug` tool registers a piece the run holds a
-  handle to in that space's piece list under a caller-chosen slug. Neither
-  surface admits arbitrary host commands, and both fabric-session tools are
-  present only when a fabric session is configured. Dedicated Loom tools
+  tool, which a browser host attached to the run carries out when there is one,
+  and otherwise, with allowlisted skill scripts, is bound to an explicit local
+  CDP lease the harness attaches itself; and the `run_pattern` tool, which
+  compiles model-authored pattern source and runs it against the configured
+  Fabric space over a lazy authorized session. The Fabric identity remains
+  outside the sandbox. The session runs pieces in the configured space and
+  admits input references from that space or foreign DIDs the operator lists
+  with their hosts. The separate `assign_slug` tool registers a piece the run
+  holds a handle to in that space's piece list under a caller-chosen slug.
+  Neither surface admits arbitrary host commands, and both fabric-session tools
+  are present only when a fabric session is configured. Dedicated Loom tools
   additionally invoke three fixed command ids through an operator-configured
   host CLI, using argv and stdin with pinned routing and attribution. This is an
   authority-only host boundary, not a new flow-aware store commit gate; see

@@ -52,6 +52,84 @@ describe("console/src/markdown", () => {
       expect(text).not.toContain("x.example");
     });
 
+    it("returns each block as its element, headings starting under the pane's own", () => {
+      const text = rendered(
+        [
+          "# One",
+          "## Two",
+          "### Three",
+          "#### Four",
+          "",
+          "> quoted",
+          "",
+          "- a",
+          "- b",
+          "",
+          "---",
+          "",
+          "3. c",
+          "4. d",
+          "",
+          "| x | y |",
+          "| - | - |",
+          "| 1 | 2 |",
+        ].join("\n"),
+      );
+
+      for (
+        const element of [
+          "<h3>One</h3>",
+          "<h4>Two</h4>",
+          "<h5>Three</h5>",
+          "<h6>Four</h6>",
+          "<blockquote><p>quoted</p></blockquote>",
+          "<ul><li>a</li><li>b</li></ul>",
+          "<hr>",
+          '<ol start="3"><li>c</li><li>d</li></ol>',
+          "<th>x</th>",
+          "<td>2</td>",
+        ]
+      ) {
+        expect(text.replace(/\s+</g, "<").replace(/>\s+/g, ">")).toContain(
+          element,
+        );
+      }
+    });
+
+    it("returns emphasis, a struck word, a hard break and an escape as they read", () => {
+      const text = rendered("**bold** *em* ~~gone~~ a  \nb \\*not em\\*");
+
+      expect(text).toContain("<strong>bold</strong>");
+      expect(text).toContain("<em>em</em>");
+      expect(text).toContain("<del>gone</del>");
+      expect(text).toContain("a<br>b");
+      expect(text).toContain("*not em*");
+    });
+
+    it("returns a code block as written, with each revealed return referent as its string", () => {
+      const text = rendered("```\nopen cfh:v:22222 &amp;\n```", {
+        "cfh:v:22222": "https://shop.example/",
+      });
+
+      expect(text).toContain(
+        '<pre><code>open <code class="live-found" title="Found by an agent">https://shop.example/</code> &amp;</code></pre>',
+      );
+    });
+
+    it("returns a task list's boxes showing their state, and taking no input", () => {
+      const text = rendered("- [x] done\n- [ ] to do");
+
+      expect(text).toContain('<input type="checkbox" disabled checked>');
+      expect(text).toContain('<input type="checkbox" disabled>');
+    });
+
+    it("returns a link whose destination is not a URL as its label alone", () => {
+      const text = rendered("[shop](https://[shop)");
+
+      expect(text).toContain("shop");
+      expect(text).not.toContain("<a");
+    });
+
     it("returns a code span as written, character references included", () => {
       expect(rendered("`a &amp; b`")).toContain("<code>a &amp; b</code>");
     });

@@ -420,7 +420,7 @@ describe("console/src/live-view", () => {
       }]);
     });
 
-    it("returns the piece links a completed turn handed back", () => {
+    it("returns the piece links a completed turn handed back, with its final text as the answer", () => {
       const entries = consoleLiveEntries(log({
         kind: "turn_completed",
         turnId: "turn-1",
@@ -436,14 +436,13 @@ describe("console/src/live-view", () => {
         },
       }));
 
-      // The final text is the turn's last assistant message, which the feed
-      // already carries, so the closing block is the links and nothing else.
       expect(entries[0]).toEqual({
         kind: "ended",
         key: "1",
         turnId: "turn-1",
         status: "completed",
         outcome: "completed",
+        answer: "built it",
         pieces: [{ slug: "reading-list", url: "http://localhost:8000/s/r" }],
         spaceName: "s",
       });
@@ -1664,6 +1663,26 @@ describe("console/src/live-view", () => {
       }));
       expect(templateText(view.view())).toContain(answer);
       expect(consoleLiveState(view.entries)).toBe("done");
+    });
+
+    it("renders a completed turn's answer as Markdown, each revealed referent as its string", () => {
+      const view = new TestConsoleLive();
+      view.entries = consoleLiveEntries(log({
+        kind: "turn_completed",
+        turnId: "turn-1",
+        result: {
+          ...EMPTY_RESULT,
+          outcome: "completed" as const,
+          finalText: "Bought **cfh:v:22222**.",
+          revealed: { "cfh:v:22222": "the blue one" },
+        },
+      }));
+
+      const rendered = templateText(view.view());
+      expect(rendered).toContain('class="live-final live-answer"');
+      expect(rendered).toContain(
+        '<strong><code class="live-found" title="Found by an agent">the blue one</code></strong>',
+      );
     });
 
     it("renders a thought as Markdown set apart from what the model said", () => {

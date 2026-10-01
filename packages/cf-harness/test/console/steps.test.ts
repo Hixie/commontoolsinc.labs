@@ -106,6 +106,29 @@ describe("console/steps", () => {
       ]);
     });
 
+    it("returns no handle into scope that only a model's reasoning named", () => {
+      const steps = consoleRunSteps([
+        {
+          role: "assistant",
+          content: "",
+          reasoning: "Read cfh:a:aaaaa first.",
+          toolCalls: [{
+            id: "c1",
+            type: "function" as const,
+            function: { name: "read_file", arguments: '{"path":"a"}' },
+          }],
+        },
+        result("c1", "read_file", { content: "a" }),
+        {
+          role: "assistant",
+          content: "done",
+          reasoning: "cfh:a:bbbbb held it.",
+        },
+      ]);
+
+      expect(steps.map((step) => step.handlesInScope)).toEqual([[], []]);
+    });
+
     it("folds a tool call and its result into one step", () => {
       const steps = consoleRunSteps([
         { role: "user", content: "do it" },

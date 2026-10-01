@@ -3846,6 +3846,56 @@ describe("console/server", () => {
       );
     });
 
+    it("writes each liveness tick to an attached host's stream", async () => {
+      const { server: hosted } = await hostedServer();
+      const started = await (await hosted.handle(jsonRequest("/api/task", {
+        text: "use the web",
+        browserHost: {},
+      }))).json();
+      const stream = await hosted.handle(
+        jsonRequest("/api/browser-host/stream", {
+          turnId: started.turnId,
+          token: started.browserHostToken,
+        }),
+      );
+      const reader = stream.body!.getReader();
+      await readUntil(reader, "event: request");
+
+      hosted.ping();
+      const ticked = await readUntil(reader, ": 1\n\n");
+      await hosted.handle(jsonRequest("/api/browser-host/result", {
+        turnId: started.turnId,
+        token: started.browserHostToken,
+        id: "1",
+        result: { status: "ok", page: PAGE, text: "" },
+      }));
+      await readUntil(reader, "event: close");
+      await reader.cancel();
+      await hosted.service.waitForTurn(started.sessionId, started.turnId);
+
+      expect(ticked).toContain(": 1\n\n");
+    });
+
+    it("returns 400 for a host route body that is not JSON or names no turn", async () => {
+      const notJson = await server.handle(
+        new Request("http://127.0.0.1:8100/api/browser-host/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{",
+        }),
+      );
+      const noTurn = await server.handle(
+        jsonRequest("/api/browser-host/result", { token: "t", id: "1" }),
+      );
+
+      expect(notJson.status).toBe(400);
+      expect(await notJson.json()).toEqual({
+        error: "request body is not JSON",
+      });
+      expect(noTurn.status).toBe(400);
+      expect(await noTurn.json()).toEqual({ error: "turnId is required" });
+    });
+
     it("returns 400 for a host declaration whose fields are malformed", async () => {
       const response = await server.handle(jsonRequest("/api/task", {
         text: "use the web",

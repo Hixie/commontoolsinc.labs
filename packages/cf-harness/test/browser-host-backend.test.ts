@@ -83,20 +83,27 @@ class FakeSandboxRuntime implements SandboxRuntime {
  */
 class FakeBrowserHost implements HarnessBrowserHost {
   readonly operations: BrowserHostOperation[] = [];
-  readonly profileFields = [
-    { name: "name.full", label: "Full name" },
-    { name: "card.number", label: "Card number" },
-  ];
+  readonly profileFields: readonly { name: string; label: string }[];
 
   readonly #answers: unknown[];
 
-  constructor(answers: unknown[] = []) {
+  constructor(
+    answers: unknown[] = [],
+    profileFields = [
+      { name: "name.full", label: "Full name" },
+      { name: "card.number", label: "Card number" },
+    ],
+  ) {
     this.#answers = answers;
+    this.profileFields = profileFields;
   }
 
   perform(operation: BrowserHostOperation): Promise<BrowserHostResult> {
     this.operations.push(operation);
     const next = this.#answers.shift() ?? { status: "ok", page: PAGE };
+    if (next instanceof Error) {
+      return Promise.reject(next);
+    }
     // The fake answers whatever the script holds, results or not, so a test
     // can hand the tool something a real host would never send.
     return Promise.resolve(next as BrowserHostResult);
@@ -116,7 +123,10 @@ describe("browser-host-backend", () => {
 
   const createEngine = (
     host: HarnessBrowserHost,
-    options: { fabric?: () => Promise<{ pieces: PiecesController }> } = {},
+    options: {
+      fabric?: () => Promise<{ pieces: PiecesController }>;
+      handleValueOrigins?: readonly string[];
+    } = {},
   ) =>
     new CfHarnessEngine({
       sandboxRuntime: new FakeSandboxRuntime(),
@@ -126,6 +136,9 @@ describe("browser-host-backend", () => {
       browserHost: host,
       ...(options.fabric !== undefined
         ? { fabricSessionFactory: options.fabric }
+        : {}),
+      ...(options.handleValueOrigins !== undefined
+        ? { handleValueOrigins: options.handleValueOrigins }
         : {}),
     });
 
@@ -213,6 +226,122 @@ describe("browser-host-backend", () => {
       expect(host.operations).toEqual([]);
     });
 
+    it("sends each read, wait and key to the host as one operation", async () => {
+      const host = new FakeBrowserHost();
+      const engine = createEngine(host);
+
+      await invoke(engine, { action: "get", kind: "title" });
+      await invoke(engine, { action: "get", kind: "text", target: "body" });
+      await invoke(engine, { action: "wait", ref: "@e5" });
+      await invoke(engine, { action: "wait", loadState: "load" });
+      await invoke(engine, { action: "scroll", direction: "up", ref: "@e6" });
+      await invoke(engine, { action: "check", ref: "@e7" });
+      await invoke(engine, { action: "press", key: "Enter" });
+
+      expect(host.operations).toEqual([
+        { action: "get", kind: "title" },
+        { action: "get", kind: "text", target: "body" },
+        { action: "wait", ref: "@e5" },
+        { action: "wait", loadState: "load" },
+        { action: "scroll", direction: "up", ref: "@e6" },
+        { action: "check", ref: "@e7" },
+        { action: "press", key: "Enter" },
+      ]);
+    });
+
+    it("refuses each call it cannot send, saying what the call needs, without contacting the host", async () => {
+      const refused: [BrowserToolInput, string][] = [
+        [{ action: "open", url: "" }, "open requires a url"],
+        [
+          { action: "open", url: "file:///etc/passwd" },
+          "open only allows http(s) URLs",
+        ],
+        [
+          { action: "scroll", direction: "sideways" },
+          "scroll requires a direction: up, down, left, right",
+        ],
+        [
+          { action: "scroll", direction: "down", ref: "e6" },
+          "scroll requires a ref starting with @, taken from a snapshot",
+        ],
+        [
+          { action: "get", kind: "url", target: "body" },
+          "get url does not take a target",
+        ],
+        [
+          { action: "get", kind: "text" },
+          "get text requires a target: a CSS selector such as body, or an @ref from a snapshot",
+        ],
+        [
+          { action: "get", kind: "html" },
+          "get requires kind title, url, or text",
+        ],
+        [
+          { action: "wait", ref: "@e1", loadState: "load" },
+          "wait requires exactly one of ref, loadState, or urlPattern",
+        ],
+        [
+          { action: "wait", ref: "e1" },
+          "wait requires a ref starting with @, taken from a snapshot",
+        ],
+        [
+          { action: "wait", loadState: "idle" },
+          "wait loadState must be domcontentloaded, load, or networkidle",
+        ],
+        [
+          { action: "wait", urlPattern: "file:///tmp/*" },
+          "wait urlPattern requires a non-file pattern",
+        ],
+        [
+          { action: "click", x: 10 },
+          "click at a point requires both x and y, each a non-negative number of screenshot pixels",
+        ],
+        [
+          { action: "click", ref: "e1" },
+          "click requires a ref starting with @, taken from a snapshot",
+        ],
+        [
+          { action: "check", ref: "e1" },
+          "check requires a ref starting with @, taken from a snapshot",
+        ],
+        [
+          { action: "press", key: "Control Alt" },
+          "press requires one key of letters, digits, _, +, ., or -",
+        ],
+        [
+          { action: "fill", ref: "e2", value: "blue" },
+          "fill requires a ref starting with @, taken from a snapshot",
+        ],
+        [
+          { action: "type", ref: "@e2" },
+          "type requires a value, a valueHandle, or a profileField",
+        ],
+        [
+          { action: "type", ref: "@e2", profileField: " " },
+          "profileField must name a field of the owner's profile",
+        ],
+        [
+          { action: "handoff", prompt: "   " },
+          "handoff requires a prompt telling the owner what to do",
+        ],
+        [
+          { action: "handoff", prompt: "x".repeat(1_001) },
+          "handoff prompt must be at most 1000 characters",
+        ],
+      ];
+      const host = new FakeBrowserHost();
+      const engine = createEngine(host);
+
+      const messages = [];
+      for (const [input] of refused) {
+        const output = await invoke(engine, input);
+        messages.push(output.status === "error" ? output.message : "sent");
+      }
+
+      expect(messages).toEqual(refused.map(([, message]) => message));
+      expect(host.operations).toEqual([]);
+    });
+
     it("refuses a click given both a ref and a point", async () => {
       const host = new FakeBrowserHost();
       const engine = createEngine(host);
@@ -270,6 +399,49 @@ describe("browser-host-backend", () => {
       expect(host.operations).toEqual([]);
     });
 
+    it("refuses a profile field when the host offers none", async () => {
+      const host = new FakeBrowserHost([], []);
+      const engine = createEngine(host);
+
+      const output = await invoke(engine, {
+        action: "fill",
+        ref: "@e4",
+        profileField: "name.full",
+      });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "invalid_input",
+        message: "the owner's profile offers no fields to this run",
+      });
+      expect(host.operations).toEqual([]);
+    });
+
+    it("refuses to open a returned string that is not a web address", async () => {
+      const host = new FakeBrowserHost();
+      const engine = createEngine(host);
+      const { table, token } = await mintReferentHandle(
+        createHarnessHandleTable(engine.getRunState().runId),
+        {
+          kind: "return",
+          source: "delegate_task:child",
+          label: {},
+          labelSource: "child",
+          value: "javascript:alert(1)",
+        },
+      );
+      await engine.recordHandleTable(table);
+
+      const output = await invoke(engine, { action: "open", urlHandle: token });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "invalid_input",
+        message: "open only allows http(s) URLs",
+      });
+      expect(host.operations).toEqual([]);
+    });
+
     it("enters a child's returned string as a handle value, and opens a returned URL", async () => {
       const host = new FakeBrowserHost();
       const engine = createEngine(host);
@@ -307,6 +479,36 @@ describe("browser-host-backend", () => {
           },
         },
       ]);
+    });
+
+    it("refuses a returned value that is not a string", async () => {
+      const host = new FakeBrowserHost();
+      const engine = createEngine(host);
+      const { table, token } = await mintReferentHandle(
+        createHarnessHandleTable(engine.getRunState().runId),
+        {
+          kind: "return",
+          source: "delegate_task:child",
+          label: {},
+          labelSource: "child",
+          value: 7,
+        },
+      );
+      await engine.recordHandleTable(table);
+
+      const output = await invoke(engine, {
+        action: "fill",
+        ref: "@e1",
+        valueHandle: token,
+      });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "invalid_input",
+        message:
+          "browser valueHandle must name a string value; the referent holds a value of type number",
+      });
+      expect(host.operations).toEqual([]);
     });
 
     it("refuses a referent token the run does not hold", async () => {
@@ -348,43 +550,154 @@ describe("browser-host-backend", () => {
         await storageManager?.close();
       });
 
-      it("enters a value from the owner's space as a handle value", async () => {
+      /** A handle to `value`, held in the owner's space, recorded on `engine`. */
+      const spaceHandle = async (
+        engine: CfHarnessEngine,
+        name: string,
+        value: string,
+      ): Promise<string> => {
         const space = pieces.getSpace();
-        const cell = runtime.getCell(space, "address", {} as const);
+        const cell = runtime.getCell(space, name, {} as const);
         const { error } = await runtime.editWithRetry((tx) => {
-          cell.withTx(tx).set("1 Main St");
+          cell.withTx(tx).set(value);
         });
         expect(error).toBeUndefined();
         await runtime.idle();
-        const ref = createLLMFriendlyLink(
-          cell.getAsNormalizedFullLink(),
-          space,
-        );
-        const host = new FakeBrowserHost();
-        const engine = createEngine(host, {
-          fabric: () => Promise.resolve({ pieces }),
-        });
         const minted = await mintAddressHandle(
-          createHarnessHandleTable(engine.getRunState().runId),
-          ref,
+          engine.getRunState().handleTable ??
+            createHarnessHandleTable(engine.getRunState().runId),
+          createLLMFriendlyLink(cell.getAsNormalizedFullLink(), space),
         );
         await engine.recordHandleTable(minted.table);
+        return minted.token;
+      };
 
-        await invoke(engine, {
+      const fabric = () => Promise.resolve({ pieces });
+
+      it("enters a value from the owner's space on a page the operator allows, and answers with its handle wherever the page shows it", async () => {
+        const host = new FakeBrowserHost([
+          { status: "ok", page: PAGE },
+          {
+            status: "ok",
+            page: PAGE,
+            text: 'textbox "Address" value="1 Main St"',
+          },
+          {
+            status: "ok",
+            page: { url: PAGE.url, title: "Deliver to 1 Main St" },
+          },
+        ]);
+        const engine = createEngine(host, {
+          fabric,
+          handleValueOrigins: ["https://shop.example"],
+        });
+        const token = await spaceHandle(engine, "address", "1 Main St");
+
+        const filled = await invoke(engine, {
           action: "fill",
           ref: "@e1",
-          valueHandle: minted.token,
+          valueHandle: token,
+        });
+        const reloaded = await invoke(engine, { action: "reload" });
+
+        expect(host.operations).toEqual([
+          { action: "get", kind: "url" },
+          {
+            action: "fill",
+            ref: "@e1",
+            value: {
+              kind: "handle-value",
+              text: "1 Main St",
+              description: "a value from your space",
+            },
+          },
+          { action: "reload" },
+        ]);
+        expect(filled).toMatchObject({
+          status: "ok",
+          output: `textbox "Address" value="${token}"`,
+        });
+        expect(reloaded).toMatchObject({
+          status: "ok",
+          page: { title: `Deliver to ${token}` },
+        });
+      });
+
+      it("refuses a value from the owner's space when the run allows no destination, or the page is elsewhere", async () => {
+        const closed = new FakeBrowserHost();
+        const elsewhere = new FakeBrowserHost([
+          {
+            status: "ok",
+            page: { url: "https://elsewhere.example/", title: "" },
+          },
+        ]);
+        const closedEngine = createEngine(closed, { fabric });
+        const elsewhereEngine = createEngine(elsewhere, {
+          fabric,
+          handleValueOrigins: ["https://shop.example"],
         });
 
-        expect(host.operations).toEqual([{
+        const refusedClosed = await invoke(closedEngine, {
           action: "fill",
           ref: "@e1",
-          value: {
-            kind: "handle-value",
-            text: "1 Main St",
-            description: "a value from your space",
-          },
-        }]);
+          valueHandle: await spaceHandle(closedEngine, "a", "1 Main St"),
+        });
+        const refusedElsewhere = await invoke(elsewhereEngine, {
+          action: "fill",
+          ref: "@e1",
+          valueHandle: await spaceHandle(elsewhereEngine, "b", "1 Main St"),
+        });
+
+        expect(refusedClosed).toMatchObject({
+          status: "error",
+          code: "destination_not_allowed",
+          message:
+            "this run allows no destination for a handle's value; an operator allows one with --handle-value-origin <origin>",
+        });
+        expect(closed.operations).toEqual([]);
+        expect(refusedElsewhere).toMatchObject({
+          status: "error",
+          code: "destination_not_allowed",
+          message:
+            "https://elsewhere.example is not an allowlisted destination for a handle's value; an operator allows one with --handle-value-origin <origin>",
+        });
+        expect(elsewhere.operations).toEqual([{ action: "get", kind: "url" }]);
+      });
+
+      it("opens an address from the owner's space only at an origin the operator allows, and answers with its handle as the page's address", async () => {
+        const secret = "https://shop.example/reset?token=s3cret";
+        const host = new FakeBrowserHost([
+          { status: "ok", page: { url: secret, title: "Reset" } },
+        ]);
+        const engine = createEngine(host, {
+          fabric,
+          handleValueOrigins: ["https://shop.example"],
+        });
+        const allowed = await spaceHandle(engine, "reset", secret);
+        const refused = await spaceHandle(
+          engine,
+          "elsewhere",
+          "https://elsewhere.example/reset?token=s3cret",
+        );
+
+        const opened = await invoke(engine, {
+          action: "open",
+          urlHandle: allowed,
+        });
+        const notOpened = await invoke(engine, {
+          action: "open",
+          urlHandle: refused,
+        });
+
+        expect(host.operations).toEqual([{ action: "open", url: secret }]);
+        expect(opened).toMatchObject({
+          status: "ok",
+          page: { url: allowed, title: "Reset" },
+        });
+        expect(notOpened).toMatchObject({
+          status: "error",
+          code: "destination_not_allowed",
+        });
       });
     });
   });
@@ -435,7 +748,30 @@ describe("browser-host-backend", () => {
     });
 
     it("returns host_unavailable for an answer that is not a result", async () => {
-      const host = new FakeBrowserHost([{ status: "ok" }]);
+      const host = new FakeBrowserHost([
+        { status: "ok" },
+        "ok",
+        { status: "ok", page: { url: "https://shop.example/", title: 7 } },
+      ]);
+      const engine = createEngine(host);
+
+      const outputs = [];
+      for (let index = 0; index < 3; index++) {
+        outputs.push(await invoke(engine, { action: "reload" }));
+      }
+
+      for (const output of outputs) {
+        expect(output).toMatchObject({
+          status: "error",
+          code: "host_unavailable",
+          message:
+            "the browser host answered with something that is not a result",
+        });
+      }
+    });
+
+    it("returns host_unavailable, with the reason, for a host that cannot be reached", async () => {
+      const host = new FakeBrowserHost([new Error("the stream closed")]);
       const engine = createEngine(host);
 
       const output = await invoke(engine, { action: "reload" });
@@ -443,8 +779,23 @@ describe("browser-host-backend", () => {
       expect(output).toMatchObject({
         status: "error",
         code: "host_unavailable",
-        message:
-          "the browser host answered with something that is not a result",
+        message: "the browser host could not be reached: the stream closed",
+      });
+    });
+
+    it("returns a page's text cut to 20,000 characters, saying how much was left out", async () => {
+      const host = new FakeBrowserHost([
+        { status: "ok", page: PAGE, text: "a".repeat(20_005) },
+      ]);
+      const engine = createEngine(host);
+
+      const output = await invoke(engine, { action: "snapshot" });
+
+      expect(output).toMatchObject({
+        status: "ok",
+        output: `${
+          "a".repeat(20_000)
+        }\n[cf-harness truncated output: 5 chars omitted]`,
       });
     });
 
@@ -465,6 +816,40 @@ describe("browser-host-backend", () => {
       expect(await Deno.readFile(output.imageAttachment.hostPath)).toEqual(
         PNG_BYTES,
       );
+    });
+
+    it("refuses a screenshot that is empty, or longer than an attachment may be, before decoding it", async () => {
+      const host = new FakeBrowserHost([
+        {
+          status: "ok",
+          page: PAGE,
+          image: { mediaType: "image/png", base64: "" },
+        },
+        {
+          status: "ok",
+          page: PAGE,
+          image: {
+            mediaType: "image/png",
+            base64: "A".repeat(Math.ceil(20 * 1024 * 1024 / 3) * 4 + 4),
+          },
+        },
+      ]);
+      const engine = createEngine(host);
+
+      const empty = await invoke(engine, { action: "screenshot" });
+      const large = await invoke(engine, { action: "screenshot" });
+
+      expect(empty).toMatchObject({
+        status: "error",
+        code: "command_failed",
+        message: "the screenshot could not be kept: the image is empty",
+      });
+      expect(large).toMatchObject({
+        status: "error",
+        code: "command_failed",
+        message:
+          "the screenshot could not be kept: the image is too large (max 20971520 bytes)",
+      });
     });
 
     it("refuses a screenshot whose bytes are not the image it claims", async () => {

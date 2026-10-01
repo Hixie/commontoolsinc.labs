@@ -281,9 +281,10 @@ durable: restarting the server and reopening the page replays the log.
 
 ## HTTP routes
 
-Every route is behind the loopback `Host` check and nothing else. A caller that
-names this server's host may call any of them, in one request, with no preceding
-one.
+Every route is behind the loopback `Host` check. A caller that names this
+server's host may call any of them, in one request, with no preceding one,
+except the two `/api/browser-host/` routes, which also take the per-turn token
+`POST /api/task` answered with when the task declared a browser host.
 
 | Method | Route                        | Result                                                                                  |
 | ------ | ---------------------------- | --------------------------------------------------------------------------------------- |
@@ -603,6 +604,8 @@ Start. The feed then shows, in the order the harness produces them:
 
 - **`calling <tool>`** as each tool call begins, with its input summary.
 - **`<tool> completed` / `failed`** with the result the model read, truncated.
+- **the model's reasoning**, as the provider summarizes it, before the calls and
+  the text it led to, where the provider gives a summary.
 - **assistant text** between tool calls.
 - **a nested subagent block** under each `delegate_task` entry, headed by the
   child's profile and the goal it was given, holding the child's own tool and
@@ -694,8 +697,8 @@ console's `Host` gate and its listening address are the boundary here, as they
 are for every other route.
 
 An operation waits for its result however long it takes, since a hand-off waits
-for the owner. It ends early only when the run aborts it, which withdraws it
-from the stream if the host has not been sent it yet. A result that is not one
+for the owner. The run can end it early by aborting it, which withdraws it from
+the stream if the host has not been sent it yet. A result that is not one
 settles its operation as failed rather than leaving it waiting. When the host's
 stream ends, every outstanding and later operation settles as `session-ended`,
 and so does every operation when the turn ends. The operation and result shapes
@@ -761,12 +764,13 @@ numbered `run_pattern` attempt and the compiler's word on it, the slug
 `query_docs` asked, or the Common Fabric task `research` investigated. Under a
 line whose run recorded a CFC decision sits the same CFC line the console's
 timeline draws, and a result that held anything back from the model carries the
-same omission block, openable in place. A completed turn ends the pane with the
-piece link the turn produced, which is what the pane is watched for. A completed
-turn that named no piece — a task done on the web — ends it instead with its
+same omission block, openable in place. A completed turn ends the pane with its
 answer, the final text rendered as Markdown in place of the block it streamed
-as. Raw HTML in the answer is not rendered, and a link is kept only when it
-points at a web or mail address. The turn's result carries the final text as
+as, and the piece link the turn produced, if it produced one, which is what the
+pane is watched for. A turn `finish_task` answered keeps the block it streamed,
+since the answer came from the tool rather than from that block, and closes with
+the answer. Raw HTML in the answer is not rendered, and a link is kept only when
+it points at a web or mail address. The turn's result carries the final text as
 written and, as `revealed`, the string each `cfh:v:` return referent it names
 stands for; the pane shows each such string in place of its token, in the answer
 and in a question or a reason for giving up, marked as something an agent found,

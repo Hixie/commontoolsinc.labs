@@ -1,4 +1,4 @@
-import { encodeBase64 } from "@std/encoding/base64";
+import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { extname, isAbsolute, join, relative, resolve } from "@std/path";
 import {
   HARNESS_IMAGE_ATTACHMENT_TYPE,
@@ -248,22 +248,29 @@ export const createHarnessImageAttachment = async (
 };
 
 /**
- * Makes an attachment of image bytes a tool produced rather than read from the
- * workspace — a browser host's screenshot, say. The bytes are written into
- * `snapshotDir` under their digest, and the attachment materializes from
- * there for the rest of the run.
+ * Makes an attachment of base64-encoded image bytes a tool produced rather
+ * than read from the workspace — a browser host's screenshot, say. The bytes
+ * are written into `snapshotDir` under their digest, and the attachment
+ * materializes from there for the rest of the run. An encoding longer than
+ * the largest attachment could need is refused before it is decoded.
  *
  * @throws Error when the bytes are empty, larger than an attachment may be,
- * or not an image of the declared type.
+ * not base64, or not an image of the declared type.
  */
-export const createHarnessImageAttachmentFromBytes = async (
+export const createHarnessImageAttachmentFromBase64 = async (
   options: {
     snapshotDir: string;
-    bytes: Uint8Array;
+    base64: string;
     mediaType: HarnessImageMediaType;
   },
 ): Promise<HarnessImageAttachment> => {
-  const { bytes, mediaType, snapshotDir } = options;
+  const { base64, mediaType, snapshotDir } = options;
+  if (base64.length > Math.ceil(MAX_IMAGE_ATTACHMENT_BYTES / 3) * 4) {
+    throw new Error(
+      `the image is too large (max ${MAX_IMAGE_ATTACHMENT_BYTES} bytes)`,
+    );
+  }
+  const bytes = decodeBase64(base64);
   if (bytes.byteLength === 0) {
     throw new Error("the image is empty");
   }
