@@ -152,7 +152,10 @@ export type BrowserHostOperation =
 
 /** The page a result was observed on, as the host committed it. */
 export interface BrowserHostPage {
-  /** The URL the engine committed for the main frame. */
+  /**
+   * The URL the engine committed for the main frame, or its origin alone for
+   * a document opened from a handle's value, which no observation carries.
+   */
   url: string;
 
   /** The document's title, as the page wrote it. */

@@ -10,10 +10,10 @@ on its own:
   It resolves character references by parsing them into a DOM element, so it
   runs only in a browser.
 - `packages/cf-harness/console/src/markdown.ts` builds the Lit template the
-  harness console shows answers and reasoning in. It shows each return
-  referent a turn reveals as the string it stands for, can show links as their
-  labels alone, shows images as their descriptions, and starts headings at
-  `h3`. It resolves character references with the `entities` package and checks
+  harness console shows answers in; a model's reasoning is shown as plain
+  text instead. It shows each return referent a turn reveals as the string it
+  stands for, shows a link's host beside it, shows images as their
+  descriptions, and starts headings at `h3`. It resolves character references with the `entities` package and checks
   URLs against a scheme list of its own.
 - `packages/cli/lib/view/languages/markdown/markdown.ts` renders Markdown as
   terminal lines for the `cf` pager. It resolves character references with the

@@ -82,9 +82,10 @@ export const getBuiltinTool = (
   BUILTIN_TOOL_REGISTRY.get(toolId as BuiltinToolId);
 
 /**
- * The descriptor of `tool` that a run on `runtime` in `run`'s enforcement
- * mode offers the model: the tool's own, unless the tool has one that
- * depends on the runtime.
+ * The descriptor of `tool` that a run on `runtime` offers the model, given
+ * what about `run` decides it — its enforcement mode, and whether a browser
+ * host carries its browser actions: the tool's own, unless the tool has one
+ * that depends on them.
  */
 export const builtinToolDescriptorForRuntime = (
   tool: Pick<HarnessToolDefinition, "descriptor" | "descriptorForRuntime">,

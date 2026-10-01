@@ -178,7 +178,11 @@ export class ConsoleBrowserHost implements HarnessBrowserHost {
       this.#flush();
       return "accepted";
     }
-    const pending = typeof id === "string" ? this.#pending.get(id) : undefined;
+    // Only an operation the host was sent can be answered: one still queued
+    // has not reached it, and an answer for it is not one.
+    const pending = typeof id === "string" && this.#delivered.has(id)
+      ? this.#pending.get(id)
+      : undefined;
     if (pending === undefined) {
       return "unknown";
     }

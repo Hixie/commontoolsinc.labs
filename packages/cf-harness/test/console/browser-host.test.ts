@@ -131,9 +131,27 @@ describe("console/browser-host", () => {
       );
     });
 
+    it("takes no answer for an operation the host has not been sent, and sends it once the host attaches", async () => {
+      const host = new ConsoleBrowserHost("token");
+      const answer = host.perform({ action: "reload" });
+
+      const early = host.acceptResult("1", { status: "ok", page: PAGE });
+      const stream = host.attach()!;
+      const accepted = host.acceptResult("1", { status: "ok", page: PAGE });
+      host.close();
+
+      expect(early).toBe("unknown");
+      expect(accepted).toBe("accepted");
+      expect(await answer).toEqual({ status: "ok", page: PAGE });
+      expect(await drain(stream)).toContain(
+        'event: request\ndata: {"id":"1","operation":{"action":"reload"}}',
+      );
+    });
+
     it("settles an operation as failed when the host answers with something that is not a result", async () => {
       const host = new ConsoleBrowserHost("token");
       const answer = host.perform({ action: "reload" });
+      host.attach();
 
       const acceptance = host.acceptResult("1", { status: "ok" });
 

@@ -33,8 +33,8 @@ export interface HarnessBrowserToolInputSummary {
   /** A bound handle, carried whole: it names an address, not a value. */
   urlHandle?: string;
 
-  /** A named profile field, carried whole: it names a field, not a value. */
-  profileField?: string;
+  /** Why a hand-off gave the page to the owner: one of a fixed few. */
+  reason?: string;
 
   direction?: string;
   x?: number;
@@ -44,8 +44,6 @@ export interface HarnessBrowserToolInputSummary {
   urlDigest?: string;
   valueBytes?: number;
   valueDigest?: string;
-  promptBytes?: number;
-  promptDigest?: string;
 }
 
 export interface HarnessReadFileToolInputSummary {
