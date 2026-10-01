@@ -580,7 +580,7 @@ describe("console/turn-result", () => {
     }
   });
 
-  it("returns no result when the run's handle table does not validate", async () => {
+  it("returns no result when the run's state cannot be read or its handle table does not validate", async () => {
     const artifactRoot = await Deno.makeTempDir({
       prefix: "cf-harness-console-result-",
     });
@@ -593,16 +593,25 @@ describe("console/turn-result", () => {
         join(artifactRoot, "turn-with-bad-table", "run-state.json"),
         JSON.stringify({ handleTable: { type: "not-a-table" } }),
       );
+      await writeTranscript(artifactRoot, "turn-with-unreadable-state", [
+        { role: "user", content: "find the item" },
+        { role: "assistant", content: "Found it." },
+      ]);
+      await Deno.writeTextFile(
+        join(artifactRoot, "turn-with-unreadable-state", "run-state.json"),
+        "{",
+      );
+      const read = (turnId: string) =>
+        readConsoleTurnResult({
+          sessionId: "session",
+          continuable: true,
+          artifactRoot,
+          turnId,
+          spaceName: "console-test",
+        });
 
-      const result = await readConsoleTurnResult({
-        sessionId: "session",
-        continuable: true,
-        artifactRoot,
-        turnId: "turn-with-bad-table",
-        spaceName: "console-test",
-      });
-
-      expect(result).toBeUndefined();
+      expect(await read("turn-with-bad-table")).toBeUndefined();
+      expect(await read("turn-with-unreadable-state")).toBeUndefined();
     } finally {
       await Deno.remove(artifactRoot, { recursive: true });
     }

@@ -262,7 +262,9 @@ const readRunHandleTable = async (
   try {
     table = (await readHarnessRunState(path)).handleTable;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (error instanceof Deno.errors.NotFound) {
+      return undefined;
+    }
     throw error;
   }
   if (table !== undefined) assertValidHarnessHandleTable(table);
