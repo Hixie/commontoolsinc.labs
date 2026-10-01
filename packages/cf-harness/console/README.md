@@ -676,11 +676,11 @@ yet, and leaves alone a field it does not know. The answer carries a
 and nobody else.
 
 A task may declare a host only on a console its operator launched with
-`--allow-browser-host`, which also gives that console's sessions browser
-children; a console launched without it answers the declaration 403. A turn runs
-under its session's policy either way. The token binds the stream and the
-results to the caller that declared the host, and vouches for nothing else about
-it.
+`--allow-browser-host`; a console launched without it answers the declaration
+403. A turn with a host runs under its session's policy with browser children
+added to drive the host, and the session's other turns run under its policy as
+it is. The token binds the stream and the results to the caller that declared
+the host, and vouches for nothing else about it.
 
 The holder of the token attaches with `POST /api/browser-host/stream`,
 `{"turnId", "token"}`, answered with Server-Sent Events: each operation arrives
@@ -777,15 +777,15 @@ as, and the piece link the turn produced, if it produced one, which is what the
 pane is watched for. A turn `finish_task` answered keeps the block it streamed,
 since the answer came from the tool rather than from that block, and closes with
 the answer. Raw HTML in the answer is not rendered, and a link is kept only when
-it points at a web or mail address. The turn's result carries the final text as
-written and, as `revealed`, the string each `cfh:v:` return referent it names
-stands for; the pane shows each such string in place of its token, in the answer
-and in a question or a reason for giving up, marked as something an agent found,
-so the owner sees a value the parent held only as a name. A string is only ever
-text there, and never part of a link: a link the parent wrote to a token keeps
-the token as its destination, and is dropped as not a web address, and a token
-in a link's label stays a token, so a found address never labels a link that
-goes somewhere else.
+it points at a web address, with the host it goes to shown beside it. The turn's
+result carries the final text as written and, as `revealed`, the string each
+`cfh:v:` return referent it names stands for; the pane shows each such string in
+place of its token, in the answer and in a question or a reason for giving up,
+marked as something an agent found, so the owner sees a value the parent held
+only as a name. A string is only ever text there, and never part of a link: a
+link the parent wrote to a token keeps the token as its destination, and is
+dropped as not a web address, and a token in a link's label stays a token, so a
+found address never labels a link that goes somewhere else.
 
 ## Sessions
 

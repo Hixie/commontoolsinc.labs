@@ -3951,6 +3951,25 @@ describe("console/server", () => {
       ).not.toContain("browser");
     });
 
+    it("runs a console's ordinary task without browser children, and gives a host's turn them", async () => {
+      const { server: hosted, loopOptions } = await hostedServer();
+
+      const plain = await (await hosted.handle(
+        jsonRequest("/api/task", { text: "no browser" }),
+      )).json();
+      await hosted.service.waitForTurn(plain.sessionId, plain.turnId);
+
+      expect(plain.error).toBeUndefined();
+      expect(loopOptions[0]?.browserHost).toBeUndefined();
+      expect(loopOptions[0]?.allowedSubagentProfiles).not.toContain(
+        "browser",
+      );
+      expect(
+        (await (await hosted.handle(getRequest("/api/policy"))).json())
+          .allowedSubagentProfiles,
+      ).not.toContain("browser");
+    });
+
     it("returns 400 for a host declaration that is not an object", async () => {
       const { server: hosted } = await hostedServer();
       const response = await hosted.handle(jsonRequest("/api/task", {

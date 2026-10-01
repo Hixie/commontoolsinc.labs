@@ -35,20 +35,22 @@ const MAX_FOUND_CHARS = 120;
 
 /**
  * `found` as one line the reader can see all of: each control character, line
- * or paragraph separator, and direction mark spelled as an escape, and the
- * whole cut to {@link MAX_FOUND_CHARS} characters.
+ * or paragraph separator, and direction mark spelled as an escape.
  */
-const visibleFound = (found: string): string => {
-  const escaped = found.replace(
+const visibleFound = (found: string): string =>
+  found.replace(
     /[\p{Cc}\p{Zl}\p{Zp}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu,
     (character) =>
       character === "\n"
         ? "\\n"
         : `\\u{${(character.codePointAt(0) ?? 0).toString(16).toUpperCase()}}`,
   );
-  const characters = Array.from(escaped);
+
+/** `text` cut to {@link MAX_FOUND_CHARS} characters. */
+const cutFound = (text: string): string => {
+  const characters = Array.from(text);
   return characters.length <= MAX_FOUND_CHARS
-    ? escaped
+    ? text
     : `${characters.slice(0, MAX_FOUND_CHARS).join("")}…`;
 };
 
@@ -61,17 +63,21 @@ const visibleFound = (found: string): string => {
 const known = (tokens: readonly Token[] | undefined): readonly MarkedToken[] =>
   (tokens ?? []) as readonly MarkedToken[];
 
-/** What a found string's chip says it is, on hover and in its badge. */
-const FOUND_TITLE = "Found by an agent";
+/** What a found string's chip says it is. */
 const FOUND_BADGE = html`<span class="live-found-badge">found</span>`;
 
 /**
- * `value` as something an agent found: isolated, so its direction cannot run
+ * `found` as something an agent found: isolated, so its direction cannot run
  * into the text around it, and badged, so it never reads as the answer's own
- * words. One line, with no space around it, since it may sit in a code block.
+ * words. One line, with no space around it, since it may sit in a code block;
+ * cut short where it is long, with the whole of it on hover.
  */
-const foundChip = (value: string): TemplateResult =>
-  html`<bdi class="live-found" title=${FOUND_TITLE}>${FOUND_BADGE}${value}</bdi>`;
+const foundChip = (found: string): TemplateResult => {
+  const visible = visibleFound(found);
+  return html`<bdi class="live-found" title=${visible}>${FOUND_BADGE}${
+    cutFound(visible)
+  }</bdi>`;
+};
 
 /**
  * `text`, with each return referent the context reveals shown as the string
@@ -84,7 +90,7 @@ const revealing = (text: string, context: Context): unknown[] => {
   for (const match of text.matchAll(new RegExp(REFERENT_TOKEN_PATTERN))) {
     if (!Object.hasOwn(context.revealed, match[0])) continue;
     parts.push(text.slice(from, match.index));
-    parts.push(foundChip(visibleFound(context.revealed[match[0]])));
+    parts.push(foundChip(context.revealed[match[0]]));
     from = match.index + match[0].length;
   }
   parts.push(text.slice(from));

@@ -112,7 +112,7 @@ describe("console/src/markdown", () => {
       });
 
       expect(text).toContain(
-        '<pre><code>open <bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>https://shop.example/</bdi> &amp;</code></pre>',
+        '<pre><code>open <bdi class="live-found" title=https://shop.example/><span class="live-found-badge">found</span>https://shop.example/</bdi> &amp;</code></pre>',
       );
     });
 
@@ -152,7 +152,7 @@ describe("console/src/markdown", () => {
       });
 
       expect(text).toContain(
-        '<bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>https://shop.example/item/7</bdi>',
+        '<bdi class="live-found" title=https://shop.example/item/7><span class="live-found-badge">found</span>https://shop.example/item/7</bdi>',
       );
       expect(text).toContain("see cfh:v:33333.");
     });
@@ -189,13 +189,15 @@ describe("console/src/markdown", () => {
       expect(text).not.toContain("mailto:");
     });
 
-    it("returns a found string on one line, cut short, its control characters, separators and direction marks spelled out", () => {
+    it("returns a found string on one line, cut short with the whole of it on hover, its control characters, separators and direction marks spelled out", () => {
       const text = rendered("Bought cfh:v:22222.", {
         "cfh:v:22222": `a\nb\u202Ec\u2028${"x".repeat(200)}`,
       });
 
       expect(text).toContain(
-        `<span class="live-found-badge">found</span>a\\nb\\u{202E}c\\u{2028}${
+        `<bdi class="live-found" title=a\\nb\\u{202E}c\\u{2028}${
+          "x".repeat(200)
+        }><span class="live-found-badge">found</span>a\\nb\\u{202E}c\\u{2028}${
           "x".repeat(99)
         }…</bdi>`,
       );
@@ -213,7 +215,7 @@ describe("console/src/markdown", () => {
       );
 
       expect(text).toBe(
-        'Could not buy <bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>the blue one</bdi>; see cfh:v:33333.',
+        'Could not buy <bdi class="live-found" title=the blue one><span class="live-found-badge">found</span>the blue one</bdi>; see cfh:v:33333.',
       );
     });
   });

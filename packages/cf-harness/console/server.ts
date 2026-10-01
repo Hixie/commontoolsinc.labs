@@ -9,14 +9,17 @@
  *   deno task --cwd packages/cf-harness console
  *   open http://127.0.0.1:8100
  *
- * The server binds 127.0.0.1 and asks one thing of a request: that it names
- * this server's own host. A hostile name that resolves to 127.0.0.1 would
- * otherwise make these routes same-origin to a browser, and that name is
- * visible on the wire. Nothing else is asked, and no client carries a
+ * The server binds 127.0.0.1 and asks two things of a request: that it names
+ * this server's own host, and, for an `/api/` route, that no browser marks it
+ * as a navigation or as another site's request. A hostile name that resolves
+ * to 127.0.0.1 would otherwise make these routes same-origin to a browser, and
+ * that name is visible on the wire; a page an agent opened would otherwise
+ * read a route by loading it. Nothing else is asked, and no client carries a
  * credential — a caller that reaches this socket is a caller the network
  * admitted. So the network is the boundary: run this where reaching it already
  * means being trusted, which on a shared host means a tailnet with an access
- * policy, and not behind a public address.
+ * policy, and not behind a public address. A browser host's routes also take
+ * the per-turn token their turn was given.
  *
  * What a task runs under is not decided here. This server resolves flags, the
  * environment and the request body into a `HarnessSessionConfig` — the same
@@ -93,7 +96,6 @@ import {
   connectorGrantName,
 } from "../src/well-known-grants.ts";
 import {
-  BROWSER_SUBAGENT_PROFILE,
   DEFAULT_SUBAGENT_PROFILE,
   PATTERN_AUTHOR_SUBAGENT_PROFILE,
 } from "../src/contracts/subagent.ts";
@@ -511,6 +513,9 @@ const parseTaskPatternRefs = (
 interface ConsoleConfig extends HarnessSessionConfig {
   port: number;
   harnessHome: string;
+
+  /** Whether a task may declare a browser host (`--allow-browser-host`). */
+  allowBrowserHost: boolean;
 
   /** Active configuration values and the source selected by this resolver. */
   healthFacts: readonly ConsoleResolvedValue[];
@@ -973,17 +978,15 @@ export const resolveConsoleConfig = async (
     patternRefs: [],
     // The tool surface is left to the session's own backing rather than
     // listed here, so a tool the harness gains reaches this surface with it.
-    // Browser children are the operator's decision, taken at launch like
-    // skill scripts: with them, a task may declare a browser host for them to
-    // drive, and without them no task may.
     allowedSubagentProfiles: [
       DEFAULT_SUBAGENT_PROFILE,
       PATTERN_AUTHOR_SUBAGENT_PROFILE,
-      ...(parsed["allow-browser-host"] === true ||
-          nonEmpty(env.CF_HARNESS_ALLOW_BROWSER_HOST) === "1"
-        ? [BROWSER_SUBAGENT_PROFILE]
-        : []),
     ],
+    // Whether a task may declare a browser host is the operator's decision,
+    // taken at launch like skill scripts. A turn with a host has browser
+    // children to drive it; a session's other turns have none.
+    allowBrowserHost: parsed["allow-browser-host"] === true ||
+      nonEmpty(env.CF_HARNESS_ALLOW_BROWSER_HOST) === "1",
     // Stated only when it is being turned off: guidance is what the profile
     // ships with, so saying so restates a default rather than configuring one.
     ...(parsed["no-child-composition-guidance"] === true
@@ -1030,9 +1033,7 @@ export const resolveConsoleConfig = async (
         : "console default",
     }, {
       name: "browser host",
-      value: config.allowedSubagentProfiles.includes(BROWSER_SUBAGENT_PROFILE)
-        ? "a task may declare one"
-        : "refused",
+      value: config.allowBrowserHost ? "a task may declare one" : "refused",
       source: parsed["allow-browser-host"] === true
         ? "--allow-browser-host"
         : nonEmpty(env.CF_HARNESS_ALLOW_BROWSER_HOST) === "1"
@@ -2066,11 +2067,7 @@ export class ConsoleServer {
     let browserHost: ConsoleBrowserHost | undefined;
     let browserHostToken: string | undefined;
     if (body.browserHost !== undefined && body.browserHost !== null) {
-      if (
-        !this.#config.allowedSubagentProfiles.includes(
-          BROWSER_SUBAGENT_PROFILE,
-        )
-      ) {
+      if (!this.#config.allowBrowserHost) {
         return Response.json({
           error:
             "this console takes no browser host; an operator allows one with --allow-browser-host",

@@ -1360,11 +1360,27 @@ export class HarnessInteractiveChatService {
       return activeTurnError(requestId, record.status, record.startingTurnId);
     }
     const context = params.context ?? record.status.context;
-    const policy = resolveHarnessChatPolicy(
+    const sessionPolicy = resolveHarnessChatPolicy(
       params.policy ?? record.status.policy,
       context,
       this.#basePromptLoopOptions.loomAuthoring?.allowCommentThreads === true,
     );
+    // A turn its caller attached a browser host to may delegate to browser
+    // children: the host is the browser they drive, and attaching one is the
+    // caller's decision. The session's policy, which a later turn without a
+    // host runs under, stays as it is.
+    const policy = attached.browserHost !== undefined &&
+        !sessionPolicy.allowedSubagentProfiles.includes(
+          BROWSER_SUBAGENT_PROFILE,
+        )
+      ? {
+        ...sessionPolicy,
+        allowedSubagentProfiles: [
+          ...sessionPolicy.allowedSubagentProfiles,
+          BROWSER_SUBAGENT_PROFILE,
+        ],
+      }
+      : sessionPolicy;
     const browserAccess = params.browserAccess ?? record.status.browserAccess;
     if (
       policy.allowedSubagentProfiles.includes(BROWSER_SUBAGENT_PROFILE) &&

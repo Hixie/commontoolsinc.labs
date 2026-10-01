@@ -327,6 +327,12 @@ describe("browser-host-backend", () => {
           { action: "wait", urlPattern: "https://u@[::1]:8/*" },
           "wait urlPattern names the open web only: not this device, its network, or an IP address",
         ],
+        ...["**://localhost/**", "http*://127.0.0.1/**"].map((
+          urlPattern,
+        ): [BrowserToolInput, string] => [
+          { action: "wait", urlPattern },
+          "wait urlPattern names the open web only: not this device, its network, or an IP address",
+        ]),
       ];
       const host = new FakeBrowserHost();
       const engine = createEngine(host);
@@ -548,6 +554,8 @@ describe("browser-host-backend", () => {
           { action: "click", ref: "@e1" },
           { action: "fill", ref: "@e1", value: "x" },
           { action: "press", key: "Enter" },
+          { action: "back" },
+          { action: "reload" },
           { action: "open", url: "https://elsewhere.example/" },
           { action: "open", url: "https://bank.example/statements" },
           { action: "snapshot" },
@@ -558,9 +566,11 @@ describe("browser-host-backend", () => {
       }
 
       expect(outputs).toEqual([
-        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and it is read-only: click is refused",
-        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and it is read-only: fill is refused",
-        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and it is read-only: press is refused",
+        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and only reading it and opening that site are allowed: click is refused",
+        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and only reading it and opening that site are allowed: fill is refused",
+        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and only reading it and opening that site are allowed: press is refused",
+        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and only reading it and opening that site are allowed: back is refused",
+        "the owner finished a hand-off on https://bank.example, so the page may hold their sign-in, and only reading it and opening that site are allowed: reload is refused",
         "the owner finished a hand-off on https://bank.example, and the page stays there",
         "ok",
         "ok",

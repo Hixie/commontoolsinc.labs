@@ -44,8 +44,14 @@ const REFUSAL_CODES: Record<BrowserHostRefusal, BrowserToolErrorCode> = {
   "failed": "command_failed",
 };
 
-/** The actions that change a page rather than read or move about it. */
+/**
+ * The actions refused once the owner finishes a hand-off: each changes the
+ * page, leaves it for an address no one checked, or sends it again.
+ */
 const ACTING_ACTIONS: ReadonlySet<BrowserToolAction> = new Set([
+  "back",
+  "forward",
+  "reload",
   "click",
   "check",
   "press",
@@ -185,12 +191,12 @@ const isPoint = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 /**
- * The host a URL pattern names, as `scheme://host/...` does, or `undefined`
- * for a pattern that names none. A bracketed IPv6 literal is returned
- * bracketed.
+ * The host a URL pattern names, as `scheme://host/...` does, a glob for its
+ * scheme included, or `undefined` for a pattern that names none. A bracketed
+ * IPv6 literal is returned bracketed.
  */
 const patternHost = (pattern: string): string | undefined => {
-  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i.exec(pattern)?.[1];
+  const authority = /^[^/?#]*:\/\/([^/?#]*)/.exec(pattern)?.[1];
   if (authority === undefined) {
     return undefined;
   }
@@ -228,7 +234,7 @@ const planHostOperation = (
     return {
       error: `the owner finished a hand-off on ${
         sessionOf(host).handedOffAt
-      }, so the page may hold their sign-in, and it is read-only: ${action} is refused`,
+      }, so the page may hold their sign-in, and only reading it and opening that site are allowed: ${action} is refused`,
     };
   }
   switch (action) {

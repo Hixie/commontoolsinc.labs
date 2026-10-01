@@ -1681,7 +1681,7 @@ describe("console/src/live-view", () => {
       const rendered = templateText(view.view());
       expect(rendered).toContain('class="live-final live-answer"');
       expect(rendered).toContain(
-        '<strong><bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>the blue one</bdi></strong>',
+        '<strong><bdi class="live-found" title=the blue one><span class="live-found-badge">found</span>the blue one</bdi></strong>',
       );
     });
 
@@ -1719,7 +1719,7 @@ describe("console/src/live-view", () => {
 
       const rendered = templateText(view.view());
       expect(rendered).toContain(
-        'Buy <bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>the blue one</bdi>?',
+        'Buy <bdi class="live-found" title=the blue one><span class="live-found-badge">found</span>the blue one</bdi>?',
       );
       expect(rendered).not.toContain("cfh:v:22222");
     });

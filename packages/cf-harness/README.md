@@ -2743,9 +2743,11 @@ and the title the page wrote.
 No operation names this device, its network, or an address written as an IP
 literal: `open`, a `urlHandle`'s value, and a `urlPattern` naming a host are
 refused here, and the host refuses such a load whatever starts it. Once the
-owner finishes a hand-off, the page may hold their sign-in, so the session is
-read-only from then on — `click`, `check`, `press`, `fill`, `type`, and `select`
-are refused — and `open` reaches only the origin they finished on.
+owner finishes a hand-off, the page may hold their sign-in, so from then on the
+session can only be read and opened on the origin they finished on: `click`,
+`check`, `press`, `fill`, `type`, and `select` change the page, `back` and
+`forward` leave it for an address nobody checked, and `reload` may send it
+again, so all of them are refused.
 
 A value reaches a page in one of two ways, and the host is told which:
 
