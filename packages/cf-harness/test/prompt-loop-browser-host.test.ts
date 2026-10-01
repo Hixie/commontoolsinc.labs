@@ -54,7 +54,6 @@ const PNG_BASE64 = "iVBORw0KGgoA";
 
 class RecordingBrowserHost implements HarnessBrowserHost {
   readonly operations: BrowserHostOperation[] = [];
-  readonly profileFields = [{ name: "name.full", label: "Full name" }];
 
   perform(operation: BrowserHostOperation): Promise<BrowserHostResult> {
     this.operations.push(operation);
@@ -64,6 +63,7 @@ class RecordingBrowserHost implements HarnessBrowserHost {
       ...(operation.action === "screenshot"
         ? { image: { mediaType: "image/png" as const, base64: PNG_BASE64 } }
         : {}),
+      ...(operation.action === "handoff" ? { handoff: "done" as const } : {}),
     });
   }
 }
@@ -153,10 +153,8 @@ describe("prompt-loop with a browser host", () => {
       )?.content ?? "{}",
     );
     expect(parentFirst).toContain("this run has a browser the owner watches");
-    expect(parentFirst).toContain("name.full (Full name)");
     expect(child.tools).toEqual(["browser"]);
     expect(childSystem).toContain("shown to the owner as you work");
-    expect(childSystem).toContain("name.full (Full name)");
     expect(childSystem).not.toContain("Browser Access lease");
     expect(host.operations).toEqual([
       { action: "open", url: "https://shop.example/" },
@@ -213,7 +211,7 @@ describe("prompt-loop with a browser host", () => {
     }
   });
 
-  it("accepts a text answer after a browser child that did not return what was asked, since the owner may have declined", async () => {
+  it("asks a parent whose browser child did not finish to end through finish_task, rather than accept its text", async () => {
     const requestBodies: unknown[] = [];
     const loop = new CfHarnessPromptLoop({
       apiKey: "test-key",
@@ -224,7 +222,7 @@ describe("prompt-loop with a browser host", () => {
         cfcEnforcementMode: "disabled",
         browserHost: new RecordingBrowserHost(),
       }),
-      allowedToolIds: ["delegate_task"],
+      allowedToolIds: ["delegate_task", "finish_task"],
       allowedSubagentProfiles: ["browser"],
       requirePieceOutput: true,
       fetchFn: scriptedFetch([
@@ -239,21 +237,157 @@ describe("prompt-loop with a browser host", () => {
           },
         }),
         finalTurn("The owner declined the purchase."),
-        finalTurn("You declined the purchase, so nothing was bought."),
+        finalTurn("You declined the purchase."),
+        toolCallTurn("call-end", "finish_task", {
+          outcome: "gave-up",
+          message: "You declined the purchase, so nothing was bought.",
+        }),
       ], requestBodies),
     });
 
     const result = await loop.runPrompt({ prompt: "Buy me the item." });
+
+    const corrected = JSON.stringify(
+      chatViewOfRequest(requestBodies[3]).messages,
+    );
+    expect(requestBodies).toHaveLength(4);
+    expect(corrected).toContain("Host completion check");
+    expect(result.finalAssistantText).toBe(
+      "You declined the purchase, so nothing was bought.",
+    );
+  });
+
+  it("passes a URL one browser child found to the next as a handle value it opens", async () => {
+    const host = new RecordingBrowserHost();
+    let requests = 0;
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine: new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId: "run-browser-host-relay",
+        model: "gpt-5.4",
+        cfcEnforcementMode: "disabled",
+        browserHost: host,
+      }),
+      allowedToolIds: ["delegate_task"],
+      allowedSubagentProfiles: ["browser"],
+      fetchFn: (_input, init) => {
+        // Each request after the first child returned names the token its
+        // return became: the parent's, in a tool result, and the second
+        // child's, in its goal.
+        const body = String(init?.body);
+        const token = body.match(/cfh:v:[a-z0-9]+/)?.[0];
+        const payloads = [
+          toolCallTurn("call-find", "delegate_task", {
+            profile: "browser",
+            goal: "Find the item's page.",
+            returnSchema: {
+              type: "object",
+              properties: { url: { type: "string" } },
+              required: ["url"],
+              additionalProperties: false,
+            },
+          }),
+          finalTurn(JSON.stringify({ url: "https://shop.example/item/7" })),
+          toolCallTurn("call-open", "delegate_task", {
+            profile: "browser",
+            goal: `Open ${token} with urlHandle.`,
+          }),
+          toolCallTurn("call-go", "browser", {
+            action: "open",
+            urlHandle: token,
+          }),
+          finalTurn("Opened it."),
+          finalTurn("The item's page is open."),
+        ];
+        const payload = payloads[requests++];
+        return Promise.resolve(
+          new Response(JSON.stringify(responsesBodyFromChatFixture(payload)), {
+            status: 200,
+          }),
+        );
+      },
+    });
+
+    await loop.runPrompt({ prompt: "Open the item's page." });
+
+    expect(host.operations).toEqual([{
+      action: "open",
+      url: {
+        kind: "handle-value",
+        text: "https://shop.example/item/7",
+        description: "a value an agent found",
+      },
+    }]);
+  });
+
+  it("keeps a browser child's strings sealed once the owner has finished a hand-off", async () => {
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine: new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId: "run-browser-host-signed-in",
+        model: "gpt-5.4",
+        cfcEnforcementMode: "disabled",
+        browserHost: new RecordingBrowserHost(),
+      }),
+      allowedToolIds: ["delegate_task"],
+      allowedSubagentProfiles: ["browser"],
+      fetchFn: scriptedFetch([
+        toolCallTurn("call-account", "delegate_task", {
+          profile: "browser",
+          goal: "Read the account number once the owner signs in.",
+          returnSchema: {
+            type: "object",
+            properties: { account: { type: "string" } },
+            required: ["account"],
+            additionalProperties: false,
+          },
+        }),
+        toolCallTurn("call-hand", "browser", {
+          action: "handoff",
+          reason: "sign-in",
+        }),
+        finalTurn(JSON.stringify({ account: "12-3456-7890" })),
+        finalTurn("Read it."),
+      ], []),
+    });
+
+    const result = await loop.runPrompt({
+      prompt: "What is my account number?",
+    });
 
     const delegated = JSON.parse(
       result.transcript.findLast((message) =>
         message.role === "tool" && message.toolName === "delegate_task"
       )?.content ?? "{}",
     );
-    expect(delegated.subagent.status).toBe("failed");
-    expect(requestBodies).toHaveLength(3);
-    expect(result.finalAssistantText).toBe(
-      "You declined the purchase, so nothing was bought.",
-    );
+    expect(delegated.subagent.structuredReturn.value.account).toEqual({
+      "@link": "opaque:run-browser-host-signed-in.subagent.1#/account",
+    });
+    expect(result.runState.handleTable?.referents ?? []).toEqual([]);
+  });
+
+  it("refuses to start a run under CFC enforcement that has a browser host", async () => {
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine: new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId: "run-browser-host-enforced",
+        model: "gpt-5.4",
+        cfcEnforcementMode: "enforce-explicit",
+        browserHost: new RecordingBrowserHost(),
+      }),
+      allowedToolIds: ["delegate_task"],
+      allowedSubagentProfiles: ["browser"],
+      fetchFn: () => {
+        throw new Error("no model request is made");
+      },
+    });
+
+    await expect(loop.runPrompt({ prompt: "Look at the page." })).rejects
+      .toThrow(
+        "a browser host gives no CFC labels, so a run under enforce-explicit cannot use one",
+      );
   });
 });

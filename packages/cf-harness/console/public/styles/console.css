@@ -494,20 +494,11 @@ button[disabled] {
 }
 
 /* A model's summary of its own reasoning reads as an aside to the step. */
-/* Rendered Markdown lays itself out; its code blocks keep their lines. */
 .pane.thought .body {
   color: var(--muted);
   font-style: italic;
-  white-space: normal;
-}
-
-.pane.thought .body pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.pane.thought .body > :first-child {
-  margin-top: 0;
 }
 
 .pane-note {

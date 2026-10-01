@@ -13,7 +13,6 @@ import {
   type ConsoleStep,
   consoleStepArguments,
 } from "../steps.ts";
-import { markdownTemplate } from "./markdown.ts";
 
 const json = (value: unknown): string => {
   try {
@@ -535,9 +534,7 @@ export class ConsoleSteps extends LitElement {
     return step.reasoning === undefined ? nothing : html`
       <div class="pane thought">
         <div class="pane-head">thinking</div>
-        <div class="body">${markdownTemplate(step.reasoning, {
-          links: false,
-        })}</div>
+        <div class="body">${step.reasoning}</div>
       </div>
     `;
   }

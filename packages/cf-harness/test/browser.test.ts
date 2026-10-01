@@ -33,6 +33,7 @@ import type {
   SandboxShellRequest,
 } from "../src/sandbox/types.ts";
 import {
+  browserTool,
   type BrowserToolErrorOutput,
   type BrowserToolInput,
   type BrowserToolSuccessOutput,
@@ -153,15 +154,31 @@ describe("browser", () => {
       for (const action of ["back", "forward", "reload", "screenshot"]) {
         expect(errorOf({ action })).toBe(`the ${action} action ${lease}`);
       }
-      expect(errorOf({ action: "handoff", prompt: "sign in" })).toBe(
+      expect(errorOf({ action: "handoff", reason: "sign-in" })).toBe(
         `the handoff action ${lease}`,
       );
       expect(errorOf({ action: "click", x: 10, y: 20 })).toBe(
         `a click at a point ${lease}`,
       );
-      expect(
-        errorOf({ action: "fill", ref: "@e1", profileField: "name.full" }),
-      ).toBe(`profileField ${lease}`);
+    });
+
+    it("offers a lease run the lease's actions and a host run the host's", () => {
+      const run = { cfcEnforcementMode: "observe" as const };
+      const actionsOf = (browserHost: boolean): unknown =>
+        browserTool.descriptorForRuntime?.(
+          new FakeSandboxRuntime().describe(),
+          { ...run, browserHost },
+        ).inputSchema;
+      const lease = JSON.stringify(actionsOf(false));
+      const host = JSON.stringify(actionsOf(true));
+
+      expect(lease).not.toContain('"handoff"');
+      expect(lease).not.toContain('"reason"');
+      expect(lease).toContain("cfh:a:");
+      expect(host).toContain('"handoff"');
+      expect(host).toContain('"reason"');
+      expect(host).toContain("cfh:v:");
+      expect(host).not.toContain('"ms"');
     });
 
     it("plans open for an http(s) URL only", () => {
@@ -291,7 +308,7 @@ describe("browser", () => {
         value: "hunter2",
         valueHandle: "cfh:a:22222",
       })).toBe(
-        "value, valueHandle, and profileField are alternatives: give the value itself, a handle to it, or the profile field that holds it",
+        "value and valueHandle cannot both be set: give the value itself or a handle to it",
       );
       expect(errorOf({
         action: "open",
@@ -534,7 +551,7 @@ describe("browser", () => {
       const output = result.output as BrowserToolErrorOutput;
       expect(output.code).toBe("invalid_input");
       expect(output.message).toBe(
-        "value, valueHandle, and profileField are alternatives: give the value itself, a handle to it, or the profile field that holds it",
+        "value and valueHandle cannot both be set: give the value itself or a handle to it",
       );
       expect(runner.calls).toEqual([]);
     });

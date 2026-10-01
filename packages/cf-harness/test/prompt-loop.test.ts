@@ -6504,12 +6504,9 @@ Deno.test("CfHarnessPromptLoop activates browser subagent skills and host skill 
       };
     };
     assertEquals(delegateOutput.subagent.structuredReturn?.value?.ok, true);
-    const [capturedReferent] = result.runState.handleTable?.referents ?? [];
-    assertEquals(capturedReferent?.kind, "return");
-    assertEquals(
-      delegateOutput.subagent.structuredReturn?.value?.captured,
-      capturedReferent?.token,
-    );
+    assertEquals(delegateOutput.subagent.structuredReturn?.value?.captured, {
+      "@link": "opaque:run-browser-subagent-skills.subagent.1#/captured",
+    });
     assertEquals(
       result.finalAssistantText,
       "Parent saw browser child summary.",
@@ -6974,22 +6971,15 @@ Deno.test("CfHarnessPromptLoop keeps browser subagent observations behind struct
     );
     assertEquals(childArtifactRoot.startsWith(`${artifactRoot}/`), true);
     assertEquals(output.subagent.structuredReturn.status, "valid");
-    assertEquals(output.subagent.structuredReturn.linkedStringCount, 0);
-    // The observation reaches the parent as a return referent it can pass on
-    // and never read: its run holds the value, its model holds a token.
-    const [evidenceReferent] = result.runState.handleTable?.referents ?? [];
-    assertEquals(evidenceReferent?.kind, "return");
-    assertEquals(evidenceReferent?.value, browserObservation);
+    assertEquals(output.subagent.structuredReturn.linkedStringCount, 1);
     assertEquals(output.subagent.structuredReturn.value, {
       verdict: "unsafe",
       canProceed: false,
       riskCount: 1,
-      evidence: evidenceReferent?.token,
+      evidence: {
+        "@link": "opaque:run-browser-structured-return.subagent.1#/evidence",
+      },
     });
-    assertEquals(
-      JSON.stringify(result.transcript).includes(browserObservation),
-      false,
-    );
 
     const rawReturn = JSON.parse(
       await Deno.readTextFile(output.subagent.structuredReturn.rawArtifactPath),

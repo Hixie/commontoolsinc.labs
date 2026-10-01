@@ -176,6 +176,7 @@ Every environment variable has a flag, and the flag wins:
 | `--max-model-turns`           | `CF_HARNESS_CONSOLE_MAX_MODEL_TURNS`   | the prompt loop's default             |
 | `--skills-root`               | `CF_HARNESS_CONSOLE_SKILLS_ROOT`       | the repository's `skills/` tree       |
 | `--allow-skill-scripts`       | `CF_HARNESS_ALLOW_SKILL_SCRIPTS=1`     | off; scripts do not run               |
+| `--allow-browser-host`        | `CF_HARNESS_ALLOW_BROWSER_HOST=1`      | off; a task may declare no host       |
 | `--host-mount`                | —                                      | none; repeatable                      |
 
 ### Skill scripts
@@ -658,27 +659,28 @@ replaying the feed.
 
 ## Browser hosts
 
-A task body may carry `browserHost`, declaring that the caller can host the
-turn's browser — show a web page to the owner and execute the `browser` tool's
-operations in it — and naming the owner's profile fields it offers:
+A task body may carry `browserHost`, an object declaring that the caller can
+host the turn's browser — show a web page to the owner and execute the `browser`
+tool's operations in it:
 
 ```json
 {
-  "text": "order the book on my list",
-  "browserHost": {
-    "profileFields": [{ "name": "name.full", "label": "Full name" }]
-  }
+  "text": "find the book on my list",
+  "browserHost": {}
 }
 ```
 
-A field's name is lowercase words joined by dots, dashes, or underscores; its
-label is one line. The names become the vocabulary of the `browser` tool's
-`profileField`, and neither the console nor the run ever holds a value: the host
-fills one itself. The turn's policy then allows `browser` children, and the
-answer carries a `browserHostToken` beside `sessionId` and `turnId`, given to
-the task's starter and nobody else. A turn without a host keeps the session's
-policy, so a later turn of the same session has a browser only if it declares
-one too.
+The declaration is an object so it can grow; the console reads nothing in it
+yet, and leaves alone a field it does not know. The answer carries a
+`browserHostToken` beside `sessionId` and `turnId`, given to the task's starter
+and nobody else.
+
+A task may declare a host only on a console its operator launched with
+`--allow-browser-host`, which also gives that console's sessions browser
+children; a console launched without it answers the declaration 403. A turn runs
+under its session's policy either way. The token binds the stream and the
+results to the caller that declared the host, and vouches for nothing else about
+it.
 
 The holder of the token attaches with `POST /api/browser-host/stream`,
 `{"turnId", "token"}`, answered with Server-Sent Events: each operation arrives
@@ -686,23 +688,28 @@ as a `request` event whose data is `{"id", "operation"}`, and a `close` event
 says the turn is over and the stream ends. Operations sent before the host
 attaches wait for it, and the first attach is the only one: a second answers
 409. Each result goes back with `POST /api/browser-host/result`,
-`{"turnId", "token", "id", "result"}`; a result that is not one answers 400, and
-an id nobody waits on 404. A request whose token does not match answers 404, as
-one for a turn with no host does. The token rides in the body so it appears in
-no URL and no log line between the host and the console.
-
-Any caller that can start a task can declare a host. The token binds the stream
-and the results to that caller alone and vouches for nothing else about it: the
-console's `Host` gate and its listening address are the boundary here, as they
-are for every other route.
+`{"turnId", "token", "id", "result"}`; a result that is not one answers 400, an
+id nobody waits on 404, and a body over 32 MiB 413 without the rest being read.
+A request whose token does not match answers 404, as one for a turn with no host
+does. The token rides in the body so it appears in no URL and no log line
+between the host and the console.
 
 An operation waits for its result however long it takes, since a hand-off waits
-for the owner. The run can end it early by aborting it, which withdraws it from
-the stream if the host has not been sent it yet. A result that is not one
-settles its operation as failed rather than leaving it waiting. When the host's
-stream ends, every outstanding and later operation settles as `session-ended`,
-and so does every operation when the turn ends. The operation and result shapes
-are `src/contracts/browser-host.ts`.
+for the owner. The run can end it early by aborting it. One the host has not
+been sent is simply withdrawn; one it holds is withdrawn with a `withdraw` event
+whose data is `{"id"}`, and the host stops it if it can and answers it as it
+ended. That answer is the acknowledgment: no later operation reaches the host
+until it arrives, so nothing the host does for a withdrawn call overlaps the
+next. A result that is not one settles its operation as failed rather than
+leaving it waiting. When the host's stream ends, every outstanding and later
+operation settles as `session-ended`, and so does every operation when the turn
+ends. The operation and result shapes are `src/contracts/browser-host.ts`.
+
+The `/api/` routes answer only the console's own page and clients that are not
+browsers: a request a browser marks as a navigation, or as made by another
+site's page (`Sec-Fetch-Mode: navigate`, or a `Sec-Fetch-Site` other than
+`same-origin` or `none`), answers 403, so a page an agent opened can neither
+load a route nor reach one from elsewhere.
 
 ## The live pane
 

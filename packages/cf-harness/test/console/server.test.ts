@@ -163,6 +163,22 @@ const config = () =>
     "/console",
   );
 
+/** The same configuration, allowing a task to declare a browser host. */
+const configWithBrowserHost = () =>
+  resolveConsoleConfig(
+    [
+      "--fabric-identity",
+      "key.pkcs8",
+      "--fabric-space",
+      "console-test",
+      "--session-db",
+      "none",
+      "--allow-browser-host",
+    ],
+    {},
+    "/console",
+  );
+
 /** The same configuration, with an index for the proxy route to reach. */
 const configWithIndex = () =>
   resolveConsoleConfig(
@@ -1482,6 +1498,24 @@ describe("console/server", () => {
       );
 
       expect(response.status).toBe(403);
+    });
+
+    it("answers 403 to a browser's navigation and to another site's page, and 200 to the console's own page and to a client that is no browser", async () => {
+      const requests: Record<string, string>[] = [
+        { "sec-fetch-mode": "navigate", "sec-fetch-site": "none" },
+        { "sec-fetch-mode": "cors", "sec-fetch-site": "cross-site" },
+        { "sec-fetch-mode": "no-cors", "sec-fetch-site": "same-site" },
+        { "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" },
+        {},
+      ];
+      const statuses = [];
+      for (const headers of requests) {
+        statuses.push(
+          (await server.handle(getRequest("/api/health", headers))).status,
+        );
+      }
+
+      expect(statuses).toEqual([403, 403, 403, 200, 200]);
     });
   });
 
@@ -3744,7 +3778,7 @@ describe("console/server", () => {
       const loopOptions: CreateHarnessPromptLoopOptions[] = [];
       const results: (BrowserHostResult | undefined)[] = [];
       const hosted = new ConsoleServer(
-        await config(),
+        await configWithBrowserHost(),
         (onEvent) =>
           new HarnessInteractiveChatService({
             createPromptLoop: (options) => {
@@ -3811,17 +3845,13 @@ describe("console/server", () => {
       await server.service.waitForTurn(plainBody.sessionId, plainBody.turnId);
       const declared = await hosted.handle(jsonRequest("/api/task", {
         text: "use the web",
-        browserHost: {
-          profileFields: [{ name: "name.full", label: "Full name" }],
-        },
+        browserHost: { aFieldThisConsoleDoesNotKnow: true },
       }));
       const declaredBody = await declared.json();
 
       expect(plainBody.browserHostToken).toBeUndefined();
       expect(typeof declaredBody.browserHostToken).toBe("string");
-      expect(loopOptions[0]?.browserHost?.profileFields).toEqual([
-        { name: "name.full", label: "Full name" },
-      ]);
+      expect(loopOptions[0]?.browserHost).toBeDefined();
       expect(loopOptions[0]?.allowedSubagentProfiles).toContain("browser");
 
       const stream = await hosted.handle(
@@ -3896,16 +3926,49 @@ describe("console/server", () => {
       expect(await noTurn.json()).toEqual({ error: "turnId is required" });
     });
 
-    it("returns 400 for a host declaration whose fields are malformed", async () => {
+    it("returns 403 for a host declaration a console that allows none is sent, and gives it no browser children", async () => {
       const response = await server.handle(jsonRequest("/api/task", {
         text: "use the web",
-        browserHost: { profileFields: [{ name: "Card Number", label: "x" }] },
+        browserHost: {},
+      }));
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error:
+          "this console takes no browser host; an operator allows one with --allow-browser-host",
+      });
+      expect(
+        (await (await server.handle(getRequest("/api/policy"))).json())
+          .allowedSubagentProfiles,
+      ).not.toContain("browser");
+    });
+
+    it("returns 400 for a host declaration that is not an object", async () => {
+      const { server: hosted } = await hostedServer();
+      const response = await hosted.handle(jsonRequest("/api/task", {
+        text: "use the web",
+        browserHost: ["profileFields"],
       }));
 
       expect(response.status).toBe(400);
-      expect((await response.json()).error).toContain(
-        "must be lowercase words",
+      expect(await response.json()).toEqual({
+        error: "browserHost must be an object",
+      });
+    });
+
+    it("returns 413 for a host route body larger than a result may be, without reading the rest", async () => {
+      const response = await server.handle(
+        new Request("http://127.0.0.1:8100/api/browser-host/result", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "x".repeat(32 * 1024 * 1024 + 1),
+        }),
       );
+
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({
+        error: "request body is larger than 33554432 bytes",
+      });
     });
 
     it("carries an operation to the host and its result back to the run", async () => {
@@ -4075,7 +4138,7 @@ describe("console/server", () => {
       }
       const task = async (start: "ends" | "refuses" | "throws") => {
         const shortTurns = new ConsoleServer(
-          await config(),
+          await configWithBrowserHost(),
           (onEvent) => new ShortTurnService(onEvent, start),
         );
         const response = await shortTurns.handle(jsonRequest("/api/task", {

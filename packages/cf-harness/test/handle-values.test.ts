@@ -204,6 +204,34 @@ describe("handle-values", () => {
       });
     });
 
+    it("returns an error for a returned value labeled above the run's read ceiling, and the value for one within it", async () => {
+      const minted = await mintReferentHandle(
+        createHarnessHandleTable("handle-values-run"),
+        {
+          kind: "return",
+          source: "delegate_task:child",
+          value: "the owner's address",
+          label: { confidentiality: ["did:key:zOwner"] },
+          labelSource: "child",
+        },
+      );
+      const resolve = (ceiling: readonly string[]) =>
+        resolveHandleValue(
+          { handleTable: minted.table, cfcReadMaxConfidentiality: ceiling },
+          minted.token,
+          "browser valueHandle",
+          { returnReferents: true },
+        );
+
+      expect((await resolve(["did:key:zFacet"])).error).toBe(
+        "browser valueHandle names a value labeled above this run's read ceiling",
+      );
+      expect(await resolve(["did:key:zOwner"])).toEqual({
+        value: "the owner's address",
+        source: "return",
+      });
+    });
+
     it("returns an error for a referent token naming something other than a return", async () => {
       const minted = await mintReferentHandle(
         createHarnessHandleTable("handle-values-run"),

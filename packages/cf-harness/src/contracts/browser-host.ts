@@ -9,6 +9,11 @@
  * operation: the host executes every operation in the one session the
  * channel is attached to. An operation names no jar, no endpoint, and no
  * grant.
+ *
+ * Whatever initiates it — an operation, a page, a redirect — the host loads
+ * nothing from, and sends no request to, this device, its local network, or
+ * an address written as an IP literal. Before it takes a screenshot, it paints
+ * over every field a value was entered into.
  */
 
 import { isObjectNotArray } from "@commonfabric/utils/types";
@@ -39,34 +44,83 @@ export const BROWSER_HOST_LOAD_STATES = [
 export type BrowserHostLoadState = typeof BROWSER_HOST_LOAD_STATES[number];
 
 /**
- * A value an operation enters into a page.
- *
- * - `text` is text the agent composed: the host enters it as given.
- * - `handle-value` is a value a handle resolved to, which no model that saw it
- *   chose for this page: one from the owner's space, or a string a child
- *   returned; `description` says which. The host enters it and keeps it out of
- *   every later observation of the page.
- * - `profile-field` names a field of the owner's profile, which the host holds
- *   and the harness never does. The host resolves it, enters it, and keeps it
- *   out of every later observation of the page.
+ * A value a handle resolved to, which no model that saw it chose for the
+ * page: a string a browser child found on the web and returned, which the
+ * agent passes on by its handle. `description` says where it came from. The
+ * host enters it and keeps it out of every later observation of the page.
+ */
+export interface BrowserHostHandleValue {
+  kind: "handle-value";
+  text: string;
+  description: string;
+}
+
+/**
+ * A value an operation enters into a page: `text` the agent composed, which
+ * the host enters as given, or a handle's value.
  *
  * Nothing here asks the owner whether a value may go to a page: a question at
- * every step teaches a person to agree without reading. Whether it may is for
- * release rules over the value's CFC label, which the harness states and the
- * host enforces.
+ * every step teaches a person to agree without reading.
  */
 export type BrowserHostValue =
   | { kind: "text"; text: string }
-  | { kind: "handle-value"; text: string; description: string }
-  | { kind: "profile-field"; field: string };
+  | BrowserHostHandleValue;
+
+/**
+ * The keys `press` may name: keys that move, submit, or dismiss, none of
+ * which puts a character into the page.
+ */
+export const BROWSER_HOST_KEYS = [
+  "Enter",
+  "Tab",
+  "Escape",
+  "Backspace",
+  "Delete",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+] as const;
+
+/** One of {@link BROWSER_HOST_KEYS}. */
+export type BrowserHostKey = typeof BROWSER_HOST_KEYS[number];
+
+/**
+ * Why an agent hands the page to the owner. The host shows the owner fixed
+ * words for the reason beside the page's committed origin, never words an
+ * agent wrote, so a hand-off cannot speak in the host's voice.
+ *
+ * - `sign-in`: the page wants the owner signed in.
+ * - `one-time-code`: the page wants a code sent to the owner.
+ * - `challenge`: the page wants a person to prove they are one.
+ * - `choice`: the next step is the owner's to choose.
+ */
+export const BROWSER_HOST_HANDOFF_REASONS = [
+  "sign-in",
+  "one-time-code",
+  "challenge",
+  "choice",
+] as const;
+
+/** One of {@link BROWSER_HOST_HANDOFF_REASONS}. */
+export type BrowserHostHandoffReason =
+  typeof BROWSER_HOST_HANDOFF_REASONS[number];
 
 /** One operation the host executes in the session. */
 export type BrowserHostOperation =
   | {
     action: "open";
 
-    /** The address, as the agent wrote it or as a handle resolved it. */
-    url: string;
+    /**
+     * The address, as the agent wrote it, or as a handle resolved it. A
+     * document opened from a handle's value is reported by its origin alone,
+     * in the page of every result, while the session stays on it.
+     */
+    url: string | BrowserHostHandleValue;
   }
   | { action: "back" }
   | { action: "forward" }
@@ -88,13 +142,13 @@ export type BrowserHostOperation =
   | { action: "click"; ref: BrowserHostRef }
   | { action: "click"; x: number; y: number }
   | { action: "check"; ref: BrowserHostRef }
-  | { action: "press"; key: string }
+  | { action: "press"; key: BrowserHostKey }
   | {
     action: "fill" | "type" | "select";
     ref: BrowserHostRef;
     value: BrowserHostValue;
   }
-  | { action: "handoff"; prompt: string };
+  | { action: "handoff"; reason: BrowserHostHandoffReason };
 
 /** The page a result was observed on, as the host committed it. */
 export interface BrowserHostPage {
@@ -151,25 +205,12 @@ export type BrowserHostResult =
   };
 
 /**
- * A field of the owner's profile the host can fill: its name, which an
- * operation names, and the label the owner knows it by. The value stays with
- * the host.
- */
-export interface BrowserHostProfileField {
-  name: string;
-  label: string;
-}
-
-/**
  * The harness side of an attached host: what the `browser` tool calls when a
  * run has one. `perform` settles when the host answers or `signal` aborts,
  * and never on a clock of its own, since an operation that needs the owner
  * waits for the owner.
  */
 export interface HarnessBrowserHost {
-  /** The profile fields the host offers, named when it attached. */
-  readonly profileFields: readonly BrowserHostProfileField[];
-
   /** Executes `operation` in the host's session for this run. */
   perform(
     operation: BrowserHostOperation,

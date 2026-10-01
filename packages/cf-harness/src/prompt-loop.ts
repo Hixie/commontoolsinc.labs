@@ -180,9 +180,10 @@ import type {
 import { OpenAICompatibleGatewayModelClient } from "./model/openai-compatible-gateway.ts";
 import { sumHarnessModelUsage } from "./model/usage.ts";
 import {
-  browserHostParentGuidance,
-  browserHostSubagentGuidance,
+  BROWSER_HOST_PARENT_GUIDANCE,
+  BROWSER_HOST_SUBAGENT_GUIDANCE,
 } from "./browser-host-guidance.ts";
+import { browserHostHandedOff } from "./tools/browser-host-backend.ts";
 import { PIECE_OUTPUT_GUIDANCE } from "./piece-output.ts";
 import { isClosedResearchTask } from "./research/closed-task.ts";
 import { collapseSupersededRunPatternDiagnostics } from "./run-pattern-diagnostic-collapse.ts";
@@ -664,16 +665,11 @@ const summarizeToolInput = async (
       const valueSummary = typeof input.value === "string"
         ? await summarizeSensitiveText(input.value)
         : undefined;
-      const promptSummary = typeof input.prompt === "string"
-        ? await summarizeSensitiveText(input.prompt)
-        : undefined;
       return {
         type: "cf-harness.tool-input-summary",
         toolId,
         ...(typeof input.action === "string" ? { action: input.action } : {}),
-        ...(typeof input.profileField === "string"
-          ? { profileField: input.profileField }
-          : {}),
+        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
         ...(typeof input.direction === "string"
           ? { direction: input.direction }
           : {}),
@@ -703,12 +699,6 @@ const summarizeToolInput = async (
           : {}),
         ...(valueSummary !== undefined
           ? { valueBytes: valueSummary.bytes, valueDigest: valueSummary.digest }
-          : {}),
-        ...(promptSummary !== undefined
-          ? {
-            promptBytes: promptSummary.bytes,
-            promptDigest: promptSummary.digest,
-          }
           : {}),
       };
     }
@@ -1579,7 +1569,7 @@ const buildSubagentSystemPrompt = (
       : []),
     ...(profileConfig.profile === BROWSER_SUBAGENT_PROFILE &&
         options.browserHost !== undefined
-      ? browserHostSubagentGuidance(options.browserHost)
+      ? BROWSER_HOST_SUBAGENT_GUIDANCE
       : []),
     ...(profileConfig.skillNames !== undefined &&
         profileConfig.skillNames.length > 0
@@ -3037,9 +3027,9 @@ export class CfHarnessPromptLoop {
   readonly #requirePieceOutput: boolean;
 
   /**
-   * Whether this loop has run a browser child, however it ended. A task whose
-   * work was done on the web may end with a text answer rather than a piece:
-   * what was bought, or why nothing was.
+   * Whether a browser child driving this run's browser host has finished. A
+   * task whose work was done on the web may end with a text answer rather
+   * than a piece: what was found, or what was bought.
    */
   #browsed = false;
   readonly #allowedToolIds: ReadonlySet<BuiltinToolId>;
@@ -3746,6 +3736,18 @@ export class CfHarnessPromptLoop {
         "a model must be configured before running the prompt loop",
       );
     }
+    // A browser host gives no CFC labels, so under enforcement every page it
+    // shows would be an observation nothing mediates: refused as text and let
+    // through as pixels. The run fails at its start rather than run that way.
+    const enforcement = initialRunState.cfcEnforcementMode;
+    if (
+      this.engine.browserHost !== undefined &&
+      (enforcement === "enforce-explicit" || enforcement === "enforce-strict")
+    ) {
+      throw new Error(
+        `a browser host gives no CFC labels, so a run under ${enforcement} cannot use one`,
+      );
+    }
     this.engine.bindRunModel(model);
     const transcript: HarnessTranscriptMessage[] = [...options.transcript];
     // Keep audit history intact while excluding this loop's own control messages
@@ -3765,9 +3767,7 @@ export class CfHarnessPromptLoop {
         role: "user",
         content: [
           ...(this.#requirePieceOutput ? [PIECE_OUTPUT_GUIDANCE] : []),
-          ...(browserHost !== undefined
-            ? [browserHostParentGuidance(browserHost)]
-            : []),
+          ...(browserHost !== undefined ? [BROWSER_HOST_PARENT_GUIDANCE] : []),
         ].join("\n\n"),
       };
       // Each root task gets its own contract, immediately before its input.
@@ -3993,6 +3993,7 @@ export class CfHarnessPromptLoop {
         const sandboxDescription = this.engine.sandbox.describe();
         const toolRun = {
           cfcEnforcementMode: this.engine.getRunState().cfcEnforcementMode,
+          browserHost: this.engine.browserHost !== undefined,
         };
         try {
           response = await this.modelClient.complete({
@@ -6254,7 +6255,12 @@ export class CfHarnessPromptLoop {
           rawFinalAssistantText: childFinalText,
           schema: delegateInput.returnSchema,
           handleTable,
-          returnReferents: delegateInput.profile === BROWSER_SUBAGENT_PROFILE,
+          // Only a browser host's child, on pages a fresh browser reached,
+          // returns strings of the public web; once the owner finished a
+          // hand-off, a page may hold their account, which no label says.
+          returnReferents: delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
+            this.engine.browserHost !== undefined &&
+            !browserHostHandedOff(this.engine.browserHost),
         });
         summary = options.resolvedSkill === undefined
           ? structured.summary
@@ -6294,7 +6300,12 @@ export class CfHarnessPromptLoop {
         }
       }
     }
-    if (delegateInput.profile === BROWSER_SUBAGENT_PROFILE) {
+    // A browser host's child that finished is web work done in the owner's
+    // view, which the parent may answer for in words instead of a piece.
+    if (
+      delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
+      this.engine.browserHost !== undefined && subagentStatus === "completed"
+    ) {
       this.#browsed = true;
     }
     const childRunState = childEngine.getRunState();

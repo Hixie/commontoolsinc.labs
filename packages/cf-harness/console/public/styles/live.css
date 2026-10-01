@@ -152,19 +152,8 @@ console-live {
 .live-entry.thought {
   color: var(--muted);
   font-style: italic;
-}
-
-.live-entry.thought pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.live-entry.thought > :first-child {
-  margin-top: 0;
-}
-
-.live-entry.thought > :last-child {
-  margin-bottom: 0;
 }
 
 .live-final {
@@ -189,10 +178,31 @@ console-live {
   overflow-wrap: anywhere;
 }
 
-/* Something an agent found, shown where the answer named it. */
+/* Something an agent found, shown where the answer named it: one line, cut
+   short, and badged so it never reads as the answer's own words. */
 .live-final .live-found {
-  overflow-wrap: anywhere;
-  border-bottom: 1px dotted currentColor;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 0 4px;
+  border: 1px dotted currentColor;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.live-found-badge {
+  margin-right: 4px;
+  font-size: 0.75em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Where a link goes, beside what its author called it. */
+.live-link-host {
+  color: var(--muted);
 }
 
 .live-answer table {

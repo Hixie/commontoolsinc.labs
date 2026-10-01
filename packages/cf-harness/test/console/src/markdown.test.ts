@@ -112,7 +112,7 @@ describe("console/src/markdown", () => {
       });
 
       expect(text).toContain(
-        '<pre><code>open <code class="live-found" title="Found by an agent">https://shop.example/</code> &amp;</code></pre>',
+        '<pre><code>open <bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>https://shop.example/</bdi> &amp;</code></pre>',
       );
     });
 
@@ -140,7 +140,7 @@ describe("console/src/markdown", () => {
       });
 
       expect(text).toContain(
-        '<code class="live-found" title="Found by an agent">https://shop.example/item/7</code>',
+        '<bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>https://shop.example/item/7</bdi>',
       );
       expect(text).toContain("see cfh:v:33333.");
     });
@@ -164,16 +164,31 @@ describe("console/src/markdown", () => {
       expect(text).not.toContain("https://shop.example/item/7");
     });
 
-    it("returns each link as its label alone when links are off", () => {
-      const text = templateText(
-        markdownTemplate("Open [the form](https://shop.example/form).", {
-          links: false,
-        }),
+    it("returns a link with the host it goes to beside its label, and a mail link as its label alone", () => {
+      const text = rendered(
+        "Open [your bank](https://phish.example/login) or [write](mailto:a@b.example).",
       );
 
-      expect(text).toContain("the form");
-      expect(text).not.toContain("<a");
-      expect(text).not.toContain("shop.example");
+      expect(text).toContain(">your bank</a>");
+      expect(text).toContain(
+        '<span class="live-link-host">(phish.example)</span>',
+      );
+      expect(text).toContain("write");
+      expect(text).not.toContain("mailto:");
+    });
+
+    it("returns a found string on one line, cut short, its control characters, separators and direction marks spelled out", () => {
+      const text = rendered("Bought cfh:v:22222.", {
+        "cfh:v:22222": `a\nb\u202Ec\u2028${"x".repeat(200)}`,
+      });
+
+      expect(text).toContain(
+        `<span class="live-found-badge">found</span>a\\nb\\u{202E}c\\u{2028}${
+          "x".repeat(99)
+        }…</bdi>`,
+      );
+      expect(text).not.toContain("\u202E");
+      expect(text).not.toContain("\n");
     });
   });
 
@@ -186,7 +201,7 @@ describe("console/src/markdown", () => {
       );
 
       expect(text).toBe(
-        'Could not buy <code class="live-found" title="Found by an agent">the blue one</code>; see cfh:v:33333.',
+        'Could not buy <bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>the blue one</bdi>; see cfh:v:33333.',
       );
     });
   });

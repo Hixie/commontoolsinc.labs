@@ -2,7 +2,6 @@ import type {
   BuiltinToolId,
   HarnessToolDescriptor,
 } from "../contracts/tool-descriptor.ts";
-import type { CfcEnforcementMode } from "@commonfabric/runner/cfc";
 import type { SandboxRuntimeDescription } from "../sandbox/types.ts";
 import { acquireSkillTool } from "./acquire-skill.ts";
 import { assignSlugTool } from "./assign-slug.ts";
@@ -32,7 +31,7 @@ import { submitResultTool } from "./submit-result.ts";
 import { webFetchTool } from "./web-fetch.ts";
 import { viewImageTool } from "./view-image.ts";
 import { writeFileTool } from "./write-file.ts";
-import type { HarnessToolDefinition } from "./types.ts";
+import type { HarnessToolDefinition, HarnessToolRun } from "./types.ts";
 
 export const BUILTIN_TOOLS = [
   bashTool,
@@ -90,6 +89,6 @@ export const getBuiltinTool = (
 export const builtinToolDescriptorForRuntime = (
   tool: Pick<HarnessToolDefinition, "descriptor" | "descriptorForRuntime">,
   runtime: SandboxRuntimeDescription,
-  run: { cfcEnforcementMode: CfcEnforcementMode },
+  run: HarnessToolRun,
 ): HarnessToolDescriptor =>
   tool.descriptorForRuntime?.(runtime, run) ?? tool.descriptor;

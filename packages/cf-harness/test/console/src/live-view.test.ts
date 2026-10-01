@@ -1681,21 +1681,24 @@ describe("console/src/live-view", () => {
       const rendered = templateText(view.view());
       expect(rendered).toContain('class="live-final live-answer"');
       expect(rendered).toContain(
-        '<strong><code class="live-found" title="Found by an agent">the blue one</code></strong>',
+        '<strong><bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>the blue one</bdi></strong>',
       );
     });
 
-    it("renders a thought as Markdown set apart from what the model said", () => {
+    it("renders a thought as plain text set apart from what the model said", () => {
       const view = new TestConsoleLive();
       view.entries = consoleLiveEntries(log({
         kind: "assistant_reasoning",
-        text: "**Planning** the search.",
+        text: "**Planning** [the search](https://elsewhere.example/).",
       }));
 
       const rendered = templateText(view.view());
       expect(rendered).toContain('class="live-entry thought');
-      expect(rendered).toContain("<strong>Planning</strong>");
-      expect(rendered).not.toContain("**");
+      expect(rendered).toContain(
+        "**Planning** [the search](https://elsewhere.example/).",
+      );
+      expect(rendered).not.toContain("<strong>");
+      expect(rendered).not.toContain("<a");
     });
 
     it("renders a question naming a return referent with the string it stands for", () => {
@@ -1716,7 +1719,7 @@ describe("console/src/live-view", () => {
 
       const rendered = templateText(view.view());
       expect(rendered).toContain(
-        'Buy <code class="live-found" title="Found by an agent">the blue one</code>?',
+        'Buy <bdi class="live-found" title=Found by an agent><span class="live-found-badge">found</span>the blue one</bdi>?',
       );
       expect(rendered).not.toContain("cfh:v:22222");
     });

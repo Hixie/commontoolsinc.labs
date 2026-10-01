@@ -2723,56 +2723,69 @@ service takes a host per turn (`startTurn`'s `attached.browserHost`), which is
 how the console's [browser host routes](console/README.md#browser-hosts) reach
 it.
 
-With a host, the tool offers more than a lease does: `back`, `forward`,
-`reload`, `scroll`, `screenshot` (whose pixels reach the model's next turn as an
-image, one pixel per CSS pixel, with whatever the page shows in them), a `click`
-at a point of that screenshot, and `handoff`, which gives the page to the owner
-with a prompt and returns whether they finished or declined. It offers less in
-one respect: a host waits for a ref, a load state, or a URL, never for a time,
-and takes no `timeoutMs` — an operation waits as long as the page or the owner
-takes. It ends when the host answers, when the host's stream or the turn ends
-(settling it as `session-ended`), or when the run's abort signal fires. A
-browser child in such a run holds the `browser` tool alone, with no skill
-scripts and no host execution. Every result carries the page the host committed,
-which is the host's statement of where an observation came from rather than
-anything the page wrote.
+With a host, the tool offers more than a lease does, and the model is offered
+the host's descriptor rather than the lease's: `back`, `forward`, `reload`,
+`scroll`, `screenshot` (whose pixels reach the model's next turn as an image,
+one pixel per CSS pixel, with whatever the page shows in them), a `click` at a
+point of that screenshot, and `handoff`, which gives the page to the owner for a
+fixed reason — `sign-in`, `one-time-code`, `challenge`, or `choice` — and
+returns whether they finished or declined; the host shows the owner fixed words
+for the reason, never words an agent wrote. `press` takes only keys that move,
+submit, or dismiss, none of which puts a character into the page. A host waits
+for a ref, a load state, or a URL, never for a time, and takes no `timeoutMs` —
+an operation waits as long as the page or the owner takes. It ends when the host
+answers, when the host's stream or the turn ends (settling it as
+`session-ended`), or when the run's abort signal fires. A browser child in such
+a run holds the `browser` tool alone, with no skill scripts and no host
+execution. Every result carries the page: the address the host committed for it,
+and the title the page wrote.
 
-A value reaches a page in one of three ways, and the host is told which:
+No operation names this device, its network, or an address written as an IP
+literal: `open`, a `urlHandle`'s value, and a `urlPattern` naming a host are
+refused here, and the host refuses such a load whatever starts it. Once the
+owner finishes a hand-off, the page may hold their sign-in, so the session is
+read-only from then on — `click`, `check`, `press`, `fill`, `type`, and `select`
+are refused — and `open` reaches only the origin they finished on.
+
+A value reaches a page in one of two ways, and the host is told which:
 
 - text the agent wrote is entered as given;
-- a value a handle resolves to — from the owner's space for an address handle,
-  or a string a browser child returned for a `cfh:v:` return referent — goes as
-  a `handle-value` with a description of where it came from, and the host enters
-  it and leaves it out of later snapshots, since no model that saw it chose it.
-  A value from the owner's space goes only to an origin `--handle-value-origin`
-  allows, as on the lease path: the page it is typed into is read first, and an
-  address is checked by its own origin. A string a browser child found on the
-  web goes to any page;
-- `profileField` names a field of the owner's profile, which the host alone
-  holds: the harness never resolves it, and the host enters the value itself and
-  leaves it out of later snapshots.
+- a string a browser child found on the web, which its parent holds as a
+  `cfh:v:` return referent and passes on without reading, goes as a
+  `handle-value`, and the host enters it and leaves it out of later snapshots,
+  since no model that saw it chose it. An address one resolves to is opened the
+  same way, and the host reports that document by its origin alone. A referent
+  labeled above the run's read ceiling is refused.
+
+The host path takes no value from the owner's space: nothing yet holds such a
+value to the page it was meant for, so an address handle (`cfh:a:`) is refused
+there. Only a browser child of a run with a host returns referents, and only
+before the owner finishes a hand-off; after one, a page may hold their account,
+which no label describes, so its strings stay sealed.
 
 Nothing asks the owner whether a value may go to a page, or whether a click may
 commit them to something: a question at every step teaches a person to agree
 without reading. Until release rules over a value's CFC label decide it, the
 owner's task and the guidance below are the only limit on what an agent enters
-or clicks.
+or clicks. A run under `enforce-explicit` or `enforce-strict` cannot have a
+host: a host gives no labels, so its pages would be observations nothing
+mediates, and such a run fails at its start.
 
 A page can show what it was given back — in its text, its title, its address, or
-a screenshot. Wherever a host's later answer carries a value from the owner's
-space as it was sent, the harness puts the value's handle in its place before a
-model reads the answer. What the page shows in pixels, or after changing it, is
-the page's.
+a screenshot. Wherever a host's later answer carries a value it was sent, the
+harness puts the value's handle in its place before a model reads the answer,
+and the host paints over every field a value went into before it takes a
+screenshot. What the page shows after changing a value is the page's.
 
-The host decides which fields only the owner may fill and which hosts a page may
-reach. Its refusals come back under their own codes — `stale_ref`,
-`owner_only_field`, `session_ended` — beside the lease's.
+The host decides which fields only the owner may fill. Its refusals come back
+under their own codes — `stale_ref`, `owner_only_field`, `session_ended` —
+beside the lease's.
 
 A turn with a host is guided on both sides (`src/browser-host-guidance.ts`): the
 parent is told how to split web work between browser children and pass their
 findings on as handles, and a browser child what the owner sees and what it may
-do without asking anyone. A turn that delegated to a browser child may end with
-a Markdown answer rather than a named piece.
+do without asking anyone. A turn whose browser child finished may end with a
+Markdown answer rather than a named piece.
 
 The `web_fetch` profile is the preferred first-pass path for web page
 inspection. It gives the child only the `web_fetch` tool: no shell, no browser,

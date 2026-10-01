@@ -5,12 +5,20 @@ import { Lexer, type MarkedToken, type Token, type Tokens } from "marked";
 import { REFERENT_TOKEN_PATTERN } from "../../src/contracts/handle-table.ts";
 
 /** The schemes a link in a rendered answer may point at. */
-const LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+const LINK_SCHEMES = new Set(["http:", "https:"]);
 
-/** `href` when a link may point at it, and `undefined` otherwise. */
-const safeHref = (href: string): string | undefined => {
+/**
+ * `href` and the host it goes to, when a link may point at it, and
+ * `undefined` otherwise.
+ */
+const safeHref = (
+  href: string,
+): { href: string; host: string } | undefined => {
   try {
-    return LINK_SCHEMES.has(new URL(href).protocol) ? href : undefined;
+    const url = new URL(href);
+    return LINK_SCHEMES.has(url.protocol)
+      ? { href, host: url.host }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -20,10 +28,29 @@ const safeHref = (href: string): string | undefined => {
 interface Context {
   /** The strings return referents stand for, by token. */
   revealed: Readonly<Record<string, string>>;
-
-  /** Whether a link is kept as one, or shown as its label alone. */
-  links: boolean;
 }
+
+/** The longest found string shown before it is cut. */
+const MAX_FOUND_CHARS = 120;
+
+/**
+ * `found` as one line the reader can see all of: each control character, line
+ * or paragraph separator, and direction mark spelled as an escape, and the
+ * whole cut to {@link MAX_FOUND_CHARS} characters.
+ */
+const visibleFound = (found: string): string => {
+  const escaped = found.replace(
+    /[\p{Cc}\p{Zl}\p{Zp}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu,
+    (character) =>
+      character === "\n"
+        ? "\\n"
+        : `\\u{${(character.codePointAt(0) ?? 0).toString(16).toUpperCase()}}`,
+  );
+  const characters = Array.from(escaped);
+  return characters.length <= MAX_FOUND_CHARS
+    ? escaped
+    : `${characters.slice(0, MAX_FOUND_CHARS).join("")}…`;
+};
 
 /**
  * `tokens` as the tokens the lexer documents. The lexer's `Token` also admits
@@ -33,6 +60,18 @@ interface Context {
  */
 const known = (tokens: readonly Token[] | undefined): readonly MarkedToken[] =>
   (tokens ?? []) as readonly MarkedToken[];
+
+/** What a found string's chip says it is, on hover and in its badge. */
+const FOUND_TITLE = "Found by an agent";
+const FOUND_BADGE = html`<span class="live-found-badge">found</span>`;
+
+/**
+ * `value` as something an agent found: isolated, so its direction cannot run
+ * into the text around it, and badged, so it never reads as the answer's own
+ * words. One line, with no space around it, since it may sit in a code block.
+ */
+const foundChip = (value: string): TemplateResult =>
+  html`<bdi class="live-found" title=${FOUND_TITLE}>${FOUND_BADGE}${value}</bdi>`;
 
 /**
  * `text`, with each return referent the context reveals shown as the string
@@ -45,11 +84,7 @@ const revealing = (text: string, context: Context): unknown[] => {
   for (const match of text.matchAll(new RegExp(REFERENT_TOKEN_PATTERN))) {
     if (!Object.hasOwn(context.revealed, match[0])) continue;
     parts.push(text.slice(from, match.index));
-    parts.push(
-      html`<code class="live-found" title="Found by an agent">${
-        context.revealed[match[0]]
-      }</code>`,
-    );
+    parts.push(foundChip(visibleFound(context.revealed[match[0]])));
     from = match.index + match[0].length;
   }
   parts.push(text.slice(from));
@@ -63,7 +98,7 @@ const revealing = (text: string, context: Context): unknown[] => {
 export const revealedText = (
   text: string,
   revealed: Readonly<Record<string, string>> = {},
-): unknown[] => revealing(text, { revealed, links: false });
+): unknown[] => revealing(text, { revealed });
 
 const inline = (tokens: readonly Token[] | undefined, context: Context) =>
   known(tokens).map((token) => inlineToken(token, context));
@@ -88,14 +123,15 @@ const inlineToken = (token: MarkedToken, context: Context): unknown => {
     case "checkbox":
       return checkbox(token);
     // A link's label shows no found string: the owner would read it as where
-    // the link goes, and the parent wrote the destination.
+    // the link goes, and the parent wrote the destination. The host it goes
+    // to is shown beside it, so a label cannot pass for somewhere else.
     case "link": {
-      const href = context.links
-        ? safeHref(decodeEntities(token.href))
-        : undefined;
-      const label = inline(token.tokens, { ...context, revealed: {} });
-      return href === undefined ? label : html`
-        <a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>
+      const target = safeHref(decodeEntities(token.href));
+      const label = inline(token.tokens, { revealed: {} });
+      return target === undefined ? label : html`
+        <a href="${target
+          .href}" target="_blank" rel="noopener noreferrer">${label}</a>
+        <span class="live-link-host">(${target.host})</span>
       `;
     }
     // An image in an answer is shown as its description: the pane loads
@@ -187,20 +223,15 @@ const block = (token: MarkedToken, context: Context): unknown => {
  * Renders a Markdown document as a Lit template. The document never becomes
  * markup: the lexer reads it into tokens, each token becomes a template, and
  * text reaches the page as text. Raw HTML in the source is dropped, and a
- * link is kept only when it points at a web or mail address.
+ * link is kept only when it points at a web address, with its host shown
+ * beside it.
  *
  * `revealed` maps return referents to the strings they stand for. Each one
- * the document names in its text is shown as its string, marked as found by
- * an agent; a link's destination is left as written, so a found string never
- * becomes where a link goes. With `links` false, every link is shown as its
- * label alone: for text a model wrote while reading pages, whose addresses a
- * page may have put there.
+ * the document names in its text is shown as its string, on one line, cut
+ * short, and marked as found by an agent; a link's destination is left as
+ * written, so a found string never becomes where a link goes.
  */
 export const markdownTemplate = (
   source: string,
-  { revealed = {}, links = true }: {
-    revealed?: Readonly<Record<string, string>>;
-    links?: boolean;
-  } = {},
-): TemplateResult =>
-  html`${blocks(new Lexer().lex(source), { revealed, links })}`;
+  { revealed = {} }: { revealed?: Readonly<Record<string, string>> } = {},
+): TemplateResult => html`${blocks(new Lexer().lex(source), { revealed })}`;

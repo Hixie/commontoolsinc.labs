@@ -1,10 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 
-import {
-  ConsoleBrowserHost,
-  parseBrowserHostDeclaration,
-} from "../../console/browser-host.ts";
+import { ConsoleBrowserHost } from "../../console/browser-host.ts";
 
 const PAGE = { url: "https://shop.example/", title: "Shop" };
 
@@ -19,53 +16,9 @@ const drain = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
 };
 
 describe("console/browser-host", () => {
-  describe("parseBrowserHostDeclaration()", () => {
-    it("returns the declared fields, and none for a declaration naming none", () => {
-      expect(parseBrowserHostDeclaration({})).toEqual({ profileFields: [] });
-      expect(parseBrowserHostDeclaration({
-        profileFields: [
-          { name: "name.full", label: " Full name " },
-          { name: "card_number", label: "Card number" },
-        ],
-      })).toEqual({
-        profileFields: [
-          { name: "name.full", label: "Full name" },
-          { name: "card_number", label: "Card number" },
-        ],
-      });
-    });
-
-    it("returns an error for each malformed declaration", () => {
-      const errors = [
-        [],
-        { profileFields: "name" },
-        { profileFields: [{ name: "Name", label: "Name" }] },
-        { profileFields: [{ name: "name", label: "" }] },
-        { profileFields: [{ name: "name", label: "a\nb" }] },
-        { profileFields: [{ name: "name", label: "a\u2028b" }] },
-        { profileFields: [{ name: "name", label: "a\u2029b" }] },
-        { profileFields: [{ name: "name", label: "x".repeat(81) }] },
-        {
-          profileFields: [
-            { name: "name", label: "Name" },
-            { name: "name", label: "Name again" },
-          ],
-        },
-        {
-          profileFields: Array.from(
-            { length: 65 },
-            (_, index) => ({ name: `f${index}`, label: "Field" }),
-          ),
-        },
-      ].map((declaration) => parseBrowserHostDeclaration(declaration).error);
-
-      expect(errors.every((error) => typeof error === "string")).toBe(true);
-    });
-  });
-
   describe("ConsoleBrowserHost", () => {
     it("admits only the token it was minted with", () => {
-      const host = new ConsoleBrowserHost("the-token", []);
+      const host = new ConsoleBrowserHost("the-token");
 
       expect(host.admits("the-token")).toBe(true);
       expect(host.admits("the-tokem")).toBe(false);
@@ -74,7 +27,7 @@ describe("console/browser-host", () => {
     });
 
     it("delivers an operation sent before the host attached once it does", async () => {
-      const host = new ConsoleBrowserHost("token", []);
+      const host = new ConsoleBrowserHost("token");
       const answer = host.perform({ action: "reload" });
 
       const stream = host.attach()!;
@@ -91,8 +44,8 @@ describe("console/browser-host", () => {
     });
 
     it("refuses a second attach, and any attach once the channel has ended", () => {
-      const attached = new ConsoleBrowserHost("token", []);
-      const closed = new ConsoleBrowserHost("token", []);
+      const attached = new ConsoleBrowserHost("token");
+      const closed = new ConsoleBrowserHost("token");
       attached.attach();
       closed.close();
 
@@ -101,7 +54,7 @@ describe("console/browser-host", () => {
     });
 
     it("returns session-ended for an operation sent after the turn ended", async () => {
-      const host = new ConsoleBrowserHost("token", []);
+      const host = new ConsoleBrowserHost("token");
       const outstanding = host.perform({
         action: "snapshot",
         interactive: false,
@@ -122,7 +75,7 @@ describe("console/browser-host", () => {
     });
 
     it("rejects an operation with the signal's reason when the run aborts it", async () => {
-      const host = new ConsoleBrowserHost("token", []);
+      const host = new ConsoleBrowserHost("token");
       const controller = new AbortController();
       const answer = host.perform({ action: "reload" }, controller.signal);
 
@@ -135,7 +88,7 @@ describe("console/browser-host", () => {
     });
 
     it("never delivers an operation the run withdrew before the host attached, and rejects an aborted signal outright", async () => {
-      const host = new ConsoleBrowserHost("token", []);
+      const host = new ConsoleBrowserHost("token");
       const controller = new AbortController();
       const withdrawn = host.perform({ action: "reload" }, controller.signal);
       controller.abort(new Error("canceled"));
@@ -149,8 +102,37 @@ describe("console/browser-host", () => {
       expect(await drain(stream)).toBe("event: close\ndata: {}\n\n");
     });
 
+    it("withdraws an operation the host holds when the run aborts it, and sends the host nothing more until it answers that one", async () => {
+      const host = new ConsoleBrowserHost("token");
+      const stream = host.attach()!;
+      const controller = new AbortController();
+      const withdrawn = host.perform({ action: "reload" }, controller.signal);
+      controller.abort(new Error("canceled"));
+      const next = host.perform({ action: "back" });
+      host.ping(7);
+
+      const acknowledged = host.acceptResult("1", {
+        status: "failed",
+        message: "stopped",
+      });
+      const answered = host.acceptResult("2", { status: "ok", page: PAGE });
+      host.close();
+
+      await expect(withdrawn).rejects.toThrow("canceled");
+      expect(acknowledged).toBe("accepted");
+      expect(answered).toBe("accepted");
+      expect(await next).toEqual({ status: "ok", page: PAGE });
+      expect(await drain(stream)).toBe(
+        'event: request\ndata: {"id":"1","operation":{"action":"reload"}}\n\n' +
+          'event: withdraw\ndata: {"id":"1"}\n\n' +
+          ": 7\n\n" +
+          'event: request\ndata: {"id":"2","operation":{"action":"back"}}\n\n' +
+          "event: close\ndata: {}\n\n",
+      );
+    });
+
     it("settles an operation as failed when the host answers with something that is not a result", async () => {
-      const host = new ConsoleBrowserHost("token", []);
+      const host = new ConsoleBrowserHost("token");
       const answer = host.perform({ action: "reload" });
 
       const acceptance = host.acceptResult("1", { status: "ok" });
@@ -167,7 +149,7 @@ describe("console/browser-host", () => {
     });
 
     it("writes a comment frame to an attached stream on each ping", async () => {
-      const host = new ConsoleBrowserHost("token", []);
+      const host = new ConsoleBrowserHost("token");
       host.ping(1);
       const stream = host.attach()!;
 

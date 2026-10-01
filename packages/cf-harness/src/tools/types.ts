@@ -355,6 +355,14 @@ export interface HarnessToolContext {
   }): Promise<HarnessCfcInvocationContext>;
 }
 
+/** What about a run decides the descriptor a tool offers it. */
+export interface HarnessToolRun {
+  cfcEnforcementMode: CfcEnforcementMode;
+
+  /** Whether a browser host carries out the run's browser actions. */
+  browserHost?: boolean;
+}
+
 export interface HarnessToolDefinition<Input = unknown, Output = unknown> {
   descriptor: HarnessToolDescriptor;
 
@@ -367,7 +375,7 @@ export interface HarnessToolDefinition<Input = unknown, Output = unknown> {
    */
   descriptorForRuntime?(
     runtime: SandboxRuntimeDescription,
-    run: { cfcEnforcementMode: CfcEnforcementMode },
+    run: HarnessToolRun,
   ): HarnessToolDescriptor;
 
   /**

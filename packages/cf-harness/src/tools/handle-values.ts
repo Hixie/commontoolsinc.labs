@@ -25,6 +25,7 @@
  * an address refuses one.
  */
 
+import { cfcObservationFitsCeiling } from "@commonfabric/runner/cfc";
 import { parseLLMFriendlyLink } from "@commonfabric/runner/shared";
 
 import {
@@ -53,7 +54,7 @@ export type HandleValueResolution =
 /** The part of the tool context a handle resolution reads. */
 export type HandleValueResolutionContext = Pick<
   HarnessToolContext,
-  "getFabricSession" | "handleTable"
+  "getFabricSession" | "handleTable" | "cfcReadMaxConfidentiality"
 >;
 
 const errorMessage = (error: unknown): string =>
@@ -85,7 +86,12 @@ export const HANDLE_VALUE_ORIGIN_FLAG = "--handle-value-origin";
 export const NO_HANDLE_VALUE_DESTINATION_MESSAGE =
   `this run allows no destination for a handle's value; an operator allows one with ${HANDLE_VALUE_ORIGIN_FLAG} <origin>`;
 
-/** Why a handle's value does not go to `origin`. */
+/**
+ * The refusal for a destination outside the allowlist. It names the origin
+ * and nothing else: the operator needs to know which origin to allow, and the
+ * path, query, and value that would have gone there are none of the model's
+ * business.
+ */
 export const originNotAllowedMessage = (origin: string): string =>
   `${origin} is not an allowlisted destination for a handle's value; an operator allows one with ${HANDLE_VALUE_ORIGIN_FLAG} <origin>`;
 
@@ -144,6 +150,18 @@ export const resolveHandleValue = async (
         error:
           `${label} must name a string value; the referent holds a value of type ${typeof referent
             .value}`,
+      };
+    }
+    // The child that found the value labeled it; a run whose ceiling it is
+    // above may not observe it, and so may not send it anywhere either.
+    if (
+      !cfcObservationFitsCeiling(
+        referent.label.confidentiality ?? [],
+        context.cfcReadMaxConfidentiality,
+      )
+    ) {
+      return {
+        error: `${label} names a value labeled above this run's read ceiling`,
       };
     }
     return { value: referent.value, source: "return" };

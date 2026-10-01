@@ -160,10 +160,7 @@ import {
 } from "../src/sandbox/runtime-selection.ts";
 import type { CreateHarnessPromptLoopOptions } from "../src/prompt-loop.ts";
 import type { HarnessChatSessionStore } from "../src/session-store.ts";
-import {
-  ConsoleBrowserHost,
-  parseBrowserHostDeclaration,
-} from "./browser-host.ts";
+import { ConsoleBrowserHost } from "./browser-host.ts";
 import { parseConnectorGrants } from "./connector-grants.ts";
 import {
   ConsoleHealth,
@@ -651,6 +648,7 @@ const CONSOLE_BOOLEAN_FLAGS = [
   "no-pattern-index-publish",
   "pattern-index-publish-discoverable",
   "allow-skill-scripts",
+  "allow-browser-host",
 ] as const;
 
 /** Every flag the console takes, without its dashes. */
@@ -958,8 +956,9 @@ export const resolveConsoleConfig = async (
       nonEmpty(env.CF_HARNESS_ALLOW_SKILL_SCRIPTS) === "1",
     // The rest of the session description this surface does not vary. Skills
     // are scanned rather than preloaded by name, no individual script is
-    // named, handles materialize nowhere, and a task's input cells and pattern
-    // references arrive per task on `/api/task` rather than at startup.
+    // named, no page is a destination for a handle's value, and a task's input
+    // cells and pattern references arrive per task on `/api/task` rather than
+    // at startup.
     skillNames: [],
     allowedSkillScripts: [],
     skillScriptExecutionTarget: "sandbox",
@@ -974,9 +973,16 @@ export const resolveConsoleConfig = async (
     patternRefs: [],
     // The tool surface is left to the session's own backing rather than
     // listed here, so a tool the harness gains reaches this surface with it.
+    // Browser children are the operator's decision, taken at launch like
+    // skill scripts: with them, a task may declare a browser host for them to
+    // drive, and without them no task may.
     allowedSubagentProfiles: [
       DEFAULT_SUBAGENT_PROFILE,
       PATTERN_AUTHOR_SUBAGENT_PROFILE,
+      ...(parsed["allow-browser-host"] === true ||
+          nonEmpty(env.CF_HARNESS_ALLOW_BROWSER_HOST) === "1"
+        ? [BROWSER_SUBAGENT_PROFILE]
+        : []),
     ],
     // Stated only when it is being turned off: guidance is what the profile
     // ships with, so saying so restates a default rather than configuring one.
@@ -1021,6 +1027,16 @@ export const resolveConsoleConfig = async (
         ? "--allow-skill-scripts"
         : nonEmpty(env.CF_HARNESS_ALLOW_SKILL_SCRIPTS) === "1"
         ? "CF_HARNESS_ALLOW_SKILL_SCRIPTS"
+        : "console default",
+    }, {
+      name: "browser host",
+      value: config.allowedSubagentProfiles.includes(BROWSER_SUBAGENT_PROFILE)
+        ? "a task may declare one"
+        : "refused",
+      source: parsed["allow-browser-host"] === true
+        ? "--allow-browser-host"
+        : nonEmpty(env.CF_HARNESS_ALLOW_BROWSER_HOST) === "1"
+        ? "CF_HARNESS_ALLOW_BROWSER_HOST"
         : "console default",
     }, {
       name: "index",
@@ -1436,6 +1452,36 @@ const TERMINAL_TURN_EVENT_KINDS: ReadonlySet<string> = new Set([
   "turn_canceled",
 ]);
 
+/**
+ * The largest body a browser host route reads: a screenshot's encoding, at
+ * the most an attachment may be, with room for the rest of its result.
+ */
+const MAX_BROWSER_HOST_BODY_BYTES = 32 * 1024 * 1024;
+
+/**
+ * `request`'s body as text, or `undefined` once it runs past `limit` bytes,
+ * which stops reading it there.
+ */
+const boundedBodyText = async (
+  request: Request,
+  limit: number,
+): Promise<string | undefined> => {
+  if (request.body === null) {
+    return "";
+  }
+  const decoder = new TextDecoder();
+  let text = "";
+  let bytes = 0;
+  for await (const chunk of request.body) {
+    bytes += chunk.byteLength;
+    if (bytes > limit) {
+      return undefined;
+    }
+    text += decoder.decode(chunk, { stream: true });
+  }
+  return text + decoder.decode();
+};
+
 /** The live event fan-out, and the routes that read and write through it. */
 export class ConsoleServer {
   readonly #clients = new Set<StreamClient>();
@@ -1748,6 +1794,18 @@ export class ConsoleServer {
     if (!url.pathname.startsWith("/api/")) {
       return undefined;
     }
+    // A route is called by the console's own page, or by a client that is no
+    // browser. A browser marks a navigation, and a request another site's
+    // page made, so a page an agent opened can neither read a route by
+    // loading it nor reach one from elsewhere.
+    const fetchSite = request.headers.get("sec-fetch-site");
+    if (
+      request.headers.get("sec-fetch-mode") === "navigate" ||
+      (fetchSite !== null && fetchSite !== "same-origin" &&
+        fetchSite !== "none")
+    ) {
+      return new Response("forbidden", { status: 403 });
+    }
     if (
       request.method === "POST" &&
       !(request.headers.get("content-type") ?? "").startsWith(
@@ -2005,15 +2063,25 @@ export class ConsoleServer {
     let browserHost: ConsoleBrowserHost | undefined;
     let browserHostToken: string | undefined;
     if (body.browserHost !== undefined && body.browserHost !== null) {
-      const declared = parseBrowserHostDeclaration(body.browserHost);
-      if (declared.error !== undefined) {
-        return Response.json({ error: declared.error }, { status: 400 });
+      if (
+        !this.#config.allowedSubagentProfiles.includes(
+          BROWSER_SUBAGENT_PROFILE,
+        )
+      ) {
+        return Response.json({
+          error:
+            "this console takes no browser host; an operator allows one with --allow-browser-host",
+        }, { status: 403 });
+      }
+      // The declaration is an object so it can grow; nothing in it is read
+      // yet, and a field this console does not know is left alone.
+      if (!isObjectNotArray(body.browserHost)) {
+        return Response.json({ error: "browserHost must be an object" }, {
+          status: 400,
+        });
       }
       browserHostToken = crypto.randomUUID();
-      browserHost = new ConsoleBrowserHost(
-        browserHostToken,
-        declared.profileFields,
-      );
+      browserHost = new ConsoleBrowserHost(browserHostToken);
     }
     let sessionId = body.sessionId;
     if (sessionId === undefined) {
@@ -2047,11 +2115,6 @@ export class ConsoleServer {
           ? { inputCells }
           : {}),
         ...(patternRefs.length > 0 ? { patternRefs } : {}),
-        // A turn with a host may delegate to browser children; the session's
-        // policy, which a later turn without one runs under, stays as it was.
-        ...(browserHost !== undefined
-          ? { policy: this.#browserTurnPolicy() }
-          : {}),
       },
       browserHost !== undefined ? { browserHost } : {},
     ).catch((error: unknown) => {
@@ -2069,20 +2132,6 @@ export class ConsoleServer {
     });
   }
 
-  /** The session policy, with browser children allowed. */
-  #browserTurnPolicy(): HarnessChatPolicy {
-    const policy = this.#sessionPolicy();
-    return {
-      ...policy,
-      allowedSubagentProfiles: [
-        ...policy.allowedSubagentProfiles.filter((profile) =>
-          profile !== BROWSER_SUBAGENT_PROFILE
-        ),
-        BROWSER_SUBAGENT_PROFILE,
-      ],
-    };
-  }
-
   /**
    * Reads a browser host request body: the turn it names and the token that
    * proves the caller is that turn's host. Returns the channel, or the
@@ -2098,9 +2147,18 @@ export class ConsoleServer {
     }
     | { host?: undefined; body?: undefined; refusal: Response }
   > {
+    const text = await boundedBodyText(request, MAX_BROWSER_HOST_BODY_BYTES);
+    if (text === undefined) {
+      return {
+        refusal: Response.json({
+          error:
+            `request body is larger than ${MAX_BROWSER_HOST_BODY_BYTES} bytes`,
+        }, { status: 413 }),
+      };
+    }
     let parsed: unknown;
     try {
-      parsed = await request.json();
+      parsed = JSON.parse(text);
     } catch {
       return {
         refusal: Response.json({ error: "request body is not JSON" }, {

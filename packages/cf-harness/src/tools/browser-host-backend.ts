@@ -4,20 +4,20 @@
  * into the tool's output.
  *
  * The host executes the operation in the one session it holds for this run and
- * shows it to the owner. What this side decides is what the operation carries:
- * a value a handle resolves to is resolved here, trusted-side, and marked as a
- * handle value, so the host keeps it out of later observations. A profile
- * field is only named here; its value never leaves the host.
+ * shows it to the owner. What this side decides is what the operation carries
+ * and where it may go: a handle's value is resolved here, trusted-side, and
+ * marked as a handle value, so the host keeps it out of later observations,
+ * and no operation names this device, its network, or an IP literal.
  */
 
 import {
+  BROWSER_HOST_HANDOFF_REASONS,
+  BROWSER_HOST_KEYS,
   BROWSER_HOST_LOAD_STATES,
   BROWSER_HOST_SCROLL_DIRECTIONS,
-  type BrowserHostLoadState,
   type BrowserHostOperation,
   type BrowserHostRefusal,
   type BrowserHostResult,
-  type BrowserHostScrollDirection,
   type BrowserHostValue,
   type HarnessBrowserHost,
   isBrowserHostResult,
@@ -30,24 +30,10 @@ import type {
   BrowserToolInput,
   BrowserToolOutput,
 } from "./browser.ts";
-import {
-  httpOriginOf,
-  NO_HANDLE_VALUE_DESTINATION_MESSAGE,
-  originNotAllowedMessage,
-  resolveHandleValue,
-} from "./handle-values.ts";
+import { httpOriginOf, resolveHandleValue } from "./handle-values.ts";
 import type { HarnessToolContext } from "./types.ts";
 
 const MAX_HOST_OUTPUT_CHARS = 20_000;
-
-/** The longest hand-off prompt the owner is shown. */
-const MAX_HANDOFF_PROMPT_CHARS = 1_000;
-
-/** What the owner is told a handle's value is, by where it came from. */
-const HANDLE_VALUE_DESCRIPTIONS = {
-  space: "a value from your space",
-  return: "a value an agent found",
-} as const;
 
 /** The error code each host refusal is reported under. */
 const REFUSAL_CODES: Record<BrowserHostRefusal, BrowserToolErrorCode> = {
@@ -56,6 +42,109 @@ const REFUSAL_CODES: Record<BrowserHostRefusal, BrowserToolErrorCode> = {
   "session-ended": "session_ended",
   "invalid": "invalid_input",
   "failed": "command_failed",
+};
+
+/** The actions that change a page rather than read or move about it. */
+const ACTING_ACTIONS: ReadonlySet<BrowserToolAction> = new Set([
+  "click",
+  "check",
+  "press",
+  "fill",
+  "type",
+  "select",
+]);
+
+/**
+ * What the harness keeps about each host's session: the values it sent the
+ * host, by value, with the handle each was sent as, so the host's answers
+ * carry the handle where they would carry the value; and, once the owner
+ * finished a hand-off, the origin they finished on, which confines the
+ * session from then on.
+ */
+const sessions = new WeakMap<
+  HarnessBrowserHost,
+  { sent: Map<string, string>; handedOffAt?: string }
+>();
+
+const sessionOf = (host: HarnessBrowserHost) => {
+  let session = sessions.get(host);
+  if (session === undefined) {
+    session = { sent: new Map() };
+    sessions.set(host, session);
+  }
+  return session;
+};
+
+/**
+ * Whether the owner finished a hand-off in `host`'s session, after which a
+ * page may hold their signed-in account rather than the public web.
+ */
+export const browserHostHandedOff = (host: HarnessBrowserHost): boolean =>
+  sessions.get(host)?.handedOffAt !== undefined;
+
+/**
+ * `text` with each value sent to `host` replaced by its handle, in one pass
+ * over `text` alone, so a value is never found inside a handle put in place
+ * of another. At each position the longest value that starts there wins, so a
+ * value that contains another is replaced whole.
+ */
+const withHandles = (host: HarnessBrowserHost, text: string): string => {
+  const sent = sessionOf(host).sent;
+  if (sent.size === 0) {
+    return text;
+  }
+  const pattern = new RegExp(
+    [...sent.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|"),
+    "g",
+  );
+  return text.replace(pattern, (value) => sent.get(value) ?? value);
+};
+
+/** The name suffixes that resolve on this device or its network. */
+const LOCAL_NAME_SUFFIXES = [
+  ".localhost",
+  ".local",
+  ".internal",
+  ".home.arpa",
+  ".ts.net",
+];
+
+/**
+ * Whether `hostname`, a parsed URL's, names this device, its network, or an
+ * address written as an IP literal. A name is judged by its spelling; the
+ * host refuses what it resolves to.
+ */
+const isLocalHost = (hostname: string): boolean => {
+  const name = hostname.toLowerCase().replace(/\.$/, "");
+  return name === "localhost" || !name.includes(".") ||
+    name.startsWith("[") || /^[\d.]+$/.test(name) ||
+    LOCAL_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix));
+};
+
+/**
+ * Why the page may not go to `url`, or `undefined` when it may: an http(s)
+ * address on the open web, and after a finished hand-off, on the origin the
+ * owner finished on.
+ */
+const destinationError = (
+  host: HarnessBrowserHost,
+  url: string,
+): string | undefined => {
+  const origin = httpOriginOf(url);
+  if (origin === undefined) {
+    return "open only allows http(s) URLs";
+  }
+  if (isLocalHost(new URL(url).hostname)) {
+    return "open only reaches the open web: not this device, its network, or an IP address";
+  }
+  const handedOffAt = sessionOf(host).handedOffAt;
+  if (handedOffAt !== undefined && origin !== handedOffAt) {
+    return `the owner finished a hand-off on ${handedOffAt}, and the page stays there`;
+  }
+  return undefined;
 };
 
 /**
@@ -86,18 +175,39 @@ const isRef = (ref: unknown): ref is string =>
 const refError = (action: string): string =>
   `${action} requires a ref starting with @, taken from a snapshot`;
 
-/** The scroll direction `value` names, or `undefined` when it names none. */
-const scrollDirection = (
+/** The member of `values` that `value` is, or `undefined` when it is none. */
+const memberOf = <T extends string>(
+  values: readonly T[],
   value: unknown,
-): BrowserHostScrollDirection | undefined =>
-  BROWSER_HOST_SCROLL_DIRECTIONS.find((direction) => direction === value);
-
-/** The load state `value` names, or `undefined` when it names none. */
-const loadState = (value: unknown): BrowserHostLoadState | undefined =>
-  BROWSER_HOST_LOAD_STATES.find((state) => state === value);
+): T | undefined => values.find((member) => member === value);
 
 const isPoint = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/**
+ * The host a URL pattern names, as `scheme://host/...` does, or `undefined`
+ * for a pattern that names none. A bracketed IPv6 literal is returned
+ * bracketed.
+ */
+const patternHost = (pattern: string): string | undefined => {
+  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i.exec(pattern)?.[1];
+  if (authority === undefined) {
+    return undefined;
+  }
+  const host = authority.slice(authority.lastIndexOf("@") + 1);
+  return host.startsWith("[") ? host : host.split(":")[0];
+};
+
+/**
+ * Why `handle` cannot give a value to a page, or `undefined` when it can: a
+ * host takes only a return referent, a string a browser child found on the
+ * web, since nothing yet holds a value from the owner's space to the page it
+ * was meant for.
+ */
+const handleError = (field: string, handle: string): string | undefined =>
+  handle.trim().startsWith(REFERENT_HANDLE_TOKEN_PREFIX)
+    ? undefined
+    : `${field} takes a return referent (cfh:v:) on this run's browser: a browser host enters no value from the owner's space`;
 
 /**
  * The operation `input` describes, or the handle it binds and how the value
@@ -112,18 +222,32 @@ const planHostOperation = (
   const done = (operation: BrowserHostOperation): PlanResult => ({
     plan: { operation },
   });
+  if (
+    ACTING_ACTIONS.has(action) && sessionOf(host).handedOffAt !== undefined
+  ) {
+    return {
+      error: `the owner finished a hand-off on ${
+        sessionOf(host).handedOffAt
+      }, so the page may hold their sign-in, and it is read-only: ${action} is refused`,
+    };
+  }
   switch (action) {
     case "open": {
       if (input.urlHandle !== undefined) {
+        const error = handleError("urlHandle", input.urlHandle);
+        if (error !== undefined) {
+          return { error };
+        }
         return {
           plan: {
             binding: {
               field: "url",
               handle: input.urlHandle,
-              complete: ({ text }) =>
-                httpOriginOf(text) === undefined
-                  ? "open only allows http(s) URLs"
-                  : { action: "open", url: text },
+              complete: ({ text, description }) =>
+                destinationError(host, text) ?? {
+                  action: "open",
+                  url: { kind: "handle-value", text, description },
+                },
             },
           },
         };
@@ -131,10 +255,10 @@ const planHostOperation = (
       if (typeof input.url !== "string" || input.url === "") {
         return { error: "open requires a url" };
       }
-      if (httpOriginOf(input.url) === undefined) {
-        return { error: "open only allows http(s) URLs" };
-      }
-      return done({ action: "open", url: input.url });
+      const error = destinationError(host, input.url);
+      return error === undefined
+        ? done({ action: "open", url: input.url })
+        : { error };
     }
     case "back":
     case "forward":
@@ -144,7 +268,10 @@ const planHostOperation = (
     case "screenshot":
       return done({ action });
     case "scroll": {
-      const direction = scrollDirection(input.direction);
+      const direction = memberOf(
+        BROWSER_HOST_SCROLL_DIRECTIONS,
+        input.direction,
+      );
       if (direction === undefined) {
         return {
           error: `scroll requires a direction: ${
@@ -199,17 +326,26 @@ const planHostOperation = (
           : { error: refError(action) };
       }
       if (input.loadState !== undefined) {
-        const state = loadState(input.loadState);
+        const state = memberOf(BROWSER_HOST_LOAD_STATES, input.loadState);
         return state !== undefined ? done({ action, loadState: state }) : {
           error:
             "wait loadState must be domcontentloaded, load, or networkidle",
         };
       }
       const urlPattern = input.urlPattern;
-      return typeof urlPattern === "string" && urlPattern !== "" &&
-          !/^file:/i.test(urlPattern)
-        ? done({ action, urlPattern })
-        : { error: "wait urlPattern requires a non-file pattern" };
+      if (
+        typeof urlPattern !== "string" || urlPattern === "" ||
+        /^file:/i.test(urlPattern)
+      ) {
+        return { error: "wait urlPattern requires a non-file pattern" };
+      }
+      const named = patternHost(urlPattern);
+      return named !== undefined && isLocalHost(named)
+        ? {
+          error:
+            "wait urlPattern names the open web only: not this device, its network, or an IP address",
+        }
+        : done({ action, urlPattern });
     }
     case "click": {
       if (input.x !== undefined || input.y !== undefined) {
@@ -233,11 +369,12 @@ const planHostOperation = (
       return isRef(input.ref)
         ? done({ action, ref: input.ref })
         : { error: refError(action) };
-    case "press":
-      return typeof input.key === "string" &&
-          /^[A-Za-z0-9_+.-]+$/.test(input.key)
-        ? done({ action, key: input.key })
-        : { error: "press requires one key of letters, digits, _, +, ., or -" };
+    case "press": {
+      const key = memberOf(BROWSER_HOST_KEYS, input.key);
+      return key !== undefined ? done({ action, key }) : {
+        error: `press requires one of the keys ${BROWSER_HOST_KEYS.join(", ")}`,
+      };
+    }
     case "fill":
     case "type":
     case "select": {
@@ -250,19 +387,11 @@ const planHostOperation = (
         ref,
         value,
       });
-      if (input.profileField !== undefined) {
-        const field = input.profileField;
-        return host.profileFields.some((offered) => offered.name === field)
-          ? done(withValue({ kind: "profile-field", field }))
-          : {
-            error: host.profileFields.length === 0
-              ? "the owner's profile offers no fields to this run"
-              : `the owner's profile offers no field named ${field}; it offers ${
-                host.profileFields.map((offered) => offered.name).join(", ")
-              }`,
-          };
-      }
       if (input.valueHandle !== undefined) {
+        const error = handleError("valueHandle", input.valueHandle);
+        if (error !== undefined) {
+          return { error };
+        }
         return {
           plan: {
             binding: {
@@ -276,26 +405,15 @@ const planHostOperation = (
       }
       return typeof input.value === "string"
         ? done(withValue({ kind: "text", text: input.value }))
-        : {
-          error: `${action} requires a value, a valueHandle, or a profileField`,
-        };
+        : { error: `${action} requires a value or a valueHandle` };
     }
     case "handoff": {
-      const prompt = typeof input.prompt === "string"
-        ? input.prompt.trim()
-        : "";
-      if (prompt === "") {
-        return {
-          error: "handoff requires a prompt telling the owner what to do",
-        };
-      }
-      if (prompt.length > MAX_HANDOFF_PROMPT_CHARS) {
-        return {
-          error:
-            `handoff prompt must be at most ${MAX_HANDOFF_PROMPT_CHARS} characters`,
-        };
-      }
-      return done({ action, prompt });
+      const reason = memberOf(BROWSER_HOST_HANDOFF_REASONS, input.reason);
+      return reason !== undefined ? done({ action, reason }) : {
+        error: `handoff requires a reason: ${
+          BROWSER_HOST_HANDOFF_REASONS.join(", ")
+        }`,
+      };
     }
   }
 };
@@ -332,36 +450,9 @@ const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
- * The values from the owner's space each host was sent, by value, with the
- * handle each was sent as. A host's answers are read through it, so a value
- * the run cannot see is not seen by way of the page it went to.
- */
-const sentSpaceValues = new WeakMap<HarnessBrowserHost, Map<string, string>>();
-
-/** `text` with each value sent to `host` replaced by its handle. */
-const withHandles = (host: HarnessBrowserHost, text: string): string => {
-  const sent = sentSpaceValues.get(host);
-  if (sent === undefined) {
-    return text;
-  }
-  // The longest first, so a value that contains another is replaced whole.
-  return [...sent]
-    .sort(([a], [b]) => b.length - a.length)
-    .reduce(
-      (replaced, [value, token]) => replaced.replaceAll(value, token),
-      text,
-    );
-};
-
-/**
  * Executes one validated `browser` call on `host` and returns the tool's
  * output. `action` is the call's action, already established by the tool's
  * field checks.
- *
- * A handle's value from the owner's space goes only to an origin the
- * operator allows, as on the Browser Access path, and from then on the
- * host's answers carry its handle where they would carry it. A value a
- * child found on the web goes to any page.
  *
  * The call waits for the host however long it takes — a hand-off waits for
  * the owner — and ends early only when the run's signal aborts.
@@ -377,31 +468,6 @@ export const invokeBrowserOnHost = async (
     code: BrowserToolErrorCode,
     message: string,
   ): BrowserToolOutput => ({ outputId, status: "error", code, message });
-  /** The host's result for `operation`, or the output saying why there is none. */
-  const perform = async (
-    operation: BrowserHostOperation,
-  ): Promise<
-    | { result: BrowserHostResult; error?: undefined }
-    | { result?: undefined; error: BrowserToolOutput }
-  > => {
-    try {
-      const answer: unknown = await host.perform(operation, context.signal);
-      return isBrowserHostResult(answer) ? { result: answer } : {
-        error: errorOutput(
-          "host_unavailable",
-          "the browser host answered with something that is not a result",
-        ),
-      };
-    } catch (error) {
-      context.signal?.throwIfAborted();
-      return {
-        error: errorOutput(
-          "host_unavailable",
-          `the browser host could not be reached: ${errorMessage(error)}`,
-        ),
-      };
-    }
-  };
   if (input.timeoutMs !== undefined) {
     return errorOutput(
       "invalid_input",
@@ -409,7 +475,7 @@ export const invokeBrowserOnHost = async (
     );
   }
   // The whole call is planned before anything is read, so a call that cannot
-  // execute never reads a value out of the run's space.
+  // execute never reads a handle's value.
   const planned = planHostOperation(host, input, action);
   if (planned.error !== undefined) {
     return errorOutput("invalid_input", planned.error);
@@ -419,38 +485,6 @@ export const invokeBrowserOnHost = async (
     operation = planned.plan.operation;
   } else {
     const { binding } = planned.plan;
-    const allowedOrigins = context.handleValueOrigins ?? [];
-    const fromSpace = !binding.handle.trim().startsWith(
-      REFERENT_HANDLE_TOKEN_PREFIX,
-    );
-    if (fromSpace && allowedOrigins.length === 0) {
-      return errorOutput(
-        "destination_not_allowed",
-        NO_HANDLE_VALUE_DESTINATION_MESSAGE,
-      );
-    }
-    if (fromSpace && binding.field === "value") {
-      // The page the value would be typed into is read before the value
-      // exists, so a page outside the allowlist never has one resolved
-      // against it.
-      const page = await perform({ action: "get", kind: "url" });
-      if (page.error !== undefined) {
-        return page.error;
-      }
-      if (page.result.status !== "ok") {
-        return errorOutput(
-          REFUSAL_CODES[page.result.status],
-          truncate(withHandles(host, page.result.message), "message"),
-        );
-      }
-      const origin = httpOriginOf(page.result.page.url);
-      if (origin === undefined || !allowedOrigins.includes(origin)) {
-        return errorOutput(
-          "destination_not_allowed",
-          originNotAllowedMessage(origin ?? "this page"),
-        );
-      }
-    }
     const resolution = await resolveHandleValue(
       context,
       binding.handle,
@@ -462,41 +496,44 @@ export const invokeBrowserOnHost = async (
     }
     const completed = binding.complete({
       text: resolution.value,
-      description: HANDLE_VALUE_DESCRIPTIONS[resolution.source],
+      description: "a value an agent found",
     });
     if (typeof completed === "string") {
       return errorOutput("invalid_input", completed);
     }
-    if (resolution.source === "space") {
-      // A URL names its own destination, so it is checked against what it
-      // resolved to.
-      const target = binding.field === "url"
-        ? httpOriginOf(resolution.value)
-        : undefined;
-      if (target !== undefined && !allowedOrigins.includes(target)) {
-        return errorOutput(
-          "destination_not_allowed",
-          originNotAllowedMessage(target),
-        );
-      }
-      if (resolution.value !== "") {
-        const sent = sentSpaceValues.get(host) ?? new Map<string, string>();
-        sent.set(resolution.value, binding.handle.trim());
-        sentSpaceValues.set(host, sent);
-      }
+    if (resolution.value !== "") {
+      sessionOf(host).sent.set(resolution.value, binding.handle.trim());
     }
     operation = completed;
   }
-  const performed = await perform(operation);
-  if (performed.error !== undefined) {
-    return performed.error;
+  let result: BrowserHostResult;
+  try {
+    const answer: unknown = await host.perform(operation, context.signal);
+    if (!isBrowserHostResult(answer)) {
+      return errorOutput(
+        "host_unavailable",
+        "the browser host answered with something that is not a result",
+      );
+    }
+    result = answer;
+  } catch (error) {
+    context.signal?.throwIfAborted();
+    return errorOutput(
+      "host_unavailable",
+      `the browser host could not be reached: ${
+        withHandles(host, errorMessage(error))
+      }`,
+    );
   }
-  const result = performed.result;
   if (result.status !== "ok") {
     return errorOutput(
       REFUSAL_CODES[result.status],
       truncate(withHandles(host, result.message), "message"),
     );
+  }
+  if (operation.action === "handoff" && result.handoff === "done") {
+    sessionOf(host).handedOffAt = httpOriginOf(result.page.url) ??
+      result.page.url;
   }
   let imageAttachment;
   if (result.image !== undefined) {

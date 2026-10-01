@@ -145,9 +145,9 @@ advertised capability as dependency readiness.
   not the source of label meaning.
 - Host execution: no parent-run shell reaches the host. Bounded host-side
   surfaces exist beside the sandbox: the browser child profile's typed `browser`
-  tool, which a browser host attached to the run carries out when there is one,
-  and otherwise, with allowlisted skill scripts, is bound to an explicit local
-  CDP lease the harness attaches itself; and the `run_pattern` tool, which
+  tool, which a browser host attached to the run carries out when there is one
+  and which is otherwise bound, as allowlisted skill scripts are, to an explicit
+  local CDP lease the harness attaches itself; and the `run_pattern` tool, which
   compiles model-authored pattern source and runs it against the configured
   Fabric space over a lazy authorized session. The Fabric identity remains
   outside the sandbox. The session runs pieces in the configured space and

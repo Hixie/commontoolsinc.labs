@@ -892,7 +892,7 @@ export class ConsoleLive extends LitElement {
               ? ""
               : "child"}"
           >
-            ${markdownTemplate(entry.text, { links: false })}
+            ${entry.text}
           </div>
         `;
       case "tool":
