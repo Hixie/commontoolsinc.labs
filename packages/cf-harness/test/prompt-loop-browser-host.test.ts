@@ -8,6 +8,7 @@ import type {
   HarnessBrowserHost,
 } from "../src/contracts/browser-host.ts";
 import { CfHarnessEngine } from "../src/engine.ts";
+import { CFC_ATOM_TYPE, CFC_CONCEPT_KIND } from "@commonfabric/api/cfc";
 import { createCliPromptSlotBinding } from "../src/contracts/prompt-slot.ts";
 import { CfHarnessPromptLoop } from "../src/prompt-loop.ts";
 import type {
@@ -376,6 +377,36 @@ describe("prompt-loop with a browser host", () => {
       "@link": "opaque:run-browser-host-signed-in.subagent.1#/account",
     });
     expect(result.runState.handleTable?.referents ?? []).toEqual([]);
+  });
+
+  it("labels what a host shows with the unscreened prompt-injection caveat, sourced to the page's origin", async () => {
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine: new CfHarnessEngine({
+        sandboxRuntime: new FakeSandboxRuntime(),
+        runId: "run-browser-host-caveat",
+        model: "gpt-5.4",
+        cfcEnforcementMode: "observe",
+        browserHost: new RecordingBrowserHost(),
+      }),
+      allowedToolIds: ["browser"],
+      fetchFn: scriptedFetch([
+        toolCallTurn("call-read", "browser", { action: "snapshot" }),
+        finalTurn("Read it."),
+      ], []),
+    });
+
+    const result = await loop.runPrompt({ prompt: "Read the page." });
+
+    expect(result.runState.cfcModelContext?.label.confidentiality).toEqual([{
+      type: CFC_ATOM_TYPE.Caveat,
+      kind: CFC_CONCEPT_KIND.PromptInjectionRiskUnscreened,
+      source: {
+        type: CFC_ATOM_TYPE.Resource,
+        class: "WebPage",
+        subject: "https://shop.example",
+      },
+    }]);
   });
 
   it("records a hand-off's reason only when it is one the protocol names", async () => {

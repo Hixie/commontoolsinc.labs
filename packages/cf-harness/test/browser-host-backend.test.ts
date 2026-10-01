@@ -596,13 +596,23 @@ describe("browser-host-backend", () => {
       ]);
       const engine = createEngine(host, "enforce-strict");
 
-      await invoke(engine, { action: "handoff", reason: "sign-in" });
+      const handed = await invoke(engine, {
+        action: "handoff",
+        reason: "sign-in",
+      });
       const read = await invoke(engine, { action: "snapshot" });
       const again = await invoke(engine, {
         action: "handoff",
         reason: "choice",
       });
 
+      expect(handed).toEqual({
+        outputId: expect.any(String),
+        status: "ok",
+        output: "done",
+        page: { url: "https://bank.example", title: "" },
+        handoff: "done",
+      });
       expect(read).toMatchObject({
         status: "error",
         code: "invalid_input",

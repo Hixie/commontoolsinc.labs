@@ -452,6 +452,11 @@ const truncateTitle = (title: string): string => {
     : `${characters.slice(0, MAX_TITLE_CHARS).join("")}…`;
 };
 
+/** Whether the run enforces CFC rather than observing it or not at all. */
+const enforcing = (context: HarnessToolContext): boolean =>
+  context.cfcEnforcementMode === "enforce-explicit" ||
+  context.cfcEnforcementMode === "enforce-strict";
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -486,11 +491,7 @@ export const invokeBrowserOnHost = async (
   // describes, so a run under enforcement gives the page back to the owner
   // and observes nothing more of it.
   const handedOffAt = sessionOf(host).handedOffAt;
-  if (
-    handedOffAt !== undefined && action !== "handoff" &&
-    (context.cfcEnforcementMode === "enforce-explicit" ||
-      context.cfcEnforcementMode === "enforce-strict")
-  ) {
+  if (handedOffAt !== undefined && action !== "handoff" && enforcing(context)) {
     return errorOutput(
       "invalid_input",
       `the owner finished a hand-off on ${handedOffAt}, so the page may show their account, which no CFC label describes; a run under ${context.cfcEnforcementMode} can only hand the page back to them`,
@@ -554,8 +555,20 @@ export const invokeBrowserOnHost = async (
     );
   }
   if (operation.action === "handoff" && result.handoff === "done") {
-    sessionOf(host).handedOffAt = httpOriginOf(result.page.url) ??
-      result.page.url;
+    const origin = httpOriginOf(result.page.url) ?? result.page.url;
+    sessionOf(host).handedOffAt = origin;
+    // The page the owner finished on may already show their account, so a
+    // run under enforcement learns how the hand-off ended and where, and
+    // nothing the page shows.
+    if (enforcing(context)) {
+      return {
+        outputId,
+        status: "ok",
+        output: "done",
+        page: { url: origin, title: "" },
+        handoff: "done",
+      };
+    }
   }
   let imageAttachment;
   if (result.image !== undefined) {

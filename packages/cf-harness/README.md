@@ -2772,11 +2772,15 @@ owner's task and the guidance below are the only limit on what an agent enters
 or clicks.
 
 What a host shows is labeled by where the session stands. Before any hand-off it
-is a fresh browser with no sign-in, so what it shows is the public web, and its
-label is public: it enters the model's context under any enforcement mode,
-pixels and text alike. Once the owner finishes a hand-off, a page may show their
-account, which no label describes, so a run under `enforce-explicit` or
-`enforce-strict` refuses every action but another `handoff`, and observes
+is a fresh browser with no sign-in, so what it shows is the public web: text and
+pixels a page wrote, which may carry instructions. Each result enters the
+model's context under the unscreened prompt-injection caveat
+(`prompt-injection-risk-unscreened`), sourced to the page's origin, under any
+enforcement mode, and whatever the run derives from it — a child's return, a
+referent, the parent's answer — carries the caveat on. Once the owner finishes a
+hand-off, a page may show their account, which no label describes, so a run
+under `enforce-explicit` or `enforce-strict` learns only how the hand-off ended
+and on which origin, refuses every action but another `handoff`, and observes
 nothing more of the page.
 
 A page can show what it was given back — in its text, its title, its address, or
