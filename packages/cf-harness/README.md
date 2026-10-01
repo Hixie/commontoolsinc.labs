@@ -85,6 +85,16 @@ happens to know. Handles cross that boundary — a child resolves tokens its
 parent minted — but the brief around them does not. Closing that is live work,
 not a settled part of the design.
 
+What crosses back is handles too. A string a child's structured return would
+otherwise seal as an `opaque:` link reaches the parent as a `cfh:v:` return
+referent: the parent can name it in another child's goal, and that child can
+spend it as the `browser` tool's `urlHandle` or `valueHandle`, while neither
+parent nor `describe_handle` ever reads it. A field that takes an address, such
+as `skillHandle`, refuses one. That is how one browser child's finding — a URL,
+a value on a page — becomes the input of the next without passing through the
+model that planned them. The owner, whose run it is, sees the string in place of
+the token where the final answer names one.
+
 ## Why This Exists
 
 Common Fabric needs an agent harness that can become CFC-aware without
@@ -126,8 +136,9 @@ What works today:
   [Read-only Loom retrieval](docs/LOOM_RETRIEVAL.md);
 - built-in tools:
   - `bash`
-  - `browser` (structured host browser control for the browser subagent profile
-    only)
+  - `browser` (structured browser control for the browser subagent profile only,
+    executed by a browser host attached to the run or else through the Browser
+    Access lease; see [A browser host](#a-browser-host))
   - `read_file`
   - `view_image`
   - `web_fetch` (explicit parent allowlist or `web_fetch` subagent profile only)
@@ -2700,6 +2711,61 @@ deno task run -- \
   --allow-subagent-profile browser \
   --prompt "Delegate browser inspection of the local app and summarize the result."
 ```
+
+### A browser host
+
+A run may instead have a browser host attached: a trusted component, such as the
+Weaver, that owns a web engine, shows its page to the owner, and executes the
+`browser` tool's operations in the one session it holds for the run. The
+protocol is `src/contracts/browser-host.ts` (`HarnessBrowserHost`), and the
+tool's host backend is `src/tools/browser-host-backend.ts`. The interactive chat
+service takes a host per turn (`startTurn`'s `attached.browserHost`), which is
+how the console's [browser host routes](console/README.md#browser-hosts) reach
+it.
+
+With a host, the tool offers more than a lease does: `back`, `forward`,
+`reload`, `scroll`, `screenshot` (whose pixels reach the model's next turn as an
+image, one pixel per CSS pixel, with whatever the page shows in them), a `click`
+at a point of that screenshot, and `handoff`, which gives the page to the owner
+with a prompt and returns whether they finished or declined. It offers less in
+one respect: a host waits for a ref, a load state, or a URL, never for a time,
+and takes no `timeoutMs` — an operation waits as long as the page or the owner
+takes, and the run's abort signal is what ends it. A browser child in such a run
+holds the `browser` tool alone, with no skill scripts and no host execution.
+Every result carries the page the host committed, which is the host's statement
+of where an observation came from rather than anything the page wrote.
+
+A value reaches a page in one of three ways, and the host is told which:
+
+- text the agent wrote is entered as given;
+- a value a handle resolves to — from the owner's space for an address handle,
+  or a string a child returned for a `cfh:v:` return referent — goes as a
+  `handle-value` with a description of where it came from, and the host enters
+  it and leaves it out of later snapshots, since no model that saw it chose it;
+- `profileField` names a field of the owner's profile, which the host alone
+  holds: the harness never resolves it, and the host enters the value itself and
+  leaves it out of later snapshots.
+
+Nothing asks the owner whether a value may go to a page, or whether a click may
+commit them to something: a question at every step teaches a person to agree
+without reading. Until release rules over a value's CFC label decide it, the
+owner's task and the guidance below are the only limit on what an agent enters
+or clicks.
+
+None of this keeps a value from a model once it is on a page. A page can show
+what it was given back — in its text, its title, its address, or a screenshot —
+and a later observation carries what the page shows. What the host withholds is
+the field itself; the rest is the page's.
+
+The host decides which fields only the owner may fill and which hosts a page may
+reach. Its refusals come back under their own codes — `stale_ref`,
+`owner_only_field`, `session_ended` — beside the lease's.
+
+A turn with a host is guided on both sides (`src/browser-host-guidance.ts`): the
+parent is told how to split web work between browser children and pass their
+findings on as handles, and a browser child what the owner sees and what it may
+do without asking anyone. A turn that delegated to a browser child may end with
+a Markdown answer rather than a named piece.
 
 The `web_fetch` profile is the preferred first-pass path for web page
 inspection. It gives the child only the `web_fetch` tool: no shell, no browser,

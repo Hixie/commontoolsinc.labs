@@ -29,6 +29,7 @@ The runtime has four main boundaries:
    `runsc-cfc`, and the other invokes a `runsc` binary directly, with no Docker.
    [Sandbox runtimes](#sandbox-runtimes) describes both. The browser child is a
    constrained host-adjacent profile whose typed `browser` tool the harness
+   sends to a browser host attached to the run, such as the Weaver, or else
    binds to a leased local CDP endpoint itself. The optional `run_pattern` tool
    is a distinct trusted-host path whose Fabric identity stays outside the
    sandbox. It runs pieces in the configured space and admits input references
@@ -926,7 +927,9 @@ host.
 
 Loom also has an opt-in adapter for the interactive NDJSON protocol. It is not
 the default interactive harness, and browser automation is not yet wired into
-that interactive product path.
+that interactive product path. The console's interactive path does browse: a
+task that declares a browser host, as every Weaver `/cf-harness` task does, has
+its browser children drive the page that host shows the owner.
 
 Loom currently forces autonomous `cf-harness` runs to `observe` mode while
 trusted `runsc-cfc` observation metadata is not wired through every local tool

@@ -332,6 +332,94 @@ describe("console/src/live-view", () => {
       );
     });
 
+    it("returns a completed turn's answer in place of the block it streamed as, when the turn named no piece", () => {
+      const entries = consoleLiveEntries(log(
+        { kind: "assistant_completed", text: "Bought cfh:v:22222." },
+        {
+          kind: "turn_completed",
+          turnId: "turn-1",
+          finalText: "Bought cfh:v:22222.",
+          result: {
+            outcome: "completed" as const,
+            sessionId: "session-1",
+            continuable: true,
+            looms: [],
+            pieces: [],
+            spaceName: "s",
+            finalText: "Bought **cfh:v:22222**.",
+            revealed: { "cfh:v:22222": "https://shop.example/item/7" },
+          },
+        },
+      ));
+
+      expect(entries).toEqual([{
+        kind: "ended",
+        key: "2",
+        turnId: "turn-1",
+        status: "completed",
+        outcome: "completed",
+        answer: "Bought **cfh:v:22222**.",
+        revealed: { "cfh:v:22222": "https://shop.example/item/7" },
+        pieces: [],
+        spaceName: "s",
+      }]);
+    });
+
+    it("keeps the block a turn streamed when its answer came from finish_task", () => {
+      const entries = consoleLiveEntries(log(
+        { kind: "assistant_completed", text: "Checking the forecast." },
+        {
+          kind: "turn_completed",
+          turnId: "turn-1",
+          finalText: "It is sunny.",
+          outcome: "completed",
+          answer: "It is sunny.",
+          result: {
+            ...EMPTY_RESULT,
+            outcome: "completed" as const,
+            answer: "It is sunny.",
+            finalText: "It is sunny.",
+          },
+        },
+      ));
+
+      expect(entries.map((entry) => entry.kind)).toEqual([
+        "assistant",
+        "ended",
+      ]);
+      expect(entries[0].kind === "assistant" && entries[0].text).toBe(
+        "Checking the forecast.",
+      );
+      expect(entries[1].kind === "ended" && entries[1].text).toBe(
+        "It is sunny.",
+      );
+    });
+
+    it("returns a model's reasoning as a thought under the subagent it came from", () => {
+      const subagent = {
+        parentToolCallId: "call-1",
+        profile: "browser" as const,
+        childRunId: "turn-1.subagent.1",
+      };
+      const entries = consoleLiveEntries(log(
+        { kind: "assistant_reasoning", text: "**Planning** the search." },
+        { kind: "assistant_reasoning", text: "Open the form first.", subagent },
+      ));
+
+      expect(entries).toEqual([{
+        kind: "thought",
+        key: "1",
+        turnId: "turn-1",
+        text: "**Planning** the search.",
+      }, {
+        kind: "thought",
+        key: "2",
+        turnId: "turn-1",
+        text: "Open the form first.",
+        subagent: { parentToolCallId: "call-1", profile: "browser" },
+      }]);
+    });
+
     it("returns the piece links a completed turn handed back", () => {
       const entries = consoleLiveEntries(log({
         kind: "turn_completed",
@@ -1576,6 +1664,42 @@ describe("console/src/live-view", () => {
       }));
       expect(templateText(view.view())).toContain(answer);
       expect(consoleLiveState(view.entries)).toBe("done");
+    });
+
+    it("renders a thought as Markdown set apart from what the model said", () => {
+      const view = new TestConsoleLive();
+      view.entries = consoleLiveEntries(log({
+        kind: "assistant_reasoning",
+        text: "**Planning** the search.",
+      }));
+
+      const rendered = templateText(view.view());
+      expect(rendered).toContain('class="live-entry thought');
+      expect(rendered).toContain("<strong>Planning</strong>");
+      expect(rendered).not.toContain("**");
+    });
+
+    it("renders a question naming a return referent with the string it stands for", () => {
+      const view = new TestConsoleLive();
+      view.entries = consoleLiveEntries(log({
+        kind: "turn_completed",
+        turnId: "turn-1",
+        outcome: "question",
+        question: { text: "Buy cfh:v:22222?" },
+        result: {
+          ...EMPTY_RESULT,
+          outcome: "question" as const,
+          question: { text: "Buy cfh:v:22222?" },
+          finalText: "Buy cfh:v:22222?",
+          revealed: { "cfh:v:22222": "the blue one" },
+        },
+      }));
+
+      const rendered = templateText(view.view());
+      expect(rendered).toContain(
+        'Buy <code class="live-found" title="Found by an agent">the blue one</code>?',
+      );
+      expect(rendered).not.toContain("cfh:v:22222");
     });
 
     it("renders a turn line, prose, a subagent and the piece link it ended with", () => {

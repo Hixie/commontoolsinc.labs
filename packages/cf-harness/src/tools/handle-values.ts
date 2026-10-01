@@ -17,6 +17,12 @@
  * this run was given has an entry, an address the model composed does not, and
  * only the first resolves. Without that check a handle field is a general read
  * of every cell in the run's space.
+ *
+ * A referent token (`cfh:v:`) resolves too, in a field that asks for it —
+ * the browser tool's value fields — when it names a string a child's
+ * structured return sealed: that is how a parent hands one child's finding,
+ * a URL, say, to another child's tool without reading it. A field that takes
+ * an address refuses one.
  */
 
 import { parseLLMFriendlyLink } from "@commonfabric/runner/shared";
@@ -25,14 +31,24 @@ import {
   handleRefAddressKey,
   resolveHandleRef,
   resolveHandleToken,
+  resolveReferentToken,
 } from "../handle-table.ts";
-import { ADDRESS_HANDLE_TOKEN_PREFIX } from "../contracts/handle-table.ts";
+import {
+  ADDRESS_HANDLE_TOKEN_PREFIX,
+  REFERENT_HANDLE_TOKEN_PREFIX,
+} from "../contracts/handle-table.ts";
 import type { HarnessToolContext } from "./types.ts";
 import type { HarnessHandleCapability } from "../contracts/handle-table.ts";
 
+/**
+ * Where a resolved value came from: a cell in the run's own space, which is
+ * the owner's, or a string a child's structured return sealed.
+ */
+export type HandleValueSource = "space" | "return";
+
 export type HandleValueResolution =
-  | { value: string; error?: undefined }
-  | { value?: undefined; error: string };
+  | { value: string; source: HandleValueSource; error?: undefined }
+  | { value?: undefined; source?: undefined; error: string };
 
 /** The part of the tool context a handle resolution reads. */
 export type HandleValueResolutionContext = Pick<
@@ -83,11 +99,43 @@ export const resolveHandleValue = async (
   context: HandleValueResolutionContext,
   handle: string,
   label: string,
-  options: { capability?: HarnessHandleCapability } = {},
+  options: {
+    capability?: HarnessHandleCapability;
+
+    /** Whether a return referent may resolve here; only a value field's may. */
+    returnReferents?: boolean;
+  } = {},
 ): Promise<HandleValueResolution> => {
   const trimmed = handle.trim();
   if (trimmed === "") {
     return { error: `${label} requires a handle naming a value` };
+  }
+  if (trimmed.startsWith(REFERENT_HANDLE_TOKEN_PREFIX)) {
+    if (options.returnReferents !== true) {
+      return {
+        error: `${label} takes an address handle (cfh:a:), not a referent`,
+      };
+    }
+    const referent = context.handleTable === undefined
+      ? undefined
+      : resolveReferentToken(context.handleTable, trimmed);
+    if (referent === undefined) {
+      return { error: `${label} does not name a handle this run holds` };
+    }
+    if (referent.kind !== "return") {
+      return {
+        error:
+          `${label} can only take a referent a child's return sealed; this one holds a ${referent.kind}`,
+      };
+    }
+    if (typeof referent.value !== "string") {
+      return {
+        error:
+          `${label} must name a string value; the referent holds a value of type ${typeof referent
+            .value}`,
+      };
+    }
+    return { value: referent.value, source: "return" };
   }
   if (context.getFabricSession === undefined) {
     return {
@@ -177,5 +225,5 @@ export const resolveHandleValue = async (
         `${label} must name a string value; the reference holds a value of type ${typeof value}`,
     };
   }
-  return { value };
+  return { value, source: "space" };
 };

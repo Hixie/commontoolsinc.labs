@@ -13,6 +13,7 @@ import {
   type ConsoleStep,
   consoleStepArguments,
 } from "../steps.ts";
+import { markdownTemplate } from "./markdown.ts";
 
 const json = (value: unknown): string => {
   try {
@@ -529,9 +530,22 @@ export class ConsoleSteps extends LitElement {
     `;
   }
 
+  /** What the model was thinking before the step, when the provider said. */
+  #reasoning(step: ConsoleStep): unknown {
+    return step.reasoning === undefined ? nothing : html`
+      <div class="pane thought">
+        <div class="pane-head">thinking</div>
+        <div class="body">${markdownTemplate(step.reasoning, {
+          links: false,
+        })}</div>
+      </div>
+    `;
+  }
+
   #detail(step: ConsoleStep): TemplateResult {
     if (step.kind !== "tool") {
       return html`
+        ${this.#reasoning(step)}
         <div class="pane">
           <div class="pane-head">${step.kind}</div>
           <div class="body">${step.text ?? ""}</div>
@@ -540,6 +554,7 @@ export class ConsoleSteps extends LitElement {
       `;
     }
     return html`
+      ${this.#reasoning(step)}
       <div class="pane">
         <div class="pane-head">
           <span class="tool">${step.toolName}</span>

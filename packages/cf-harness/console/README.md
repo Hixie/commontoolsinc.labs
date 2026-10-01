@@ -291,6 +291,8 @@ one.
 | `GET`  | `/api/health/detail`         | Cached operator observations with deciding records, times, causes, and remedies         |
 | `POST` | `/api/task`                  | Starts a session or a follow-up turn                                                    |
 | `POST` | `/api/cancel`                | Cancels the active turn, recording the reason the caller gives                          |
+| `POST` | `/api/browser-host/stream`   | A turn's browser operations, over SSE, for the holder of its host token                 |
+| `POST` | `/api/browser-host/result`   | The host's result for one operation                                                     |
 | `GET`  | `/api/sessions`              | Durable session summaries                                                               |
 | `GET`  | `/api/status`                | Session status and artifact roots                                                       |
 | `GET`  | `/api/policy`                | What a new session here would run under                                                 |
@@ -651,6 +653,54 @@ Cancel stops the running turn. The session survives a cancel and a page reload
 both — the stream resumes from the last event the page rendered rather than
 replaying the feed.
 
+## Browser hosts
+
+A task body may carry `browserHost`, declaring that the caller can host the
+turn's browser — show a web page to the owner and execute the `browser` tool's
+operations in it — and naming the owner's profile fields it offers:
+
+```json
+{
+  "text": "order the book on my list",
+  "browserHost": {
+    "profileFields": [{ "name": "name.full", "label": "Full name" }]
+  }
+}
+```
+
+A field's name is lowercase words joined by dots, dashes, or underscores; its
+label is one line. The names become the vocabulary of the `browser` tool's
+`profileField`, and neither the console nor the run ever holds a value: the host
+fills one itself. The turn's policy then allows `browser` children, and the
+answer carries a `browserHostToken` beside `sessionId` and `turnId`, given to
+the task's starter and nobody else. A turn without a host keeps the session's
+policy, so a later turn of the same session has a browser only if it declares
+one too.
+
+The holder of the token attaches with `POST /api/browser-host/stream`,
+`{"turnId", "token"}`, answered with Server-Sent Events: each operation arrives
+as a `request` event whose data is `{"id", "operation"}`, and a `close` event
+says the turn is over and the stream ends. Operations sent before the host
+attaches wait for it, and the first attach is the only one: a second answers
+409. Each result goes back with `POST /api/browser-host/result`,
+`{"turnId", "token", "id", "result"}`; a result that is not one answers 400, and
+an id nobody waits on 404. A request whose token does not match answers 404, as
+one for a turn with no host does. The token rides in the body so it appears in
+no URL and no log line between the host and the console.
+
+Any caller that can start a task can declare a host. The token binds the stream
+and the results to that caller alone and vouches for nothing else about it: the
+console's `Host` gate and its listening address are the boundary here, as they
+are for every other route.
+
+An operation waits for its result however long it takes, since a hand-off waits
+for the owner. It ends early only when the run aborts it, which withdraws it
+from the stream if the host has not been sent it yet. A result that is not one
+settles its operation as failed rather than leaving it waiting. When the host's
+stream ends, every outstanding and later operation settles as `session-ended`,
+and so does every operation when the turn ends. The operation and result shapes
+are `src/contracts/browser-host.ts`.
+
 ## The live pane
 
 `GET /live/<sessionId>` is the same work in a column, for a host that can show a
@@ -698,6 +748,13 @@ come from the turn's own run, which the pane re-reads when one of its tool calls
 completes. The run id of a console turn is the turn id, so no route composes
 that address and no lookup stands between the two.
 
+Before the calls a model makes, and before what it says, the pane shows what it
+was thinking, as the provider's summary of its reasoning sums it up, set in
+italics under the parent or the subagent it came from; the console page shows
+the same summary above the step it led to. A model that reasoned little may have
+no summary, and a gateway model has one only when the run names a reasoning
+effort, since the gateway also serves models that do not reason.
+
 Each step is one line — the tool, how it ended, and what it was about: the
 numbered `run_pattern` attempt and the compiler's word on it, the slug
 `assign_slug` registered, the query a search was given, the question legacy
@@ -705,7 +762,19 @@ numbered `run_pattern` attempt and the compiler's word on it, the slug
 line whose run recorded a CFC decision sits the same CFC line the console's
 timeline draws, and a result that held anything back from the model carries the
 same omission block, openable in place. A completed turn ends the pane with the
-piece link the turn produced, which is what the pane is watched for.
+piece link the turn produced, which is what the pane is watched for. A completed
+turn that named no piece — a task done on the web — ends it instead with its
+answer, the final text rendered as Markdown in place of the block it streamed
+as. Raw HTML in the answer is not rendered, and a link is kept only when it
+points at a web or mail address. The turn's result carries the final text as
+written and, as `revealed`, the string each `cfh:v:` return referent it names
+stands for; the pane shows each such string in place of its token, in the answer
+and in a question or a reason for giving up, marked as something an agent found,
+so the owner sees a value the parent held only as a name. A string is only ever
+text there, and never part of a link: a link the parent wrote to a token keeps
+the token as its destination, and is dropped as not a web address, and a token
+in a link's label stays a token, so a found address never labels a link that
+goes somewhere else.
 
 ## Sessions
 

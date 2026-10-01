@@ -423,6 +423,22 @@ export const BROWSER_SUBAGENT_PROFILE_CONFIG: HarnessSubagentProfileConfig = {
   returnPolicy: DEFAULT_SUBAGENT_RETURN_POLICY,
 };
 
+/**
+ * The `browser` profile in a run with a browser host attached. The host
+ * executes every browser action itself, so the child holds the `browser` tool
+ * and nothing that runs on this machine: no skill scripts, which drive the
+ * Browser Access CLI, and no host tools.
+ */
+export const BROWSER_HOST_SUBAGENT_PROFILE_CONFIG:
+  HarnessSubagentProfileConfig = {
+    type: "cf-harness.subagent-profile-config",
+    profile: BROWSER_SUBAGENT_PROFILE,
+    allowedToolIds: ["browser"],
+    hostToolIds: NO_HOST_TOOL_IDS,
+    maxModelTurns: DEFAULT_SUBAGENT_MAX_MODEL_TURNS,
+    returnPolicy: DEFAULT_SUBAGENT_RETURN_POLICY,
+  };
+
 export const WEB_FETCH_SUBAGENT_PROFILE_CONFIG: HarnessSubagentProfileConfig = {
   type: "cf-harness.subagent-profile-config",
   profile: WEB_FETCH_SUBAGENT_PROFILE,

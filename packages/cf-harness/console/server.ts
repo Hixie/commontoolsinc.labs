@@ -77,7 +77,7 @@ import {
   resolveCfcEnforcementMode,
 } from "../src/config.ts";
 import type { CfcPosture } from "@commonfabric/runner";
-import { isObjectOrArray } from "@commonfabric/utils/types";
+import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 import {
   type HarnessChatError,
   type HarnessChatEventEnvelope,
@@ -93,6 +93,7 @@ import {
   connectorGrantName,
 } from "../src/well-known-grants.ts";
 import {
+  BROWSER_SUBAGENT_PROFILE,
   DEFAULT_SUBAGENT_PROFILE,
   PATTERN_AUTHOR_SUBAGENT_PROFILE,
 } from "../src/contracts/subagent.ts";
@@ -159,6 +160,10 @@ import {
 } from "../src/sandbox/runtime-selection.ts";
 import type { CreateHarnessPromptLoopOptions } from "../src/prompt-loop.ts";
 import type { HarnessChatSessionStore } from "../src/session-store.ts";
+import {
+  ConsoleBrowserHost,
+  parseBrowserHostDeclaration,
+} from "./browser-host.ts";
 import { parseConnectorGrants } from "./connector-grants.ts";
 import {
   ConsoleHealth,
@@ -1434,6 +1439,9 @@ const TERMINAL_TURN_EVENT_KINDS: ReadonlySet<string> = new Set([
 /** The live event fan-out, and the routes that read and write through it. */
 export class ConsoleServer {
   readonly #clients = new Set<StreamClient>();
+
+  /** Each running turn's browser host channel, by turn id. */
+  readonly #browserHosts = new Map<string, ConsoleBrowserHost>();
   readonly #config: ConsoleConfig;
   readonly #service: HarnessInteractiveChatService;
   readonly #health: ConsoleHealth;
@@ -1506,6 +1514,9 @@ export class ConsoleServer {
    * all.
    */
   broadcast(envelope: HarnessChatEventEnvelope): Promise<void> {
+    if (TERMINAL_TURN_EVENT_KINDS.has(envelope.event.kind)) {
+      this.#closeBrowserHost(envelope.turnId);
+    }
     if (
       !TERMINAL_TURN_EVENT_KINDS.has(envelope.event.kind) &&
       this.#heldFanOut === undefined
@@ -1617,6 +1628,9 @@ export class ConsoleServer {
     for (const client of this.#clients) {
       this.#enqueue(client, frame);
     }
+    for (const host of this.#browserHosts.values()) {
+      host.ping(this.#beats);
+    }
   }
 
   async handle(request: Request): Promise<Response> {
@@ -1662,6 +1676,16 @@ export class ConsoleServer {
     }
     if (request.method === "POST" && url.pathname === "/api/task") {
       return await this.#startTask(request);
+    }
+    if (
+      request.method === "POST" && url.pathname === "/api/browser-host/stream"
+    ) {
+      return await this.#browserHostStream(request);
+    }
+    if (
+      request.method === "POST" && url.pathname === "/api/browser-host/result"
+    ) {
+      return await this.#browserHostResult(request);
     }
     if (request.method === "POST" && url.pathname === "/api/index/call") {
       return await this.#indexCall(request);
@@ -1944,6 +1968,7 @@ export class ConsoleServer {
       inputCells?: unknown;
       patternRefs?: unknown;
       loomId?: unknown;
+      browserHost?: unknown;
     } = isObjectOrArray(parsed) ? parsed : {};
     if (
       body.loomId !== undefined &&
@@ -1977,6 +2002,19 @@ export class ConsoleServer {
         error: error instanceof Error ? error.message : String(error),
       }, { status: 400 });
     }
+    let browserHost: ConsoleBrowserHost | undefined;
+    let browserHostToken: string | undefined;
+    if (body.browserHost !== undefined && body.browserHost !== null) {
+      const declared = parseBrowserHostDeclaration(body.browserHost);
+      if (declared.error !== undefined) {
+        return Response.json({ error: declared.error }, { status: 400 });
+      }
+      browserHostToken = crypto.randomUUID();
+      browserHost = new ConsoleBrowserHost(
+        browserHostToken,
+        declared.profileFields,
+      );
+    }
     let sessionId = body.sessionId;
     if (sessionId === undefined) {
       const session = await this.#service.startSession(crypto.randomUUID(), {
@@ -1990,21 +2028,156 @@ export class ConsoleServer {
       }
       sessionId = session.result.sessionId;
     }
-    const turn = await this.#service.startTurn(crypto.randomUUID(), {
-      sessionId,
-      input: {
-        text,
-        ...(typeof body.loomId === "string" ? { loomId: body.loomId } : {}),
+    // The channel is registered under the turn's id before the turn starts,
+    // so nothing the turn does can reach its end before the channel exists.
+    const turnId = crypto.randomUUID();
+    if (browserHost !== undefined) {
+      this.#browserHosts.set(turnId, browserHost);
+    }
+    const turn = await this.#service.startTurn(
+      crypto.randomUUID(),
+      {
+        turnId,
+        sessionId,
+        input: {
+          text,
+          ...(typeof body.loomId === "string" ? { loomId: body.loomId } : {}),
+        },
+        ...(body.inputCells !== undefined && body.inputCells !== null
+          ? { inputCells }
+          : {}),
+        ...(patternRefs.length > 0 ? { patternRefs } : {}),
+        // A turn with a host may delegate to browser children; the session's
+        // policy, which a later turn without one runs under, stays as it was.
+        ...(browserHost !== undefined
+          ? { policy: this.#browserTurnPolicy() }
+          : {}),
       },
-      ...(body.inputCells !== undefined && body.inputCells !== null
-        ? { inputCells }
-        : {}),
-      ...(patternRefs.length > 0 ? { patternRefs } : {}),
+      browserHost !== undefined ? { browserHost } : {},
+    ).catch((error: unknown) => {
+      this.#closeBrowserHost(turnId);
+      throw error;
     });
     if (!turn.ok) {
+      this.#closeBrowserHost(turnId);
       return chatErrorResponse(turn);
     }
-    return Response.json({ sessionId, turnId: turn.result.turnId });
+    return Response.json({
+      sessionId,
+      turnId: turn.result.turnId,
+      ...(browserHostToken !== undefined ? { browserHostToken } : {}),
+    });
+  }
+
+  /** The session policy, with browser children allowed. */
+  #browserTurnPolicy(): HarnessChatPolicy {
+    const policy = this.#sessionPolicy();
+    return {
+      ...policy,
+      allowedSubagentProfiles: [
+        ...policy.allowedSubagentProfiles.filter((profile) =>
+          profile !== BROWSER_SUBAGENT_PROFILE
+        ),
+        BROWSER_SUBAGENT_PROFILE,
+      ],
+    };
+  }
+
+  /**
+   * Reads a browser host request body: the turn it names and the token that
+   * proves the caller is that turn's host. Returns the channel, or the
+   * response refusing the request.
+   */
+  async #browserHostRequest(
+    request: Request,
+  ): Promise<
+    | {
+      host: ConsoleBrowserHost;
+      body: Record<string, unknown>;
+      refusal?: undefined;
+    }
+    | { host?: undefined; body?: undefined; refusal: Response }
+  > {
+    let parsed: unknown;
+    try {
+      parsed = await request.json();
+    } catch {
+      return {
+        refusal: Response.json({ error: "request body is not JSON" }, {
+          status: 400,
+        }),
+      };
+    }
+    if (!isObjectNotArray(parsed) || typeof parsed.turnId !== "string") {
+      return {
+        refusal: Response.json({ error: "turnId is required" }, {
+          status: 400,
+        }),
+      };
+    }
+    const host = this.#browserHosts.get(parsed.turnId);
+    // A turn with no channel and a token that does not match are answered
+    // alike, so the route says nothing about which turns have hosts.
+    if (host === undefined || !host.admits(parsed.token)) {
+      return {
+        refusal: Response.json({ error: "no browser host for that turn" }, {
+          status: 404,
+        }),
+      };
+    }
+    return { host, body: parsed };
+  }
+
+  /**
+   * `POST /api/browser-host/stream`: the host's end of its turn's channel, as
+   * Server-Sent Events. A POST because the body carries the token, which a
+   * query string would leave in every log between the two.
+   */
+  async #browserHostStream(request: Request): Promise<Response> {
+    const read = await this.#browserHostRequest(request);
+    if (read.refusal !== undefined) {
+      return read.refusal;
+    }
+    const stream = read.host.attach();
+    if (stream === undefined) {
+      return Response.json({
+        error: "that turn's browser host is already attached, or has ended",
+      }, { status: 409 });
+    }
+    return new Response(stream, {
+      headers: {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  /** `POST /api/browser-host/result`: the host's answer to one operation. */
+  async #browserHostResult(request: Request): Promise<Response> {
+    const read = await this.#browserHostRequest(request);
+    if (read.refusal !== undefined) {
+      return read.refusal;
+    }
+    switch (read.host.acceptResult(read.body.id, read.body.result)) {
+      case "accepted":
+        return Response.json({ ok: true });
+      case "unknown":
+        return Response.json({
+          error: "no operation with that id is waiting for a result",
+        }, { status: 404 });
+      case "invalid":
+        return Response.json({
+          error: "result is not a browser host result",
+        }, { status: 400 });
+    }
+  }
+
+  #closeBrowserHost(turnId: string | undefined): void {
+    if (turnId === undefined) {
+      return;
+    }
+    this.#browserHosts.get(turnId)?.close();
+    this.#browserHosts.delete(turnId);
   }
 
   /**

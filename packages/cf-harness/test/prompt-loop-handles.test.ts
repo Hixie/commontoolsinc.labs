@@ -491,7 +491,7 @@ describe("prompt-loop address handles", () => {
     expect(followup.content).not.toContain(HASH_A);
   });
 
-  it("returns a sealed structured-return string that names an address as a token while a free-form string stays opaque", async () => {
+  it("returns a sealed structured-return string that names an address as an address handle, and a free-form string as a return referent", async () => {
     const runId = "run-handles-post";
     const childRunId = `${runId}.subagent.1`;
     const expectedToken =
@@ -546,11 +546,24 @@ describe("prompt-loop address handles", () => {
         structuredReturn: { value: unknown; linkedStringCount: number };
       };
     };
+    const referents = result.runState.handleTable?.referents ?? [];
+    expect(referents.map(({ token: _token, ...referent }) => referent))
+      .toEqual([{
+        kind: "return",
+        source: `delegate_task:${childRunId}`,
+        value: "free-form prose",
+        label: {},
+        labelSource: "child",
+      }]);
     expect(output.subagent.structuredReturn.value).toEqual({
       link: expectedToken,
-      note: { "@link": `opaque:${childRunId}#/note` },
+      note: referents[0].token,
     });
-    expect(output.subagent.structuredReturn.linkedStringCount).toBe(1);
+    expect(referents[0].token).toMatch(/^cfh:v:/);
+    expect(lastToolMessageContent(result.transcript)).not.toContain(
+      "free-form prose",
+    );
+    expect(output.subagent.structuredReturn.linkedStringCount).toBe(0);
     expect(
       result.runState.handleTable?.entries.map((entry) => entry.token),
     ).toEqual([expectedToken]);
@@ -558,7 +571,6 @@ describe("prompt-loop address handles", () => {
 
   it("aligns sealed positions with their raw counterparts across nested arrays and objects in a structured return", async () => {
     const runId = "run-handles-tandem";
-    const childRunId = `${runId}.subagent.1`;
     const expectedTokenA =
       (await mintAddressHandle(createHarnessHandleTable(runId), URI_A)).token;
     const expectedTokenB =
@@ -634,21 +646,19 @@ describe("prompt-loop address handles", () => {
         structuredReturn: { value: unknown; linkedStringCount: number };
       };
     };
+    const referentToken = (value: string): string | undefined =>
+      result.runState.handleTable?.referents?.find((referent) =>
+        referent.kind === "return" && referent.value === value
+      )?.token;
     expect(output.subagent.structuredReturn.value).toEqual({
       items: [
-        {
-          link: expectedTokenA,
-          note: { "@link": `opaque:${childRunId}#/items/0/note` },
-        },
-        {
-          link: { "@link": `opaque:${childRunId}#/items/1/link` },
-          note: expectedTokenB,
-        },
+        { link: expectedTokenA, note: referentToken("free-form one") },
+        { link: referentToken("free-form two"), note: expectedTokenB },
       ],
       meta: { primary: expectedTokenA },
     });
-    // Five sealed string positions, three of which became tokens.
-    expect(output.subagent.structuredReturn.linkedStringCount).toBe(2);
+    // Five sealed string positions, every one of which became a token.
+    expect(output.subagent.structuredReturn.linkedStringCount).toBe(0);
     expect(
       result.runState.handleTable?.entries.map((entry) => entry.token).sort(),
     ).toEqual([expectedTokenA, expectedTokenB].sort());

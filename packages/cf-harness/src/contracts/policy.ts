@@ -33,11 +33,19 @@ export interface HarnessBrowserToolInputSummary {
   /** A bound handle, carried whole: it names an address, not a value. */
   urlHandle?: string;
 
+  /** A named profile field, carried whole: it names a field, not a value. */
+  profileField?: string;
+
+  direction?: string;
+  x?: number;
+  y?: number;
   timeoutMs?: number;
   urlBytes?: number;
   urlDigest?: string;
   valueBytes?: number;
   valueDigest?: string;
+  promptBytes?: number;
+  promptDigest?: string;
 }
 
 export interface HarnessReadFileToolInputSummary {

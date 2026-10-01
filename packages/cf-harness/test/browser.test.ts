@@ -146,6 +146,24 @@ describe("browser", () => {
         .toBe("value does not apply to the press action");
     });
 
+    it("refuses what only a browser host offers, naming the lease", () => {
+      const lease =
+        "needs a browser host, such as the Weaver; this run's browser is a Browser Access lease";
+
+      for (const action of ["back", "forward", "reload", "screenshot"]) {
+        expect(errorOf({ action })).toBe(`the ${action} action ${lease}`);
+      }
+      expect(errorOf({ action: "handoff", prompt: "sign in" })).toBe(
+        `the handoff action ${lease}`,
+      );
+      expect(errorOf({ action: "click", x: 10, y: 20 })).toBe(
+        `a click at a point ${lease}`,
+      );
+      expect(
+        errorOf({ action: "fill", ref: "@e1", profileField: "name.full" }),
+      ).toBe(`profileField ${lease}`);
+    });
+
     it("plans open for an http(s) URL only", () => {
       expect(argvOf({ action: "open", url: "https://example.com/a?b=c" }))
         .toEqual(["open", "https://example.com/a?b=c"]);
@@ -273,7 +291,7 @@ describe("browser", () => {
         value: "hunter2",
         valueHandle: "cfh:a:22222",
       })).toBe(
-        "value and valueHandle cannot both be set: give the value itself or a handle to it",
+        "value, valueHandle, and profileField are alternatives: give the value itself, a handle to it, or the profile field that holds it",
       );
       expect(errorOf({
         action: "open",
@@ -516,7 +534,7 @@ describe("browser", () => {
       const output = result.output as BrowserToolErrorOutput;
       expect(output.code).toBe("invalid_input");
       expect(output.message).toBe(
-        "value and valueHandle cannot both be set: give the value itself or a handle to it",
+        "value, valueHandle, and profileField are alternatives: give the value itself, a handle to it, or the profile field that holds it",
       );
       expect(runner.calls).toEqual([]);
     });

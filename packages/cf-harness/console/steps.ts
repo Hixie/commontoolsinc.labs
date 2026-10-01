@@ -236,6 +236,12 @@ export interface ConsoleStep {
   /** Assistant or user prose, and the system prompt for step zero. */
   text?: string;
 
+  /**
+   * The provider's summary of the model's reasoning behind this step: on the
+   * assistant's prose, or, when the assistant only made calls, on its first.
+   */
+  reasoning?: string;
+
   toolName?: string;
   toolCallId?: string;
 
@@ -329,6 +335,25 @@ const sourceWasReplaced = (value: unknown): boolean => {
   return typeof sourceText === "string" && sourceText.startsWith(
     "[cf-harness: superseded run_pattern source collapsed",
   );
+};
+
+/**
+ * The reasoning behind each assistant message that only made calls, by the id
+ * of its first call, which is the step that shows it.
+ */
+const reasoningByFirstCall = (
+  transcript: readonly HarnessTranscriptMessage[],
+): Map<string, string> => {
+  const reasoning = new Map<string, string>();
+  for (const message of transcript) {
+    if (
+      message.role !== "assistant" || message.reasoning === undefined ||
+      message.content.trim() !== ""
+    ) continue;
+    const first = message.toolCalls?.[0];
+    if (first !== undefined) reasoning.set(first.id, message.reasoning);
+  }
+  return reasoning;
 };
 
 /** The tool calls an assistant made, by call id. */
@@ -703,6 +728,7 @@ export const consoleRunSteps = (
   };
 
   const calls = toolCallsById(transcript);
+  const thoughts = reasoningByFirstCall(transcript);
   const decisionsByCall = new Map(
     policyDecisions.map((decision) => [decision.toolCallId, decision]),
   );
@@ -751,6 +777,7 @@ export const consoleRunSteps = (
         : parseJson(call.function.arguments);
       const parsedOutput = parseJson(message.content);
       const handlesIntroduced = admit([
+        thoughts.get(message.toolCallId) ?? "",
         call?.function.arguments ?? "",
         message.content,
       ]);
@@ -763,6 +790,9 @@ export const consoleRunSteps = (
         kind: "tool",
         toolName: message.toolName,
         toolCallId: message.toolCallId,
+        ...(thoughts.has(message.toolCallId)
+          ? { reasoning: thoughts.get(message.toolCallId) }
+          : {}),
         ...(parsedInput.ok
           ? { input: parsedInput.value }
           : call !== undefined
@@ -819,11 +849,17 @@ export const consoleRunSteps = (
       });
       continue;
     }
-    const handlesIntroduced = admit([message.content]);
+    const handlesIntroduced = admit([
+      message.role === "assistant" ? message.reasoning ?? "" : "",
+      message.content,
+    ]);
     steps.push({
       index,
       kind: message.role,
       text: message.content,
+      ...(message.role === "assistant" && message.reasoning !== undefined
+        ? { reasoning: message.reasoning }
+        : {}),
       handlesIntroduced,
       handlesInScope: [...inScope],
       status: "none",

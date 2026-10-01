@@ -4,6 +4,7 @@ import {
   type CfcSandboxResult,
   type CfcStreamObservation,
   evaluateHarnessWriteFileAuthorization,
+  type IFCLabel,
 } from "@commonfabric/runner/cfc";
 import { maxOf } from "@commonfabric/utils/math";
 import {
@@ -23,6 +24,7 @@ import type {
   HarnessOpenAIWebSearchResult,
 } from "./contracts/native-model-tool.ts";
 import type { HarnessBrowserAccessLease } from "./contracts/browser-access.ts";
+import type { HarnessBrowserHost } from "./contracts/browser-host.ts";
 import type { HarnessCfcModelContextObservationInput } from "./contracts/cfc-model-context.ts";
 import {
   createHarnessCfcPolicySnapshot,
@@ -83,6 +85,7 @@ import {
 } from "./contracts/skill.ts";
 import {
   asHarnessSubagentFailureReport,
+  BROWSER_HOST_SUBAGENT_PROFILE_CONFIG,
   BROWSER_SUBAGENT_PROFILE,
   DEFAULT_SUBAGENT_PROFILE,
   type DelegateTaskPatternRef,
@@ -176,6 +179,10 @@ import type {
 } from "./model/client.ts";
 import { OpenAICompatibleGatewayModelClient } from "./model/openai-compatible-gateway.ts";
 import { sumHarnessModelUsage } from "./model/usage.ts";
+import {
+  browserHostParentGuidance,
+  browserHostSubagentGuidance,
+} from "./browser-host-guidance.ts";
 import { PIECE_OUTPUT_GUIDANCE } from "./piece-output.ts";
 import { isClosedResearchTask } from "./research/closed-task.ts";
 import { collapseSupersededRunPatternDiagnostics } from "./run-pattern-diagnostic-collapse.ts";
@@ -209,6 +216,7 @@ import {
   PATTERN_COMPOSITION_GUIDANCE,
 } from "./pattern-authoring.ts";
 import { projectHarnessResearchKitForModel } from "./research/model-projection.ts";
+import { isBrowserScreenshotOutput } from "./tools/browser.ts";
 import { isEditFileToolSuccessOutput } from "./tools/edit-file.ts";
 import { isStructuredFileToolErrorOutput } from "./tools/file-errors.ts";
 import { loomRetrievalModelContextObservation } from "./tools/loom-retrieval.ts";
@@ -656,10 +664,25 @@ const summarizeToolInput = async (
       const valueSummary = typeof input.value === "string"
         ? await summarizeSensitiveText(input.value)
         : undefined;
+      const promptSummary = typeof input.prompt === "string"
+        ? await summarizeSensitiveText(input.prompt)
+        : undefined;
       return {
         type: "cf-harness.tool-input-summary",
         toolId,
         ...(typeof input.action === "string" ? { action: input.action } : {}),
+        ...(typeof input.profileField === "string"
+          ? { profileField: input.profileField }
+          : {}),
+        ...(typeof input.direction === "string"
+          ? { direction: input.direction }
+          : {}),
+        ...(typeof input.x === "number" && Number.isFinite(input.x)
+          ? { x: input.x }
+          : {}),
+        ...(typeof input.y === "number" && Number.isFinite(input.y)
+          ? { y: input.y }
+          : {}),
         ...(typeof input.kind === "string" ? { kind: input.kind } : {}),
         ...(typeof input.ref === "string" ? { ref: input.ref } : {}),
         // A handle is a selector, not a value: it names an address the model
@@ -680,6 +703,12 @@ const summarizeToolInput = async (
           : {}),
         ...(valueSummary !== undefined
           ? { valueBytes: valueSummary.bytes, valueDigest: valueSummary.digest }
+          : {}),
+        ...(promptSummary !== undefined
+          ? {
+            promptBytes: promptSummary.bytes,
+            promptDigest: promptSummary.digest,
+          }
           : {}),
       };
     }
@@ -1104,14 +1133,18 @@ const createSubagentInputSummary = async (
  * declared by the `default` profile and `search_patterns` by `pattern-author`,
  * but a run with no fabric session or no pattern index cannot back them, so
  * such a tool leaves the profile rather than being offered and failing — the
- * same gate the parent surface applies.
+ * same gate the parent surface applies. A browser child in a run with a
+ * browser host takes the host's profile.
  */
 const subagentProfileConfigForRun = (
   profile: HarnessSubagentProfile,
   availability: HarnessToolBackingAvailability,
   provider: HarnessModelProviderId,
+  hasBrowserHost: boolean,
 ): HarnessSubagentProfileConfig => {
-  const config = getHarnessSubagentProfileConfig(profile, provider);
+  const config = profile === BROWSER_SUBAGENT_PROFILE && hasBrowserHost
+    ? BROWSER_HOST_SUBAGENT_PROFILE_CONFIG
+    : getHarnessSubagentProfileConfig(profile, provider);
   const withheld = withheldToolIds(availability);
   if (
     withheld.size === 0 ||
@@ -1497,6 +1530,7 @@ const buildSubagentSystemPrompt = (
     structuredReturn: boolean;
     compositionGuidance: boolean;
     browserAccess?: HarnessBrowserAccessLease;
+    browserHost?: HarnessBrowserHost;
   } = { structuredReturn: false, compositionGuidance: true },
 ): string =>
   [
@@ -1542,6 +1576,10 @@ const buildSubagentSystemPrompt = (
           ]
           : []),
       ]
+      : []),
+    ...(profileConfig.profile === BROWSER_SUBAGENT_PROFILE &&
+        options.browserHost !== undefined
+      ? browserHostSubagentGuidance(options.browserHost)
       : []),
     ...(profileConfig.skillNames !== undefined &&
         profileConfig.skillNames.length > 0
@@ -1773,16 +1811,19 @@ const summarizeSubagentRunState = (
  * Helper for `createStructuredSubagentReturn()`, which walks a sanitized
  * structured return and the raw value it was sanitized from in tandem,
  * replacing each sealed opaque-link object whose raw counterpart is a string
- * naming an entity address with a minted handle token. A sealed position
- * whose raw counterpart is anything else — free-form prose, a whole record —
- * keeps its opaque `@link` object. Returns the updated table, the reworked
- * value, and the number of sealed string positions that became tokens, which
- * the caller subtracts from the sanitizer's `linkedStringCount`.
+ * with a minted token: an address handle when the string names an entity
+ * address, and otherwise a return referent holding the string under the
+ * child's label, which the parent can pass on and never read. A sealed
+ * position whose raw counterpart is not a string — a whole record — keeps its
+ * opaque `@link` object. Returns the updated table, the reworked value, and
+ * the number of sealed string positions that became tokens, which the caller
+ * subtracts from the sanitizer's `linkedStringCount`.
  */
-const swapSealedAddressStringsForTokens = async (
+const swapSealedStringsForTokens = async (
   table: HarnessHandleTable,
   sanitized: unknown,
   raw: unknown,
+  child: { source: string; label: IFCLabel },
 ): Promise<{ table: HarnessHandleTable; value: unknown; replaced: number }> => {
   if (isSealedOpaqueLinkObject(sanitized)) {
     if (typeof raw !== "string") {
@@ -1792,18 +1833,26 @@ const swapSealedAddressStringsForTokens = async (
       const minted = await mintAddressHandle(table, raw);
       return { table: minted.table, value: minted.token, replaced: 1 };
     } catch {
-      // Not an entity address — the position stays sealed.
-      return { table, value: sanitized, replaced: 0 };
+      // Not an entity address: the string itself is what the child found.
     }
+    const minted = await mintReferentHandle(table, {
+      kind: "return",
+      source: child.source,
+      value: raw,
+      label: child.label,
+      labelSource: "child",
+    });
+    return { table: minted.table, value: minted.token, replaced: 1 };
   }
   if (Array.isArray(sanitized) && Array.isArray(raw)) {
     let replaced = 0;
     const items: unknown[] = [];
     for (let index = 0; index < sanitized.length; index += 1) {
-      const result = await swapSealedAddressStringsForTokens(
+      const result = await swapSealedStringsForTokens(
         table,
         sanitized[index],
         raw[index],
+        child,
       );
       table = result.table;
       replaced += result.replaced;
@@ -1814,11 +1863,12 @@ const swapSealedAddressStringsForTokens = async (
   if (isObjectNotArray(sanitized) && isObjectNotArray(raw)) {
     let replaced = 0;
     const entries: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(sanitized)) {
-      const result = await swapSealedAddressStringsForTokens(
+    for (const [key, value] of Object.entries(sanitized)) {
+      const result = await swapSealedStringsForTokens(
         table,
-        child,
+        value,
         raw[key],
+        child,
       );
       table = result.table;
       replaced += result.replaced;
@@ -1912,10 +1962,15 @@ const createStructuredSubagentReturn = async (
     let linkedStringCount = sanitized.linkedStringCount;
     let updatedHandleTable: HarnessHandleTable | undefined;
     if (options.handleTable !== undefined) {
-      const swapped = await swapSealedAddressStringsForTokens(
+      const swapped = await swapSealedStringsForTokens(
         options.handleTable,
         sanitized.value,
         parsedValue,
+        {
+          source: `delegate_task:${options.childRunId}`,
+          label: options.childEngine.getRunState().cfcModelContext?.label ??
+            {},
+        },
       );
       returnValue = swapped.value;
       linkedStringCount -= swapped.replaced;
@@ -2970,6 +3025,13 @@ export class CfHarnessPromptLoop {
   readonly #maxModelTurns: number;
   readonly #finalizeOnTurnLimit: boolean;
   readonly #requirePieceOutput: boolean;
+
+  /**
+   * Whether this loop has run a browser child, however it ended. A task whose
+   * work was done on the web may end with a text answer rather than a piece:
+   * what was bought, or why nothing was.
+   */
+  #browsed = false;
   readonly #allowedToolIds: ReadonlySet<BuiltinToolId>;
   readonly #nativeModelToolIds: readonly HarnessNativeModelToolId[];
   readonly #parentToolAllowanceMode: HarnessParentToolAllowance;
@@ -3210,6 +3272,7 @@ export class CfHarnessPromptLoop {
             profile,
             this.#toolBackingAvailability(),
             this.engine.config.modelProvider,
+            this.engine.browserHost !== undefined,
           )
         ),
         ...(cfc?.absenceBehavior !== undefined
@@ -3681,10 +3744,18 @@ export class CfHarnessPromptLoop {
     const turnNotices = new Set<HarnessTranscriptMessage>();
     const resumableTranscript = () =>
       transcript.filter((message) => !turnNotices.has(message));
-    if (this.#requirePieceOutput) {
+    const browserHost = this.engine.browserHost;
+    if (this.#requirePieceOutput || browserHost !== undefined) {
       const guidance: HarnessTranscriptMessage = {
         role: "user",
-        content: PIECE_OUTPUT_GUIDANCE,
+        content: [
+          ...(this.#requirePieceOutput ? [PIECE_OUTPUT_GUIDANCE] : []),
+          ...(browserHost !== undefined && this.#allowedSubagentProfiles.has(
+              BROWSER_SUBAGENT_PROFILE,
+            )
+            ? [browserHostParentGuidance(browserHost)]
+            : []),
+        ].join("\n\n"),
       };
       // Each root task gets its own contract, immediately before its input.
       // The durable audit keeps it; a later task supplies its own copy.
@@ -3995,7 +4066,7 @@ export class CfHarnessPromptLoop {
             );
           }
           if (
-            !finalizing && this.#requirePieceOutput &&
+            !finalizing && this.#requirePieceOutput && !this.#browsed &&
             (this.engine.getRunState().assignedPieces?.length ?? 0) === 0
           ) {
             const correction: HarnessTranscriptMessage = {
@@ -5145,6 +5216,17 @@ export class CfHarnessPromptLoop {
       content: JSON.stringify(modelOutput),
       resultRef: result.resultRef,
     }, modelOutputResult.omissionRules ?? []);
+    if (toolId === "browser" && isBrowserScreenshotOutput(result.output)) {
+      return {
+        toolMessage,
+        followupMessages: [{
+          role: "user",
+          content:
+            `Screenshot taken by browser (outputId: ${result.output.outputId}). Its pixels are the coordinates a click at a point takes.`,
+          imageAttachments: [result.output.imageAttachment],
+        }],
+      };
+    }
     if (isViewImageToolSuccessOutput(result.output)) {
       // The raw path may embed an address a token resolved to, so the
       // followup goes through the same outbound swap as the tool message.
@@ -5188,6 +5270,12 @@ export class CfHarnessPromptLoop {
       ((event) => this.engine.recordPolicyEvent(event));
     const mode = this.engine.getRunState().cfcEnforcementMode;
     const cfcResult = cfcResultFromOutput(output);
+    if (toolId === "browser" && isBrowserScreenshotOutput(output)) {
+      // The attachment names where the harness keeps the pixels, which is
+      // none of the model's business; the pixels follow as an image.
+      const { imageAttachment: _attached, ...rest } = output;
+      return { output: { ...rest, imageAttached: true } };
+    }
     if (toolId === "view_image" && isViewImageToolSuccessOutput(output)) {
       return {
         output: {
@@ -5662,6 +5750,7 @@ export class CfHarnessPromptLoop {
       delegateInput.profile,
       this.#toolBackingAvailability(),
       this.engine.config.modelProvider,
+      this.engine.browserHost !== undefined,
     );
     const childModel = resolveSubagentModel(options.model, profileConfig);
     const inheritsParentModel = childModel.source === "parent";
@@ -5793,6 +5882,13 @@ export class CfHarnessPromptLoop {
         ? {
           skillScriptExecutionTarget: profileConfig.skillScriptExecutionTarget,
         }
+        : {}),
+      // A browser child drives the run's browser host when there is one,
+      // and never another child's page at the same time: the loop holds the
+      // calls after a browser delegation until it returns.
+      ...(delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
+          this.engine.browserHost !== undefined
+        ? { browserHost: this.engine.browserHost }
         : {}),
       ...(delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
           this.#browserAccess !== undefined
@@ -6049,6 +6145,10 @@ export class CfHarnessPromptLoop {
                 this.#browserAccess !== undefined
               ? { browserAccess: this.#browserAccess }
               : {}),
+            ...(delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
+                this.engine.browserHost !== undefined
+              ? { browserHost: this.engine.browserHost }
+              : {}),
           },
         ),
         prompt: buildSubagentUserPrompt(
@@ -6175,6 +6275,9 @@ export class CfHarnessPromptLoop {
           });
         }
       }
+    }
+    if (delegateInput.profile === BROWSER_SUBAGENT_PROFILE) {
+      this.#browsed = true;
     }
     const childRunState = childEngine.getRunState();
     // The child's documentation failures are the family's, and the operator

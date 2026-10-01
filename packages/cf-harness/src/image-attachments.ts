@@ -247,6 +247,52 @@ export const createHarnessImageAttachment = async (
   };
 };
 
+/**
+ * Makes an attachment of image bytes a tool produced rather than read from the
+ * workspace — a browser host's screenshot, say. The bytes are written into
+ * `snapshotDir` under their digest, and the attachment materializes from
+ * there for the rest of the run.
+ *
+ * @throws Error when the bytes are empty, larger than an attachment may be,
+ * or not an image of the declared type.
+ */
+export const createHarnessImageAttachmentFromBytes = async (
+  options: {
+    snapshotDir: string;
+    bytes: Uint8Array;
+    mediaType: HarnessImageMediaType;
+  },
+): Promise<HarnessImageAttachment> => {
+  const { bytes, mediaType, snapshotDir } = options;
+  if (bytes.byteLength === 0) {
+    throw new Error("the image is empty");
+  }
+  if (bytes.byteLength > MAX_IMAGE_ATTACHMENT_BYTES) {
+    throw new Error(
+      `the image is too large (${bytes.byteLength} bytes, max ${MAX_IMAGE_ATTACHMENT_BYTES})`,
+    );
+  }
+  // No path to fall back on: only the bytes' own signature decides.
+  if (detectImageMediaType(bytes, "") !== mediaType) {
+    throw new Error(`the image is not ${mediaType}`);
+  }
+  const digest = await sha256Digest(bytes);
+  const snapshotPath = await writeImageAttachmentSnapshot(
+    snapshotDir,
+    bytes,
+    digest,
+    mediaType,
+  );
+  return {
+    type: HARNESS_IMAGE_ATTACHMENT_TYPE,
+    hostPath: snapshotPath,
+    mediaType,
+    bytes: bytes.byteLength,
+    digest,
+    snapshotPath,
+  };
+};
+
 export const materializeImageAttachmentContentPart = async (
   attachment: HarnessImageAttachment,
 ): Promise<OpenAIChatMessageContentPart> => {

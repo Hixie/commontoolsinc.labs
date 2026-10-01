@@ -80,6 +80,32 @@ const secretCell = (
 
 describe("console/steps", () => {
   describe("consoleRunSteps()", () => {
+    it("returns the reasoning behind calls on the first call's step, and behind prose on the prose", () => {
+      const steps = consoleRunSteps([
+        { role: "user", content: "do it" },
+        {
+          role: "assistant",
+          content: "",
+          reasoning: "Read both, then answer.",
+          toolCalls: ["c1", "c2"].map((id) => ({
+            id,
+            type: "function" as const,
+            function: { name: "read_file", arguments: '{"path":"a"}' },
+          })),
+        },
+        result("c1", "read_file", { content: "a" }),
+        result("c2", "read_file", { content: "b" }),
+        { role: "assistant", content: "done", reasoning: "Both say done." },
+      ]);
+
+      expect(steps.map((step) => [step.kind, step.reasoning])).toEqual([
+        ["user", undefined],
+        ["tool", "Read both, then answer."],
+        ["tool", undefined],
+        ["assistant", "Both say done."],
+      ]);
+    });
+
     it("folds a tool call and its result into one step", () => {
       const steps = consoleRunSteps([
         { role: "user", content: "do it" },

@@ -215,9 +215,11 @@ schema for `submit_result` — and a tool the run cannot back is absent from the
 surface rather than present and failing, so an explicit allowlist naming it does
 not conjure it. `run_pattern` additionally requires the three `--fabric-*`
 session flags. `browser` exists only as a built-in used by the authorized
-browser child profile and cannot be selected as a parent CLI tool; it drives the
-host `agent-browser` CLI through a typed action vocabulary, with the Browser
-Access CDP endpoint attached by the harness rather than written by the model.
+browser child profile and cannot be selected as a parent CLI tool. It sends its
+typed action vocabulary to a browser host attached to the run when there is one,
+and otherwise drives the host `agent-browser` CLI, with the Browser Access CDP
+endpoint attached by the harness rather than written by the model. In neither
+case does an input name a session, an endpoint, or a jar.
 
 `submit_result` is how a run returns its structured result without a sandbox
 write. It takes the value as its input, validates it with the structured-result
