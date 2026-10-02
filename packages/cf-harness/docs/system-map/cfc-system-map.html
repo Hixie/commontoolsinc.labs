@@ -1541,8 +1541,8 @@
       },
       g_page: {
         t: "Page release",
-        status: "intended",
-        short: "the task is the only limit",
+        status: "partial",
+        short: "sends released by label; commits ungated",
         boundary: "browser host → page",
       },
       g_ingest: {
@@ -1947,7 +1947,7 @@
         threats: ["t2", "t21"],
         close: [
           "“Labels' job … not yet wired”: the browser tool has no label input, and its origin allowlist is per run rather than per handle.",
-          "Release rules over a value's CFC label decide whether a detail may go to a page or a click may commit the owner; until they exist the agent's task is the only limit (see the page release gate).",
+          "Release decisions over a payload's CFC label decide which origins an action may send to, on a lease as on a host; whether a click may commit the owner is decided by nothing but the agent's task (see the page release gate).",
         ],
       },
       child_web: {
@@ -1964,7 +1964,7 @@
           `<p>A trusted component outside the harness, such as the Weaver: it owns a web engine, shows the page to the owner, and executes each <code>browser</code> action in the one session it holds for the turn. A task declares one with <code>browserHost</code> on <code>POST /api/task</code>, which a console accepts only when its operator launched it with <code>--allow-browser-host</code> and answers 403 otherwise; a turn with a host runs under its session's policy with browser children added, and the session's other turns under its policy as it is. The console returns a per-turn token, streams the turn's operations to its holder over <code>POST /api/browser-host/stream</code> (SSE), and takes each result on <code>POST /api/browser-host/result</code>. While a host is attached, the browser child's tool goes to it instead of a Browser Access CDP lease, and the child holds that tool alone. Before any hand-off the host is a fresh browser with no sign-in, so what it shows is the public web, which may carry instructions: each result enters the model's context under the unscreened prompt-injection caveat, sourced to the page's origin, and what the run derives from it carries the caveat on. Once the owner finishes a hand-off a page may show their account, which no label describes, so a run under <code>enforce-explicit</code> or <code>enforce-strict</code> learns only how the hand-off ended and where, and refuses every action but another hand-off.</p><p>The host refuses to load this device, its network, or an address written as an IP literal, whatever starts the load. It leaves a value it was sent out of later snapshots, and paints over every field a value went into before it takes a screenshot. It decides which fields only the owner may fill, such as a password or a one-time code.</p><p>Nothing asks the owner to approve each action. The owner watches, and takes the page only through a hand-off for a fixed reason (sign-in, one-time code, challenge, or choice), which the host shows in fixed words, never words an agent wrote, and which ends when the owner finishes or declines it. Once the owner finishes one, the page may hold their sign-in, so the session can only be read and opened on the origin they finished on: changing the page, going back or forward, and reloading are refused.</p>`,
         threats: ["t21"],
         close: [
-          "Release rules over a value's CFC label, stated by the harness and enforced by the host, are the intended gate on what goes to a page and what a click commits the owner to (the page release gate).",
+          "The host enforces the harness's release decisions on what goes to a page and where the session may navigate; what a click commits the owner to has no gate yet (the page release gate).",
         ],
       },
       docker: {
@@ -2180,11 +2180,11 @@
       },
       g_page: {
         body:
-          `<p>What reaches a page, and what a click commits the owner to. The host enters text the agent composed or a string a return referent resolved to, and clicks where the agent says. Nothing asks the owner to approve each action, because a question at every step teaches a person to agree without reading; the owner watches, and takes the page through a hand-off.</p><p>The intended gate is release rules over the value's CFC label, which the harness states and the host enforces: whether a detail may go to this page, and whether a click may commit the owner to a purchase, a payment or an account.</p>`,
+          `<p>What reaches a page, and what a click commits the owner to. Nothing asks the owner to approve each action, because a question at every step teaches a person to agree without reading; the owner watches, and takes the page through a hand-off.</p><p>Every action that sends something a page can observe passes a release decision over its payload's CFC label: the run's model context, the labels of the handles it resolves, and everything already sent into the session. Content a browser observed on the public web may go anywhere on it, what an origin showed the owner goes back to that origin only, a handle's value goes where the owner set before the run, and anything else goes nowhere. Under enforcement a send outside the decision's origins is refused before it leaves. The host receives the decision with the operation and refuses any top-level navigation outside it, redirects included; on a Browser Access lease the harness holds the browser's navigations itself over the DevTools protocol.</p>`,
         why:
-          "The owner's task and the agents' guidance are the only limit: the models are told to enter the owner's details or commit them only where the task says to, which is guidance, not a gate.",
+          "Where an action's payload may go is decided by its label, not by the agent's task. What a click commits the owner to (a purchase, a payment, an account) is still limited only by the task and the agents' guidance.",
         close: [
-          "Release rules over a value's CFC label for the browser's value-entering and committing actions, stated by the harness and enforced by the host.",
+          "A gate on commit points: requests that change the owner's state on a site, admitted only where the owner declared the change before the task.",
         ],
         threats: ["t21"],
       },

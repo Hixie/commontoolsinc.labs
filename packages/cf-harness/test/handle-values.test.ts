@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 
 import { expect } from "@std/expect";
+import { cfcAtom } from "@commonfabric/api/cfc";
 import { createSession, Identity } from "@commonfabric/identity";
 import { PiecesController } from "@commonfabric/piece/ops";
 import { Runtime } from "@commonfabric/runner";
@@ -152,7 +153,11 @@ describe("handle-values", () => {
         ref,
         "browser valueHandle",
       );
-      expect(resolution).toEqual({ value: "Ada Lovelace", source: "space" });
+      expect(resolution).toEqual({
+        value: "Ada Lovelace",
+        source: "space",
+        label: { confidentiality: [cfcAtom.space(pieces.getSpace())] },
+      });
     });
 
     it("returns the string behind an unswapped handle token", async () => {
@@ -201,6 +206,7 @@ describe("handle-values", () => {
       expect(held).toEqual({
         value: "https://shop.example/item/7",
         source: "return",
+        label: {},
       });
     });
 
@@ -229,6 +235,7 @@ describe("handle-values", () => {
       expect(await resolve(["did:key:zOwner"])).toEqual({
         value: "the owner's address",
         source: "return",
+        label: { confidentiality: ["did:key:zOwner"] },
       });
     });
 

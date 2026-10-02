@@ -706,6 +706,16 @@ leaving it waiting. When the host's stream ends, every outstanding and later
 operation settles as `session-ended`, and so does every operation when the turn
 ends. The operation and result shapes are `src/contracts/browser-host.ts`.
 
+An operation that sends something to the page carries the release decision the
+harness made for it, `decision`: its position among the operations of the turn,
+its sink, and the origins what it sends may reach. The host refuses an operation
+whose decision `verifyBrowserReleaseDecision()` does not accept, delivers input
+only to a frame on a covered origin, and answers `navigation-refused` for a
+top-level load outside the latest decision's coverage, whatever started it. The
+cf-harness README's section on
+[release decisions](../README.md#release-decisions-for-browser-operations) says
+how the harness decides.
+
 The `/api/` routes answer only the console's own page and clients that are not
 browsers: a request a browser marks as a navigation, or as made by another
 site's page (`Sec-Fetch-Mode: navigate`, or a `Sec-Fetch-Site` other than

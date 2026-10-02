@@ -15,12 +15,16 @@ import {
   BROWSER_HOST_KEYS,
   BROWSER_HOST_LOAD_STATES,
   BROWSER_HOST_SCROLL_DIRECTIONS,
+  BROWSER_RELEASE_PUBLIC_WEB,
   type BrowserHostOperation,
+  browserHostOperationSends,
   type BrowserHostRefusal,
   type BrowserHostResult,
   type BrowserHostValue,
+  type BrowserReleaseCovers,
   type HarnessBrowserHost,
   isBrowserHostResult,
+  isLocalHostname,
 } from "../contracts/browser-host.ts";
 import { CFC_CONCEPT_KIND, cfcAtom } from "@commonfabric/api/cfc";
 import {
@@ -29,7 +33,9 @@ import {
 } from "@commonfabric/runner/cfc";
 import { isObjectNotArray } from "@commonfabric/utils/types";
 
+import { decideBrowserRelease } from "../browser-release.ts";
 import { REFERENT_HANDLE_TOKEN_PREFIX } from "../contracts/handle-table.ts";
+import type { HarnessReleaseDecision } from "../contracts/policy-refusal.ts";
 import { createHarnessImageAttachmentFromBase64 } from "../image-attachments.ts";
 import type {
   BrowserToolAction,
@@ -45,6 +51,7 @@ const MAX_HOST_OUTPUT_CHARS = 20_000;
 /** The error code each host refusal is reported under. */
 const REFUSAL_CODES: Record<BrowserHostRefusal, BrowserToolErrorCode> = {
   "stale-ref": "stale_ref",
+  "navigation-refused": "navigation_refused",
   "owner-only-field": "owner_only_field",
   "session-ended": "session_ended",
   "invalid": "invalid_input",
@@ -70,19 +77,30 @@ const ACTING_ACTIONS: ReadonlySet<BrowserToolAction> = new Set([
 /**
  * What the harness keeps about each host's session: the values it sent the
  * host, by value, with the handle each was sent as, so the host's answers
- * carry the handle where they would carry the value; and, once the owner
- * finished a hand-off, the origin they finished on, which confines the
- * session from then on.
+ * carry the handle where they would carry the value; once the owner finished
+ * a hand-off, the origin they finished on, which confines the session from
+ * then on; how many operations it sent the host; where everything it sent
+ * into the session may go; and the origin of the page the host last reported.
  */
 const sessions = new WeakMap<
   HarnessBrowserHost,
-  { sent: Map<string, string>; handedOffAt?: string }
+  {
+    sent: Map<string, string>;
+    handedOffAt?: string;
+    sequence: number;
+    covers: BrowserReleaseCovers;
+    pageOrigin?: string;
+  }
 >();
 
 const sessionOf = (host: HarnessBrowserHost) => {
   let session = sessions.get(host);
   if (session === undefined) {
-    session = { sent: new Map() };
+    session = {
+      sent: new Map(),
+      sequence: 0,
+      covers: BROWSER_RELEASE_PUBLIC_WEB,
+    };
     sessions.set(host, session);
   }
   return session;
@@ -116,27 +134,6 @@ const withHandles = (host: HarnessBrowserHost, text: string): string => {
   return text.replace(pattern, (value) => sent.get(value) ?? value);
 };
 
-/** The name suffixes that resolve on this device or its network. */
-const LOCAL_NAME_SUFFIXES = [
-  ".localhost",
-  ".local",
-  ".internal",
-  ".home.arpa",
-  ".ts.net",
-];
-
-/**
- * Whether `hostname`, a parsed URL's, names this device, its network, or an
- * address written as an IP literal. A name is judged by its spelling; the
- * host refuses what it resolves to.
- */
-const isLocalHost = (hostname: string): boolean => {
-  const name = hostname.toLowerCase().replace(/\.$/, "");
-  return name === "localhost" || !name.includes(".") ||
-    name.startsWith("[") || /^[\d.]+$/.test(name) ||
-    LOCAL_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix));
-};
-
 /**
  * Why the page may not go to `url`, or `undefined` when it may: an http(s)
  * address on the open web, and after a finished hand-off, on the origin the
@@ -150,7 +147,7 @@ const destinationError = (
   if (origin === undefined) {
     return "open only allows http(s) URLs";
   }
-  if (isLocalHost(new URL(url).hostname)) {
+  if (isLocalHostname(new URL(url).hostname)) {
     return "open only reaches the open web: not this device, its network, or an IP address";
   }
   const handedOffAt = sessionOf(host).handedOffAt;
@@ -353,7 +350,7 @@ const planHostOperation = (
         return { error: "wait urlPattern requires a non-file pattern" };
       }
       const named = patternHost(urlPattern);
-      return named !== undefined && isLocalHost(named)
+      return named !== undefined && isLocalHostname(named)
         ? {
           error:
             "wait urlPattern names the open web only: not this device, its network, or an IP address",
@@ -494,6 +491,29 @@ const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
+ * The origin that receives what `operation` sends, when the harness knows it:
+ * an address's own origin for `open`, the page's for an operation on the page,
+ * and none for `back` and `forward`, which go wherever the session's history
+ * says.
+ */
+const destinationOf = (
+  operation: BrowserHostOperation,
+  pageOrigin: string | undefined,
+): string | undefined => {
+  switch (operation.action) {
+    case "open":
+      return httpOriginOf(
+        typeof operation.url === "string" ? operation.url : operation.url.text,
+      );
+    case "back":
+    case "forward":
+      return undefined;
+    default:
+      return pageOrigin;
+  }
+};
+
+/**
  * Executes one validated `browser` call on `host` and returns the tool's
  * output. `action` is the call's action, already established by the tool's
  * field checks.
@@ -508,10 +528,17 @@ export const invokeBrowserOnHost = async (
   action: BrowserToolAction,
   outputId: string,
 ): Promise<BrowserToolOutput> => {
+  let releaseDecision: HarnessReleaseDecision | undefined;
   const errorOutput = (
     code: BrowserToolErrorCode,
     message: string,
-  ): BrowserToolOutput => ({ outputId, status: "error", code, message });
+  ): BrowserToolOutput => ({
+    outputId,
+    status: "error",
+    code,
+    message,
+    ...(releaseDecision !== undefined ? { releaseDecision } : {}),
+  });
   if (input.timeoutMs !== undefined) {
     return errorOutput(
       "invalid_input",
@@ -537,6 +564,7 @@ export const invokeBrowserOnHost = async (
     return errorOutput("invalid_input", planned.error);
   }
   let operation: BrowserHostOperation;
+  let handleLabel: IFCLabel | undefined;
   if (planned.plan.binding === undefined) {
     operation = planned.plan.operation;
   } else {
@@ -561,7 +589,30 @@ export const invokeBrowserOnHost = async (
       sessionOf(host).sent.set(resolution.value, binding.handle.trim());
     }
     operation = completed;
+    handleLabel = resolution.label;
   }
+  const session = sessionOf(host);
+  if (browserHostOperationSends(operation)) {
+    const outcome = decideBrowserRelease(session, {
+      action: operation.action,
+      parts: [{ label: context.toolInputCfcLabel }, { label: handleLabel }],
+      destination: destinationOf(operation, session.pageOrigin),
+      mode: context.cfcEnforcementMode,
+    });
+    releaseDecision = outcome.record;
+    if (outcome.refused !== undefined) {
+      return errorOutput("release_refused", outcome.refused);
+    }
+    operation = {
+      ...operation,
+      decision: {
+        sequence: session.sequence + 1,
+        sink: outcome.sink,
+        covers: outcome.covers,
+      },
+    };
+  }
+  session.sequence += 1;
   let result: BrowserHostResult;
   try {
     const answer: unknown = await host.perform(operation, context.signal);
@@ -572,6 +623,9 @@ export const invokeBrowserOnHost = async (
       );
     }
     result = answer;
+    if (result.page !== undefined) {
+      session.pageOrigin = httpOriginOf(result.page.url);
+    }
   } catch (error) {
     context.signal?.throwIfAborted();
     return errorOutput(
@@ -647,5 +701,6 @@ export const invokeBrowserOnHost = async (
     },
     ...(result.handoff !== undefined ? { handoff: result.handoff } : {}),
     ...(imageAttachment !== undefined ? { imageAttachment } : {}),
+    ...(releaseDecision !== undefined ? { releaseDecision } : {}),
   };
 };

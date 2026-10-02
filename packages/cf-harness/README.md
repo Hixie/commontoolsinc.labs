@@ -2700,11 +2700,14 @@ with no allowlist cannot materialize a handle at all.
 That destination check is a policy control, not a race-free guarantee, and the
 distinction matters. The origin is read and then the value is typed; a page that
 navigates in between — a redirect, or another child driving the same leased
-browser — is not caught. The allowlist is also per-run rather than per-handle,
-so any allowlisted origin can receive any handle the run holds: allowing a mail
-origin for a mail credential does not stop a banking credential going there too.
-Binding permitted destinations to the handle itself, at mint time, is the shape
-that closes both, and it is not what this does.
+browser — receives the value. Once the value is in the session, under
+enforcement, the [navigation guard](#release-decisions-for-browser-operations)
+refuses any later load of a page on an origin outside the allowlist. The
+allowlist is also per-run rather than per-handle, so any allowlisted origin can
+receive any handle the run holds: allowing a mail origin for a mail credential
+does not stop a banking credential going there too. Binding permitted
+destinations to the handle itself, at mint time, is the shape that closes both,
+and it is not what this does.
 
 A materialized value can come back. The page holds what was typed into it, so a
 later snapshot, a read of the filled field, or a skill script driving the same
@@ -2796,9 +2799,11 @@ which no label describes, so its strings stay sealed.
 
 Nothing asks the owner whether a value may go to a page, or whether a click may
 commit them to something: a question at every step teaches a person to agree
-without reading. Until release rules over a value's CFC label decide it, the
-owner's task and the guidance below are the only limit on what an agent enters
-or clicks.
+without reading. Where what an agent sends may go is decided by
+[release decisions](#release-decisions-for-browser-operations) over its CFC
+label. Whether a click may commit the owner to something (a purchase, a new
+account) is not yet decided by anything but the owner's task and the guidance
+below.
 
 What a host shows is labeled by where the session stands. Before any hand-off it
 is a fresh browser with no sign-in, so what it shows is the public web: text and
@@ -2829,6 +2834,55 @@ parent is told how to split web work between browser children and pass their
 findings on as handles, and a browser child what the owner sees and what it may
 do without asking anyone. A turn whose browser child finished may end with a
 Markdown answer rather than a named piece.
+
+### Release decisions for browser operations
+
+Every browser operation that sends something a page can observe — `open`,
+`back`, `forward`, `reload`, `scroll`, `click`, `check`, `press`, `fill`,
+`type`, `select`, and `get text` of a selector rather than of a ref — passes a
+release decision first (`src/browser-release.ts`). The decision is about the
+operation's payload: everything the run's model context holds (the agent chose
+the address, the value, and the target with all of it in view), the label of
+each handle the operation resolves, and everything already sent into the
+session, which every later navigation of the session takes along. It names the
+origins the payload may reach, and a payload may reach an origin only when every
+clause of its confidentiality label is released to that origin:
+
+- a clause of the public web, an `Origin` atom or a prompt caveat whose source
+  is a page a browser observed, goes to every origin of the open web;
+- an owner-view clause, `User(owner) ∨ Service(did:web:<host>)`, goes back to
+  the origin it names;
+- the label of a handle whose destinations were set before the run goes to those
+  destinations, for that handle's value alone: on a Browser Access lease, the
+  origins `--handle-value-origin` names;
+- every other clause, such as a value from the owner's space, goes nowhere.
+
+Under `enforce-explicit` or `enforce-strict`, an operation whose destination the
+decision does not cover is refused before anything is sent, with the
+`release_refused` error naming the sink (`browser.open`, for instance) and the
+destination. The destination of `open` is its address's origin, and that of an
+operation on the page is the page's origin. A run under `observe` sends anyway
+and the decision is recorded as `cfc_release_observed`; either way the run's
+policy trace holds it as a decision whose `release` names the sink and the
+audience.
+
+Every top-level navigation, whatever starts it — a link, a redirect, page script
+— sends what the session holds to its destination, so the decision also bounds
+where the session may go from then on. A browser host receives the decision with
+the operation (`BrowserReleaseDecision` in `src/contracts/browser-host.ts`: the
+operation's sequence number in the session, its sink, and the origins it
+covers), verifies it with `verifyBrowserReleaseDecision()`, delivers input only
+to a frame on a covered origin, and refuses any top-level load outside coverage
+with `navigation-refused`. On a Browser Access lease the harness plays that part
+itself: once the session holds something that may not go everywhere on the open
+web, a navigation guard (`src/tools/browser-access-guard.ts`) attaches to the
+leased Chrome over the DevTools protocol, holds every top-level document
+request, and fails each one outside coverage; the action that caused it returns
+`navigation_refused`. A guard that cannot attach refuses the action. The guard
+is detached when the browser child that attached it finishes, and the next
+browser child attaches its own.
+
+### Other subagent profiles
 
 The `web_fetch` profile is the preferred first-pass path for web page
 inspection. It gives the child only the `web_fetch` tool: no shell, no browser,

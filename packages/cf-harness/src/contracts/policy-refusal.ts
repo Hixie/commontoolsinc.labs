@@ -138,6 +138,7 @@ export type HarnessReleaseDecisionReasonCode =
   | "cfc_release_allowed"
   | "cfc_release_observed"
   | "cfc_release_withheld"
+  | "cfc_release_refused"
   | "cfc_commit_refused";
 
 /**
@@ -149,6 +150,7 @@ export const HARNESS_RELEASE_DECISION_REASON_CODES:
     "cfc_release_allowed",
     "cfc_release_observed",
     "cfc_release_withheld",
+    "cfc_release_refused",
     "cfc_commit_refused",
   ];
 
@@ -177,6 +179,12 @@ export interface HarnessReleaseDecision {
    * is a fit this record does not state a ceiling for.
    */
   ceiling?: readonly string[];
+
+  /**
+   * The origin the sink would have sent to, where the sink sends to one: a
+   * browser operation's destination.
+   */
+  audience?: string;
 
   /** What the fit refused. Absent on `cfc_release_allowed`, which refused nothing. */
   refusal?: HarnessPolicyRefusal;

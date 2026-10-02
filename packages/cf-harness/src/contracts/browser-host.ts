@@ -110,8 +110,167 @@ export const BROWSER_HOST_HANDOFF_REASONS = [
 export type BrowserHostHandoffReason =
   typeof BROWSER_HOST_HANDOFF_REASONS[number];
 
-/** One operation the host executes in the session. */
+/** The name of each origin of the open web every page may reach. */
+export const BROWSER_RELEASE_PUBLIC_WEB = "public-web";
+
+/**
+ * The origins a release decision lets a payload reach: every origin of the
+ * open web (any http(s) origin that names neither this device, its network,
+ * nor an IP literal), or exactly the origins listed, each written as
+ * `scheme://host[:port]`.
+ */
+export type BrowserReleaseCovers =
+  | typeof BROWSER_RELEASE_PUBLIC_WEB
+  | readonly string[];
+
+/**
+ * What the harness decided about an operation that sends something to a
+ * page: where what it sends may go.
+ *
+ * The host executes the operation only when the decision is the one issued
+ * for it, which {@link verifyBrowserReleaseDecision} decides; the channel
+ * binds the decision to the session. It delivers input only to a frame whose
+ * committed origin `covers` names, and from then on loads no top-level
+ * document, whatever starts the navigation, whose origin `covers` does not
+ * name, answering `navigation-refused` instead: the session holds what was
+ * sent into it, and every navigation sends that on to its destination.
+ */
+export interface BrowserReleaseDecision {
+  /**
+   * The operation's position among every operation sent in this session,
+   * counting from 1.
+   */
+  sequence: number;
+
+  /** The sink the decision is for: `browser.` and the operation's action. */
+  sink: string;
+
+  /** Where the payload, and everything sent into the session, may go. */
+  covers: BrowserReleaseCovers;
+}
+
+/** The name suffixes that resolve on this device or its network. */
+const LOCAL_NAME_SUFFIXES = [
+  ".localhost",
+  ".local",
+  ".internal",
+  ".home.arpa",
+  ".ts.net",
+];
+
+/**
+ * Whether `hostname`, a parsed URL's, names this device, its network, or an
+ * address written as an IP literal. A name is judged by its spelling; the
+ * host refuses what it resolves to.
+ */
+export const isLocalHostname = (hostname: string): boolean => {
+  const name = hostname.toLowerCase().replace(/\.$/, "");
+  return name === "localhost" || !name.includes(".") ||
+    name.startsWith("[") || /^[\d.]+$/.test(name) ||
+    LOCAL_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix));
+};
+
+/**
+ * Whether `covers` lets a payload reach `origin`, an origin as
+ * `URL.prototype.origin` spells it.
+ */
+export const browserReleaseCovers = (
+  covers: BrowserReleaseCovers,
+  origin: string,
+): boolean => {
+  if (covers !== BROWSER_RELEASE_PUBLIC_WEB) {
+    return covers.includes(origin);
+  }
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  return (url.protocol === "http:" || url.protocol === "https:") &&
+    url.origin === origin && !isLocalHostname(url.hostname);
+};
+
+/**
+ * The actions whose operation always sends something a page can observe: an
+ * address, a value, a gesture, or a scroll.
+ */
+const SENDING_ACTIONS: ReadonlySet<string> = new Set([
+  "open",
+  "back",
+  "forward",
+  "reload",
+  "scroll",
+  "click",
+  "check",
+  "press",
+  "fill",
+  "type",
+  "select",
+]);
+
+/**
+ * Whether an operation of `action` sends something a page can observe: every
+ * operation of a sending action, and a read of the text a selector `target`
+ * picks, which the model wrote and the page could watch being resolved. A
+ * ref from a snapshot is the host's own, and sends nothing.
+ */
+export const browserActionSends = (
+  action: string,
+  target?: string,
+): boolean =>
+  SENDING_ACTIONS.has(action) ||
+  (action === "get" && target !== undefined && !target.startsWith("@"));
+
+/** Whether `operation` sends something a page can observe. */
+export const browserHostOperationSends = (
+  operation: BrowserHostOperationBody,
+): boolean =>
+  browserActionSends(
+    operation.action,
+    operation.action === "get" && operation.kind === "text"
+      ? operation.target
+      : undefined,
+  );
+
+/**
+ * Why a host must refuse `operation`, the `sequence`-th it was sent in its
+ * session, or `undefined` when its decision is the one issued for it: an
+ * operation that sends something carries a decision for its own sink and
+ * position, and one that sends nothing carries none.
+ */
+export const verifyBrowserReleaseDecision = (
+  operation: BrowserHostOperation,
+  sequence: number,
+): string | undefined => {
+  const decision = operation.decision;
+  if (!browserHostOperationSends(operation)) {
+    return decision === undefined
+      ? undefined
+      : `${operation.action} sends nothing, so it carries no release decision`;
+  }
+  if (decision === undefined) {
+    return `${operation.action} sends to the page, so it needs a release decision`;
+  }
+  if (decision.sink !== `browser.${operation.action}`) {
+    return `the release decision is for ${decision.sink}, not browser.${operation.action}`;
+  }
+  if (decision.sequence !== sequence) {
+    return `the release decision is for operation ${decision.sequence}, not operation ${sequence}`;
+  }
+  return undefined;
+};
+
+/**
+ * One operation the host executes in the session, with the release decision
+ * for it when it sends something to the page.
+ */
 export type BrowserHostOperation =
+  & BrowserHostOperationBody
+  & { decision?: BrowserReleaseDecision };
+
+/** What one operation asks the host to do. */
+export type BrowserHostOperationBody =
   | {
     action: "open";
 
@@ -168,6 +327,9 @@ export interface BrowserHostPage {
  *
  * - `stale-ref`: the ref names an element of a document the page has since
  *   replaced; take a new snapshot.
+ * - `navigation-refused`: the page was to load a top-level document on an
+ *   origin the latest release decision does not cover; the message names
+ *   that origin, and the page stays where it was.
  * - `owner-only-field`: the target is a password or one-time-code field, or a
  *   challenge; only the owner may enter a value there, through a hand-off.
  * - `session-ended`: the session is gone — the owner closed it, or the host
@@ -177,6 +339,7 @@ export interface BrowserHostPage {
  */
 export const BROWSER_HOST_REFUSALS = [
   "stale-ref",
+  "navigation-refused",
   "owner-only-field",
   "session-ended",
   "invalid",

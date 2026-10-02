@@ -104,6 +104,9 @@ export const CFC_ATOM_TYPE = {
   PromptSlotBound: "https://commonfabric.org/cfc/atom/PromptSlotBound",
   PromptSlotInfluence: "https://commonfabric.org/cfc/atom/PromptSlotInfluence",
   Resource: "https://commonfabric.org/cfc/atom/Resource",
+  // Service principal (confidentiality; spec §15.2): readable by the service
+  // the DID names. A `did:web` subject names a web origin's host and port.
+  Service: "https://commonfabric.org/cfc/atom/Service",
   // Space principal (confidentiality; spec §15.2): access is typically
   // derived via exchange rules from `HasRole` integrity, not satisfied
   // directly.
@@ -269,6 +272,11 @@ export type CfcExternalIngestAtom =
 
 export type CfcUserAtom = CfcAtomObject & {
   readonly type: typeof CFC_ATOM_TYPE.User;
+  readonly subject: string;
+};
+
+export type CfcServiceAtom = CfcAtomObject & {
+  readonly type: typeof CFC_ATOM_TYPE.Service;
   readonly subject: string;
 };
 
@@ -715,6 +723,10 @@ export const cfcAtom = {
 
   user(subject: string): CfcUserAtom {
     return { type: CFC_ATOM_TYPE.User, subject };
+  },
+
+  service(subject: string): CfcServiceAtom {
+    return { type: CFC_ATOM_TYPE.Service, subject };
   },
 
   policyRef(

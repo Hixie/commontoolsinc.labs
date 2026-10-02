@@ -9,6 +9,7 @@
  */
 
 import type { JSONSchema } from "@commonfabric/api";
+import type { IFCLabel } from "@commonfabric/runner/cfc";
 import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import {
@@ -16,12 +17,25 @@ import {
   redactCdpEndpoint,
   validateBrowserAccessLeaseFreshness,
 } from "../contracts/browser-access.ts";
+import type { HarnessReleaseDecision } from "../contracts/policy-refusal.ts";
 import type { HarnessToolDescriptor } from "../contracts/tool-descriptor.ts";
 import {
   BROWSER_HOST_HANDOFF_REASONS,
   BROWSER_HOST_KEYS,
   BROWSER_HOST_SCROLL_DIRECTIONS,
+  BROWSER_RELEASE_PUBLIC_WEB,
+  browserActionSends,
 } from "../contracts/browser-host.ts";
+import {
+  browserReleaseCoverage,
+  decideBrowserRelease,
+  intersectBrowserReleaseCovers,
+} from "../browser-release.ts";
+import {
+  browserAccessGuardOf,
+  type BrowserAccessNavigationGuard,
+  browserAccessReleaseOf,
+} from "./browser-access-guard.ts";
 import {
   HARNESS_IMAGE_ATTACHMENT_TYPE,
   type HarnessImageAttachment,
@@ -132,6 +146,12 @@ export interface BrowserToolSuccessOutput {
 
   /** A screenshot, attached to the model's next turn. */
   imageAttachment?: HarnessImageAttachment;
+
+  /**
+   * What the release boundary decided about what the action sent, when the
+   * run's policy trace records it. The model is not shown it.
+   */
+  releaseDecision?: HarnessReleaseDecision;
 }
 
 export type BrowserToolErrorCode =
@@ -142,7 +162,9 @@ export type BrowserToolErrorCode =
   | "command_failed"
   | "stale_ref"
   | "owner_only_field"
-  | "session_ended";
+  | "session_ended"
+  | "release_refused"
+  | "navigation_refused";
 
 /** Every {@link BrowserToolErrorCode}, for the output schema. */
 export const BROWSER_TOOL_ERROR_CODES = [
@@ -154,6 +176,8 @@ export const BROWSER_TOOL_ERROR_CODES = [
   "stale_ref",
   "owner_only_field",
   "session_ended",
+  "release_refused",
+  "navigation_refused",
 ] as const satisfies readonly BrowserToolErrorCode[];
 
 export interface BrowserToolErrorOutput {
@@ -162,6 +186,12 @@ export interface BrowserToolErrorOutput {
   code: BrowserToolErrorCode;
   message: string;
   exitCode?: number;
+
+  /**
+   * What the release boundary decided about what the action would have sent,
+   * when the run's policy trace records it. The model is not shown it.
+   */
+  releaseDecision?: HarnessReleaseDecision;
 }
 
 export type BrowserToolOutput =
@@ -700,8 +730,14 @@ const readPageOrigin = async (
 };
 
 type BrowserHandleResolution =
-  | { input: BrowserToolInput; error?: undefined }
-  | { input?: undefined; error: string };
+  | {
+    input: BrowserToolInput;
+
+    /** The label of each value a handle resolved to. */
+    labels: readonly IFCLabel[];
+    error?: undefined;
+  }
+  | { input?: undefined; labels?: undefined; error: string };
 
 /**
  * Stands in for a bound handle's value while the action's shape is checked.
@@ -746,7 +782,7 @@ const resolveBrowserHandles = async (
 ): Promise<BrowserHandleResolution> => {
   const { valueHandle, urlHandle, ...rest } = input;
   if (valueHandle === undefined && urlHandle === undefined) {
-    return { input };
+    return { input, labels: [] };
   }
   const resolvedInput: BrowserToolInput = { ...rest };
   const bindings: readonly (readonly [
@@ -761,14 +797,16 @@ const resolveBrowserHandles = async (
       ? [["browser urlHandle", urlHandle, "url"] as const]
       : []),
   ];
+  const labels: IFCLabel[] = [];
   for (const [label, handle, field] of bindings) {
     const resolution = await resolveHandleValue(context, handle, label);
     if (resolution.error !== undefined) {
       return { error: resolution.error };
     }
     resolvedInput[field] = resolution.value;
+    labels.push(resolution.label);
   }
-  return { input: resolvedInput };
+  return { input: resolvedInput, labels };
 };
 
 /**
@@ -794,6 +832,7 @@ export const browserTool: HarnessToolDefinition<
     run.browserHost ? hostBrowserToolDescriptor : browserToolDescriptor,
   async invoke(context, input) {
     const outputId = context.nextOutputId("browser");
+    let releaseDecision: HarnessReleaseDecision | undefined;
     const errorOutput = (
       code: BrowserToolErrorCode,
       message: string,
@@ -804,6 +843,7 @@ export const browserTool: HarnessToolDefinition<
       code,
       message,
       ...(exitCode !== undefined ? { exitCode } : {}),
+      ...(releaseDecision !== undefined ? { releaseDecision } : {}),
     });
     const fields = checkBrowserInputFields(input);
     if (fields.error !== undefined) {
@@ -872,32 +912,47 @@ export const browserTool: HarnessToolDefinition<
     // any page it likes and fills a credential into it, and the value leaves
     // without ever entering a model's context.
     const allowedOrigins = context.handleValueOrigins ?? [];
-    if (usesHandle) {
-      if (allowedOrigins.length === 0) {
+    if (usesHandle && allowedOrigins.length === 0) {
+      return errorOutput(
+        "destination_not_allowed",
+        NO_HANDLE_VALUE_DESTINATION_MESSAGE,
+      );
+    }
+    const sends = browserActionSends(
+      fields.action,
+      input.kind === "text" ? input.target : undefined,
+    );
+    const release = browserAccessReleaseOf(lease);
+    // What an operation on the page sends goes to the page in view, read
+    // trusted-side rather than taken from what the call claims the page is,
+    // and before any value exists, so a page outside the allowlist never
+    // gets one resolved against it at all. Only a payload that may not go
+    // everywhere on the open web needs it.
+    const page = sends && fields.action !== "open" &&
+        (input.valueHandle !== undefined ||
+          intersectBrowserReleaseCovers(
+              release.covers,
+              browserReleaseCoverage([{ label: context.toolInputCfcLabel }]),
+            ) !== BROWSER_RELEASE_PUBLIC_WEB)
+      ? await readPageOrigin(
+        context,
+        cdpOrigin,
+        hostCwd,
+        resolveHostTimeoutMs(input.timeoutMs),
+      )
+      : undefined;
+    if (input.valueHandle !== undefined) {
+      if (page?.origin === undefined) {
         return errorOutput(
           "destination_not_allowed",
-          NO_HANDLE_VALUE_DESTINATION_MESSAGE,
+          page?.error ?? "the current page could not be read",
         );
       }
-      if (input.valueHandle !== undefined) {
-        // The page the value would be typed into is read before the value
-        // exists, so a page outside the allowlist never gets one resolved
-        // against it at all.
-        const page = await readPageOrigin(
-          context,
-          cdpOrigin,
-          hostCwd,
-          resolveHostTimeoutMs(input.timeoutMs),
+      if (!allowedOrigins.includes(page.origin)) {
+        return errorOutput(
+          "destination_not_allowed",
+          originNotAllowedMessage(page.origin),
         );
-        if (page.error !== undefined) {
-          return errorOutput("destination_not_allowed", page.error);
-        }
-        if (!allowedOrigins.includes(page.origin)) {
-          return errorOutput(
-            "destination_not_allowed",
-            originNotAllowedMessage(page.origin),
-          );
-        }
       }
     }
     // A handle becomes a value here and nowhere earlier.
@@ -925,6 +980,45 @@ export const browserTool: HarnessToolDefinition<
     if (plan.error !== undefined) {
       return errorOutput("invalid_input", plan.error);
     }
+    let guard: BrowserAccessNavigationGuard | undefined;
+    if (sends) {
+      const outcome = decideBrowserRelease(release, {
+        action: fields.action,
+        parts: [
+          { label: context.toolInputCfcLabel },
+          ...resolved.labels.map((label) => ({
+            label,
+            releasedTo: allowedOrigins,
+          })),
+        ],
+        destination: fields.action === "open"
+          ? httpOriginOf(resolved.input.url ?? "")
+          : page?.origin,
+        mode: context.cfcEnforcementMode,
+      });
+      releaseDecision = outcome.record;
+      if (outcome.refused !== undefined) {
+        return errorOutput("release_refused", outcome.refused);
+      }
+      // A session whose contents may go anywhere on the open web needs no
+      // guard; one narrower than that holds every navigation from then on.
+      if (outcome.covers !== BROWSER_RELEASE_PUBLIC_WEB) {
+        try {
+          guard = await browserAccessGuardOf(lease, cdpOrigin);
+        } catch (error) {
+          return errorOutput(
+            "host_unavailable",
+            `the browser's navigations could not be guarded, so nothing is sent to it: ${
+              redactEndpoint(
+                error instanceof Error ? error.message : String(error),
+              )
+            }`,
+          );
+        }
+        guard.arm(outcome.covers);
+        guard.takeRefused();
+      }
+    }
     let result;
     try {
       result = await context.hostProcessRunner.run({
@@ -945,6 +1039,13 @@ export const browserTool: HarnessToolDefinition<
         }`,
       );
     }
+    const refused = guard?.takeRefused()[0];
+    if (refused !== undefined) {
+      return errorOutput(
+        "navigation_refused",
+        `the page was to load a document on ${refused}, where what this run sent may not go, and the load was refused`,
+      );
+    }
     if (result.exitCode !== 0) {
       const failureText = result.stderr.trim() !== ""
         ? result.stderr
@@ -963,6 +1064,7 @@ export const browserTool: HarnessToolDefinition<
       ...(stderrText !== ""
         ? { detail: truncateHostOutput(stderrText, "detail") }
         : {}),
+      ...(releaseDecision !== undefined ? { releaseDecision } : {}),
     };
   },
 };

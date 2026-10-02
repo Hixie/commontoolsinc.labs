@@ -25,7 +25,11 @@
  * an address refuses one.
  */
 
-import { cfcObservationFitsCeiling } from "@commonfabric/runner/cfc";
+import { cfcAtom } from "@commonfabric/api/cfc";
+import {
+  cfcObservationFitsCeiling,
+  type IFCLabel,
+} from "@commonfabric/runner/cfc";
 import { parseLLMFriendlyLink } from "@commonfabric/runner/shared";
 
 import {
@@ -48,8 +52,18 @@ import type { HarnessHandleCapability } from "../contracts/handle-table.ts";
 export type HandleValueSource = "space" | "return";
 
 export type HandleValueResolution =
-  | { value: string; source: HandleValueSource; error?: undefined }
-  | { value?: undefined; source?: undefined; error: string };
+  | {
+    value: string;
+    source: HandleValueSource;
+
+    /**
+     * What the value carries: the label the child that found it gave it, or,
+     * for a value in the run's space, that space.
+     */
+    label: IFCLabel;
+    error?: undefined;
+  }
+  | { value?: undefined; source?: undefined; label?: undefined; error: string };
 
 /** The part of the tool context a handle resolution reads. */
 export type HandleValueResolutionContext = Pick<
@@ -164,7 +178,7 @@ export const resolveHandleValue = async (
         error: `${label} names a value labeled above this run's read ceiling`,
       };
     }
-    return { value: referent.value, source: "return" };
+    return { value: referent.value, source: "return", label: referent.label };
   }
   if (context.getFabricSession === undefined) {
     return {
@@ -254,5 +268,9 @@ export const resolveHandleValue = async (
         `${label} must name a string value; the reference holds a value of type ${typeof value}`,
     };
   }
-  return { value, source: "space" };
+  return {
+    value,
+    source: "space",
+    label: { confidentiality: [cfcAtom.space(space)] },
+  };
 };

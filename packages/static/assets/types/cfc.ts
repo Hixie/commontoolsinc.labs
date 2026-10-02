@@ -55,6 +55,7 @@ export declare const CFC_ATOM_TYPE: {
   readonly PromptSlotInfluence:
     "https://commonfabric.org/cfc/atom/PromptSlotInfluence";
   readonly Resource: "https://commonfabric.org/cfc/atom/Resource";
+  readonly Service: "https://commonfabric.org/cfc/atom/Service";
   readonly Space: "https://commonfabric.org/cfc/atom/Space";
   readonly TransformedBy: "https://commonfabric.org/cfc/atom/TransformedBy";
   readonly User: "https://commonfabric.org/cfc/atom/User";
@@ -134,6 +135,10 @@ export type CfcExternalIngestAtom =
   | CfcFetchExternalIngestAtom;
 export type CfcUserAtom = CfcAtomObject & {
   readonly type: typeof CFC_ATOM_TYPE.User;
+  readonly subject: string;
+};
+type CfcServiceAtom = CfcAtomObject & {
+  readonly type: typeof CFC_ATOM_TYPE.Service;
   readonly subject: string;
 };
 export type CfcNamedPolicyRefAtom = CfcAtomObject & {
@@ -386,6 +391,7 @@ export declare const cfcAtom: {
     valueDigest: string,
   ) => CfcPromptSlotBoundAtom<Source, Role>;
   readonly user: (subject: string) => CfcUserAtom;
+  readonly service: (subject: string) => CfcServiceAtom;
   readonly policyRef: (
     name: string,
     subject: string,

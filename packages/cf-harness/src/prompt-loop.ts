@@ -224,6 +224,7 @@ import {
 } from "./pattern-authoring.ts";
 import { projectHarnessResearchKitForModel } from "./research/model-projection.ts";
 import { isBrowserScreenshotOutput } from "./tools/browser.ts";
+import { closeBrowserAccessGuard } from "./tools/browser-access-guard.ts";
 import { isEditFileToolSuccessOutput } from "./tools/edit-file.ts";
 import { isStructuredFileToolErrorOutput } from "./tools/file-errors.ts";
 import { loomRetrievalModelContextObservation } from "./tools/loom-retrieval.ts";
@@ -2186,6 +2187,7 @@ const stripInternalToolFields = (output: unknown): unknown => {
   const {
     cfcResult: _cfcResult,
     researchRecord: _researchRecord,
+    releaseDecision: _releaseDecision,
     ...publicOutput
   } = output as
     & CfcSandboxResultCarrier
@@ -6332,6 +6334,14 @@ export class CfHarnessPromptLoop {
           });
         }
       }
+    }
+    // Nothing drives the lease's browser until the next browser child, which
+    // attaches a guard of its own.
+    if (
+      delegateInput.profile === BROWSER_SUBAGENT_PROFILE &&
+      this.#browserAccess !== undefined
+    ) {
+      closeBrowserAccessGuard(this.#browserAccess);
     }
     // A browser host's child that finished is web work done in the owner's
     // view, which the parent may answer for in words instead of a piece.

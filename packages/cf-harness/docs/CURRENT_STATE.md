@@ -938,7 +938,9 @@ that interactive product path. The console's interactive path does browse: on a
 console launched with `--allow-browser-host`, a task that declares a browser
 host has its browser children drive the page that host shows the owner, under
 the confinements the [browser host section](../README.md#a-browser-host)
-describes. What a host shows enters the model's context under the unscreened
+describes, and what its browser children send to a page passes a
+[release decision](../README.md#release-decisions-for-browser-operations) over
+its label. What a host shows enters the model's context under the unscreened
 prompt-injection caveat, sourced to the page's origin, and is withheld from a
 run whose read ceiling does not admit it. A child's return brings the child's
 model-context label into its parent's, for every child, so the caveat reaches

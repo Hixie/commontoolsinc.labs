@@ -220,7 +220,10 @@ browser child profile and cannot be selected as a parent CLI tool. It sends its
 typed action vocabulary to a browser host attached to the run when there is one,
 and otherwise drives the host `agent-browser` CLI, with the Browser Access CDP
 endpoint attached by the harness rather than written by the model. In neither
-case does an input name a session, an endpoint, or a jar.
+case does an input name a session, an endpoint, or a jar. In both, an action
+that sends something to a page passes a release decision over its CFC label
+first, which names the origins it may reach and, under enforcement, refuses one
+whose destination it does not cover.
 
 `submit_result` is how a run returns its structured result without a sandbox
 write. It takes the value as its input, validates it with the structured-result

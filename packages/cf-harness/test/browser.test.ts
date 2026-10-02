@@ -15,7 +15,10 @@ import { Runtime } from "@commonfabric/runner";
 import { createLLMFriendlyLink } from "@commonfabric/runner/shared";
 import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
 
+import { browserOwnerViewClause } from "../src/browser-release.ts";
+import { createToolOutputId } from "../src/contracts/tool-result.ts";
 import { CfHarnessEngine } from "../src/engine.ts";
+import { FakeCdpBrowser } from "./fake-cdp-browser.ts";
 import {
   createHarnessHandleTable,
   mintAddressHandle,
@@ -353,8 +356,10 @@ describe("browser", () => {
     let storageManager: ReturnType<typeof StorageManager.emulate>;
     let runtime: Runtime;
     let pieces: PiecesController;
+    let cdp: FakeCdpBrowser;
 
     beforeEach(async () => {
+      cdp = new FakeCdpBrowser();
       storageManager = StorageManager.emulate({ as: signer });
       runtime = new Runtime({
         apiUrl: new URL("http://toolshed.test"),
@@ -373,6 +378,7 @@ describe("browser", () => {
     afterEach(async () => {
       await runtime?.dispose();
       await storageManager?.close();
+      await cdp.close();
     });
 
     const createEngine = (
@@ -381,6 +387,8 @@ describe("browser", () => {
         fabricSession?: boolean;
         handleValueOrigins?: readonly string[];
         onFabricSession?: () => void;
+        cdpUrl?: string;
+        cfcEnforcementMode?: "observe" | "enforce-strict";
       } = {},
     ) =>
       new CfHarnessEngine({
@@ -388,7 +396,13 @@ describe("browser", () => {
         runId: `browser-tool-test-${crypto.randomUUID()}`,
         processRunner,
         workspaceHostPath: "/tmp/cf-harness-workspace",
-        browserAccess: BROWSER_LEASE,
+        browserAccess: {
+          ...BROWSER_LEASE,
+          cdpUrl: options.cdpUrl ?? BROWSER_LEASE.cdpUrl,
+        },
+        ...(options.cfcEnforcementMode !== undefined
+          ? { cfcEnforcementMode: options.cfcEnforcementMode }
+          : {}),
         handleValueOrigins: options.handleValueOrigins ?? [ALLOWED_ORIGIN],
         ...(options.fabricSession === false ? {} : {
           fabricSessionFactory: () => {
@@ -431,7 +445,7 @@ describe("browser", () => {
         pageAt(`${ALLOWED_ORIGIN}/login`),
         { stdout: 'filled @e1 with "hunter2"\n', stderr: "", exitCode: 0 },
       ]);
-      const engine = createEngine(runner);
+      const engine = createEngine(runner, { cdpUrl: cdp.origin });
       await holdHandles(engine, ref);
 
       const result = await engine.invokeBuiltinTool("browser", {
@@ -443,14 +457,14 @@ describe("browser", () => {
       // The destination is established first, trusted-side.
       expect(runner.calls[0]?.args).toEqual([
         "--cdp",
-        "http://localhost:9362",
+        cdp.origin,
         "get",
         "url",
       ]);
       // The value reached the page, so the action did what was asked.
       expect(runner.calls[1]?.args).toEqual([
         "--cdp",
-        "http://localhost:9362",
+        cdp.origin,
         "fill",
         "@e1",
         "hunter2",
@@ -499,7 +513,7 @@ describe("browser", () => {
         stderr: "",
         exitCode: 0,
       }]);
-      const engine = createEngine(runner);
+      const engine = createEngine(runner, { cdpUrl: cdp.origin });
       await holdHandles(engine, ref);
 
       const result = await engine.invokeBuiltinTool("browser", {
@@ -510,7 +524,7 @@ describe("browser", () => {
       expect((result.output as BrowserToolSuccessOutput).status).toBe("ok");
       expect(runner.calls[0]?.args).toEqual([
         "--cdp",
-        "http://localhost:9362",
+        cdp.origin,
         "open",
         "https://example.com/inbox",
       ]);
@@ -925,6 +939,193 @@ describe("browser", () => {
       expect(runner.calls.map((call) => call.args)).toEqual([
         ["--cdp", "http://localhost:9362", "get", "url"],
       ]);
+    });
+
+    describe("release decisions", () => {
+      const OWNER = "did:key:z6MkownerOfTheBrowserAccessReleaseTests";
+      const BANK = "https://bank.example";
+      const COLLECTOR = "https://collector.example";
+
+      /**
+       * Makes the run's model context hold what a page showing the owner's
+       * account on `origin` showed, as reading it would.
+       */
+      const readPrivatePage = async (
+        engine: CfHarnessEngine,
+        origin: string,
+      ) => {
+        await engine.recordCfcModelContextObservations([{
+          toolCallId: "call-private-read",
+          toolId: "browser",
+          outputId: createToolOutputId(
+            engine.getRunState().runId,
+            "browser",
+            0,
+          ),
+          channels: ["output"],
+          label: { confidentiality: [browserOwnerViewClause(OWNER, origin)] },
+        }]);
+      };
+
+      it("refuses opening another origin with what a private page showed in the address, and runs nothing", async () => {
+        const runner = new FakeProcessRunner();
+        const engine = createEngine(runner, {
+          cdpUrl: cdp.origin,
+          cfcEnforcementMode: "enforce-strict",
+        });
+        await readPrivatePage(engine, BANK);
+
+        const result = await engine.invokeBuiltinTool("browser", {
+          action: "open",
+          url: `${COLLECTOR}/?balance=1234`,
+        });
+
+        expect(result.output).toMatchObject({
+          status: "error",
+          code: "release_refused",
+          releaseDecision: {
+            reasonCode: "cfc_release_refused",
+            sink: "browser.open",
+            audience: COLLECTOR,
+          },
+        });
+        expect(runner.calls).toEqual([]);
+      });
+
+      it("refuses typing what a private page showed into a page of another origin", async () => {
+        const runner = new FakeProcessRunner([pageAt(`${COLLECTOR}/form`)]);
+        const engine = createEngine(runner, {
+          cdpUrl: cdp.origin,
+          cfcEnforcementMode: "enforce-strict",
+        });
+        await readPrivatePage(engine, BANK);
+
+        const result = await engine.invokeBuiltinTool("browser", {
+          action: "type",
+          ref: "@e1",
+          value: "1234",
+        });
+
+        expect(result.output).toMatchObject({
+          status: "error",
+          code: "release_refused",
+          releaseDecision: { sink: "browser.type", audience: COLLECTOR },
+        });
+        expect(runner.calls.map((call) => call.args.slice(2))).toEqual([
+          ["get", "url"],
+        ]);
+      });
+
+      it("refuses the load an open redirect on the private page's origin leads to, and says so", async () => {
+        const navigations: string[] = [];
+        const runner: ProcessRunner = {
+          async run(request) {
+            // The leased browser opens the page and follows its redirect.
+            const sessionId = await cdp.openPage("page-1");
+            navigations.push(
+              await cdp.navigate(sessionId, "page-1", `${BANK}/out`),
+              await cdp.navigate(
+                sessionId,
+                "page-1",
+                `${COLLECTOR}/?balance=1234`,
+              ),
+            );
+            expect(request.args.slice(2)).toEqual(["open", `${BANK}/out`]);
+            return { stdout: "", stderr: "", exitCode: 1 };
+          },
+        };
+        const engine = createEngine(runner, {
+          cdpUrl: cdp.origin,
+          cfcEnforcementMode: "enforce-strict",
+        });
+        await readPrivatePage(engine, BANK);
+
+        const result = await engine.invokeBuiltinTool("browser", {
+          action: "open",
+          url: `${BANK}/out`,
+        });
+
+        expect(navigations).toEqual(["continued", "failed"]);
+        expect(result.output).toMatchObject({
+          status: "error",
+          code: "navigation_refused",
+        });
+        expect((result.output as BrowserToolErrorOutput).message).toContain(
+          COLLECTOR,
+        );
+      });
+
+      it("refuses to send anything narrower than the open web when the browser's navigations cannot be guarded", async () => {
+        await cdp.close();
+        const runner = new FakeProcessRunner();
+        const engine = createEngine(runner, {
+          cdpUrl: cdp.origin,
+          cfcEnforcementMode: "enforce-strict",
+        });
+        await readPrivatePage(engine, BANK);
+
+        const result = await engine.invokeBuiltinTool("browser", {
+          action: "open",
+          url: `${BANK}/account`,
+        });
+
+        expect(result.output).toMatchObject({
+          status: "error",
+          code: "host_unavailable",
+        });
+        expect((result.output as BrowserToolErrorOutput).message).not
+          .toContain(cdp.origin.replace(/^http:\/\//, ""));
+        expect(runner.calls).toEqual([]);
+      });
+
+      it("sends what the open web showed without attaching a guard", async () => {
+        const runner = new FakeProcessRunner();
+        const engine = createEngine(runner, {
+          cdpUrl: cdp.origin,
+          cfcEnforcementMode: "enforce-strict",
+        });
+
+        const result = await engine.invokeBuiltinTool("browser", {
+          action: "type",
+          ref: "@e1",
+          value: "blue",
+        });
+
+        expect(result.output).toMatchObject({ status: "ok" });
+        expect(result.output).not.toHaveProperty("releaseDecision");
+        expect(cdp.commands).toEqual([]);
+        expect(runner.calls.map((call) => call.args.slice(2))).toEqual([
+          ["type", "@e1", "blue"],
+        ]);
+      });
+
+      it("sends under observation, and records what enforcement would have refused", async () => {
+        const runner = new FakeProcessRunner([
+          pageAt(`${COLLECTOR}/form`),
+          { stdout: "", stderr: "", exitCode: 0 },
+        ]);
+        const engine = createEngine(runner, {
+          cdpUrl: cdp.origin,
+          cfcEnforcementMode: "observe",
+        });
+        await readPrivatePage(engine, BANK);
+
+        const result = await engine.invokeBuiltinTool("browser", {
+          action: "type",
+          ref: "@e1",
+          value: "1234",
+        });
+
+        expect(result.output).toMatchObject({
+          status: "ok",
+          releaseDecision: {
+            reasonCode: "cfc_release_observed",
+            sink: "browser.type",
+            audience: COLLECTOR,
+          },
+        });
+        expect(cdp.commands).toEqual([]);
+      });
     });
   });
 });
