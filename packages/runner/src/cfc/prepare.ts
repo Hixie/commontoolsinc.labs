@@ -300,6 +300,24 @@ const nativeLengthParent = (
   return Array.isArray(parent) ? parentPath : undefined;
 };
 
+/**
+ * Returns the logical path of the parent a trigger read of a `length` names,
+ * or `undefined` when its path does not end in `length`. A trigger read
+ * (§8.9.2) holds the logical path of the read whose change scheduled the run.
+ * A read of an array's `length` observes the array's membership, so the
+ * parent is charged as a shape read whatever it holds when the rerun
+ * prepares: the change that scheduled the rerun, or the rerun's own write,
+ * may have replaced the array with something that is not one, and the count
+ * the run read still came from it. An object field named `length` is charged
+ * the same way, which over-charges, the safe direction.
+ */
+const triggerReadLengthParent = (
+  path: readonly string[],
+): ValuePath | undefined =>
+  path.at(-1) === "length"
+    ? canonicalizeLogicalPath(path.slice(0, -1))
+    : undefined;
+
 const labelForEntriesAtPath = (
   entries: readonly LabelMapEntry[],
   path: readonly string[],
@@ -4046,16 +4064,40 @@ const forEachFlowObservation = (
     if (trigger.id.startsWith("cid:")) {
       continue;
     }
+    const id = trigger.id as URI;
+    const scope = normalizeCellScope(trigger.scope);
     if (
       consume(
         trigger.space,
-        trigger.id as URI,
-        normalizeCellScope(trigger.scope),
+        id,
+        scope,
         "application/json",
         trigger.path,
         {
           shape: "value",
           nonRecursive: false,
+          coveredByTrace: false,
+          machinery: false,
+          writeDestination: false,
+          followedSlot: false,
+        },
+      )
+    ) {
+      return true;
+    }
+    // A trigger read of a `length` observes its parent's membership.
+    const lengthOf = triggerReadLengthParent(trigger.path);
+    if (
+      lengthOf !== undefined &&
+      consume(
+        trigger.space,
+        id,
+        scope,
+        "application/json",
+        lengthOf,
+        {
+          shape: "shape",
+          nonRecursive: true,
           coveredByTrace: false,
           machinery: false,
           writeDestination: false,
@@ -9278,9 +9320,10 @@ const collectConsumedLabelImpl = (
   }
   // §8.9.2 / SC-3 (H5): a handler scheduled by a confidential write must not
   // egress past a sink ceiling just because its branch never re-read that
-  // write. Empty when the trigger-read gate is off. A trigger names the value a
-  // write changed, which is never an array's native `length`, so it has no
-  // length parent.
+  // write. Empty when the trigger-read gate is off. A trigger names the read
+  // whose change scheduled the run; a trigger read of a `length` also charges
+  // its parent as a shape read (`triggerReadLengthParent`), as the journal's
+  // read of that `length` does.
   for (const read of triggerReadSources(tx)) {
     const labels = labelsOf(read);
     if (labels === undefined) continue;
@@ -9290,6 +9333,10 @@ const collectConsumedLabelImpl = (
       canonicalizeLogicalPath(read.path),
       read.nonRecursive,
     );
+    const lengthOf = triggerReadLengthParent(read.path);
+    if (lengthOf !== undefined) {
+      collectAt(read, labels, lengthOf, true);
+    }
   }
   // Label-metadata observations (inv-12 Stage 2): the introspection
   // surface's records enter the egress consumed set with their §4.6.4.2
