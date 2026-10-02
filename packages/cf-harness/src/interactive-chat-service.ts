@@ -24,6 +24,7 @@ import { REVISION_VERIFICATION_GUIDANCE } from "./revision-verification.ts";
 import type { HarnessBrowserHost } from "./contracts/browser-host.ts";
 import type { HarnessInputCellSpec } from "./contracts/input-cells.ts";
 import type { HarnessAssignedPiece } from "./contracts/assigned-piece.ts";
+import type { HarnessHandleTable } from "./contracts/handle-table.ts";
 import type { HarnessPatternRefSpec } from "./contracts/pattern-refs.ts";
 import {
   createHarnessChatErrorResponse,
@@ -183,6 +184,13 @@ interface HarnessInteractiveChatSessionRecord {
   assignedPieces?: readonly HarnessAssignedPiece[];
 
   /**
+   * The handle table matching the durable transcript. The next turn's run
+   * starts from it, so the tokens that history names still resolve; it
+   * advances only with the transcript, in the same durable write.
+   */
+  handleTable?: HarnessHandleTable;
+
+  /**
    * Why a restored session cannot be resumed. Set when the recorded history
    * could not be repaired into valid model history; a turn started on such a
    * session is refused rather than sent to a provider.
@@ -243,6 +251,9 @@ interface HarnessInteractiveChatEmitOptions {
    * may act on during delivery.
    */
   onCommitted?: () => void;
+
+  /** The handle table matching `transcript`, committed and adopted with it. */
+  handleTable?: HarnessHandleTable;
 }
 
 /**
@@ -260,7 +271,34 @@ export const HARNESS_CHAT_INTERRUPTED_TURN_NOTICE =
 interface HarnessChatTurnCheckpoint {
   transcript: HarnessTranscriptMessage[];
   researchContext?: HarnessChatResearchContext;
+
+  /**
+   * The run's handle table at that point. Absent where the turn's run holds
+   * none, which leaves the session's table as it was.
+   */
+  handleTable?: HarnessHandleTable;
 }
+
+/**
+ * The part of a session's handle table a following turn's run starts from:
+ * all of it but the skill-context entries. A skill-context handle stands for
+ * a skill whose acquired scripts were written under the acquiring run's
+ * artifact directory and recorded on that run alone, so a later run holding
+ * the token would delegate the skill's instructions without its scripts. Left
+ * out, the token names nothing in the later turn, and a delegation on it is
+ * refused as an unheld handle, which is how the model learns to acquire the
+ * skill again.
+ *
+ * SHORTCUT: the handle is reported unavailable rather than carried. To
+ * harden, carry the run's acquisition records with the checkpoint once the
+ * lifetime of the scripts' run directory is settled, and keep these entries.
+ */
+const tableForNextTurn = (table: HarnessHandleTable): HarnessHandleTable => ({
+  ...table,
+  entries: table.entries.filter((entry) =>
+    entry.capability !== "skill-context"
+  ),
+});
 
 const defaultPromptLoopFactory: HarnessInteractivePromptLoopFactory = (
   options,
@@ -928,6 +966,9 @@ export class HarnessInteractiveChatService {
         ...(snapshot.assignedPieces === undefined
           ? {}
           : { assignedPieces: snapshot.assignedPieces }),
+        ...(snapshot.handleTable === undefined
+          ? {}
+          : { handleTable: snapshot.handleTable }),
         canceledTurnIds: new Set(),
         fabricRuntimes: new Set(),
         turns: new Map(
@@ -1654,6 +1695,9 @@ export class HarnessInteractiveChatService {
           ...(interrupted?.researchContext === undefined
             ? {}
             : { researchContext: interrupted.researchContext }),
+          ...(interrupted?.handleTable === undefined
+            ? {}
+            : { handleTable: interrupted.handleTable }),
         }
         : {};
       await this.#emit(sessionId, undefined, {
@@ -1955,7 +1999,11 @@ export class HarnessInteractiveChatService {
     // request and advances with each completed tool batch; a cancel keeps it,
     // and a failure keeps it only once a batch completed and the host opted in.
     let interruptedCheckpoint: HarnessChatTurnCheckpoint | undefined;
-    let completedCheckpoint: Required<HarnessChatTurnCheckpoint> | undefined;
+    let completedCheckpoint:
+      | (HarnessChatTurnCheckpoint & {
+        researchContext: HarnessChatResearchContext;
+      })
+      | undefined;
     // The `delegate_task` children this turn has announced, keyed by the
     // parent tool call that started each one. Membership is what closes the
     // bracket: a `subagent_completed` is emitted only for a child whose
@@ -1963,7 +2011,11 @@ export class HarnessInteractiveChatService {
     const startedSubagents = new Map<string, HarnessChatSubagentSummary>();
 
     try {
-      const { loop, contextMessages } = await this.#startPromptLoop(
+      const {
+        loop,
+        contextMessages,
+        handleTable: startupHandleTable,
+      } = await this.#startPromptLoop(
         {
           ...this.#buildPromptLoopOptions(
             session,
@@ -1993,6 +2045,13 @@ export class HarnessInteractiveChatService {
             })),
             inheritedCfcModelContext: record.researchContext.cfcModelContext,
           }),
+          // A host that injects an engine or a run state has named the run
+          // every turn continues, and that run's table is the one it holds.
+          ...(record.handleTable === undefined ||
+              this.#basePromptLoopOptions.engine !== undefined ||
+              this.#basePromptLoopOptions.runState !== undefined
+            ? {}
+            : { inheritedHandleTable: tableForNextTurn(record.handleTable) }),
         },
       );
       // The context messages announce what this turn's own run holds — its
@@ -2025,7 +2084,12 @@ export class HarnessInteractiveChatService {
       // from this turn: in particular, a recovered unknown-outcome result must
       // not be re-emitted as a newly completed tool call.
       observedTranscriptLength = transcript.length;
-      interruptedCheckpoint = { transcript: [...transcript] };
+      interruptedCheckpoint = {
+        transcript: [...transcript],
+        ...(startupHandleTable === undefined
+          ? {}
+          : { handleTable: startupHandleTable }),
+      };
       const result = await loop.runTranscript({
         transcript,
         ...(record.researchContext?.runs.length
@@ -2081,6 +2145,9 @@ export class HarnessInteractiveChatService {
               ...(checkpoint.runState.cfcModelContext === undefined ? {} : {
                 cfcModelContext: checkpoint.runState.cfcModelContext,
               }),
+            }),
+            ...(checkpoint.runState.handleTable === undefined ? {} : {
+              handleTable: structuredClone(checkpoint.runState.handleTable),
             }),
           };
           interruptedCheckpoint = completedCheckpoint;
@@ -2154,6 +2221,9 @@ export class HarnessInteractiveChatService {
           : params.inputCells !== undefined
           ? { assignedPieces: [] }
           : {}),
+        ...(result.runState.handleTable === undefined
+          ? {}
+          : { handleTable: result.runState.handleTable }),
       });
     } catch (error) {
       if (record.canceledTurnIds.has(turnId)) {
@@ -2197,8 +2267,9 @@ export class HarnessInteractiveChatService {
    * builds and hands to the loop: the skill registry has to be on the run
    * state before the first model turn for `read_skill_resource` to answer and
    * for a delegated subagent to inherit its profile's preloaded skills, and
-   * the grants and input cells mint their tokens into that run's own handle
-   * table — the tokens a turn is told about are the ones its own run holds.
+   * the grants and input cells mint their tokens into that run's handle
+   * table — the one the session carried forward, where the options name it —
+   * so the tokens a turn is told about are ones its own run holds.
    *
    * Tools reach the tree on the host here, so the skills scan records host
    * paths and no sandbox mount is involved.
@@ -2208,6 +2279,13 @@ export class HarnessInteractiveChatService {
   ): Promise<{
     loop: HarnessInteractivePromptLoop;
     contextMessages: readonly string[];
+
+    /**
+     * The run's handle table once the context is established: the one the
+     * context messages' tokens resolve in. Absent where no run was brought
+     * up here.
+     */
+    handleTable?: HarnessHandleTable;
   }> {
     // The skills root reaches this either way: on the options directly, or on
     // an injected engine's own config (where `options.skillsRoot` is unset).
@@ -2245,6 +2323,9 @@ export class HarnessInteractiveChatService {
     return {
       loop: this.#createPromptLoop({ ...options, engine }),
       contextMessages,
+      ...(engine.handleTable === undefined
+        ? {}
+        : { handleTable: engine.handleTable }),
     };
   }
 
@@ -2641,6 +2722,8 @@ export class HarnessInteractiveChatService {
     const pieceSnapshot = assignedPieces === undefined
       ? {}
       : { assignedPieces };
+    const handleTable = options.handleTable ?? record?.handleTable;
+    const handleSnapshot = handleTable === undefined ? {} : { handleTable };
     const nextStatus = record === undefined
       ? undefined
       : reduceHarnessChatSessionStatus(record.status, envelope);
@@ -2656,6 +2739,7 @@ export class HarnessInteractiveChatService {
             transcript,
             ...researchSnapshot,
             ...pieceSnapshot,
+            ...handleSnapshot,
           },
           turn: nextTurn,
           event: envelope,
@@ -2670,6 +2754,7 @@ export class HarnessInteractiveChatService {
           transcript,
           ...researchSnapshot,
           ...pieceSnapshot,
+          ...handleSnapshot,
         }, envelope);
       }
     } else {
@@ -2686,6 +2771,9 @@ export class HarnessInteractiveChatService {
     }
     if (record !== undefined && options.assignedPieces !== undefined) {
       record.assignedPieces = options.assignedPieces;
+    }
+    if (record !== undefined && options.handleTable !== undefined) {
+      record.handleTable = options.handleTable;
     }
     if (record !== undefined && nextStatus !== undefined) {
       record.status = nextStatus;
