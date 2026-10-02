@@ -2776,16 +2776,25 @@ answers, when the host's stream or the turn ends (settling it as
 `session-ended`), or when the run's abort signal fires. A browser child in such
 a run holds the `browser` tool alone, with no skill scripts and no host
 execution. Every result carries the page: the address the host committed for it,
-and the title the page wrote.
+and the title the page wrote. A page with no web origin, such as `about:blank`
+or a `data:` document, is reported, and labeled, as `null`, the web's spelling
+of an opaque origin, so nothing of its address reaches a label or a result's
+page.
 
 No operation names this device, its network, or an address written as an IP
 literal: `open`, a `urlHandle`'s value, and a `urlPattern` naming a host are
-refused here, and the host refuses such a load whatever starts it. Once the
-owner finishes a hand-off, the page may hold their sign-in, so from then on the
-session can only be read and opened on the origin they finished on: `click`,
-`check`, `press`, `fill`, `type`, and `select` change the page, `back` and
-`forward` leave it for an address nobody checked, and `reload` may send it
-again, so all of them are refused.
+refused here, and the host refuses such a load whatever starts it. Once a
+hand-off is sent, the page may hold the owner's sign-in, however the hand-off
+ends: finished, declined, refused, withheld by the run's read ceiling, or never
+answered because the run withdrew it. From then on the session can only be read
+and opened on the web origin the page was on when it was first handed off:
+`click`, `check`, `press`, `fill`, `type`, and `select` change the page, `back`
+and `forward` leave it for an address nobody checked, and `reload` may send it
+again, so all of them are refused. The origin is checked against the address the
+host committed for each result, not only the one an `open` asked for, so a
+result the owner, the page, or a redirect took to another origin is withheld; a
+hand-off the owner ends elsewhere tells the run only how it ended and where. A
+page handed off on no web origin the run knows leaves no site to open.
 
 A value reaches a page in one of two ways, and the host is told which:
 
@@ -2799,9 +2808,12 @@ A value reaches a page in one of two ways, and the host is told which:
 
 The host path takes no value from the owner's space: nothing yet holds such a
 value to the page it was meant for, so an address handle (`cfh:a:`) is refused
-there. Only a browser child of a run with a host returns referents, and only
-before the owner finishes a hand-off; after one, a page may hold their account,
-which no label describes, so its strings stay sealed.
+there. Only a browser child of a run with a host returns referents, only under
+its model-context label, which includes what it inherited from its parent, so a
+child with no label returns none, and only before a hand-off is sent; after one,
+a page may hold the owner's account, which no label describes, so its strings
+stay sealed, and a reply in words reaches the parent as a fixed sentence saying
+it is sealed.
 
 Nothing asks the owner whether a value may go to a page, or whether a click may
 commit them to something: a question at every step teaches a person to agree
@@ -2817,17 +2829,17 @@ model's context under the unscreened prompt-injection caveat
 enforcement mode, and a run whose read ceiling does not admit it is told the
 action ran and given none of the page. A child's return brings the child's label
 into its parent's model context, as every child's does, so the caveat reaches
-the parent with whatever crosses — a scalar, a summary, a referent. Once the
-owner finishes a hand-off, a page may show their account, which no label
-describes, so a run under `enforce-explicit` or `enforce-strict` learns only how
-the hand-off ended and on which origin, refuses every action but another
-`handoff`, and observes nothing more of the page.
+the parent with whatever crosses — a scalar, a summary, a referent. A screenshot
+is labeled as the page's text is. Once a hand-off is sent, a page may show the
+owner's account, which no label describes, so a run under `enforce-explicit` or
+`enforce-strict` learns only how the hand-off ended and on which origin, refuses
+every action but another `handoff`, and observes nothing more of the page.
 
 A page can show what it was given back — in its text, its title, its address, or
-a screenshot. Wherever a host's later answer carries a value it was sent, the
-harness puts the value's handle in its place before a model reads the answer,
-and the host paints over every field a value went into before it takes a
-screenshot. What the page shows after changing a value is the page's.
+a screenshot, as given or changed. So the session keeps a label, the join of the
+labels of every value it was sent, and every result from then on carries it as
+well as the page's caveat. The host also paints over every field a value went
+into before it takes a screenshot.
 
 The host decides which fields only the owner may fill. Its refusals come back
 under their own codes — `stale_ref`, `owner_only_field`, `session_ended` —
