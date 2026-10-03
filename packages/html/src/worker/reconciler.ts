@@ -29,12 +29,14 @@ import {
   cellRuntime,
   CFC_ATOM_TYPE,
   convertCellsToLinks,
+  hostValueOf,
   isCell,
   isStream,
   type JSONSchema,
   KeepAsCell,
   parseLink,
   type SinkConsumedLabel,
+  sinkProjected,
   type Stream,
   UI,
   useCancelGroup,
@@ -1134,11 +1136,42 @@ export class WorkerReconciler {
         ) ?? true
         : true,
     );
-    addCancel(this.#sinkCell(hostRead, (value, labels) => {
-      consumed = labels;
-      elements?.update(read, value);
-      watch.reeval();
-    }, true));
+    // The binding hands the host a handle whose reads take in the whole
+    // value, so its decision is made on the read they are decided on: each
+    // value as the worker hands it to a host (`hostValueOf()`), so a field the
+    // schema leaves untyped is measured as the host's read takes it in. A
+    // stream, which holds no value, is heard as anything else is.
+    const subscribe = (
+      onRead: (value: unknown, labels?: SinkConsumedLabel) => void,
+    ): Cancel =>
+      hostRead.sink((value, _cfcLabel, labels) => onRead(value, labels), {
+        readOnly: true,
+        includeConsumedLabel: true,
+      });
+    addCancel(this.#sinkRead(
+      hostRead,
+      (onRead) =>
+        isStream(hostRead) ? subscribe(onRead) : sinkProjected(
+          hostRead,
+          (value) => {
+            try {
+              hostValueOf(value);
+              return { value, complete: true };
+            } catch {
+              // Links that cannot be followed, as a cycle of them cannot, end
+              // a read that does not complete.
+              return { value, complete: false };
+            }
+          },
+          ({ value, complete }, labels) =>
+            onRead(value, complete ? labels : undefined),
+        ),
+      (value, labels) => {
+        consumed = labels;
+        elements?.update(read, value);
+        watch.reeval();
+      },
+    ));
     return cancel;
   }
 
@@ -1545,6 +1578,29 @@ export class WorkerReconciler {
     deliver: (value: T | undefined, consumed?: SinkConsumedLabel) => void,
     includeConsumedLabel = false,
   ): Cancel {
+    return this.#sinkRead(
+      cell,
+      (onRead) =>
+        cell.sink((value, _cfcLabel, read) => onRead(value, read), {
+          readOnly: true,
+          includeConsumedLabel,
+        }),
+      deliver,
+    );
+  }
+
+  /**
+   * {@link #sinkCell} over the subscription `subscribe` makes of `cell`, which
+   * reports each value and the labels its read consumed to the `onRead` it is
+   * handed.
+   */
+  #sinkRead<T>(
+    cell: Cell<T>,
+    subscribe: (
+      onRead: (value: T | undefined, read?: SinkConsumedLabel) => void,
+    ) => Cancel,
+    deliver: (value: T | undefined, consumed?: SinkConsumedLabel) => void,
+  ): Cancel {
     const [cancel, addCancel] = useCancelGroup();
     const watched = new Set<string>();
     let active = true;
@@ -1559,7 +1615,7 @@ export class WorkerReconciler {
         );
       }
     };
-    addCancel(cell.sink((value, _cfcLabel, read) => {
+    const onRead = (value: T | undefined, read?: SinkConsumedLabel) => {
       current = value;
       consumed = read;
       if (this.#spaceAccess !== undefined) {
@@ -1572,7 +1628,8 @@ export class WorkerReconciler {
         }
       }
       emit();
-    }, { readOnly: true, includeConsumedLabel }));
+    };
+    addCancel(subscribe(onRead));
     return () => {
       active = false;
       cancel();

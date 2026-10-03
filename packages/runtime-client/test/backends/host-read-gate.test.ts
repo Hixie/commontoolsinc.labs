@@ -15,7 +15,11 @@ import { rootRenderPolicyFor } from "@commonfabric/html/worker";
 import { Identity } from "@commonfabric/identity";
 import { defaultRenderConfidentialityCeiling } from "@commonfabric/lib-shell/runtime";
 import { type Cell, KeepAsCell, NAME, Runtime } from "@commonfabric/runner";
-import { nameSchema, stringSchema } from "@commonfabric/runner/schemas";
+import {
+  nameSchema,
+  rendererVDOMSchema,
+  stringSchema,
+} from "@commonfabric/runner/schemas";
 import { StorageManager } from "@commonfabric/runner/storage/cache.deno";
 
 import {
@@ -43,6 +47,7 @@ const SEALED_NAME = "name-behind-the-seal";
 const SEALED_RENAME = "second-name-behind-the-seal";
 const SEALED_INTERNAL = "internal-state-behind-the-seal";
 const HOME_NAME = "name-for-members-of-the-owner-space";
+const CREDENTIAL = "credential-even-the-owner-is-not-shown";
 
 type Labels = readonly [path: string[], confidentiality: readonly CfcAtom[]][];
 
@@ -131,11 +136,43 @@ async function shelf() {
     { [NAME]: HOME_NAME },
     [[[], [cfcAtom.space(space)]]],
   );
+  // The owner's piece holding a credential, which the default ceiling shows
+  // no one, beside the `openPath` stream and `sidebarUI` it exports: once in
+  // a document of its own, and once in the piece's own document.
+  const credential = await write(
+    "credential",
+    { token: CREDENTIAL, account: "owner account" },
+    [[["token"], [cfcAtom.resource("CredentialSecret")]], [[], [ownerOnly]]],
+  );
+  const sidebar = await write("importer-sidebar", {
+    type: "vnode",
+    name: "div",
+    props: {},
+    children: ["Accounts"],
+  }, [[[], [ownerOnly]]]);
+  const exportsOf = {
+    [NAME]: "Importer",
+    openPath: { $stream: true },
+    sidebarUI: link(sidebar),
+  };
+  const importer = await write("importer", {
+    ...exportsOf,
+    auth: link(credential),
+  }, [[[], [ownerOnly]]]);
+  const inlineImporter = await write("inline-importer", {
+    ...exportsOf,
+    auth: { token: CREDENTIAL },
+  }, [
+    [[], [ownerOnly]],
+    [["auth", "token"], [cfcAtom.resource("CredentialSecret")]],
+  ]);
   await runtime.idle();
 
   return {
     runtime,
     write,
+    importer,
+    inlineImporter,
     sealedEntry,
     piece,
     nestedPiece,
@@ -322,6 +359,78 @@ describe("HostReadGate", () => {
       );
 
       expect(holds(answer, SEALED_ENTRY)).toBe(true);
+    });
+  });
+
+  describe("what a piece exports, as the shell asks it", () => {
+    // The shell asks a piece whether it exports an `openPath` stream, and
+    // for its sidebar, by reading the piece's root for that one field. Each
+    // read is decided on the piece's own node and on what it reads, so a
+    // credential elsewhere in the piece does not refuse it.
+    const openPathRead = {
+      type: "object",
+      properties: {
+        openPath: {
+          type: "object",
+          properties: { $stream: { type: "boolean" } },
+        },
+      },
+    } as const;
+    const sidebarRead = {
+      type: "object",
+      properties: { sidebarUI: { $ref: "#/$defs/vdomNode" } },
+      $defs: { ...rendererVDOMSchema.$defs },
+    } as const;
+
+    for (const piece of ["importer", "inlineImporter"] as const) {
+      const where = piece === "importer"
+        ? "a document of its own"
+        : "the piece's own document";
+
+      it(`refuses the owner the whole of a piece holding a credential in ${where}`, async () => {
+        await using docs = await shelf();
+        const answer = gateFor(docs.runtime, owner).read(
+          docs[piece].asSchema(true),
+        );
+
+        expect(holds(answer, CREDENTIAL)).toBe(false);
+        expect("refused" in answer).toBe(true);
+      });
+    }
+
+    it("returns the owner the `openPath` stream and `sidebarUI` beside a credential in a document of its own, each read from the root for that field", async () => {
+      await using docs = await shelf();
+      const gate = gateFor(docs.runtime, owner);
+      const openPath = gate.read(docs.importer.asSchema(openPathRead));
+      const sidebar = gate.read(docs.importer.asSchema(sidebarRead));
+
+      expect(openPath).toEqual({ value: { openPath: { $stream: true } } });
+      expect(sidebar).toEqual({
+        value: { sidebarUI: expect.objectContaining({ name: "div" }) },
+      });
+      expect(holds([openPath, sidebar], CREDENTIAL)).toBe(false);
+    });
+
+    it("answers both reads of a piece that exports neither with neither", async () => {
+      await using docs = await shelf();
+      const gate = gateFor(docs.runtime, visitor);
+
+      for (const schema of [openPathRead, sidebarRead]) {
+        expect(gate.read(docs.publicPiece.asSchema(schema))).toEqual({
+          value: {},
+        });
+      }
+    });
+
+    it("refuses a visitor the same reads of the owner's piece", async () => {
+      await using docs = await shelf();
+      const gate = gateFor(docs.runtime, visitor);
+
+      for (const schema of [openPathRead, sidebarRead]) {
+        expect(gate.read(docs.importer.asSchema(schema))).toEqual({
+          refused: { refusedBy: "display-ceiling" },
+        });
+      }
     });
   });
 
