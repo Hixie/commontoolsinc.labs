@@ -1020,10 +1020,16 @@ mode.
   model-authored tool arguments through the address handle table; denial-path
   tool messages are not swapped, and interactive restore does not persist the
   handle table.
-- The session-local handle table covers cell addresses and the held referents
-  that Loom retrieval admits under `cfh:v:` tokens. Those referent handles are
-  consumed when the agent result writer links or observes a retrieved row; there
-  is no general-purpose value-handle dereference or release mechanism.
+- The session-local handle table covers cell addresses and three kinds of held
+  referent under `cfh:v:` tokens: documents, research kits, and strings a
+  child's structured return sealed. A document is a row Loom retrieval admits or
+  the retained result of a Weaver command. A retrieved row's referent is
+  consumed when the agent result writer links or observes the row, and
+  `describe_handle` reports a command result's label but never its content. A
+  research referent is read through `describe_handle`. A return referent is
+  dereferenced by the `browser` tool's `urlHandle` and `valueHandle` on a
+  browser host, which sends the string to the page. There is no general-purpose
+  value-handle dereference or release mechanism.
 - `estimatedCostUsd` is available for GPT-6.1 Sol, GPT-6 Luna, and GPT-5.6
   gateway models when the response includes cache reads and writes. It uses
   [public OpenAI pricing](https://developers.openai.com/api/docs/pricing);
