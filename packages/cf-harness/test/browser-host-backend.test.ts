@@ -167,6 +167,28 @@ describe("browser-host-backend", () => {
       ]);
     });
 
+    it("sends a wait for a pattern that names a host on the open web", async () => {
+      const host = new FakeBrowserHost();
+      const engine = createEngine(host);
+      const patterns = [
+        "https://shop.example/**",
+        "*://SHOP.example./**",
+        "https://*.shop.example/**",
+        "https://u@shop.example:8443/**",
+        "https://home.arpa.example/**",
+        "https://*.home.arpa.example/**",
+        "https://*.com/**",
+      ];
+
+      for (const urlPattern of patterns) {
+        await invoke(engine, { action: "wait", urlPattern });
+      }
+
+      expect(host.operations).toEqual(
+        patterns.map((urlPattern) => ({ action: "wait", urlPattern })),
+      );
+    });
+
     it("returns the host's text with the page the host committed", async () => {
       const host = new FakeBrowserHost([
         { status: "ok", page: PAGE, text: '- button "Buy" [@e3]' },
@@ -332,6 +354,7 @@ describe("browser-host-backend", () => {
           "http://0x7f.1/",
           "https://mac.tail1234.ts.net/",
           "http://host.docker.internal/",
+          "http://home.arpa/",
         ].map((url): [BrowserToolInput, string] => [
           { action: "open", url },
           "open only reaches the open web: not this device, its network, or an IP address",
@@ -344,7 +367,26 @@ describe("browser-host-backend", () => {
           { action: "wait", urlPattern: "https://u@[::1]:8/*" },
           "wait urlPattern names the open web only: not this device, its network, or an IP address",
         ],
-        ...["**://localhost/**", "http*://127.0.0.1/**"].map((
+        ...[
+          "**://localhost/**",
+          "http*://127.0.0.1/**",
+          "http?://127.0.0.1/**",
+          "**//127.0.0.1/**",
+          "*//127.0.0.1/**",
+          "http://0x7f.1/*",
+          "https://%31%32%37.0.0.1/**",
+          "https://2130706433/**",
+          "*://ＬＯＣＡＬＨＯＳＴ/**",
+          "http://127.0.0.*/**",
+          "https://*.*/**",
+          "https://*.1/**",
+          "https://*.0x7f/**",
+          "https://*.local/**",
+          "https://*.home.arpa/**",
+          "https://192.168.{0,1}.1/**",
+          "https://shop.example:*/**",
+          "https://exa mple.com/**",
+        ].map((
           urlPattern,
         ): [BrowserToolInput, string] => [
           { action: "wait", urlPattern },
