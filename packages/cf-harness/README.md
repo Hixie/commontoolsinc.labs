@@ -2837,9 +2837,10 @@ brings the child's label into its parent's model context, as every child's does,
 so the caveat reaches the parent with whatever crosses — a scalar, a summary, a
 referent. A screenshot is labeled as the page's text is. Once a hand-off is
 sent, a page may show the owner's account, which no label describes, so a run
-under `enforce-explicit` or `enforce-strict` learns only how the hand-off ended
-and on which origin, refuses every action but another `handoff`, and observes
-nothing more of the page.
+under `enforce-explicit` or `enforce-strict` learns at most how the hand-off
+ended and on which origin, and nothing when its read ceiling withholds the page,
+refuses every action but another `handoff`, and observes nothing more of the
+page.
 
 A page can show what it was given back — in its text, its title, its address, or
 a screenshot, as given or changed. So the session keeps a label, the join of the
