@@ -102,6 +102,30 @@ class LabeledSandboxRuntime implements SandboxRuntime {
   }
 }
 
+/**
+ * A CFC sandbox that answers each shell command with the labeled output named
+ * for the command it runs, whatever order the commands arrive in.
+ */
+class CommandLabeledSandboxRuntime extends LabeledSandboxRuntime {
+  readonly #outputs: ReadonlyMap<string, LabeledOutput>;
+
+  constructor(outputs: ReadonlyMap<string, LabeledOutput>) {
+    super([]);
+    this.#outputs = outputs;
+  }
+
+  override runShell(
+    request: SandboxShellRequest,
+  ): Promise<SandboxCommandResult> {
+    const output = [...this.#outputs].find(([command]) =>
+      request.command.includes(command)
+    )?.[1];
+    return output === undefined
+      ? super.runShell(request)
+      : Promise.resolve(mediated(output));
+  }
+}
+
 const mediated = ({ stdout, label }: LabeledOutput): SandboxCommandResult => ({
   stdout,
   stderr: "",
@@ -450,6 +474,96 @@ describe("prompt-loop", () => {
         .toContainEqual(SECRET);
       expect(confidentialityOf(publicOnly.runState.cfcModelContext?.label))
         .toEqual(["public"]);
+    });
+
+    it("brings each child started in one turn only its own label, and the parent both", async () => {
+      // The parent observes its children's labels once every call of the
+      // turn has returned, so neither child inherits the other's.
+      const runId = "run-label-crossing-siblings";
+      const loop = new CfHarnessPromptLoop({
+        engine: new CfHarnessEngine({
+          sandboxRuntime: new CommandLabeledSandboxRuntime(
+            new Map([
+              ["child secret", { stdout: "secret", label: SECRET_LABEL }],
+              ["child public", { stdout: "public", label: PUBLIC_LABEL }],
+              ["parent after", { stdout: "parent after", label: {} }],
+            ]),
+          ),
+          runId,
+          model: "gpt-5.4",
+          cfcEnforcementMode: "enforce-strict",
+        }),
+        allowedToolIds: ["bash", "delegate_task"],
+        allowedSubagentProfiles: ["default"],
+        modelClient: {
+          providerId: "test-provider",
+          complete: (request) => {
+            const answered = request.transcript.some((message) =>
+              message.role === "tool"
+            );
+            if (request.runId !== runId) {
+              const command = JSON.stringify(request.transcript).includes(
+                  "Read the secret.",
+                )
+                ? "child secret"
+                : "child public";
+              return Promise.resolve(
+                answered ? finalTurn("Child done.") : bashTurn("call", command),
+              );
+            }
+            const delegated = request.transcript.filter((message) =>
+              message.role === "tool" && message.toolName === "delegate_task"
+            ).length;
+            if (delegated === 0) {
+              return Promise.resolve({
+                assistant: {
+                  role: "assistant",
+                  content: "",
+                  toolCalls: ["Read the secret.", "Read the public note."].map((
+                    goal,
+                    index,
+                  ) => ({
+                    id: `call-delegate-${index}`,
+                    type: "function" as const,
+                    function: {
+                      name: "delegate_task",
+                      arguments: JSON.stringify({ profile: "default", goal }),
+                    },
+                  })),
+                },
+              });
+            }
+            return Promise.resolve(
+              request.transcript.some((message) =>
+                  message.role === "tool" && message.toolName === "bash"
+                )
+                ? finalTurn("Parent done.")
+                : bashTurn("call-parent-after", "parent after"),
+            );
+          },
+        },
+      });
+
+      const result = await loop.runPrompt({
+        prompt: "Delegate both, then check.",
+        promptSlotBinding: directPromptSlotBinding,
+      });
+
+      expect(result.runState.status).toBe("completed");
+      const crossed = delegateObservations(result.runState);
+      expect(crossed).toHaveLength(2);
+      expect(
+        crossed.find((observation) =>
+          observation.toolCallId === "call-delegate-0"
+        )?.label.confidentiality,
+      ).toEqual([SECRET]);
+      expect(
+        crossed.find((observation) =>
+          observation.toolCallId === "call-delegate-1"
+        )?.label.confidentiality,
+      ).toEqual(["public"]);
+      expect(confidentialityOf(result.runState.cfcModelContext?.label))
+        .toEqual(expect.arrayContaining([SECRET, "public"]));
     });
   });
 });
