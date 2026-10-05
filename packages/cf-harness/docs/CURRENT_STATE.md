@@ -1,8 +1,8 @@
 # cf-harness Current State
 
 Status: current implementation reference\
-Last verified: 2026-10-04\
-Revision: `e8faf8f9ca`
+Last verified: 2026-10-05\
+Revision: `799e4fa93c`
 
 The [system map](system-map/README.md) moves in lockstep with this current-state
 reference.
@@ -943,11 +943,13 @@ that interactive product path. The console's interactive path does browse: on a
 console launched with `--allow-browser-host`, a task that declares a browser
 host has its browser children drive the page that host shows the owner, under
 the confinements the [browser host section](../README.md#a-browser-host)
-describes. What a host shows enters the model's context under the unscreened
-prompt-injection caveat, sourced to the page's origin, and is withheld from a
-run whose read ceiling does not admit it. A child's return brings the child's
-model-context label into its parent's, for every child, so the caveat reaches
-the parent with whatever crosses.
+describes. Only such a console lists `browser_host` among the client protocol
+features its `GET /api/status` publishes, so a host learns before a task whether
+to declare itself; the stdio transport never lists it. What a host shows enters
+the model's context under the unscreened prompt-injection caveat, sourced to the
+page's origin, and is withheld from a run whose read ceiling does not admit it.
+A child's return brings the child's model-context label into its parent's, for
+every child, so the caveat reaches the parent with whatever crosses.
 
 Loom currently forces autonomous `cf-harness` runs to `observe` mode while
 trusted `runsc-cfc` observation metadata is not wired through every local tool
