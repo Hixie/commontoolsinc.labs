@@ -308,7 +308,9 @@ Deno.test("github spend: an unavailable enterprise day leaves a partial, gray pr
     '<span class="hfacet" title="$162 partial MTD">$162 partial MTD</span>',
   );
   assertEquals(v.sub, "1 billing day unavailable");
-  assertStringIncludes(v.extra ?? "", "<polyline");
+  // The missing 6th breaks the line, while all 17 sampled days stay
+  // highlighted rather than dropping the 1st from the rate window.
+  assertEquals((v.extra ?? "").match(/<polyline/g)?.length, 2);
 });
 
 Deno.test("github spend: one unavailable prior enterprise day preserves the rest of its month", async () => {

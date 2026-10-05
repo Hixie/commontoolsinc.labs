@@ -665,11 +665,13 @@ does not silently omit usage allocated to one.
 The organization report carries rows by product, SKU, repository, and day;
 enterprise collection reads daily summary usage items across all cost centers.
 The tile adds every returned usage item, so the figure is the account's whole
-metered GitHub bill rather than any one product's share of it. If an enterprise
-day cannot be read, the projection omits that day from its rate, the chart
-breaks across it, and the tile turns gray and labels its month-to-date total as
-partial. GitHub meters these products, and a product the account does not use
-simply has no row:
+metered GitHub bill rather than any one product's share of it. If a
+current-month enterprise day cannot be read, the projection omits that day from
+its rate, the chart breaks across it, and the tile turns gray and labels its
+month-to-date total as partial. An unavailable historical day likewise leaves a
+chart gap and stays out of the rate, without making the current total partial.
+GitHub meters these products, and a product the account does not use simply has
+no row:
 
 | product | what it bills for |
 |---|---|

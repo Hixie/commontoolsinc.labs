@@ -243,11 +243,13 @@ export function spendChart(
   sources: SpendChartSource[],
   now: Date,
   estimateDays?: number,
+  estimateSince?: string,
 ): { chart: string; duration: number } {
   const allDays = new Set<string>();
   for (const source of sources) {
     if (source.spend) {
       for (const day of source.spend.byDay.keys()) allDays.add(day);
+      for (const day of source.knownDays ?? []) allDays.add(day);
       if (source.spend.byDay.size > 0 && source.knownMonths) {
         for (const month of source.knownMonths) allDays.add(`${month}-01`);
       }
@@ -300,7 +302,12 @@ export function spendChart(
     estimateDays ??
       Math.max(currentDays, MIN_SPEND_WINDOW_DAYS),
   );
-  const highlightFrom = grid.length - highlightDays;
+  let highlightFrom = grid.length - highlightDays;
+  if (estimateSince) {
+    const estimateStart = grid.findIndex((day) => day >= estimateSince);
+    highlightFrom = estimateStart < 0 ? grid.length : estimateStart;
+  }
+  const highlightCount = grid.length - highlightFrom;
   const lines = sources.flatMap((source) => {
     const known = knownThrough.get(source);
     if (known === undefined) return [];
@@ -333,7 +340,7 @@ export function spendChart(
   return {
     chart: multiSparkline(lines, {
       fade: true,
-      highlight: { count: highlightDays },
+      highlight: { count: highlightCount },
     }),
     duration: end - start + DAY_MS,
   };

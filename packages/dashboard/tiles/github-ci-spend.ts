@@ -628,6 +628,23 @@ function minutesView(
   };
 }
 
+/** The first reported day whose value contributes to the projection rate. */
+function projectionStartDay(
+  knownDays: ReadonlySet<string> | undefined,
+  now: Date,
+  lagDays: number,
+  estimateDays: number,
+): string | undefined {
+  if (!knownDays || estimateDays <= 0) return undefined;
+  const settledThrough = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - lagDays,
+  )).toISOString().slice(0, 10);
+  const days = [...knownDays].filter((day) => day <= settledThrough).sort();
+  return days[Math.max(0, days.length - estimateDays)];
+}
+
 function unavailableMessage(error: unknown): string {
   if (error instanceof GitHubUsageShapeError) return error.message;
   if (error instanceof StalledReportError) return error.message;
@@ -683,6 +700,12 @@ export const githubCiSpend: Tile = {
         }],
         now,
         spend.estimateDays,
+        projectionStartDay(
+          spend.knownDays,
+          now,
+          GITHUB_LAG_DAYS,
+          spend.estimateDays,
+        ),
       );
       const amount = chart.chart ? "" : ` ${usd(spend.mtd)}`;
       // The ceiling shown beside the headline covers the products the headline
