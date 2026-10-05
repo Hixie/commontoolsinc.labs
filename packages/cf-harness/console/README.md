@@ -677,14 +677,15 @@ yet, and leaves alone a field it does not know. The answer carries a
 and nobody else.
 
 A task may declare a host only on a console its operator launched with
-`--allow-browser-host`, which the local dev script passes through when named:
+`--allow-browser-host`, or with `CF_HARNESS_ALLOW_BROWSER_HOST=1` in its
+environment; the local dev script passes the flag through when named:
 
 ```sh
 ./scripts/start-local-dev.sh --cf-harness --allow-browser-host
 ```
 
-A console launched without it answers the declaration 403. Only a console
-launched with it lists `browser_host` among the
+A console launched with neither answers the declaration 403. Only a console
+launched with one of them lists `browser_host` among the
 [client protocol](#client-protocol) features it serves, so a host reads
 `GET /api/status` to learn whether to declare itself. A turn with a host runs
 under its session's policy with browser children added to drive the host, and
