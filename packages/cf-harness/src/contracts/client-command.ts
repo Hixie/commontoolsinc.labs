@@ -54,7 +54,7 @@ export type HarnessClientFeature = typeof HARNESS_CLIENT_FEATURES[number];
  * before work starts.
  */
 export const HARNESS_SUPPORTED_CLIENT_FEATURES:
-  readonly HarnessClientFeature[] = ["client_actions"];
+  readonly HarnessClientFeature[] = ["client_actions", "typed_commands"];
 
 /**
  * The features a console that answers without a protocol echo is taken to
@@ -601,6 +601,9 @@ const isWithinJsonDepth = (value: unknown, depth = 0): boolean => {
     isWithinJsonDepth(entry, depth + 1)
   );
 };
+
+/** Bounded JSON-data validation used before serializing untrusted command args. */
+export { isJsonValue as isHarnessCommandJsonValue };
 
 /** Whether a value is JSON data that ordinary JSON carries unchanged. */
 const isJsonValue = (value: unknown): value is JSONValue =>
