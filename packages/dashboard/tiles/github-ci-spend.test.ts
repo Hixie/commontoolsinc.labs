@@ -213,6 +213,18 @@ Deno.test("github spend: enterprise summary includes all cost centers and enterp
             budget_scope: "organization",
             budget_amount: 10_000,
           },
+          {
+            budget_type: "ProductPricing",
+            budget_product_skus: ["actions", "packages"],
+            budget_scope: "enterprise",
+            budget_amount: 10_000,
+          },
+          {
+            budget_type: "ProductPricing",
+            budget_product_skus: [null],
+            budget_scope: "enterprise",
+            budget_amount: 10_000,
+          },
         ],
       },
     },
@@ -263,6 +275,74 @@ Deno.test("github spend: enterprise summary includes all cost centers and enterp
     requests.every(({ version }) => version === "2026-03-10"),
     true,
   );
+});
+
+Deno.test("github spend: an unavailable enterprise day leaves a partial, gray projection", async () => {
+  const routes = enterpriseSummaryRoutes(2026, 1, 20, {
+    1: [{ product: "actions", netAmount: 18 }],
+    2: [{ product: "actions", netAmount: 18 }],
+    3: [{ product: "actions", netAmount: 18 }],
+    4: [{ product: "actions", netAmount: 18 }],
+    5: [{ product: "actions", netAmount: 18 }],
+    6: [{ product: "actions", netAmount: 18 }],
+    7: [{ product: "actions", netAmount: 18 }],
+    8: [{ product: "actions", netAmount: 18 }],
+    9: [{ product: "actions", netAmount: 18 }],
+    10: [{ product: "actions", netAmount: 18 }],
+  });
+  routes[enterpriseSummaryPath(2026, 1, 6)] = {};
+
+  const v = await view(
+    "2026-01-20T09:00:00Z",
+    routes,
+    {
+      GH_BILLING_ENTERPRISE: ENTERPRISE,
+      GH_BILLING_TOKEN: "enterprise-billing",
+    },
+  );
+
+  assertEquals(v.status, "unknown");
+  assertEquals(v.value, "~$295/mo");
+  assertEquals(
+    v.aside,
+    '<span class="hfacet" title="$162 partial MTD">$162 partial MTD</span>',
+  );
+  assertEquals(v.sub, "1 billing day unavailable");
+  assertStringIncludes(v.extra ?? "", "<polyline");
+});
+
+Deno.test("github spend: one unavailable prior enterprise day preserves the rest of its month", async () => {
+  const december = enterpriseSummaryRoutes(
+    2025,
+    12,
+    31,
+    Object.fromEntries(
+      Array.from({ length: 31 }, (_, index) => [
+        index + 1,
+        [{ product: "actions", netAmount: 10 }],
+      ]),
+    ),
+  );
+  december[enterpriseSummaryPath(2025, 12, 20)] = {};
+  const v = await view(
+    "2026-01-03T09:00:00Z",
+    {
+      ...december,
+      ...enterpriseSummaryRoutes(2026, 1, 3, {
+        1: [{ product: "actions", netAmount: 20 }],
+        2: [{ product: "actions", netAmount: 20 }],
+      }),
+    },
+    {
+      GH_BILLING_ENTERPRISE: ENTERPRISE,
+      GH_BILLING_TOKEN: "enterprise-billing",
+    },
+  );
+
+  assertEquals(v.status, "good");
+  assertEquals(v.value, "~$332/mo");
+  assertEquals(v.aside, '<span class="hfacet" title="$40 MTD">$40 MTD</span>');
+  assertStringIncludes(v.extra ?? "", "<polyline");
 });
 
 Deno.test("github spend: enterprise scope never falls back to organization minutes", async () => {

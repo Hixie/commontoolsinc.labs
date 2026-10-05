@@ -99,6 +99,12 @@ interface GitHubDollarSpend extends DailySpend {
    */
   projectedBudgeted: number;
 
+  /** Enterprise days whose summary was unavailable in the current month. */
+  unavailableDays: number;
+
+  /** Enterprise days that returned a report, including days that cost $0. */
+  knownDays?: Set<string>;
+
   /**
    * The calendar months whose usage report was read, as "YYYY-MM". A month
    * that could not be read is absent, and its days are unknown rather than $0.
@@ -348,7 +354,9 @@ async function accountBudgets(
 /**
  * Reads one month at the target account scope. Enterprise summary requests
  * include every cost center by default; one request per day preserves the
- * daily series while bounding concurrent requests to the days in a month.
+ * daily series while bounding concurrent requests to the days in a month. A
+ * day that fails or has no usable array is absent from knownDays, so it becomes
+ * a hole rather than either discarding the month or reading as $0.
  */
 async function usageForMonth(
   target: BillingTarget,
@@ -356,7 +364,7 @@ async function usageForMonth(
   year: number,
   month: number,
   throughDay = new Date(Date.UTC(year, month, 0)).getUTCDate(),
-): Promise<UsageItem[]> {
+): Promise<{ items: UsageItem[]; knownDays?: Set<string> }> {
   if (target.kind === "organization") {
     const report = await github<{ usageItems?: UsageItem[] }>(
       usagePath(target, year, month),
@@ -366,32 +374,46 @@ async function usageForMonth(
     if (!Array.isArray(report.usageItems)) {
       throw new GitHubUsageShapeError("billing usage unavailable");
     }
-    return report.usageItems;
+    return { items: report.usageItems };
   }
 
   const reports = await Promise.all(
     Array.from({ length: throughDay }, (_, index) => index + 1).map(
-      async (day) => ({
-        day,
-        report: await github<{ usageItems?: Omit<UsageItem, "date">[] }>(
-          usageSummaryPath(target, year, month, day),
-          token,
-          BILLING_REQUEST,
-        ),
-      }),
+      async (day) => {
+        try {
+          const report = await github<{
+            usageItems?: Omit<UsageItem, "date">[];
+          }>(
+            usageSummaryPath(target, year, month, day),
+            token,
+            BILLING_REQUEST,
+          );
+          return {
+            day,
+            items: Array.isArray(report.usageItems)
+              ? report.usageItems
+              : undefined,
+          };
+        } catch {
+          return { day, items: undefined };
+        }
+      },
     ),
   );
   let items: UsageItem[] = [];
-  for (const { day, report } of reports) {
-    if (!Array.isArray(report.usageItems)) {
-      throw new GitHubUsageShapeError("billing usage unavailable");
-    }
+  const knownDays = new Set<string>();
+  for (const { day, items: dailyItems } of reports) {
+    if (!dailyItems) continue;
     const date = `${year}-${String(month).padStart(2, "0")}-${
       String(day).padStart(2, "0")
     }`;
-    items = items.concat(report.usageItems.map((item) => ({ ...item, date })));
+    knownDays.add(date);
+    items = items.concat(dailyItems.map((item) => ({ ...item, date })));
   }
-  return items;
+  if (knownDays.size === 0) {
+    throw new GitHubUsageShapeError("billing usage unavailable");
+  }
+  return { items, knownDays };
 }
 
 async function githubDollarSpend(
@@ -410,19 +432,30 @@ async function githubDollarSpend(
   } catch {
     // An unset GitHub budget leaves the spend projection uncompared.
   }
-  const current = await usageForMonth(
+  const currentReport = await usageForMonth(
     target,
     token,
     year,
     month0 + 1,
     dayOfMonth,
   );
+  const current = currentReport.items;
 
   // One billing pipeline writes the report, a row at a time, for every product
   // the account used on a day. Its newest row, whatever product that row
   // belongs to, is how far the pipeline has been written.
   let reportedThrough: string | undefined;
-  const noteReport = (items: UsageItem[]): void => {
+  const knownDays = currentReport.knownDays ? new Set<string>() : undefined;
+  const noteReport = (
+    report: { items: UsageItem[]; knownDays?: ReadonlySet<string> },
+  ): void => {
+    for (const day of report.knownDays ?? []) {
+      knownDays?.add(day);
+      if (reportedThrough === undefined || day > reportedThrough) {
+        reportedThrough = day;
+      }
+    }
+    const items = report.items;
     for (const entry of items) {
       const day = dayKey(entry.date);
       if (day && (reportedThrough === undefined || day > reportedThrough)) {
@@ -431,7 +464,7 @@ async function githubDollarSpend(
     }
   };
 
-  noteReport(current);
+  noteReport(currentReport);
   const mtd = current.reduce(
     (sum, item) => sum + (Number(item.netAmount) || 0),
     0,
@@ -479,16 +512,24 @@ async function githubDollarSpend(
         byDay,
         budgetedByDay,
         budgets.products,
-        previous,
+        previous.items,
       );
       months.add(monthKey(previousYear, previousMonth));
       if (immediatePrior) {
         const settleMonth = (days: Map<string, number>) => {
           const series = calendarMonth(days, previousYear, previousMonth);
-          return settled(
+          const complete = settled(
             series,
             series.length + dayOfMonth,
             GITHUB_LAG_DAYS,
+          );
+          if (!previous.knownDays) return complete;
+          const prefix = String(previousYear) + "-" +
+            String(previousMonth + 1).padStart(2, "0") + "-";
+          return complete.filter((_, index) =>
+            previous.knownDays?.has(
+              prefix + String(index + 1).padStart(2, "0"),
+            )
           );
         };
         priorMonthDaily = settleMonth(byDay);
@@ -503,6 +544,9 @@ async function githubDollarSpend(
     immediatePrior = false;
   }
   requireCurrentReport("GitHub billing report", reportedThrough, now);
+  const unavailableDays = currentReport.knownDays
+    ? dayOfMonth - currentReport.knownDays.size
+    : 0;
 
   return {
     kind: "dollars",
@@ -514,6 +558,7 @@ async function githubDollarSpend(
         lagDays: GITHUB_LAG_DAYS,
         measuredMtd: mtd,
         priorMonthDaily,
+        knownDays,
       },
     ),
     projectedBudgeted: summarizeDailySpend(
@@ -523,10 +568,13 @@ async function githubDollarSpend(
         lagDays: GITHUB_LAG_DAYS,
         measuredMtd: budgetedMtd,
         priorMonthDaily: priorMonthBudgetedDaily,
+        knownDays,
       },
     ).projected,
     budget: budgets.total,
     months,
+    unavailableDays,
+    knownDays,
   };
 }
 
@@ -621,7 +669,9 @@ export const githubCiSpend: Tile = {
       // Against the budgeted products' projection, not the headline's. The
       // headline covers products the budget never spoke for, and holding those
       // against it would turn the light on spend nobody set a limit for.
-      const status = budgetStatus(spend.projectedBudgeted, budget);
+      const status = spend.unavailableDays > 0
+        ? "unknown"
+        : budgetStatus(spend.projectedBudgeted, budget);
       const chart = spendChart(
         [{
           spend,
@@ -629,6 +679,7 @@ export const githubCiSpend: Tile = {
           label: usd(spend.mtd),
           lagDays: GITHUB_LAG_DAYS,
           knownMonths: spend.months,
+          knownDays: spend.knownDays,
         }],
         now,
         spend.estimateDays,
@@ -649,7 +700,9 @@ export const githubCiSpend: Tile = {
       const legend =
         `<p class="sub" title="${escapeHtml(legendText)}">${GITHUB_SWATCH} ${legendText}</p>`;
       const value = `~${usd(spend.projected)}/mo`;
-      const mtd = `${usd(spend.mtd)} MTD`;
+      const mtd = `${usd(spend.mtd)}${
+        spend.unavailableDays > 0 ? " partial" : ""
+      } MTD`;
 
       return {
         ...drill,
@@ -657,6 +710,11 @@ export const githubCiSpend: Tile = {
         value,
         valueLabel: value,
         aside: `<span class="hfacet" title="${mtd}">${mtd}</span>`,
+        sub: spend.unavailableDays > 0
+          ? `${spend.unavailableDays} billing ${
+            spend.unavailableDays === 1 ? "day" : "days"
+          } unavailable`
+          : undefined,
         extra: `${legend}${chart.chart}`,
         duration: chart.duration,
       };

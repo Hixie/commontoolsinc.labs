@@ -662,10 +662,14 @@ uses the organization named by `GH_BILLING_ORG` by default. Setting
 collection uses GitHub's summary report across all cost centers, so its total
 does not silently omit usage allocated to one.
 
-The report carries one row per product, SKU, repository and day. The tile adds
-up every row, so the figure is the account's whole metered GitHub bill rather
-than any one product's share of it. GitHub meters these products, and a product
-the account does not use simply has no row:
+The organization report carries rows by product, SKU, repository, and day;
+enterprise collection reads daily summary usage items across all cost centers.
+The tile adds every returned usage item, so the figure is the account's whole
+metered GitHub bill rather than any one product's share of it. If an enterprise
+day cannot be read, the projection omits that day from its rate, the chart
+breaks across it, and the tile turns gray and labels its month-to-date total as
+partial. GitHub meters these products, and a product the account does not use
+simply has no row:
 
 | product | what it bills for |
 |---|---|
@@ -777,9 +781,10 @@ Optionally powers **github spend** instead of `GH_TOKEN`. Use a separate token
 when billing access belongs at a broader scope than the repository and
 organization permissions used by the other GitHub tiles.
 
-For organization collection, use a fine-grained personal access token owned by
-that organization with organization **Administration: read**. For enterprise
-collection, set `GH_BILLING_ENTERPRISE` and use one of:
+For organization collection, use a fine-grained personal access token with
+that organization selected as its resource owner and organization
+**Administration: read**. For enterprise collection, set
+`GH_BILLING_ENTERPRISE` and use one of:
 
 - A classic personal access token with `manage_billing:enterprise`, owned by an
   enterprise owner or billing manager. GitHub does not offer a read-only
