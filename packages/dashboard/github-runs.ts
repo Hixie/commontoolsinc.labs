@@ -323,21 +323,22 @@ async function readTop(list: RunList, head: Head, size: number): Promise<void> {
   const held = new Set(head.runs.map((run) => run.id));
   const newestHeld = head.runs[0]?.id ?? Infinity;
   const top = await list.page(1, size);
-  if ((top[0]?.id ?? -Infinity) < newestHeld && newestHeld !== Infinity) {
-    // Only a deletion or a list served behind the runs held takes away the
-    // newest run held, and reading that run by its id tells the two apart.
-    if (await list.run(newestHeld) !== undefined) {
-      throw new Error(
-        `GitHub listed ${list.repo} ${list.workflow} without its run ` +
-          `${newestHeld}, which still exists: the list is behind`,
-      );
-    }
-  }
   let ended = top.length < size;
   const reaches = () => top.some((run) => held.has(run.id));
   const passes = () => (top.at(-1)?.id ?? Infinity) < newestHeld;
   while (!ended && !reaches() && !passes()) {
     ({ ended } = await follow(list, top, 0));
+  }
+  if (
+    newestHeld !== Infinity && !top.some((run) => run.id === newestHeld) &&
+    await list.run(newestHeld) !== undefined
+  ) {
+    // Only a deletion or a list served behind the runs held leaves out the
+    // newest run held, and reading that run by its id tells the two apart.
+    throw new Error(
+      `GitHub listed ${list.repo} ${list.workflow} without its run ` +
+        `${newestHeld}, which still exists: the list is behind`,
+    );
   }
   // A top read that reaches the end of the list is the whole list.
   const joins = reaches() && !ended;

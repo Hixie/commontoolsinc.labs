@@ -222,6 +222,11 @@ let benchmarkRuns = new WeakMap<BenchmarkGitHub, RunLists>();
 // is in flight or has failed. The tile itself reads the list its own
 // collection fetched, never this one.
 let latestBenchmarkRuns: Run[] | undefined;
+// How many run list reads have started, and which of them `latestBenchmarkRuns`
+// came from, so that a read that finishes after a later one does not replace
+// what the later one found.
+let benchmarkReadsStarted = 0;
+let benchmarkReadPublished = 0;
 
 export type BenchmarkFetchPhase =
   | "discovering"
@@ -416,6 +421,7 @@ async function pageBenchmarkRuns(
   credential: GitHubCredential,
   cutoff: number,
 ): Promise<Run[]> {
+  const read = ++benchmarkReadsStarted;
   let lists = benchmarkRuns.get(github);
   if (!lists) {
     lists = new RunLists();
@@ -432,7 +438,10 @@ async function pageBenchmarkRuns(
       until: (run) => Date.parse(run.created_at) < cutoff,
     },
   );
-  latestBenchmarkRuns = runs;
+  if (read > benchmarkReadPublished) {
+    latestBenchmarkRuns = runs;
+    benchmarkReadPublished = read;
+  }
   return runs;
 }
 

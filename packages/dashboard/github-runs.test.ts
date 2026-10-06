@@ -537,6 +537,33 @@ describe("github-runs", () => {
           await expect(stale).rejects.toThrow("the list is behind");
         });
 
+        it("rejects a walk from the top that passes the newest run held while it still exists", async () => {
+          using time = new FakeTime();
+          const github = new FakeGitHub(runs(300, 1));
+          const lists = new RunLists();
+          await read(lists, github, { until: (held) => held.id === 250 });
+          // A hundred runs land, and the list comes back without run 300,
+          // though it is still there to be read by its id.
+          const current = runs(400, 1);
+          const request = github.request;
+          github.request = <T>(
+            path: string,
+            options: GitHubRequestOptions,
+          ): Promise<T> => {
+            github.list = path.includes("/workflows/")
+              ? current.filter((held) => held.id !== 300)
+              : current;
+            return request<T>(path, options);
+          };
+          time.tick(HEAD_REUSE_MS);
+
+          const stale = read(lists, github, {
+            until: (held) => held.id === 250,
+          });
+
+          await expect(stale).rejects.toThrow("the list is behind");
+        });
+
         it("accepts a read of the top that leaves out the newest run held once it is deleted", async () => {
           using time = new FakeTime();
           const github = new FakeGitHub(runs(300, 1));
