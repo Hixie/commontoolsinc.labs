@@ -131,7 +131,36 @@ export interface GitHubRequestOptions {
 
   /** The REST API version required by an endpoint newer than the default. */
   apiVersion?: string;
+
+  /**
+   * Lets a request for a list of workflow runs through. `github-runs.ts` is
+   * the module that reads those lists, and the reasons it reads them as it
+   * does are given there; a run list requested without this is refused.
+   */
+  runListAccess?: typeof RUN_LIST_ACCESS;
 }
+
+/** The error a GitHub API request that GitHub answered with a failure throws. */
+export class GitHubStatusError extends Error {
+  #status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.#status = status;
+  }
+
+  /** The HTTP status GitHub answered with. */
+  get status(): number {
+    return this.#status;
+  }
+}
+
+/** What `GitHubRequestOptions.runListAccess` is set to. */
+export const RUN_LIST_ACCESS: unique symbol = Symbol("run list access");
+
+/** A path that asks for a list of a repository's or a workflow's runs. */
+const RUN_LIST_PATH =
+  /^repos\/[^/?]+\/[^/?]+\/actions\/(?:workflows\/[^/?]+\/)?runs(?:\?|$)/;
 
 export interface GitHubDownload {
   readonly ok: boolean;
@@ -357,9 +386,18 @@ async function githubResponse(
   credential: GitHubCredential,
   performance: boolean,
   withTimeout: boolean,
-  apiVersion?: string,
+  options: GitHubRequestOptions,
 ): Promise<GitHubResponseResult> {
   const normalizedPath = path.replace(/^\//, "");
+  if (
+    RUN_LIST_PATH.test(normalizedPath) &&
+    options.runListAccess !== RUN_LIST_ACCESS
+  ) {
+    throw new Error(
+      `GitHub API \`${normalizedPath}\` is a workflow run list, which only ` +
+        "`github-runs.ts` may ask for: a filtered one can be days behind",
+    );
+  }
   const operation: ActiveGitHubOperation = {
     id: nextGitHubOperationId++,
     path: normalizedPath,
@@ -382,7 +420,12 @@ async function githubResponse(
       operation.stage = "requesting GitHub";
     }
     const token = await credential.token();
-    response = await githubRequest(path, token, withTimeout, apiVersion);
+    response = await githubRequest(
+      path,
+      token,
+      withTimeout,
+      options.apiVersion,
+    );
     if (response.status === 401) credential.refused(token);
   } catch (error) {
     failed = true;
@@ -418,7 +461,7 @@ async function githubJson<T>(
     credential,
     performance,
     true,
-    options.apiVersion,
+    options,
   );
   if (!res.ok) {
     const reportHttpError = !options.ignoreStatuses?.includes(res.status);
@@ -442,8 +485,9 @@ async function githubJson<T>(
       );
     }
     finishGitHubOperation(operation, res, true);
-    throw new Error(
+    throw new GitHubStatusError(
       `GitHub API ${path} failed: HTTP ${res.status}${detail}`,
+      res.status,
     );
   }
   try {
@@ -518,7 +562,7 @@ async function githubDownloadResponse(
     credential,
     performance,
     false,
-    options.apiVersion,
+    options,
   );
   if (!response.ok) {
     const reportHttpError = !options.ignoreStatuses?.includes(response.status);
@@ -550,7 +594,11 @@ async function githubDownloadResponse(
 
 /** The GitHub JSON call a collection makes, so a test can supply its own. */
 export interface GitHubJson {
-  json<T>(path: string, credential: GitHubCredential): Promise<T>;
+  json<T>(
+    path: string,
+    credential: GitHubCredential,
+    options?: GitHubRequestOptions,
+  ): Promise<T>;
 }
 
 /**
@@ -611,72 +659,10 @@ export function clampInt(v: string | null, def: number, lo: number, hi: number):
   return Math.max(lo, Math.min(hi, Math.floor(n)));
 }
 
-/**
- * The error a run list is refused with when it is behind the workflow's newest
- * runs: its newest run is older than one already collected, or a search does
- * not reach the runs on the workflow's newest page.
- */
-export const STALE_RUNS_ERROR = "run list behind the workflow's newest runs";
-
-/** A workflow run as far as telling which of two runs was created last. */
-export interface DatedRun {
-  id: number;
-  created_at: string;
-}
-
-/**
- * Whether `fetched`, a run list read from `source`, has a newest run older than
- * the newest run of `held`, the list already collected from it. A workflow's
- * newest run only ever moves forward, so only a stale view of the workflow can
- * list that. A stale list is logged with how many runs each list holds and
- * their newest runs, which tells an empty reply from a lagging one.
- */
-export function isStaleRunList(
-  source: string,
-  fetched: readonly DatedRun[],
-  held: readonly DatedRun[] | undefined,
-): boolean {
-  if (createdAt(newestRun(fetched)) >= createdAt(newestRun(held))) return false;
-  console.error(
-    `run source ${source} stale, ${STALE_RUNS_ERROR}. Fetched ` +
-      `${describeRuns(fetched)}; held ${describeRuns(held)}.`,
-  );
-  return true;
-}
-
-/**
- * The run in `runs` created last, or `undefined` when none has a readable
- * creation time.
- */
-function newestRun(runs: readonly DatedRun[] | undefined): DatedRun | undefined {
-  let newest: DatedRun | undefined;
-  for (const run of runs ?? []) {
-    if (createdAt(run) > createdAt(newest)) newest = run;
-  }
-  return newest;
-}
-
-/**
- * When `run` was created, or `-Infinity` for no run or an unreadable time, so
- * a list without a dated run is older than any list with one.
- */
-function createdAt(run: DatedRun | undefined): number {
-  const at = run ? Date.parse(run.created_at) : NaN;
-  return Number.isFinite(at) ? at : -Infinity;
-}
-
-/** Names the size of `runs` and its newest run. */
-function describeRuns(runs: readonly DatedRun[] | undefined): string {
-  const run = newestRun(runs);
-  const count = `${runs?.length ?? 0} run${runs?.length === 1 ? "" : "s"}`;
-  return `${count}, ${run ? `newest run ${run.id} created ${run.created_at}` : "none dated"}`;
-}
-
 // Turn a raw collector error into a short, calm tile message. The full error is
 // still logged; the dashboard shows a human phrase, not a stack trace or API
 // path.
 export function friendlyError(msg: string): string {
-  if (msg === STALE_RUNS_ERROR) return "run list out of date";
   const m = msg.toLowerCase();
   if (/connect|sending request|network|dns|refused|unreachable|timed ?out|timeout|econn/.test(m)) {
     return "source unreachable";

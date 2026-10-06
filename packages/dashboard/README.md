@@ -120,48 +120,19 @@ It then shares the source's next fetch with the other tiles, rather than
 falling due on its own and fetching the source for itself, which would leave it
 describing different runs from its neighbours from then on.
 
-A workflow snapshot is joined from three reads of the workflow's runs. The
-newest page of the unfiltered listing, whatever branch or event its runs were
-for, is current; GitHub serves that listing from the moment of the request, and
-fetches of a workflow's two snapshots within twenty seconds of each other share
-one read of it. The filtered listing, narrowed to the snapshot's branch or
-event, carries the rest of the window, but GitHub serves it from an index that
-is often hours or days behind. The third read is the window the snapshot held
-before. Either the held window or the filtered listing has to join the newest
-page, so that no run falls between them. The held window joins it when the page
-still carries the newest run, of any branch or event, of the page the held
-window was joined to, which it does unless a hundred runs start between two
-refreshes.
-The filtered listing joins it when it carries the oldest of the snapshot's runs
-on the page. When neither joins, which is what a dashboard that has just
-started sees while the filtered listing is behind, the unfiltered listing is
-read on, page by page, until it reaches a run the filtered listing carries,
-holds the most runs a window holds, or reaches the age cutoff; for labs' main
-runs that is at most about eight pages. A workflow's two snapshots share the
-pages they both read within twenty seconds. The server log names the run
-nothing reached, the filtered listing's newest run, and how many runs the
-unfiltered listing gave. Each run is taken from whichever read last saw it
-updated, so a lagging read never turns a finished run back into a running one,
-and a run a lagging read missed joins the window once a current listing carries
-it. A filtered listing that fails is logged.
+A workflow snapshot is read through the run-list reader described under
+[Reading GitHub's run lists](#reading-githubs-run-lists). Each refresh reads the
+top hundred runs of the workflow's list, of every branch and event, and reads
+further down only as far as the snapshot's window reaches past the runs already
+held. A workflow's two snapshots, of its main runs and of its pull request runs,
+share one read of the top of the list when they are fetched within twenty
+seconds of each other. Each snapshot names the list filtered to its branch or
+event as the one through which runs started again further down are found.
 
-The filtered listing is read a page at a time, and the pages have to describe
-one moment. A page after the first asks GitHub for the runs created at or
-before the run the page before it ended on, rather than for an offset into a
-list that shifts as runs land. That run is one the window already holds, so the
-page has to carry it; a page that comes back without it was cut from a moment
-that never held that run, and the listing is refused rather than joining the
-two. This reads the same whichever side went stale. The cost is the one run
-each page repeats, which is why the window is up to the configured maximum
-rather than exactly it. The runs that do come back are ordered newest-first by
-the collection, not by the order the pages arrived in.
-
-A fetch fails only when a read of the unfiltered listing fails. The scheduler
-then keeps the snapshot it has, and each tile reading it turns gray and names
-the problem, apart from the ci tile, which marks the affected build
-unreadable. The next fetch that succeeds clears the gray. Together these keep a
-stale read from putting a run from weeks back at the head of a window, where
-every CI tile takes the state of the tree from.
+A fetch fails when a read of GitHub fails. The scheduler then keeps the snapshot
+it has, and each tile reading it turns gray and names the problem, apart from
+the ci tile, which marks the affected build unreadable. The next fetch that
+succeeds clears the gray.
 
 The recent-main-runs tile reads both the Labs and Loom snapshots. It rebuilds
 and sorts the combined list whenever either snapshot arrives. If one snapshot
@@ -278,6 +249,78 @@ cd packages/dashboard
 deno task regenerate-favicons
 deno test --allow-all favicon-raster.test.ts regenerate-favicons.test.ts
 ```
+
+### Reading GitHub's run lists
+
+Every list of workflow runs the dashboard reads comes through `github-runs.ts`.
+The dashboard's GitHub client refuses a request for a run list made anywhere
+else, so a tile cannot read one any other way by accident.
+
+GitHub serves a workflow's unfiltered run list current. A list narrowed by
+branch, event, status, actor, creation time, commit, or check suite comes from
+an index that is often hours or days behind, and sometimes weeks or months
+behind. Such a list leaves out runs that exist, and shows the runs it does list
+as they stood when the index last caught up. On 2026-10-06 the list of
+gvisor's Go runs filtered to its default branch began with a failure nineteen
+days old, and left out the eight passing runs created after it. So the reader
+takes which runs exist, and their order, only from the unfiltered list. A
+filtered list only names runs that may have changed, and each run it names is
+then read by its id.
+
+The unfiltered list carries every run, whatever it ran for, so a reader that
+wants one branch's runs may have to read a long way down it. Each reader says
+which runs it wants, how many of them it needs at most, and which run is the
+last it needs, and it is given only the runs it wants. A `RunLists` keeps the
+head of each workflow's list: its runs from the newest down, with none missing
+between them. Each reading brings the head up to date by reading the top of the
+list, twenty runs unless the reader asks for up to a hundred, and following it
+down the list until it reaches a run the head holds. If it passes the newest
+run held without reaching any, every held run in its way was deleted, and the
+head starts again from what it read. Readings made within twenty seconds of
+each other share one read of the top. A reading that needs runs below the head
+reads on down the list. The head is kept as deep as the deepest of its readers
+last read, and a reader that has not read for a day stops holding it. Each part
+of the dashboard that reads runs keeps its own `RunLists`, so that a deep
+reading, such as CI history's after a restart, never holds up the thirty-second
+refresh of the CI tiles reading the same workflow.
+
+GitHub lists runs newest first, and a newer run has the larger id. Runs land at
+the top of the list and can be deleted from anywhere in it between two
+requests, so a page asked for by its number can start some way from where it
+was expected to. Runs from a page are added after the last run held only when
+that one page also holds that run, since each page is a view of the list at one
+moment. The reader asks for a page that holds where the run is expected and as
+many runs after it as it can, choosing a page size between 51 and 100 to make
+that so. A page that holds only newer runs sends it on down the list a page at
+a time, and one that holds only older runs sends it back up a page at a time;
+once it has turned round, it asks for pages that hold the expected place in
+their middle. A page that holds runs on both sides of the last run, but not the
+run itself, shows that run deleted, and it is dropped. The head remembers how
+far from its expected place the last run was found, which deleted runs still
+held above it make more than zero, and starts the next walk there. A page whose
+runs are not in order of falling id is rejected.
+
+A run changes after it is listed: it finishes, or someone starts it again, which
+leaves it in its place in the list. The runs at the top of the list are read
+anew on every reading. Below them, a held run the reader wants that had not
+finished is read again by its id before the reader is given it. A run that had
+finished and has been started again is found through filtered lists every
+reader names, usually the list filtered to the reader's branch or event. Each
+such list is read down to the oldest run held, or to runs created more than
+thirty days ago, since GitHub allows a run to be started again for thirty days
+after it was created, and readings within twenty seconds of each other share
+one read of it. A held run the reader wants, which such a list shows updated
+after the copy held, is read again by its id before the reader is given any
+run. A lagging filtered list therefore delays the news of a run started again,
+and cannot hide a run or turn one back. A filtered list that cannot be read is
+logged, and the reading goes on without it. A run that is gone when it is read
+again by its id is dropped. A held run deleted without being read again stays
+held until the head is cut back past it.
+
+A reader whose answer rests on one run, as the ci tile's verdict rests on the
+run that decides a job, can ask for the run it stops at to be read again by its
+id when the reading did not read it from the list. The reading then goes on past
+that run when, read again, it no longer settles the question.
 
 ## Add a tile
 
@@ -511,7 +554,7 @@ installation with the same permissions; see [Credentials](#credentials).
 
 | tile | source | needs |
 |---|---|---|
-| ci | every job the organization runs outside pull requests, in every repository the token can see that is not archived: for each active workflow, the newest run on that repository's own default branch that passed or failed, however many runs that judged nothing came after it. The headline is `passing` when every one of them passes, the repository's name when a single job is failing, as in `loom failing`, and a count when more than one is, as in `3 failing`. The header carries how many jobs the headline speaks for and how many repositories they came from. The body lists every failing job with its conclusion and how long ago it ran; while the tile is not red it also lists the labs and loom main builds, so the two builds the team watches stay visible, and a red tile lists only its failing jobs. A failure older than `CI_FAILURE_FRESH_HOURS` is orange rather than red: it is still failing and still counted, and it is no longer the thing that just broke. A failure made before the workflow's file last changed does not count at all, since that is what a job someone stopped rather than fixed looks like. A repository whose workflow listing cannot be read is listed too, and turns the tile orange rather than being passed over. The rows carry no links of their own, because the tile itself opens the page below | `GH_TOKEN` (or `GITHUB_TOKEN`) with Actions read across the organization |
+| ci | every job the organization runs outside pull requests, in every repository the token can see that is not archived: for each active workflow, the newest run on that repository's own default branch that passed or failed, however many runs that judged nothing came after it, among the workflow's newest thousand runs of any branch. The headline is `passing` when every one of them passes, the repository's name when a single job is failing, as in `loom failing`, and a count when more than one is, as in `3 failing`. The header carries how many jobs the headline speaks for and how many repositories they came from. The body lists every failing job with its conclusion and how long ago it ran; while the tile is not red it also lists the labs and loom main builds, so the two builds the team watches stay visible, and a red tile lists only its failing jobs. A failure older than `CI_FAILURE_FRESH_HOURS` is orange rather than red: it is still failing and still counted, and it is no longer the thing that just broke. A failure made before the workflow's file last changed does not count at all, since that is what a job someone stopped rather than fixed looks like. A repository whose workflow listing cannot be read is listed too, and turns the tile orange rather than being passed over. The rows carry no links of their own, because the tile itself opens the page below | `GH_TOKEN` (or `GITHUB_TOKEN`) with Actions read across the organization |
 | CI jobs → `/ci` | every job the ci tile read, at full width: the repository and workflow, what started the deciding run (`push`, `schedule`, `workflow_dispatch`, and the rest, as GitHub names them), what that run concluded, how long it took, when it started, and how long ago that was. Every column sorts, once up and once down, on the value behind the cell rather than on what the cell says, so durations and times order as the measurements they are; the page opens worst first and a column of equal values keeps that order beneath it. Workflows with no verdict are listed under the table rather than through it, each with why: no completed run on the default branch, which is what a workflow only a pull request triggers looks like; runs that all judged nothing; or a workflow changed since it failed. So are repositories whose workflow listing could not be read. A workflow with a run in progress on its default branch carries a blue dot after its name, which links to that run, and the summary above the table counts them. Only a run in progress carries one: a queued run, or one waiting for approval, does not. It renders the tile's own last collection rather than asking GitHub again, so opening it costs no requests and shows exactly what the tile shows, running dots included: a run that starts or ends between collections shows at the next one. The page is live: an open copy shows each collection within a serving tick of the tile finishing it, without reloading, and in whatever order the reader sorted it | none |
 | labs ci trust, labs ci duration | GitHub Actions (`deno.yml` in `commonfabric/labs`), via the REST API. Trust reads the runs on main; duration reads the pull request runs | `GH_TOKEN` (or `GITHUB_TOKEN`) |
 | loom ci trust, loom ci duration | the same two tiles for `commonfabric/loom` (`test-fast.yml`) | `GH_TOKEN` (read access to loom); optional `DASHBOARD_LOOM_REPO` |
@@ -561,7 +604,8 @@ No other conclusion takes that request.
 
 The **ci** tile reads each workflow's runs on the default branch, of any
 status, newest first, and decides the job from the newest completed one
-carrying a verdict, however many runs after it carry none. A run still going
+carrying a verdict, however many runs after it carry none, among its newest
+thousand runs of any branch. A run still going
 carries none. A run concluded `success` passes; a run
 concluded `failure`, `timed_out`, or `startup_failure` fails. A `cancelled` run
 judges nothing when a newer run of the same workflow was created while it was
@@ -579,17 +623,17 @@ off with an `if:` that is never true on the default branch goes on reading
 green behind every skipped run, and so does a job whose runs are all still
 going.
 
-The runs are read a page of twenty at a time, until a page reaches a run that
-concluded `success` or failed outright. The tile keeps, for each workflow, how
-far down it has already settled the verdict, so the next collection stops as
-soon as it reaches those runs. A run started again keeps its place among the
-runs, so the tile checks whether the run that decided the job has been run again
-since, asking GitHub for it when the pages read did not reach it. One that has
-been run again sends the pages on as though nothing had been settled. A verdict far back therefore costs its pages
-once, when the tile first reads the workflow, and after that one page and one
-run on each collection. GitHub lists at most a thousand runs of a workflow
-filtered by branch, so that first read is at most fifty pages, and a workflow
-with no verdict in them has none.
+The runs are read through the run-list reader, newest first, down to the first
+run on the default branch, started by something other than a pull request, that
+concluded `success` or failed outright. That run is read again by its id when
+the reading did not read it from the list, so a run started again since it was
+held is judged as it stands now, and while it runs again the run before it
+decides the job. The reader holds each workflow's runs between sweeps, so a
+verdict far back costs its pages once, when the tile first reads the workflow,
+and after that usually one page and the list filtered to the default branch on
+each sweep, and one read of the deciding run when it lies below that page. The
+reading stops after a thousand runs of any branch or event, so a workflow with
+no verdict among its newest thousand runs has none.
 
 A job with no run carrying a verdict is one the
 tile cannot speak for, so it is left out of both the headline and the job count
@@ -727,11 +771,12 @@ latest manifest is readable, before historical collection finishes.
 Both tiles refresh their measurements and activity independently every 30 seconds.
 With a GitHub credential configured, a
 **running** badge lights while the Test Selection workflow on main is queued or
-running, including reruns of older workflow runs. Runs on the workflow's
-newest page are read from its unfiltered run list, which GitHub serves current.
-Reruns of older runs are found by status, which GitHub answers from an index
-that can be days behind, so each one counts only once a read of the run itself
-says it has not finished. The tiles share the workflow
+running, including reruns of older workflow runs. The tiles read the
+workflow's runs through the run-list reader, back to the oldest run GitHub
+would still let someone start again. A run below the top of the list that is
+started again is found through the lists of unfinished runs on main, which
+GitHub answers from an index that can be days behind, and counts once a read of
+the run itself says it has not finished. The tiles share the workflow
 lookup and keep the last known badge while that lookup is pending. A failed
 lookup shows **activity unknown** alongside the available measurements. Public
 manifest reads work without GitHub credentials. Each refresh checks for newly
@@ -1314,16 +1359,9 @@ Notes:
   settles. A completed fetch whose runs carry no readable data shows
   **benchmark data unavailable**, and one with no runs at all shows **no
   benchmark runs**.
-  The tile reads the workflow's unfiltered run list and keeps the runs on main
-  itself, since GitHub answers a list filtered by branch from an index that is
-  often days behind; nearly every run of this workflow is on main, so this
-  reads no more pages.
-  A run list whose newest run is older than the newest run already collected,
-  an empty list included, comes from a stale view of the workflow. The tile
-  refuses it, keeps its last trends gray, and reads **run list out of date**
-  until a current list arrives. Until the server has kept a list since it started, the
-  runs recorded in the benchmark history cache on disk count as collected, so
-  a stale list is refused after a restart as well.
+  The tile reads the workflow's runs through the run-list reader and keeps the
+  runs on main itself. Nearly every run of this workflow is on main, so this
+  reads no more pages than a list filtered to main would.
   Adding or removing a benchmark does not move an index. The benchmark is
   absent from one side of that adjacent comparison, so it drops out of the
   geometric mean. When two runs share no selected positive measurements, the
@@ -1468,17 +1506,14 @@ Notes:
     checks wait through the same window after GitHub rejects a collection.
     Moving the window slider starts or joins the matching collection without
     cancelling wider-window work already in progress.
-    CI history finds its builds by searching the workflow's successful pushes
-    to main over the window, and then reads the newest page of the workflow's
-    unfiltered run list. GitHub serves that list current, and answers a search
-    from an index that is often hours or days behind it. The search has to
-    reach the oldest successful first attempt of a main push in the window on
-    that page, so that no build falls between the search and the page; a
-    collection whose search does not is refused and reads **run list out of
-    date**. The builds on the newest page
-    are taken from it. A Gantt of every run, or of every main push whatever it
-    concluded, walks the unfiltered list and picks the runs out itself,
-    stopping at 150 runs or at the start of the 45-day window.
+    CI history reads the workflow's runs through the run-list reader, back to
+    the first run created a day before the window opens, and takes the
+    successful pushes to main from them. For labs that is around a hundred pages
+    the first time after the dashboard starts, and after that only the runs
+    that landed since the last collection. A Gantt of every run, or of every
+    main push whatever it concluded, reads the same runs, stopping at 150 runs
+    or at the first run created a day before the 45-day window, and charts the
+    runs that started inside it.
   - Every GitHub API request made by the three performance views reserves rate
     capacity before it starts. Each guarded request batch reads GitHub's current
     rate-limit status before reserving. Collection stops before projected
