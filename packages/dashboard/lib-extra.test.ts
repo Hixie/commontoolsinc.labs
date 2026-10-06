@@ -98,6 +98,10 @@ Deno.test("github: a workflow run list asked for without run list access is refu
         "repos/o/r/actions/runs?branch=main",
         "repos/o/r/actions/workflows/ci.yml/runs?per_page=100",
         "/repos/o/r/actions/workflows/7/runs",
+        "repos/o/r/actions/./runs?branch=main",
+        "repos/o/r/actions/workflows/x/../7/runs/",
+        "repos/o/r/Actions/Runs",
+        "repos/o/r/actions/%72uns",
       ]
     ) {
       const e = await assertRejects(() => github(path, credential), Error);

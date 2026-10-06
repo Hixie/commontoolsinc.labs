@@ -5184,13 +5184,16 @@ Deno.test("CI Gantt reads the run list only as far as its 150th run", async () =
       { limit: 150, mainOnly: false },
       NOW,
     );
-    // The first twenty runs, the lists filtered to main and to pull requests,
-    // the first hundred, and then the second page of 99, which overlaps the
-    // first hundred by a run and reaches the 150th.
+    // The first twenty runs, the lists filtered to each event that starts a
+    // run, the first hundred, and then the second page of 99, which overlaps
+    // the first hundred by a run and reaches the 150th.
     assertEquals(pages, [
       "?per_page=20&page=1",
-      "?branch=main&per_page=100&page=1",
+      "?event=push&per_page=100&page=1",
       "?event=pull_request&per_page=100&page=1",
+      "?event=schedule&per_page=100&page=1",
+      "?event=workflow_dispatch&per_page=100&page=1",
+      "?event=merge_group&per_page=100&page=1",
       "?per_page=100&page=1",
       "?per_page=99&page=2",
     ]);
@@ -6550,8 +6553,8 @@ Deno.test("CI Gantt reuses recent discovery and reports discovery failure withou
       1,
     );
     // The first chart reads the top of the list and the lists filtered to
-    // main and to pull requests; the second reuses that discovery.
-    assertEquals(workflowRequests, 3);
+    // each event that starts a run; the second reuses that discovery.
+    assertEquals(workflowRequests, 6);
 
     const failed = new RateLimitedCiJobHistoryCollector(
       new CiJobHistoryStore(`${directory}/failed.json`),

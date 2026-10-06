@@ -162,9 +162,25 @@ export class GitHubStatusError extends Error {
 /** What `GitHubRequestOptions.runListAccess` is set to. */
 export const RUN_LIST_ACCESS: unique symbol = Symbol("run list access");
 
-/** A path that asks for a list of a repository's or a workflow's runs. */
+/** The path of a list of a repository's or a workflow's runs. */
 const RUN_LIST_PATH =
-  /^repos\/[^/?]+\/[^/?]+\/actions\/(?:workflows\/[^/?]+\/)?runs(?:\?|$)/;
+  /^\/repos\/[^/]+\/[^/]+\/actions\/(?:workflows\/[^/]+\/)?runs\/?$/i;
+
+/**
+ * Returns whether `path`, relative to the GitHub API, asks for a run list,
+ * however it is spelled: dot segments, escapes, and letter case are read as
+ * GitHub would read them.
+ */
+function isRunListPath(path: string): boolean {
+  const { pathname } = new URL(path, "https://api.github.com/");
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    // A malformed escape is matched as written.
+  }
+  return RUN_LIST_PATH.test(decoded) || RUN_LIST_PATH.test(pathname);
+}
 
 export interface GitHubDownload {
   readonly ok: boolean;
@@ -394,7 +410,7 @@ async function githubResponse(
 ): Promise<GitHubResponseResult> {
   const normalizedPath = path.replace(/^\//, "");
   if (
-    RUN_LIST_PATH.test(normalizedPath) &&
+    isRunListPath(normalizedPath) &&
     options.runListAccess !== RUN_LIST_ACCESS
   ) {
     throw new Error(

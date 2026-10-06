@@ -565,6 +565,16 @@ async function fetchWorkflowRuns(
   return runs.filter(isSuccessfulPush).map(projectWorkflowRun);
 }
 
+// The events a workflow's runs are started by, as filtered run lists name
+// them.
+const ANY_RUN_EVENTS = [
+  "push",
+  "pull_request",
+  "schedule",
+  "workflow_dispatch",
+  "merge_group",
+].map((event) => ({ event }));
+
 // Up to GANTT_MAX_RUNS of a workflow's newest runs in the history window, or of
 // its pushes to main.
 async function fetchRecentWorkflowRuns(
@@ -586,9 +596,9 @@ async function fetchRecentWorkflowRuns(
         runTime(run) >= cutoff &&
         (!mainOnly || (run.event === "push" && run.head_branch === "main")),
       limit: GANTT_MAX_RUNS,
-      recheck: mainOnly
-        ? [{ branch: "main" }]
-        : [{ branch: "main" }, { event: "pull_request" }],
+      // Every kind of run the chart can hold has a list naming those of its
+      // runs that were started again.
+      recheck: mainOnly ? [{ branch: "main" }] : ANY_RUN_EVENTS,
       until: (run) => Date.parse(run.created_at) < cutoff - DAY_MS,
     },
   );
