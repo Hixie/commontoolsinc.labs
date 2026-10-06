@@ -206,7 +206,8 @@ regaining the network as well as on its own tick.
 
 A drill-down page can be kept current the same way. A route that declares
 `live: true` serves a page built by `livePage` in `live-page.ts`, which carries
-the client script and keeps everything that changes inside its `<main>` element.
+the client script and keeps everything that changes inside its `<main>` element,
+apart from the tab's favicon.
 The page opens `/events?page=<its path and query>`. On every serving tick the
 server sends a heartbeat down that stream and renders the page again by calling
 the route's handler, and it sends the new markup when that differs from what it
@@ -242,6 +243,15 @@ of the triangle instead of near its apex. The red favicon starts sad and
 becomes a crying face after the dashboard stays red for one continuous hour. The
 server retains the elapsed time across reloads. Returning below red resets it
 once every collector due in the same pass has finished.
+
+A repository's page and the CI jobs page show a status in their favicons the
+same way. A repository's page shows the repository's standing. The CI jobs page
+shows the color of the ci tile's latest collection. A live page takes its
+favicon from each rendering the server sends, so the favicon changes when the
+status does. While the status is gray, and on a live page with no status, the
+favicon is empty. These pages use the green, orange, and red faces. The crying
+face, which measures how long the whole dashboard has stayed red, appears only
+on the dashboard.
 
 After changing `favicon-artwork.ts`, regenerate the embedded PNGs and their
 content-based cache version from the dashboard package directory:

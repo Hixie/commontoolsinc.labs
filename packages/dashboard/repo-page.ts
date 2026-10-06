@@ -919,15 +919,16 @@ export function repoPageResponse(
   const name = url.searchParams.get("name");
   const content = (
     title: string,
-    current: string | undefined,
+    current: Repository | undefined,
     body: string,
   ): LivePageContent => ({
     title: escapeHtml(title),
     heading: `<a href="${REPOS_PATH}">Repositories</a>`,
     styles: STYLES,
-    head: switcher(repos, current),
+    head: switcher(repos, current?.name),
     body,
     script: SCRIPT,
+    status: current && standing(current),
   });
   if (name === null) {
     return livePageResponse(
@@ -950,7 +951,7 @@ export function repoPageResponse(
     );
   }
   return livePageResponse(
-    content(repo.name, repo.name, repositoryBody(repo, jobs, now)),
+    content(repo.name, repo, repositoryBody(repo, jobs, now)),
   );
 }
 

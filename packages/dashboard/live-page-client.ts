@@ -79,3 +79,18 @@ export function updateMain<
   );
   return reconcileMain(main, next);
 }
+
+/**
+ * Gives the tab's favicon in `page` the image of the one in `fresh`, a new
+ * rendering of it.
+ */
+export function updateIcon(
+  page: Pick<Document, "querySelector">,
+  fresh: Pick<Document, "querySelector">,
+): void {
+  const icon = page.querySelector('link[rel="icon"]');
+  const href = fresh.querySelector('link[rel="icon"]')?.getAttribute("href");
+  if (icon && href && icon.getAttribute("href") !== href) {
+    icon.setAttribute("href", href);
+  }
+}
