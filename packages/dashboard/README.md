@@ -129,7 +129,9 @@ share one read of the top of the list when they are fetched within twenty
 seconds of each other. Each snapshot names the list filtered to its branch or
 event as the one through which runs started again further down are found.
 
-A fetch fails when a read of GitHub fails. The scheduler then keeps the snapshot
+A fetch fails when a read of the unfiltered list, or of a run by its id, fails;
+a filtered list that cannot be read is logged and passed over. The scheduler
+then keeps the snapshot
 it has, and each tile reading it turns gray and names the problem, apart from
 the ci tile, which marks the affected build unreadable. The next fetch that
 succeeds clears the gray.
@@ -264,8 +266,8 @@ as they stood when the index last caught up. On 2026-10-06 the list of
 gvisor's Go runs filtered to its default branch began with a failure nineteen
 days old, and left out the eight passing runs created after it. So the reader
 takes which runs exist, and their order, only from the unfiltered list. A
-filtered list only names runs that may have changed, and each run it names is
-then read by its id.
+filtered list only names runs that may have changed: a held run the reader
+wants, which it shows updated after the copy held, is then read by its id.
 
 The unfiltered list carries every run, whatever it ran for, so a reader that
 wants one branch's runs may have to read a long way down it. Each reader says
@@ -276,13 +278,16 @@ between them. Each reading brings the head up to date by reading the top of the
 list, twenty runs unless the reader asks for up to a hundred, and following it
 down the list until it reaches a run the head holds. If it passes the newest
 run held without reaching any, every held run in its way was deleted, and the
-head starts again from what it read. Readings made within twenty seconds of
+head starts again from what it read. A read of the top that leaves out the
+newest run held is rejected as behind, unless reading that run by its id shows
+it deleted. Readings made within twenty seconds of
 each other share one read of the top. A reading that needs runs below the head
 reads on down the list. The head is kept as deep as the deepest of its readers
 last read, and a reader that has not read for a day stops holding it. Each part
-of the dashboard that reads runs keeps its own `RunLists`, so that a deep
-reading, such as CI history's after a restart, never holds up the thirty-second
-refresh of the CI tiles reading the same workflow.
+of the dashboard that reads runs keeps its own `RunLists`, and so do CI
+history and its Gantt, and the benchmarks tile and its drill-down, so that a
+deep reading, such as CI history's after a restart, never holds up a shallower
+one of the same workflow.
 
 GitHub lists runs newest first, and a newer run has the larger id. Runs land at
 the top of the list and can be deleted from anywhere in it between two
@@ -302,20 +307,21 @@ runs are not in order of falling id is rejected.
 
 A run changes after it is listed: it finishes, or someone starts it again, which
 leaves it in its place in the list. The runs at the top of the list are read
-anew on every reading. Below them, a held run the reader wants that had not
-finished is read again by its id before the reader is given it. A run that had
-finished and has been started again is found through filtered lists every
-reader names, usually the list filtered to the reader's branch or event. Each
-such list is read down to the oldest run held, or to runs created more than
-thirty days ago, since GitHub allows a run to be started again for thirty days
-after it was created, and readings within twenty seconds of each other share
-one read of it. A held run the reader wants, which such a list shows updated
-after the copy held, is read again by its id before the reader is given any
-run. A lagging filtered list therefore delays the news of a run started again,
-and cannot hide a run or turn one back. A filtered list that cannot be read is
-logged, and the reading goes on without it. A run that is gone when it is read
-again by its id is dropped. A held run deleted without being read again stays
-held until the head is cut back past it.
+anew on every reading that cannot share a read made in the last twenty seconds.
+Below them, a held run the reader wants that had not finished is read again by
+its id before the reader is given it. A run that had finished and has been
+started again is found through filtered lists every reader names, usually the
+list filtered to the reader's branch or event. Each such list is read down to
+the oldest run held, or to runs created more than thirty days ago, since GitHub
+allows a run to be started again for thirty days after it was created, and
+readings within twenty seconds of each other share one read of it. A held run
+the reader wants, which such a list shows updated after the copy held, is read
+again by its id before the reader is given any run. A lagging filtered list
+therefore delays the news of a run started again, and cannot hide a run or turn
+one back. A filtered list that cannot be read is logged, and the reading goes on
+without it. A run that is gone when it is read again by its id is dropped. A
+held run deleted without being read again stays held until the head is cut back
+past it.
 
 A reader whose answer rests on one run, as the ci tile's verdict rests on the
 run that decides a job, can ask for the run it stops at to be read again by its

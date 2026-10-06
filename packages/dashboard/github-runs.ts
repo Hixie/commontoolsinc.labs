@@ -259,6 +259,10 @@ export class RunLists {
     if (!Number.isInteger(newest) || newest < 1 || newest > PAGE) {
       throw new RangeError(`newest must be 1 to ${PAGE}, not ${newest}`);
     }
+    const limit = reading.limit ?? Infinity;
+    if (!(limit === Infinity || Number.isInteger(limit) && limit >= 1)) {
+      throw new RangeError(`limit must be a whole number from 1, not ${limit}`);
+    }
     const now = Date.now();
     for (const [key, head] of this.#heads) {
       if (now - head.usedAt > READER_TTL_MS) this.#heads.delete(key);
@@ -310,7 +314,8 @@ function trim(head: Head): void {
  * the held ones they reach past, so a held run the list no longer carries,
  * having been deleted, is dropped. When they pass the newest held run without
  * reaching any, every held run that was in their way is gone, and the head
- * starts again from them.
+ * starts again from them. A top read that leaves out the newest held run is
+ * rejected as behind unless that run has been deleted.
  */
 async function readTop(list: RunList, head: Head, size: number): Promise<void> {
   if (Date.now() - head.readAt < REUSE_MS && head.readSize >= size) return;
@@ -318,6 +323,16 @@ async function readTop(list: RunList, head: Head, size: number): Promise<void> {
   const held = new Set(head.runs.map((run) => run.id));
   const newestHeld = head.runs[0]?.id ?? Infinity;
   const top = await list.page(1, size);
+  if ((top[0]?.id ?? -Infinity) < newestHeld && newestHeld !== Infinity) {
+    // Only a deletion or a list served behind the runs held takes away the
+    // newest run held, and reading that run by its id tells the two apart.
+    if (await list.run(newestHeld) !== undefined) {
+      throw new Error(
+        `GitHub listed ${list.repo} ${list.workflow} without its run ` +
+          `${newestHeld}, which still exists: the list is behind`,
+      );
+    }
+  }
   let ended = top.length < size;
   const reaches = () => top.some((run) => held.has(run.id));
   const passes = () => (top.at(-1)?.id ?? Infinity) < newestHeld;

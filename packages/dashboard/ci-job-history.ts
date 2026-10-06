@@ -1033,7 +1033,10 @@ export class CiJobHistoryCollector {
     { at: number; runs: WorkflowRun[] }
   >();
   #workflowRequests = new Map<CiHistorySourceKey, CiWorkflowDiscovery>();
-  #runLists = new RunLists();
+  // The history and the Gantt read a workflow's runs to different depths, so
+  // each keeps its own, and neither waits behind the other's reading.
+  #historyRuns = new RunLists();
+  #ganttRuns = new RunLists();
   #ganttRequests = new Map<string, CiGanttRequest>();
 
   constructor(
@@ -1530,7 +1533,7 @@ export class CiJobHistoryCollector {
       await this.cached(source, days, now);
     const workflowRunHistory = workflowRuns ??
       await fetchWorkflowRuns(
-        this.#runLists,
+        this.#historyRuns,
         credential,
         now,
         source,
@@ -1792,7 +1795,7 @@ export class CiJobHistoryCollector {
       this.#workflowRequests,
       source.key,
       (request) =>
-        fetchWorkflowRuns(this.#runLists, credential, now, source, request)
+        fetchWorkflowRuns(this.#historyRuns, credential, now, source, request)
           .then((runs) => {
             this.#workflowRuns.set(source.key, { at: Date.now(), runs });
             return runs;
@@ -1966,7 +1969,7 @@ export class CiJobHistoryCollector {
         key,
         (request) =>
           fetchRecentWorkflowRuns(
-            this.#runLists,
+            this.#ganttRuns,
             credential,
             source,
             options.mainOnly,

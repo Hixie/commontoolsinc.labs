@@ -63,7 +63,9 @@ async function fetchRuns(lists: RunLists, source: RunSource): Promise<Run[]> {
       wants: scope.has,
       limit: CI_RUNS_MAX,
       recheck: [scope.recheck],
-      until: (run) => startedBefore(run, cutoff),
+      // A run older than the window cannot be started again into it, since
+      // GitHub stops that thirty days after a run is created.
+      until: (run) => Date.parse(run.created_at) < cutoff,
     },
   );
   return runs

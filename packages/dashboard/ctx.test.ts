@@ -243,11 +243,10 @@ Deno.test("runs(): the stream is capped at CI_RUNS_MAX, mid-page if need be", as
 });
 
 Deno.test("runs(): a run past the age cutoff ends the stream", async () => {
-  const at = (id: number, daysAgo: number) =>
-    run({
-      id,
-      run_started_at: new Date(Date.now() - daysAgo * DAY_MS).toISOString(),
-    });
+  const at = (id: number, daysAgo: number) => {
+    const time = new Date(Date.now() - daysAgo * DAY_MS).toISOString();
+    return run({ id, created_at: time, run_started_at: time });
+  };
   await withGithub({
     lists: {
       [REPO]: [

@@ -211,8 +211,11 @@ interface BenchmarkSeries {
 }
 
 let snapshot: BenchmarkSeries[] = [];
-// The benchmarks.yml runs, as far down as the window reaches.
-let benchmarkRuns = new RunLists();
+// The benchmarks.yml runs, as far down as the window reaches, for each GitHub
+// client that reads them: the tile's, and the drill-down's, which reads on the
+// performance views' rate budget. Each keeps its own, so that neither waits
+// behind the other's reading.
+let benchmarkRuns = new WeakMap<BenchmarkGitHub, RunLists>();
 // The last benchmarks.yml run list a collection paged. The drill-down reads it
 // to name the run its rerun hand-off points at. Only a fetch that worked
 // replaces it, so the hand-off keeps naming the failed run while a later fetch
@@ -413,7 +416,12 @@ async function pageBenchmarkRuns(
   credential: GitHubCredential,
   cutoff: number,
 ): Promise<Run[]> {
-  const runs = await benchmarkRuns.runs(
+  let lists = benchmarkRuns.get(github);
+  if (!lists) {
+    lists = new RunLists();
+    benchmarkRuns.set(github, lists);
+  }
+  const runs = await lists.runs(
     (path, options) => github.json(path, credential, options),
     REPO,
     WORKFLOW,
@@ -1392,7 +1400,7 @@ function benchmarkLastRequestError(): string | null {
  * rather than joined to the runs an earlier test listed.
  */
 export function forgetBenchmarkRunsForTest(): void {
-  benchmarkRuns = new RunLists();
+  benchmarkRuns = new WeakMap();
   latestBenchmarkRuns = [];
 }
 

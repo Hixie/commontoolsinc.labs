@@ -500,6 +500,58 @@ describe("github-runs", () => {
           expect(offered.length).toBe(150);
         });
 
+        it("rejects a `limit` that is not a whole number from 1", async () => {
+          const github = new FakeGitHub(runs(30, 1));
+
+          for (const limit of [0, -1, 2.5]) {
+            await expect(read(new RunLists(), github, { limit })).rejects
+              .toThrow("limit must be a whole number from 1");
+          }
+          expect(github.paths).toEqual([]);
+        });
+
+        it("rejects a read of the top that leaves out the newest run held while it still exists", async () => {
+          using time = new FakeTime();
+          const github = new FakeGitHub(runs(300, 1));
+          const lists = new RunLists();
+          await read(lists, github, { until: (held) => held.id === 250 });
+          // The list comes back as it stood days ago, though run 300 is
+          // still there to be read by its id.
+          const current = github.list;
+          const request = github.request;
+          github.request = <T>(
+            path: string,
+            options: GitHubRequestOptions,
+          ): Promise<T> => {
+            github.list = path.includes("/workflows/")
+              ? runs(280, 1)
+              : current;
+            return request<T>(path, options);
+          };
+          time.tick(HEAD_REUSE_MS);
+
+          const stale = read(lists, github, {
+            until: (held) => held.id === 250,
+          });
+
+          await expect(stale).rejects.toThrow("the list is behind");
+        });
+
+        it("accepts a read of the top that leaves out the newest run held once it is deleted", async () => {
+          using time = new FakeTime();
+          const github = new FakeGitHub(runs(300, 1));
+          const lists = new RunLists();
+          await read(lists, github, { until: (held) => held.id === 250 });
+          github.list = runs(280, 1);
+          time.tick(HEAD_REUSE_MS);
+
+          const read2 = await read(lists, github, {
+            until: (held) => held.id === 250,
+          });
+
+          expect(ids(read2)).toEqual(ids(runs(280, 250)));
+        });
+
         it("rejects a `newest` outside 1 to 100", async () => {
           const github = new FakeGitHub(runs(30, 1));
 
