@@ -854,7 +854,10 @@ export function sparkline(
 // one-sample series and for points isolated by those breaks. All overlays are
 // HTML or gradients, so preserveAspectRatio="none" cannot distort them. The
 // span it covers is drawn separately by a tile's `duration` slot. `opts.scale`
-// has the same trimming behavior as `sparkline`.
+// has the same trimming behavior as `sparkline`. With `opts.scale.highlighted`,
+// a line that draws a highlight contributes only its highlighted points to the
+// vertical scale, so its older extremes can extend outside the chart. A line
+// that draws no highlight contributes all of its points.
 export function multiSparkline(
   series: {
     vals: number[];
@@ -869,7 +872,7 @@ export function multiSparkline(
   opts: {
     fade?: boolean;
     highlight?: { count: number };
-    scale?: { trim?: number; minValues?: number };
+    scale?: { trim?: number; minValues?: number; highlighted?: boolean };
   } = {},
 ): string {
   const drawable = series.filter((line) =>
@@ -878,10 +881,26 @@ export function multiSparkline(
   );
   const all = drawable.flatMap((line) => line.vals);
   if (!all.length) return "";
-  const scaled = scaleValues(all, opts.scale);
+  const highlightCount = (
+    line: (typeof series)[number],
+  ): number => line.highlightCount ?? opts.highlight?.count ?? 0;
+  const highlightStartIndex = (
+    line: (typeof series)[number],
+    pointCount: number,
+  ): number | undefined => {
+    const count = Math.min(highlightCount(line), pointCount);
+    return count >= 2 && count < pointCount ? pointCount - count : undefined;
+  };
+  const basis = opts.scale?.highlighted
+    ? drawable.flatMap((line) =>
+      line.vals.slice(highlightStartIndex(line, line.vals.length) ?? 0)
+    )
+    : all;
+  const scaled = scaleValues(basis, opts.scale);
   const lo = minOf(scaled), hi = maxOf(scaled);
-  // Match sparkline's centered flat range when trimming leaves two equal values.
-  const pad = scaled === all || lo !== hi ? 0 : 0.5;
+  // Match sparkline's centered flat range when trimming or the highlight leaves
+  // out values and the rest are equal.
+  const pad = scaled.length === all.length || lo !== hi ? 0 : 0.5;
   const w = 220, h = 34, min = lo - pad, max = hi + pad, rng = (max - min) || 1;
   const yv = (v: number) => h - 3 - ((v - min) / rng) * (h - 6);
 
@@ -891,9 +910,6 @@ export function multiSparkline(
   // userSpaceOnUse keeps the transition at the same screen x for every line and
   // avoids the zero-bbox quirk when a line is flat.
   const defs: string[] = [];
-  const highlightCount = (
-    line: (typeof series)[number],
-  ): number => line.highlightCount ?? opts.highlight?.count ?? 0;
   const highlightEdge = (line: (typeof series)[number]): number => {
     const count = highlightCount(line);
     if (count < 2) return 1;
@@ -920,13 +936,6 @@ export function multiSparkline(
       );
     }
     return `url(#${id})`;
-  };
-  const highlightStartIndex = (
-    line: (typeof series)[number],
-    pointCount: number,
-  ): number | undefined => {
-    const count = Math.min(highlightCount(line), pointCount);
-    return count >= 2 && count < pointCount ? pointCount - count : undefined;
   };
   type SparkPoint = { index: number; x: number; px: number; py: number };
   const splitPoints = (
