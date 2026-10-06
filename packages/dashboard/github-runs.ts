@@ -469,14 +469,14 @@ async function readAgain(
  * the list with none missing and at least one run, the runs that follow the
  * last of them, from one page that holds that run as well. A page that holds
  * runs on both sides of it, but not the run, shows it deleted, and it is
- * dropped, as are all the held runs when the first page holds only older runs. A page holding only
- * newer runs sends the walk on down the list, a page at a time, and one
- * holding only older runs sends it back up. A walk that has turned round has
- * found the run at the edge of two pages read at different moments, and goes
- * on with pages that hold where the run is expected in their middle. The run
- * is expected `drift` places nearer the top than its place in `runs`. Returns
- * the runs added, how many were dropped from the end of `runs`, whether the
- * list ends there, and the drift found.
+ * dropped, as are all the held runs when the first page holds only older
+ * runs. A page holding only newer runs sends the walk on down the list, a page
+ * at a time, and one holding only older runs sends it back up. A walk that has
+ * turned round has found the run at the edge of two pages read at different
+ * moments, and goes on with pages that hold where the run is expected in their
+ * middle. The run is expected `drift` places nearer the top than its place in
+ * `runs`. Returns the runs added, how many were dropped from the end of
+ * `runs`, whether the list ends there, and the drift found.
  */
 async function follow(
   list: RunList,

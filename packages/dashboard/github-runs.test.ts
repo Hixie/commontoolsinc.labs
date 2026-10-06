@@ -607,7 +607,7 @@ describe("github-runs", () => {
           ): Promise<T> =>
             path.endsWith("/actions/runs/30")
               ? Promise.reject(
-                new GitHubStatusError(`GitHub API ${path} failed: HTTP 502`, 502),
+                new GitHubStatusError(`GitHub API ${path}: HTTP 502`, 502),
               )
               : request<T>(path, options);
           time.tick(HEAD_REUSE_MS);
