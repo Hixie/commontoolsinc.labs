@@ -355,7 +355,8 @@ const STYLES = `
   .latest{list-style:none;margin:8px 0 0;padding:0}
   .latest li{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:baseline;gap:10px;padding:4px 0;border-top:1px solid var(--divider);font-size:12px}
   .latest .what{color:var(--text);overflow:clip;overflow-clip-margin:3px;text-overflow:ellipsis;white-space:nowrap}
-  .latest .what .pr{color:var(--accent)}
+  .latest .what:has(:focus-visible){white-space:normal}
+  .latest .what .pr{color:var(--accent)}.latest .what .pr:hover{text-decoration:underline}
   .latest .what a:hover,.latest .took a:hover{color:var(--accent)}
   .latest .result{color:var(--text-muted)}
   .latest .took,.latest time{color:var(--text-muted);font-variant-numeric:tabular-nums;text-align:right}
