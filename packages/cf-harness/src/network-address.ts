@@ -57,17 +57,23 @@ export const isPublicAddress = (address: Uint8Array): boolean =>
 /**
  * The networks this device's interfaces are on at the moment of the call, as
  * Deno reports them, which needs the `networkInterfaces` system permission.
- * Throws when Deno reports an interface address that is not an address.
+ * Throws when Deno reports an interface address that is not an address, or
+ * a prefix length that is not one for that address.
  */
 export const interfaceNetworks = (): readonly LocalNetwork[] =>
   Deno.networkInterfaces().map((entry) => {
     const address = parseIpAddress(entry.address);
-    if (address === undefined) {
+    const prefixText = entry.cidr.split("/")[1] ?? "";
+    const prefixLength = Number(prefixText);
+    if (
+      address === undefined || !/^\d{1,3}$/.test(prefixText) ||
+      prefixLength > address.length * 8
+    ) {
       throw new Error(
-        debugStr`Not an interface address: $quote${entry.address}`,
+        debugStr`Not an interface network: $quote${entry.address} $quote${entry.cidr}`,
       );
     }
-    return { address, prefixLength: Number(entry.cidr.split("/")[1]) };
+    return { address, prefixLength };
   });
 
 /**

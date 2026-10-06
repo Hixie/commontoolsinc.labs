@@ -111,7 +111,7 @@ export const webFetchToolDescriptor: HarnessToolDescriptor = {
   toolId: "web_fetch",
   title: "Web Fetch",
   description:
-    "Fetch a public HTTP(S) URL with bounded output, redirect validation, and extracted text metadata. Does not use cookies or ambient browser state.",
+    "Fetch an HTTP(S) URL on the open internet with bounded output, redirect validation, and extracted text metadata. Refuses local, private and reserved addresses, and addresses on this device's own networks. Does not use cookies or ambient browser state.",
   effectClass: "read",
   inputSchema: {
     type: "object",

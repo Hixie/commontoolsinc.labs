@@ -1,5 +1,6 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
+import { stub } from "@std/testing/mock";
 
 import {
   interfaceNetworks,
@@ -160,6 +161,49 @@ describe("network-address", () => {
       expect(isOpenInternetAddress(parsed("8.8.8.8"), networks)).toBe(true);
       expect(isOpenInternetAddress(parsed("2001:4860:4860::8888"), networks))
         .toBe(true);
+    });
+
+    /** What Deno reports for an interface with `address` and `cidr`. */
+    const interfaceInfo = (
+      address: string,
+      cidr: string,
+    ): Deno.NetworkInterfaceInfo => ({
+      family: address.includes(":") ? "IPv6" : "IPv4",
+      name: "en0",
+      address,
+      netmask: "",
+      scopeid: null,
+      cidr,
+      mac: "00:00:00:00:00:00",
+    });
+
+    it("throws for an interface whose prefix length is missing or does not fit its address", () => {
+      for (
+        const info of [
+          interfaceInfo("81.2.69.142", "81.2.69.142"),
+          interfaceInfo("81.2.69.142", "81.2.69.142/x"),
+          interfaceInfo("81.2.69.142", "81.2.69.142/33"),
+          interfaceInfo(
+            "2a02:8071:1234:5600::1",
+            "2a02:8071:1234:5600::1/129",
+          ),
+          interfaceInfo("en0", "en0/24"),
+        ]
+      ) {
+        using _ = stub(Deno, "networkInterfaces", () => [info]);
+        expect(() => interfaceNetworks()).toThrow("Not an interface network");
+      }
+    });
+
+    it("reads a prefix length of 0 as one", () => {
+      using _ = stub(
+        Deno,
+        "networkInterfaces",
+        () => [interfaceInfo("81.2.70.5", "81.2.70.5/0")],
+      );
+      expect(interfaceNetworks()).toEqual([
+        { address: parsed("81.2.70.5"), prefixLength: 0 },
+      ]);
     });
   });
 });
