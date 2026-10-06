@@ -825,6 +825,33 @@ Deno.test("github: each request carries the token its credential hands out when 
   );
 });
 
+Deno.test("github: a credential whose token the rate-limit check is refused hears of it", async () => {
+  const refused: string[] = [];
+  const credential: GitHubCredential = {
+    allowance: `refused-preflight-${crypto.randomUUID()}`,
+    token: () => Promise.resolve("revoked"),
+    refused: (token) => refused.push(token),
+  };
+  await withFetch(
+    () => new Response(null, { status: 401 }),
+    async () => {
+      await assertRejects(() => performanceGithub("repos/o/r", credential), Error);
+      assertEquals(refused, ["revoked"]);
+    },
+  );
+});
+
+Deno.test("friendlyError: names the GitHub App variable a credential is missing", () => {
+  assertEquals(
+    friendlyError("set GH_APP_PRIVATE_KEY to authenticate as the GitHub App"),
+    "set GH_APP_PRIVATE_KEY",
+  );
+  assertEquals(
+    friendlyError("set GH_APP_CLIENT_ID to authenticate as the GitHub App"),
+    "set GH_APP_CLIENT_ID",
+  );
+});
+
 Deno.test("github: an explicit token wins over the env; GITHUB_TOKEN backs up GH_TOKEN", async () => {
   await withFetch(() => Response.json({}), async (calls) => {
     await withTokens({ GH_TOKEN: "gh", GITHUB_TOKEN: "github" }, async () => {

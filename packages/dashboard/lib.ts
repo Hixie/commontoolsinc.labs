@@ -334,11 +334,9 @@ async function githubPrimaryRateLimit(
   credential: GitHubCredential,
   operation: ActiveGitHubOperation,
 ): Promise<GitHubPrimaryRateLimit> {
-  const response = await githubRequest(
-    "rate_limit",
-    await credential.token(),
-    false,
-  );
+  const token = await credential.token();
+  const response = await githubRequest("rate_limit", token, false);
+  if (response.status === 401) credential.refused(token);
   if (!response.ok) {
     discardGitHubErrorResponseBody(response, operation);
     throw new Error(
@@ -687,6 +685,8 @@ export function friendlyError(msg: string): string {
   if (/\b404\b|not found/.test(m)) return "not found";
   if (/\b401\b|\b403\b|unauthor|forbidden|bad credentials/.test(m)) return "auth failed";
   if (/gh_token|github_token/.test(m)) return "set GH_TOKEN";
+  const appVariable = /\bset (GH_APP_[A-Z_]+)\b/.exec(msg);
+  if (appVariable) return `set ${appVariable[1]}`;
   return "temporarily unavailable";
 }
 

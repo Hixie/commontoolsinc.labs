@@ -744,8 +744,8 @@ Configure a GitHub App, and every GitHub tile authenticates as one of its
 installations, with no person's token involved. The app takes precedence over
 `GH_TOKEN` and `GITHUB_TOKEN`. `GH_BILLING_TOKEN` still takes precedence over
 the app for **github spend**, for an account the app cannot read. With only
-one of the two variables set, every GitHub tile is gray and names the one that
-is missing.
+one of the two variables set, every GitHub tile that would use the app is gray
+and names the one that is missing.
 
 The dashboard picks the installation by the account each request is about. The
 repository and organization reads use the installation on the owner of
@@ -1578,11 +1578,11 @@ its embedded tsnet).
    `GH_APP_PRIVATE_KEY` above, then store its private key (and each provider
    credential you want to enable):
    ```bash
-   gcloud secrets versions add k8s-stage-dashboard-github-app-private-key --data-file=<app>.private-key.pem
+   gcloud secrets versions add k8s-stage-dashboard-github-app-private-key --data-file="$GITHUB_APP_PRIVATE_KEY_FILE"
    ```
-   The app's client ID is public, and replaces the
-   `REPLACE_WITH_GITHUB_APP_CLIENT_ID` sentinel in the infra stage overlay,
-   which also names the enterprise github spend reads.
+   `$GITHUB_APP_PRIVATE_KEY_FILE` names the app's downloaded `.pem` file. The
+   app's client ID is public and sits in the infra stage overlay, which also
+   names the enterprise github spend reads.
 3. The infra manifests create separate 1 Gi `standard-rwo` PVCs for the Discord
    history file and Tailscale node state. The dashboard remains a one-replica
    `Recreate` Deployment; pod replacement reuses the same non-ephemeral
