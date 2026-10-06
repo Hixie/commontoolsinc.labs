@@ -1722,7 +1722,11 @@ the stage deployment follows. That step runs before anything from the named ref
 is checked out.
 
 The workflow runs the dashboard tests, then builds the amd64 image and pushes
-it under both the immutable `dev-dashboard:<full-sha>` tag and `latest`. Once a
+it under both the immutable `dev-dashboard:<full-sha>` tag and `latest`. The
+image carries labels naming the repository, the ref, the event, the workflow,
+the run, and the commit it was built from. The infra repository's
+`k8s/scripts/verify-image-provenance.sh` reads those labels back and checks them
+against GitHub before the image's digest is deployed. Once a
 SHA tag exists, a rerun of that commit reuses its digest: it moves `latest` onto
 the image already there rather than rebuilding it or repushing the immutable
 tag.
