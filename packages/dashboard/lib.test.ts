@@ -346,6 +346,43 @@ Deno.test("multiSparkline: a trimmed shared scale pools series and centers a fla
   assertEquals(flatYs.filter((y) => y === 17).length, 16);
 });
 
+Deno.test("multiSparkline: a highlighted scale lets older extremes leave the chart", () => {
+  const lines = [
+    { vals: [100, 1, 2, 3], color: "#0a0" },
+    { vals: [-50, 4, 5, 6], color: "#00a" },
+  ];
+  const basesOf = (svg: string) =>
+    [...svg.matchAll(/<polyline points="([^"]*)"/g)].slice(0, 2)
+      .map((match) => match[1].split(" ").map((point) => parseFloat(point.split(",")[1])));
+  const [first, second] = basesOf(
+    multiSparkline(lines, { highlight: { count: 3 }, scale: { highlighted: true } }),
+  );
+  // The highlighted 1..6 fill the chart's drawing band; the older 100 and -50
+  // fall above and below it.
+  assertEquals(first.slice(1), [31, 25.4, 19.8]);
+  assertEquals(second.slice(1), [14.2, 8.6, 3]);
+  assert(first[0] < 0, "an older high leaves the top");
+  assert(second[0] > 34, "an older low leaves the bottom");
+
+  // A line that draws no highlight keeps all of its points in the scale, beside
+  // a line that scales to its highlighted points.
+  const [plain, tinted] = basesOf(multiSparkline([
+    { vals: [10, 20], color: "#0a0", highlightCount: 1 },
+    { vals: [100, 1, 2, 3], color: "#00a", highlightCount: 3 },
+  ], { scale: { highlighted: true } }));
+  assertEquals(plain, [17.7, 3]);
+  assertEquals(tinted.slice(1), [31, 29.5, 28.1]);
+  assert(tinted[0] < 0, "the tinted line's older high leaves the top");
+
+  // Without the option, or with nothing highlighted, every point sets the scale.
+  const [whole] = basesOf(multiSparkline(lines, { highlight: { count: 3 } }));
+  assertEquals(whole[0], 3);
+  assertEquals(
+    multiSparkline(lines, { scale: { highlighted: true } }),
+    multiSparkline(lines),
+  );
+});
+
 Deno.test("multiSparkline: fades each line from its transparent color", () => {
   const svg = multiSparkline(
     [
