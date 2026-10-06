@@ -80,14 +80,19 @@ export function updateMain<
   return reconcileMain(main, next);
 }
 
+/** The parts of a document `updateIcon` reads and changes. */
+export interface IconHolder {
+  querySelector(selector: string): {
+    getAttribute(name: string): string | null;
+    setAttribute(name: string, value: string): void;
+  } | null;
+}
+
 /**
  * Gives the tab's favicon in `page` the image of the one in `fresh`, a new
  * rendering of it.
  */
-export function updateIcon(
-  page: Pick<Document, "querySelector">,
-  fresh: Pick<Document, "querySelector">,
-): void {
+export function updateIcon(page: IconHolder, fresh: IconHolder): void {
   const icon = page.querySelector('link[rel="icon"]');
   const href = fresh.querySelector('link[rel="icon"]')?.getAttribute("href");
   if (icon && href && icon.getAttribute("href") !== href) {
