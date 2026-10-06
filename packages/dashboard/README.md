@@ -54,6 +54,7 @@ dashboard/
   live-page.ts  the frame of a live drill-down page, and the event streams that keep it current
   live-page-client.ts  the browser half: puts the changed parts of a fresh rendering on the page
   ci-jobs-page.ts the page behind the ci tile, and its table sorting
+  repo-page.ts  the page for each repository, and the index of them all
   server.ts     generic runtime: scheduler, SSE, route mounting, page assembly
   registry.ts   THE ONE REGISTRATION POINT — the array of tiles
   tiles/*.ts     one tile per file
@@ -252,9 +253,9 @@ version reloads instead. The page follows its stream with the dashboard's own
 code (`followUpdates` in `stream-client.ts`), reopens it once it has heard
 nothing for three heartbeat periods, and its badge reads OFFLINE while it cannot
 hear the server. A page is rendered only while some browser is showing it. The
-test selection page and the CI jobs page are live, so a screen left on either
-follows the manifests as the publisher writes them, or the ci tile's collections
-as it makes them.
+test selection page, the CI jobs page, and the repository pages are live, so a
+screen left on one follows the manifests as the publisher writes them, or the
+tiles' collections as they make them.
 
 The tab favicon follows the most urgent visible tile. It is red when any tile is
 red, orange when there are no red tiles but at least one orange tile, and green
@@ -291,6 +292,7 @@ export const myTile: Tile = {
   // wide: true,           // optional full-width placement
   // runSources: [runSource("owner/repo", "ci.yml", "main")], // or "pull requests"
   // reportsSourceProblems: true, // read ctx.runSourceProblem(); never grayed
+  // repo: "owner/repo",   // the one repository it reports on; its page shows the tile
   async collect(ctx): Promise<TileView> {
     // ctx.runs() -> shared CI runs; ctx.env("KEY") -> env var.
     // If a required env var is missing, return a gray "unknown" view — don't throw.
@@ -398,6 +400,82 @@ the tooltip and accessible link description. `/bench` holds the histories behind
 the benchmark and duration tiles, and `/test-selection` holds the manifest behind
 the two test tiles. A page has the width to spell a test's whole name, so nothing
 on one has to be abbreviated.
+
+### Repository pages
+
+The **Repositories** button at the bottom left of the dashboard opens
+`/repos`, the index of every repository the dashboard knows. It opens on one
+sentence counting them, then groups them. Those not passing come first, as
+cards on the status wash and texture a tile of their color wears, each naming
+its standing and the worst thing wrong with it. Those passing follow as names
+with a green dot, and those with nothing to report as names alone. A repository
+is known once a tile names it, as the one repository it reports on (the tile's
+`repo`) or as the repository of one of its run sources, or once the ci tile's
+sweep has read it. It is named without its owner, as the ci tile names it, so
+two repositories of one name under different owners would share a page. A
+switch at the top of every page moves to any repository, and the heading beside
+it leads back to the index.
+
+A repository's page, `/repos?name=<name>`, puts everything the dashboard holds
+about it on one screen. On a window at least 1000 pixels wide and 620 tall the
+page is laid on a grid as tall as the window. A panel with more than its room
+scrolls within itself. The middle row keeps at least 280 pixels, so a window
+too short for that scrolls the page rather than crushing the runs. On a smaller
+window the same parts follow one another down the page.
+
+- Across the top, its name, set large on the wash and texture of its standing,
+  the way a tile wears its status, with links to its code, pull requests, and
+  actions on GitHub and how long ago its workflows were read. Beside the name
+  is its standing: `N failing` when any of its jobs is failing, and otherwise
+  `Passing`, `Worth watching`, or `Needs attention`, from the worst color
+  among its jobs with a verdict and its tiles. A gray tile is left out of
+  that, as it is left out of the favicon, since a source that could not be
+  read says nothing about the repository. A repository with nothing that has a
+  color reads `No verdict`, and one whose workflows could not be listed is
+  orange and reads `Unreadable` unless one of its jobs is failing or something
+  about it is red. Under the
+  standing, a sentence says how the newest finished run on main went, unless
+  those runs are out of date. At the right are its key figures: how many of
+  its workflows with a verdict pass, how many fail, how many runs are going in
+  it now across its jobs and its run snapshots, and the median time of the
+  main runs that passed among those the chart shows.
+- On the left, for each of its run sources, main before pull requests, a chart
+  of its newest runs, as many as the recent main runs tile shows: a bar for
+  each run, oldest on the left, as tall as the run took and colored by what it
+  concluded, with the dashboard's diamond over each failure. The charts share
+  the panel's height, so a taller window draws taller bars. A dashed line marks
+  the median of the runs that passed. The chart's scale reaches the longest run
+  but one in ten, and at least 1.7 times that median, so one run that hung does
+  not flatten the rest; a bar past the top is cut square. The chart is only as
+  wide as its bars, and the ages under its ends are those of its oldest and
+  newest runs. Each bar links to its run for a pointer; the keyboard passes over
+  the bars, since the workflow's name in the heading links every run of it on
+  GitHub. Under the chart, the three newest runs are listed: what each was for,
+  what it concluded, how long it ran (linked to the commit's CI Gantt for labs
+  and loom), and when it started. A run on main is named by its commit and
+  links to the pull request that landed it, or to the commit when its message
+  names none; a pull request's run is named by its title and links to the run. A snapshot that has
+  not been read yet, or could not be brought up to date, says so.
+- On the right, what needs attention: every job and tile that is not green,
+  gray ones included, worst first, one to a line, each linked where its job or
+  tile links, or a line saying nothing needs attention. Under it, its workflows
+  in columns, worst first and those with no verdict last. Each has how long ago
+  its deciding run started, or, with no verdict, why; a link to the run in
+  progress when there is one; and, as its tooltip, what started that run, what
+  it concluded, and how long it ran.
+- Across the foot, its measures: every tile whose `repo` is this repository, as
+  a card at most the width a tile has, in one row, with its label, headline, sub
+  line, and chart, linked where the tile links. A card's headline shrinks with
+  the card, so a narrow one still says it whole.
+
+A repository card or a measure takes its status's wash and texture, and a
+workflow its wash, only when it is orange or red, so that a page of passing
+parts stays quiet and what is wrong stands out; the opening of a repository's
+page takes them for every status, as a tile does.
+
+The pages render what the server already holds, the latest view of each tile,
+the latest snapshot of each run source, and the ci tile's latest collection,
+so opening one costs no requests and never disagrees with the dashboard.
 
 Where a tile has more than one candidate for its sub line, the one that explains
 the color it is wearing wins. The test selection tile carries the count of the
