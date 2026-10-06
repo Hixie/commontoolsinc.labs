@@ -1,21 +1,18 @@
 /** Shares the publisher's current activity between its two dashboard tiles. */
 
 import { REPO, TEST_SELECTION_WORKFLOW } from "./config.ts";
-import { RunLists } from "./github-runs.ts";
+import { RERUN_MS, RunLists } from "./github-runs.ts";
 import { dashboardGitHubCredential, github, memo } from "./lib.ts";
 import type { Ctx } from "./types.ts";
 
 const readers = new WeakMap<Ctx, () => Promise<boolean | undefined>>();
-
-/** How far back a run can still be started again. */
-const RERUN_DAYS = 30;
 
 /** The statuses a run that has not finished is listed under. */
 const UNFINISHED = ["queued", "in_progress", "waiting", "requested", "pending"];
 
 /**
  * Whether a publisher run on main is unfinished: one of the runs GitHub could
- * still start again, which reach back RERUN_DAYS. A run that has been started
+ * still start again, which reach back RERUN_MS. A run that has been started
  * again since it was read is found through the lists of unfinished runs, which
  * GitHub answers from an index that can be days behind, and is read again by
  * its id.
@@ -27,7 +24,7 @@ export function publisherRunning(ctx: Ctx): Promise<boolean | undefined> {
     read = memo(20_000, async () => {
       const credential = dashboardGitHubCredential(ctx);
       if (!credential) return undefined;
-      const cutoff = Date.now() - RERUN_DAYS * 86_400_000;
+      const cutoff = Date.now() - RERUN_MS;
       const runs = await lists.runs(
         (path, options) => github(path, credential, options),
         REPO,

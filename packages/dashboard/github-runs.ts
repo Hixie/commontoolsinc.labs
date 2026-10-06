@@ -141,7 +141,7 @@ const REUSE_MS = 20_000;
 const READER_TTL_MS = 86_400_000;
 
 /** How long after it was created GitHub lets a run be started again. */
-const RERUN_MS = 30 * 86_400_000;
+export const RERUN_MS = 30 * 86_400_000;
 
 /** The head of one workflow's list, and the readers it is held for. */
 class Head {

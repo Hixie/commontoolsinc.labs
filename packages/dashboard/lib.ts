@@ -140,12 +140,16 @@ export interface GitHubRequestOptions {
   runListAccess?: typeof RUN_LIST_ACCESS;
 }
 
-/** The error a GitHub API request that GitHub answered with a failure throws. */
+/**
+ * The error a GitHub JSON request throws when GitHub answers it with a failure.
+ */
 export class GitHubStatusError extends Error {
   #status: number;
 
+  /** Constructs an instance for a request GitHub answered with `status`. */
   constructor(message: string, status: number) {
     super(message);
+    this.name = "GitHubStatusError";
     this.#status = status;
   }
 
