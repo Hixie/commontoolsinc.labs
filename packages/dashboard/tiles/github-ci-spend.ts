@@ -665,11 +665,19 @@ export const githubCiSpend: Tile = {
         "organization",
         ctx.env("GH_BILLING_ORG") ?? REPO.split("/")[0],
       );
-    const credential = githubCredentials.for(
-      ctx,
-      { kind: target.kind, name: target.slug },
-      ["GH_BILLING_TOKEN"],
-    );
+    // GitHub refuses a GitHub App's tokens for an organization's billing, so
+    // only an enterprise's billing is read through the app.
+    const credential = target.kind === "enterprise"
+      ? githubCredentials.for(
+        ctx,
+        { kind: "enterprise", name: target.slug },
+        ["GH_BILLING_TOKEN"],
+      )
+      : githubCredentials.fromTokens(ctx, [
+        "GH_BILLING_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+      ]);
     if (!credential) {
       return {
         status: "unknown",

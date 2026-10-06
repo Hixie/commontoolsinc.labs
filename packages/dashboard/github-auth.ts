@@ -259,12 +259,18 @@ function describe(account: GitHubAccount): string {
   return `${account.kind} \`${account.name}\``;
 }
 
+/**
+ * The `refused()` of a credential with nothing to drop: a token from the
+ * environment is the only one it has.
+ */
+function ignoreRefusal(): void {}
+
 /** Returns a credential that uses `token` for every request. */
 export function staticGitHubCredential(token: string): GitHubCredential {
   return {
     allowance: token,
     token: () => Promise.resolve(token),
-    refused: () => {},
+    refused: ignoreRefusal,
   };
 }
 
@@ -290,13 +296,6 @@ export class GitHubCredentials {
     account: GitHubAccount,
     overrides: readonly string[] = [],
   ): GitHubCredential | undefined {
-    const token = (variables: readonly string[]) => {
-      for (const variable of variables) {
-        const value = source.env(variable);
-        if (value) return this.#token(value);
-      }
-      return undefined;
-    };
     const clientId = source.env("GH_APP_CLIENT_ID")?.trim();
     const privateKey = source.env("GH_APP_PRIVATE_KEY")?.trim();
     const app = !clientId && !privateKey
@@ -304,16 +303,29 @@ export class GitHubCredentials {
       : clientId && privateKey
       ? this.#app(clientId, privateKey).installation(account)
       : misconfiguredApp(clientId ? "GH_APP_PRIVATE_KEY" : "GH_APP_CLIENT_ID");
-    return token(overrides) ?? app ?? token(["GH_TOKEN", "GITHUB_TOKEN"]);
+    return this.fromTokens(source, overrides) ?? app ??
+      this.fromTokens(source, ["GH_TOKEN", "GITHUB_TOKEN"]);
   }
 
-  #token(value: string): GitHubCredential {
-    let credential = this.#tokens.get(value);
-    if (!credential) {
-      credential = staticGitHubCredential(value);
-      this.#tokens.set(value, credential);
+  /**
+   * Returns the credential for the first of `variables` that `source` sets,
+   * or `undefined` when it sets none of them.
+   */
+  fromTokens(
+    source: GitHubEnv,
+    variables: readonly string[],
+  ): GitHubCredential | undefined {
+    for (const variable of variables) {
+      const value = source.env(variable);
+      if (!value) continue;
+      let credential = this.#tokens.get(value);
+      if (!credential) {
+        credential = staticGitHubCredential(value);
+        this.#tokens.set(value, credential);
+      }
+      return credential;
     }
-    return credential;
+    return undefined;
   }
 
   #app(clientId: string, privateKey: string): GitHubApp {
@@ -338,6 +350,6 @@ function misconfiguredApp(missing: string): GitHubCredential {
       Promise.reject(
         new Error(`set ${missing} to authenticate as the GitHub App`),
       ),
-    refused: () => {},
+    refused: ignoreRefusal,
   };
 }

@@ -340,6 +340,24 @@ Deno.test("github spend: a GitHub App reads enterprise billing with its enterpri
   );
 });
 
+Deno.test("github spend: an organization's billing is not read through a GitHub App", async () => {
+  const requests: string[] = [];
+  const v = await view(
+    "2026-01-20T09:00:00Z",
+    {},
+    {
+      GH_APP_CLIENT_ID: "Iv23spend",
+      GH_APP_PRIVATE_KEY: "-----BEGIN RSA PRIVATE KEY-----\n-----END RSA PRIVATE KEY-----\n",
+      GH_BILLING_ORG: ORG,
+    },
+    (path) => requests.push(path),
+  );
+
+  assertEquals(v.status, "unknown");
+  assertEquals(v.sub, "set GH_BILLING_TOKEN or GH_TOKEN");
+  assertEquals(requests, []);
+});
+
 Deno.test("github spend: an unavailable enterprise day leaves a partial, gray projection", async () => {
   const routes = enterpriseSummaryRoutes(2026, 1, 20, {
     1: [{ product: "actions", netAmount: 18 }],

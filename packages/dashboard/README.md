@@ -750,8 +750,10 @@ and names the one that is missing.
 The dashboard picks the installation by the account each request is about. The
 repository and organization reads use the installation on the owner of
 `DASHBOARD_REPO`. **github spend** uses the installation on the enterprise
-named by `GH_BILLING_ENTERPRISE`, or, when that is unset, on the organization
-named by `GH_BILLING_ORG`. It finds each installation among the app's own on
+named by `GH_BILLING_ENTERPRISE`. GitHub refuses an app's tokens for an
+organization's billing, so with `GH_BILLING_ENTERPRISE` unset, **github
+spend** reads the organization's billing with `GH_BILLING_TOKEN`, `GH_TOKEN`,
+or `GITHUB_TOKEN`, as it does without an app. It finds each installation among the app's own on
 first use, and mints a token for it. A token is used until it is five minutes
 from expiring, and the request after that mints the next one, so a collection
 that runs longer than a token lasts carries on without a restart. A token
@@ -1578,10 +1580,10 @@ its embedded tsnet).
    `GH_APP_PRIVATE_KEY` above, then store its private key (and each provider
    credential you want to enable):
    ```bash
-   gcloud secrets versions add k8s-stage-dashboard-github-app-private-key --data-file="$GITHUB_APP_PRIVATE_KEY_FILE"
+   gcloud secrets versions add k8s-stage-dashboard-github-app-private-key --data-file=path/to/private-key.pem
    ```
-   `$GITHUB_APP_PRIVATE_KEY_FILE` names the app's downloaded `.pem` file. The
-   app's client ID is public and sits in the infra stage overlay, which also
+   with the path of the app's downloaded `.pem` file in place of
+   `path/to/private-key.pem`. The app's client ID is public and sits in the infra stage overlay, which also
    names the enterprise github spend reads.
 3. The infra manifests create separate 1 Gi `standard-rwo` PVCs for the Discord
    history file and Tailscale node state. The dashboard remains a one-replica
