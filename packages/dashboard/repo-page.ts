@@ -130,12 +130,14 @@ function repositories(board: Board, jobs: CiJobs | undefined): Repository[] {
     name,
     full: repo,
     jobs: jobs?.jobs.filter((job) => job.repo === name) ?? [],
-    unreadable: jobs?.unreadableRepos.includes(repo) ?? false,
-    measures: board.tiles.filter((tile) => tile.repo === repo).map((tile) => ({
-      tile,
-      view: board.view(tile),
-    })),
-    runs: ordered.filter((source) => source.repo === repo).map((source) => ({
+    unreadable: jobs?.unreadableRepos.some((full) => shortName(full) === name) ??
+      false,
+    measures: board.tiles.filter((tile) =>
+      tile.repo !== undefined && shortName(tile.repo) === name
+    ).map((tile) => ({ tile, view: board.view(tile) })),
+    runs: ordered.filter((source) => shortName(source.repo) === name).map((
+      source,
+    ) => ({
       source,
       ...board.runs(source),
     })),
@@ -583,7 +585,8 @@ const runTitle = (run: Run, source: RunSource): string =>
  * flatten the rest, and at least MEDIAN_HEADROOM times the median, so the
  * runs around it keep room to differ; a bar past the top is cut square. Each
  * bar links to its run for a pointer, and the keyboard passes over it, since
- * the list under the chart links the same runs.
+ * the list under the chart links the newest runs and the section's heading
+ * links every run on GitHub.
  */
 function runsChart(shown: readonly Run[], source: RunSource, now: number) {
   const took = shown.map((run) => tookMs(run, now) ?? 0);
@@ -689,8 +692,16 @@ function runSection(
   const finished = shown.filter((run) => run.status === "completed");
   const passed = finished.filter((run) => run.conclusion === "success").length;
   const going = shown.filter((run) => run.status === "in_progress").length;
+  // Every run of the source, not only those charted, on GitHub.
+  const history = `https://github.com/${source.repo}/actions/workflows/${
+    encodeURIComponent(source.workflow)
+  }?${new URLSearchParams({
+    query: source.scope === "main" ? "branch:main" : "event:pull_request",
+  })}`;
   const meta = [
-    escapeHtml(source.workflow),
+    `<a href="${escapeHtml(history)}" target="_blank" rel="noopener">${
+      escapeHtml(source.workflow)
+    } ↗</a>`,
     shown.length === 0 ? "" : `last ${plural(shown.length, "run")}`,
     finished.length === 0 ? "" : `${passed} of ${finished.length} passed`,
     going === 0 ? "" : `${going} running`,

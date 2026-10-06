@@ -432,7 +432,8 @@ window the same parts follow one another down the page.
   that, as it is left out of the favicon, since a source that could not be
   read says nothing about the repository. A repository with nothing that has a
   color reads `No verdict`, and one whose workflows could not be listed is
-  orange and reads `Unreadable` unless something about it is red. Under the
+  orange and reads `Unreadable` unless one of its jobs is failing or something
+  about it is red. Under the
   standing, a sentence says how the newest finished run on main went, unless
   those runs are out of date. At the right are its key figures: how many of
   its workflows with a verdict pass, how many fail, how many runs are going in
@@ -448,10 +449,12 @@ window the same parts follow one another down the page.
   not flatten the rest; a bar past the top is cut square. The chart is only as
   wide as its bars, and the ages under its ends are those of its oldest and
   newest runs. Each bar links to its run for a pointer; the keyboard passes over
-  the bars, since the list under the chart links the same runs. Under the chart,
-  the three newest runs are listed: what each was for, linked to the pull
-  request that landed it, what it concluded, how long it ran (linked to the
-  commit's CI Gantt for labs and loom), and when it started. A snapshot that has
+  the bars, since the workflow's name in the heading links every run of it on
+  GitHub. Under the chart, the three newest runs are listed: what each was for,
+  what it concluded, how long it ran (linked to the commit's CI Gantt for labs
+  and loom), and when it started. A run on main is named by its commit and
+  links to the pull request that landed it, or to the commit when its message
+  names none; a pull request's run is named by its title and links to the run. A snapshot that has
   not been read yet, or could not be brought up to date, says so.
 - On the right, what needs attention: every job and tile that is not green,
   gray ones included, worst first, one to a line, each linked where its job or

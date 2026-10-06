@@ -154,6 +154,20 @@ describe("repo-page", () => {
       expect(at("Nothing to report")).toBeLessThan(at(`href="/repos?name=quiet"`));
     });
 
+    it("counts a troubled repository's workflows, runs going, and measures on its card", async () => {
+      const going = run({ status: "in_progress", conclusion: null });
+      const { html } = await page(
+        board(
+          [TRUST, DURATION],
+          { "labs ci trust": { status: "bad", value: "40.0%" } },
+          new Map([[runSourceKey(LABS_MAIN), { runs: [going] }]]),
+        ),
+        collection(),
+        "",
+      );
+      expect(html).toContain(`<span class="rc-facts">1 workflow · 1 running · 2 measures</span>`);
+    });
+
     it("lists a repository only a tile names", async () => {
       const { html } = await page(board([LOOM_TRUST]), collection({ jobs: [], repos: [] }), "");
       expect(html).toContain(`href="/repos?name=loom"`);
@@ -283,6 +297,39 @@ describe("repo-page", () => {
       expect(html).toContain(`<a href="https://github.com/commonfabric/labs/pulls" target="_blank" rel="noopener">pull requests ↗</a>`);
       expect(html).toContain(`<a href="https://github.com/commonfabric/labs/actions" target="_blank" rel="noopener">actions ↗</a>`);
       expect(html).toContain("<span>workflows read 2m ago</span>");
+    });
+
+    it("links each run source's heading to every run of its workflow on GitHub", async () => {
+      const { html } = await page(
+        board(
+          [TRUST, DURATION],
+          {},
+          new Map([
+            [runSourceKey(LABS_MAIN), { runs: [run()] }],
+            [runSourceKey(LABS_PRS), { runs: [run({ event: "pull_request" })] }],
+          ]),
+        ),
+        collection(),
+        "?name=labs",
+      );
+      expect(html).toContain(`<a href="https://github.com/commonfabric/labs/actions/workflows/deno.yml?query=branch%3Amain" target="_blank" rel="noopener">deno.yml ↗</a>`);
+      expect(html).toContain(`<a href="https://github.com/commonfabric/labs/actions/workflows/deno.yml?query=event%3Apull_request" target="_blank" rel="noopener">deno.yml ↗</a>`);
+    });
+
+    it("shows the tiles, runs, and listing problems of a same-named repository under another owner", async () => {
+      const elsewhere = runSource("elsewhere/labs", "ci.yml", "main");
+      const { html } = await page(
+        board(
+          [tile("elsewhere trust", { repo: "elsewhere/labs", runSources: [elsewhere] })],
+          { "elsewhere trust": { status: "good", value: "91.0%" } },
+          new Map([[runSourceKey(elsewhere), { runs: [run()] }]]),
+        ),
+        collection({ unreadableRepos: ["elsewhere/labs"] }),
+        "?name=labs",
+      );
+      expect(html).toContain("91.0%");
+      expect(html).toContain("ci.yml ↗</a>");
+      expect(html).toContain("Its workflows could not be listed.");
     });
 
     it("says no tile follows its runs when none does", async () => {
@@ -467,7 +514,7 @@ describe("repo-page", () => {
         collection(),
         "?name=labs",
       );
-      expect(html).toContain(`deno.yml · last ${RECENT_DISPLAY} runs · ${RECENT_DISPLAY} of ${RECENT_DISPLAY} passed`);
+      expect(html).toContain(`deno.yml ↗</a> · last ${RECENT_DISPLAY} runs · ${RECENT_DISPLAY} of ${RECENT_DISPLAY} passed`);
       expect(occurrences(html, `<a class="bar `)).toBe(RECENT_DISPLAY);
       expect(html).toContain(`runs/${100 + RECENT_DISPLAY - 1}"`);
       expect(html).not.toContain(`runs/${100 + RECENT_DISPLAY}"`);
