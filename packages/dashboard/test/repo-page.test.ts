@@ -375,10 +375,11 @@ describe("repo-page", () => {
       expect(html).toContain("The newest finished run on main passed 30 min ago.");
       // A bar for each run, linked to it.
       expect(html).toContain(`href="https://github.com/commonfabric/labs/actions/runs/11" target="_blank" rel="noopener" tabindex="-1" title="fix(runner): keep labels (#8248) — green · 30m 00s · 1h ago"`);
-      // A run on main is listed by the pull request that landed it.
-      expect(html).toContain(`href="https://github.com/commonfabric/labs/pull/8248" target="_blank" rel="noopener">fix(runner): keep labels (#8248)</a>`);
+      // A run on main is listed by its commit, linked to the run, with its
+      // pull request number linked to the pull request.
+      expect(html).toContain(`<span class="what"><a href="https://github.com/commonfabric/labs/actions/runs/11" target="_blank" rel="noopener">fix(runner): keep labels </a><a class="pr" href="https://github.com/commonfabric/labs/pull/8248" target="_blank" rel="noopener">(#8248)</a></span>`);
       // A pull request's run is listed by its title, and counts as running now.
-      expect(html).toContain(`href="https://github.com/commonfabric/labs/actions/runs/12" target="_blank" rel="noopener">feat: a new page</a>`);
+      expect(html).toContain(`<span class="what"><a href="https://github.com/commonfabric/labs/actions/runs/12" target="_blank" rel="noopener">feat: a new page</a></span>`);
       expect(html).toContain(`<a class="bar run"`);
       expect(html).toContain("<dt>running now</dt><dd>1</dd>");
     });
@@ -452,7 +453,7 @@ describe("repo-page", () => {
         collection(),
         "?name=labs",
       );
-      expect(occurrences(html, `<a class="what"`)).toBe(3);
+      expect(occurrences(html, `<span class="what">`)).toBe(3);
       expect(html).toContain(">change 2</a>");
       expect(html).not.toContain(">change 3</a>");
     });

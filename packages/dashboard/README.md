@@ -511,10 +511,11 @@ window the same parts follow one another down the page.
   the bars, since the workflow's name in the heading links every run of it on
   GitHub. Under the chart, the three newest runs are listed: what each was for,
   what it concluded, how long it ran (linked to the commit's CI Gantt for labs
-  and loom), and when it started. A run on main is named by its commit and
-  links to the pull request that landed it, or to the commit when its message
-  names none; a pull request's run is named by its title and links to the run. A snapshot that has
-  not been read yet, or could not be brought up to date, says so.
+  and loom), and when it started. A run on main is named by its commit, and a
+  pull request's run by its title; either name links to the run, except that a
+  pull request number in it, such as "(#1234)", links to that pull request. A
+  snapshot that has not been read yet, or could not be brought up to date, says
+  so.
 - On the right, what needs attention: every job and tile that is not green,
   gray ones included, worst first, one to a line, each linked where its job or
   tile links, or a line saying nothing needs attention. Under it, its workflows
@@ -575,7 +576,7 @@ installation with the same permissions; see [Credentials](#credentials).
 | labs ci trust, labs ci duration | GitHub Actions (`deno.yml` in `commonfabric/labs`), via the REST API. Trust reads the runs on main; duration reads the pull request runs | `GH_TOKEN` (or `GITHUB_TOKEN`) |
 | loom ci trust, loom ci duration | the same two tiles for `commonfabric/loom` (`test-fast.yml`) | `GH_TOKEN` (read access to loom); optional `DASHBOARD_LOOM_REPO` |
 | weaver ci trust, weaver ci duration | the same two tiles for `commonfabric/commonfabric-weaver` (`ci.yml`). The duration tile is not a link, because the history views cover only labs and loom | `GH_TOKEN` (read access to weaver); optional `DASHBOARD_WEAVER_REPO` |
-| recent main runs | Labs and Loom main-run snapshots, refreshed independently and merged chronologically whenever either arrives; each row is tagged with its repo | `GH_TOKEN` |
+| recent main runs | Labs and Loom main-run snapshots, refreshed independently and merged chronologically whenever either arrives; each row is tagged with its repo and links to its run, except that a pull request number in its title, such as "(#1234)", links to that pull request, and its arrow links to the pull request that landed the commit, or to the commit when its title names none | `GH_TOKEN` |
 | commit CI Gantt → `/ci-gantt` | job and step timing for every successful main workflow run attached to one commit, linked from run durations in recent main runs | `GH_TOKEN` |
 | CI duration history → `/bench?view=ci` | labs and loom job, shard-group, and end-to-end workflow duration trends. The labs and loom duration tiles open their repository's view, which charts runs on main rather than the pull request runs the tiles measure | `GH_TOKEN` |
 | CI run Gantt → `/bench?view=gantt` | detailed labs or loom job phases from `scripts/ci-gantt.ts`, backed by the CI history cache | `GH_TOKEN` |
