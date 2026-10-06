@@ -1751,21 +1751,14 @@ The publish job authenticates with GitHub OIDC and GCP Workload Identity
 Federation. It emits the immutable `sha256:` image reference in the workflow
 summary; no service-account JSON key is used.
 
-The manual trigger publishes whatever `main` currently points at. To publish
-some other commit, build and push it by hand:
+The manual trigger publishes whatever `main` currently points at. Stage runs
+only an image this workflow published from `main`, because the infra
+repository deploys a first-party image only when its build metadata shows
+such a publish. A commit that has not landed on `main` therefore cannot be deployed
+there.
 
-```bash
-SHA=$(git rev-parse HEAD)
-IMG=us-central1-docker.pkg.dev/commontools-core/containers/dev-dashboard
-docker build --platform=linux/amd64 \
-  --build-arg DASHBOARD_GIT_COMMIT="$SHA" \
-  -f Dockerfile.dashboard -t "$IMG:$SHA" .
-docker push "$IMG:$SHA"
-```
-
-Copy the published digest — from the workflow summary, or from `docker push`'s
-output for a hand build — into the infra stage overlay's `images[].digest`,
-commit that immutable pin, then run
+Copy the published digest from the workflow summary into the infra stage
+overlay's `images[].digest`, commit that immutable pin, then run
 `make apply-dev-dashboard-stage` from `infra/k8s`. The node then appears in the
 Tailscale console as `tag:dashboard`; open
 `https://dashboard.<tailnet>.ts.net/`. (The sidecar image is already pinned by
