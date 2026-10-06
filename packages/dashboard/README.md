@@ -759,9 +759,9 @@ GitHub refuses, and an installation that cannot mint one, are dropped, and the
 next request looks the installation up again, so reinstalling the app needs no
 restart either.
 
-GitHub counts an installation's requests separately from any person's, and an
-installation in a GitHub Enterprise Cloud organization has a larger hourly
-allowance than a personal access token.
+GitHub counts an installation's requests separately from any person's. An
+installation in a GitHub Enterprise Cloud organization is allowed 15,000
+requests an hour, where a personal access token is allowed 5,000.
 
 1. Create the app under the enterprise, at
    `https://github.com/enterprises/<enterprise>/settings/apps` → **New GitHub
@@ -771,11 +771,10 @@ allowance than a personal access token.
 2. **Repository permissions**: **Actions** and **Contents**, both
    **Read-only**. **Metadata** becomes read-only automatically.
 3. **Organization permissions**: **Members** **Read-only** for **github
-   users**. **Administration** **Read-only** only if **github spend** reads an
-   organization's billing rather than an enterprise's. GitHub's permission
-   reference for apps lists the enterprise billing endpoints and not the
-   organization ones, so for organization billing keep `GH_BILLING_TOKEN` set
-   if the installation is refused.
+   users**. GitHub refuses an app's tokens for an organization's billing
+   ("Resource not accessible by integration"), so **github spend** reads
+   through the app only with `GH_BILLING_ENTERPRISE` set. For an
+   organization's billing, set `GH_BILLING_TOKEN` as well.
 4. **Enterprise permissions**: **Enterprise billing** **Read-only**, for
    **github spend** with `GH_BILLING_ENTERPRISE` set.
 5. **Create GitHub App**. Copy the **Client ID** (`Iv23…`) into
