@@ -466,10 +466,10 @@ async function readAgain(
 
 /**
  * Helper for `readTop()` and `readDown()`, which adds to `runs`, the top of
- * the list with none missing, the runs that follow the last of them, from one
- * page that holds that run as well. A page that holds runs on both sides of
- * it, but not the run, shows it deleted, and it is dropped, as are all the
- * held runs when the first page holds only older runs. A page holding only
+ * the list with none missing and at least one run, the runs that follow the
+ * last of them, from one page that holds that run as well. A page that holds
+ * runs on both sides of it, but not the run, shows it deleted, and it is
+ * dropped, as are all the held runs when the first page holds only older runs. A page holding only
  * newer runs sends the walk on down the list, a page at a time, and one
  * holding only older runs sends it back up. A walk that has turned round has
  * found the run at the edge of two pages read at different moments, and goes
@@ -485,11 +485,6 @@ async function follow(
 ): Promise<
   { added: GitHubRun[]; dropped: number; ended: boolean; drift: number }
 > {
-  if (runs.length === 0) {
-    const added = await list.page(1, PAGE);
-    for (const run of added) runs.push(run);
-    return { added, dropped: 0, ended: added.length < PAGE, drift: 0 };
-  }
   let dropped = 0;
   const dropAfter = (kept: number) => {
     while (runs.length > 0 && runs[runs.length - 1].id < kept) {

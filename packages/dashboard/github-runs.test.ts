@@ -548,11 +548,17 @@ describe("github-runs", () => {
             reader: "deep",
             until: (held) => held.id === 1,
           });
-          time.tick(86_400_001);
-          await read(lists, github, {
-            reader: "shallow",
-            until: (held) => held.id === 290,
-          });
+          // The shallow reader goes on reading through the day, so the
+          // workflow is still read while the deep reader is not.
+          const shallow = () =>
+            read(lists, github, {
+              reader: "shallow",
+              until: (held) => held.id === 290,
+            });
+          time.tick(43_200_000);
+          await shallow();
+          time.tick(43_200_001);
+          await shallow();
           github.paths = [];
 
           await read(lists, github, {
@@ -563,6 +569,79 @@ describe("github-runs", () => {
           // The head was cut back to the shallow reader's depth, so the deep
           // reader reads the rest of the list again.
           expect(github.pages).toEqual(["1@100", "2@99", "3@98", "4@97"]);
+        });
+
+        it("forgets a workflow nobody has read for a day", async () => {
+          using time = new FakeTime();
+          const github = new FakeGitHub(runs(300, 1));
+          const lists = new RunLists();
+          await read(lists, github, { until: (held) => held.id === 1 });
+          time.tick(86_400_001);
+          github.paths = [];
+
+          await read(lists, github, { until: (held) => held.id === 1 });
+
+          // The whole list is read again, as it was the first time.
+          expect(github.pages).toEqual([
+            "1@20",
+            "1@100",
+            "2@99",
+            "3@98",
+            "4@97",
+          ]);
+        });
+
+        it("rejects a reading whose read of a run by its id fails other than as deleted", async () => {
+          using time = new FakeTime();
+          const github = new FakeGitHub([
+            ...runs(250, 31),
+            run(30, { status: "queued", conclusion: null }),
+            ...runs(29, 1),
+          ]);
+          const lists = new RunLists();
+          await read(lists, github, { until: (held) => held.id === 1 });
+          const request = github.request;
+          github.request = <T>(
+            path: string,
+            options: GitHubRequestOptions,
+          ): Promise<T> =>
+            path.endsWith("/actions/runs/30")
+              ? Promise.reject(
+                new GitHubStatusError(`GitHub API ${path} failed: HTTP 502`, 502),
+              )
+              : request<T>(path, options);
+          time.tick(HEAD_REUSE_MS);
+
+          await expect(read(lists, github, { until: (held) => held.id === 1 }))
+            .rejects.toThrow("HTTP 502");
+        });
+
+        it("drops the held runs a page shows are past the end of the list", async () => {
+          const github = new FakeGitHub(runs(300, 1));
+          const lists = new RunLists();
+          await read(lists, github, {
+            reader: "shallow",
+            newest: 100,
+            until: (held) => held.id === 201,
+          });
+          github.list = runs(300, 251);
+
+          const deep = await read(lists, github, { reader: "deep" });
+
+          expect(ids(deep)).toEqual(ids(runs(300, 251)));
+        });
+
+        it("drops every held run once the list is empty", async () => {
+          const github = new FakeGitHub(runs(300, 1));
+          const lists = new RunLists();
+          await read(lists, github, {
+            reader: "shallow",
+            newest: 100,
+            until: (held) => held.id === 201,
+          });
+          github.list = [];
+
+          expect(await read(lists, github, { reader: "deep" })).toEqual([]);
         });
 
         it("returns only the runs the reader wants, and counts them against `limit`", async () => {
