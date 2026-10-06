@@ -1877,6 +1877,28 @@ boardTest("sse: the CI jobs page is live", async () => {
   await reader.cancel();
 });
 
+boardTest("sse: a repository's page is live and follows the tiles' views", async () => {
+  const res = await handle(
+    req(`/events?page=${encodeURIComponent("/repos?name=labs")}`),
+  );
+  assertEquals(res.headers.get("content-type"), "text/event-stream");
+  const reader = res.body!.getReader();
+  assertEquals(await chunk(reader), ": connected\n\n");
+  const opened = await chunk(reader);
+  assertStringIncludes(opened, "event: page\n");
+  assertStringIncludes(opened, "labs ci trust");
+  assertStringIncludes(opened, "not collected yet");
+  assertStringIncludes(opened, "The runs have not been read yet.");
+
+  await tick([fake("labs ci trust", () => ({ status: "good", value: "97.5%" }))]);
+  await serveTick(() => {});
+  assertStringIncludes(await chunk(reader), "event: ping\n");
+  const updated = await chunk(reader);
+  assertStringIncludes(updated, "event: page\n");
+  assertStringIncludes(updated, "97.5%");
+  await reader.cancel();
+});
+
 boardTest("routes: a tile's drill-down path wins over the page; anything else is the page", async () => {
   const gantt = await handle(req("/bench?view=gantt&repo=loom"));
   assertEquals(gantt.status, 200);
@@ -1893,6 +1915,10 @@ boardTest("routes: a tile's drill-down path wins over the page; anything else is
     await commitGantt.text(),
     `<title>CI Gantt · ${sha.slice(0, 7)}</title>`,
   );
+
+  const repos = await handle(req("/repos"));
+  assertEquals(repos.status, 200);
+  assertStringIncludes(await repos.text(), "<title>Repositories</title>");
 
   const fallback = await handle(req("/not-a-route"));
   assertEquals(fallback.status, 200);

@@ -61,6 +61,7 @@ import {
   CI_JOBS_PATH,
   ciJobsPage,
   type Job,
+  shortName,
 } from "../ci-jobs-page.ts";
 import {
   compactSpan,
@@ -178,9 +179,6 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function shortName(repo: string): string {
-  return repo.slice(repo.indexOf("/") + 1);
-}
 
 function workflowFile(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
@@ -549,7 +547,8 @@ function jobDetail(job: Job, now: number): string {
 }
 
 function ciHealthView(collected: CiJobs, now = Date.now()): TileView {
-  const { jobs, repoCount, unreadableRepos } = collected;
+  const { jobs, repos, unreadableRepos } = collected;
+  const repoCount = repos.length;
   // A repository whose workflows could not be listed stands in the body as a
   // row of its own, since the jobs behind it are the ones nobody can see.
   const rows: Job[] = [
@@ -645,6 +644,8 @@ interface Sweep {
 /** The ci tile, and a way to wait for the sweep it has under way. */
 export interface CiHealthTile extends Tile {
   sweeping(): Promise<void>;
+  /** What the latest collection saw, which the tile's page renders. */
+  jobs(): CiJobs | undefined;
 }
 
 export function createCiHealth(): CiHealthTile {
@@ -808,6 +809,7 @@ export function createCiHealth(): CiHealthTile {
       live: true,
     }],
     sweeping: () => sweep ?? Promise.resolve(),
+    jobs: () => collected,
     async collect(ctx): Promise<TileView> {
       const credential = dashboardGitHubCredential(ctx);
       if (!credential) {
@@ -829,7 +831,7 @@ export function createCiHealth(): CiHealthTile {
 
       const jobs: CiJobs = {
         jobs: [...await judgePinned(ctx, swept, credential), ...swept.jobs],
-        repoCount: swept.repos.length,
+        repos: swept.repos.map((repo) => shortName(repo.repo)),
         unreadableRepos: swept.repos
           .filter((repo) => repo.error !== undefined)
           .map((repo) => repo.repo),

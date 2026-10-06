@@ -1473,6 +1473,7 @@ function makeBenchmarkTile(
 ): Tile {
   return {
     label,
+    repo: REPO,
     intervalMs: 60_000,
     showOnlyCompletedViews: true,
     async collect(ctx): Promise<TileView> {
