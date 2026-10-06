@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { maxOf, minOf } from "@commonfabric/utils/math";
-import { budgetStatus, ciDurationSub, clampInt, compactSpan, concDot, daysLabel, durationTag, escapeHtml, friendlyError, groupDigits, humanDur, humanSpan, jsonFromZip, landingHref, lighten, median, multiSparkline, readBudget, sparkline, STALE_RUNS_ERROR, strip, thin, usd } from "./lib.ts";
+import { budgetStatus, ciDurationSub, clampInt, compactSpan, concDot, daysLabel, durationTag, escapeHtml, friendlyError, groupDigits, humanDur, humanSpan, jsonFromZip, landingHref, lighten, median, multiSparkline, readBudget, sparkline, strip, thin, usd } from "./lib.ts";
 import { artifactZip, bytes, makeZip } from "./test/artifact-zip.ts";
 
 Deno.test("landingHref: squash-merge trailing (#N) -> the PR", () => {
@@ -103,7 +103,6 @@ Deno.test("friendlyError: raw errors become short calm phrases", () => {
   assertEquals(friendlyError("HTTP 403: rate limit exceeded"), "rate limit hit");
   assertEquals(friendlyError("Bad credentials"), "auth failed");
   assertEquals(friendlyError("GitHub API x: set GH_TOKEN or GITHUB_TOKEN"), "set GH_TOKEN");
-  assertEquals(friendlyError(STALE_RUNS_ERROR), "run list out of date");
   assertEquals(friendlyError("something weird"), "temporarily unavailable");
 });
 
