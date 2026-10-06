@@ -3,8 +3,9 @@
 Type a task, watch the harness work, open what it built — and read what the run
 left behind when the feed's elided summaries are not enough. One Deno HTTP
 server holding one in-process interactive chat service, and two Lit pages
-reading its events over Server-Sent Events: the console itself, and the live
-pane a host embeds to show one session working.
+reading it over the [console socket](#the-console-socket), one WebSocket that
+carries every request and every event: the console itself, and the live pane a
+host embeds to show one session working.
 
 Opening research appears in the live pane as “Orienting: working out what is
 already available,” with elapsed time until it completes, fails, or is canceled.
@@ -30,12 +31,14 @@ unnamed pieces are not transient and are neither deleted nor garbage-collected.
 See
 [piece execution and retention](../README.md#running-patterns-against-a-fabric-space).
 
-The server binds `127.0.0.1` and asks one thing of a request: that it names this
+The server binds `127.0.0.1` and asks of every request that it names this
 server's own host. A hostile name that resolves to `127.0.0.1` would otherwise
-make these routes same-origin to a browser, and that name is visible on the
-wire. Nothing else is asked and no client carries a credential, so the network
-is the boundary: run this where reaching it already means being trusted — on a
-shared host, a tailnet with an access policy — and not behind a public address.
+make the console same-origin to a browser, and that name is visible on the wire.
+It also refuses a request a browser marks as a navigation or as another site's,
+and a [console socket](#the-console-socket) opened from any page but its own. No
+client carries a credential, so the network is the boundary: run this where
+reaching it already means being trusted — on a shared host, a tailnet with an
+access policy — and not behind a public address.
 
 ## Prerequisites
 
@@ -280,12 +283,53 @@ names one per fabric and port for that reason.
 is what a throwaway run wants. Otherwise sessions, turns, and events are
 durable: restarting the server and reopening the page replays the log.
 
-## HTTP routes
+## The console socket
 
-Every route is behind the loopback `Host` check. A caller that names this
-server's host may call any of them, in one request, with no preceding one,
-except the two `/api/browser-host/` routes, which also take the per-turn token
-`POST /api/task` answered with when the task declared a browser host.
+A client holds one WebSocket to the console, at `GET /api/socket`, and reaches
+everything over it: it calls the console's routes, subscribes to chat events,
+and, when it hosts a turn's browser, receives that turn's operations and answers
+them. The console's own pages, the Weaver, and the measurement runner are all
+clients of it. Besides its pages, the console answers only one other address
+over plain HTTP: `GET /api/health`, for a script asking whether it is up.
+
+Every message is one JSON object in one text frame, naming its kind in `type`. A
+reader ignores a field it does not know, and a client ignores a frame kind it
+does not know. The shapes are [`socket-protocol.ts`](./socket-protocol.ts), and
+[`src/socket.ts`](./src/socket.ts) is the client the pages and the measurement
+runner share.
+
+A client sends three kinds of frame:
+
+- `{"type": "request", "id", "method", "path", "body"?}` calls one route below.
+  `method` is `GET` or `POST`, `path` is the route's path and query, and `body`
+  is the JSON a `POST` carries. The console answers with exactly one
+  `{"type": "response", "id", "status", "body"}`, where `status` is the route's
+  status and `body` its answer as text, JSON for every route but a run file read
+  raw. Answers to different requests may arrive in any order.
+- `{"type": "subscribe", "id", "sessionId"?, "turnId"?, "afterSequence"?}`
+  subscribes to chat events: the session's, or every session's when it names
+  none; only the turn's, when it names one; and only those with a sequence above
+  `afterSequence`, or all of them when it gives none. The recorded events arrive
+  first and the live ones after, in sequence order, each as
+  `{"type": "event", "subscription", "envelope"}`. A subscription the console
+  cannot serve ends with `{"type": "unsubscribed", "subscription", "error"}`.
+- `{"type": "unsubscribe", "id"}` ends one subscription.
+
+A frame the console cannot read is answered under its own id: a request as a
+`400` response, a subscription as ended. One with no usable id is answered with
+`{"type": "error", "message"}`. Closing the socket ends its subscriptions and
+every browser host channel it holds; a client that wants to keep following a
+session opens a new socket and subscribes again from the last sequence it saw.
+
+The socket answers this server's own pages and clients that are not browsers. A
+browser names the page that opens a socket in `Origin`, and a socket opened from
+any page but this server's own, `http://127.0.0.1:<port>` or
+`http://localhost:<port>`, is refused with 403; the `Sec-Fetch-*` gate below
+applies too. A host that fronts the console under an origin of its own rewrites
+`Origin` as it rewrites `Host`: loom's daemon rewrites an `Origin` naming the
+daemon itself to the console's own, and passes any other unchanged for the
+console to refuse. A client that answers no WebSocket ping for thirty seconds is
+closed, which ends its subscriptions and every browser host it holds.
 
 | Method | Route                        | Result                                                                                  |
 | ------ | ---------------------------- | --------------------------------------------------------------------------------------- |
@@ -293,20 +337,26 @@ except the two `/api/browser-host/` routes, which also take the per-turn token
 | `GET`  | `/api/health/detail`         | Cached operator observations with deciding records, times, causes, and remedies         |
 | `POST` | `/api/task`                  | Starts a session or a follow-up turn                                                    |
 | `POST` | `/api/cancel`                | Cancels the active turn, recording the reason the caller gives                          |
-| `POST` | `/api/browser-host/stream`   | A turn's browser operations, over SSE, for the holder of its host token                 |
-| `POST` | `/api/browser-host/result`   | The host's result for one operation                                                     |
+| `POST` | `/api/browser-host/attach`   | Starts sending this socket the operations of a turn it hosts                            |
+| `POST` | `/api/browser-host/detach`   | Gives up a turn this socket hosts, settling its operations as `session-ended`           |
+| `POST` | `/api/browser-host/result`   | The host's result for one operation of a turn this socket hosts                         |
 | `POST` | `/api/client-actions`        | Settles one action the model asked the person's client to perform                       |
 | `GET`  | `/api/sessions`              | Durable session summaries                                                               |
 | `GET`  | `/api/status`                | Session status and artifact roots                                                       |
 | `GET`  | `/api/policy`                | What a new session here would run under                                                 |
 | `GET`  | `/api/turns/<turnId>/result` | Durable structured result for a completed turn                                          |
-| `GET`  | `/api/events`                | Live and replayed chat events over SSE                                                  |
 | `GET`  | `/api/runs`                  | Run summaries                                                                           |
 | `GET`  | `/api/runs/<runId>/...`      | Run detail, flow, graph, artifacts, and tool outputs                                    |
 | `POST` | `/api/index/call`            | One allowlisted pattern-index read                                                      |
 | `POST` | `/api/index/feedback`        | Records one up or down vote on a pattern in the index                                   |
 | `POST` | `/api/index/retract`         | Retracts an owned generation in favor of its direct successor                           |
-| `GET`  | `/live/<sessionId>`          | The live pane for one session; takes `?turn=<turnId>` and `?piecesBase=<url-prefix>`    |
+
+The pages are served over plain HTTP:
+
+| Method | Path                | Result                                                                               |
+| ------ | ------------------- | ------------------------------------------------------------------------------------ |
+| `GET`  | `/`                 | The console page                                                                     |
+| `GET`  | `/live/<sessionId>` | The live pane for one session; takes `?turn=<turnId>` and `?piecesBase=<url-prefix>` |
 
 Health returns `ok`, `fabricApiUrl`, and `fabricSession`. The last field is
 `unverified`: the console has no inspectable Fabric-session connection state,
@@ -655,8 +705,8 @@ what the work produced. The same result is durable under
 appearing, the Runs view below reads it back.
 
 Cancel stops the running turn. The session survives a cancel and a page reload
-both — the stream resumes from the last event the page rendered rather than
-replaying the feed.
+both — the subscription resumes from the last event the page rendered rather
+than replaying the feed.
 
 ## Browser hosts
 
@@ -672,9 +722,11 @@ tool's operations in it:
 ```
 
 The declaration is an object so it can grow; the console reads nothing in it
-yet, and leaves alone a field it does not know. The answer carries a
-`browserHostToken` beside `sessionId` and `turnId`, given to the task's starter
-and nobody else.
+yet, and leaves alone a field it does not know. A task declares a host over the
+console socket, and the socket it arrived on becomes the turn's host: the answer
+carries `"browserHost": true` beside `sessionId` and `turnId`, and the turn's
+operations arrive on that socket and nowhere else. A task that declares a host
+over no socket answers 400.
 
 A task may declare a host only on a console its operator launched with
 `--allow-browser-host`, or with `CF_HARNESS_ALLOW_BROWSER_HOST=1` in its
@@ -689,38 +741,42 @@ launched with one of them lists `browser_host` among the
 [client protocol](#client-protocol) features it serves, so a host reads
 `GET /api/status` to learn whether to declare itself. A turn with a host runs
 under its session's policy with browser children added to drive the host, and
-the session's other turns run under its policy as it is. The token binds the
-stream and the results to the caller that declared the host, and vouches for
-nothing else about it.
+the session's other turns run under its policy as it is. Holding the socket
+binds the operations and the results to the client that declared the host, and
+vouches for nothing else about it.
 
-The holder of the token attaches with `POST /api/browser-host/stream`,
-`{"turnId", "token"}`, answered with Server-Sent Events: each operation arrives
-as a `request` event whose data is `{"id", "operation"}`, and a `close` event
-says the turn is over and the stream ends. Operations sent before the host
-attaches wait for it, and the first attach is the only one: a second answers
-409. Each result goes back with `POST /api/browser-host/result`,
-`{"turnId", "token", "id", "result"}`; a result that is not one answers 400, an
-id nobody waits on 404, and a body over 32 MiB 413 without the rest being read.
-A request whose token does not match answers 404, as one for a turn with no host
-does. The token rides in the body so it appears in no URL and no log line
-between the host and the console.
+When the host is ready for the turn's operations, it attaches with a request to
+`POST /api/browser-host/attach` with the body `{"turnId"}`. Operations the run
+sends before then wait for it, and may arrive before the attach's own response;
+the first attach is the only one: a second answers 409. Each operation then
+arrives as `{"type": "browser-host-request", "turnId", "id", "operation"}`, and
+`{"type": "browser-host-close", "turnId"}` says the turn is over. Each result
+goes back as a request to `POST /api/browser-host/result` with the body
+`{"turnId", "id", "result"}`; a result that is not one answers 400, and an id
+nobody waits on 404. A host that can no longer serve the turn gives it up with a
+request to `POST /api/browser-host/detach` with the body `{"turnId"}`, and the
+socket stays open for everything else it carries. Each of the three routes
+answers 404 for a turn this socket does not host, as it does for a turn with no
+host, and none answers over any other socket.
 
 An operation waits for its result however long it takes, since a hand-off waits
 for the owner. The run can end it early by aborting it. One the host has not
-been sent is simply withdrawn; one it holds is withdrawn with a `withdraw` event
-whose data is `{"id"}`, and the host stops it if it can and answers it as it
-ended. That answer is the acknowledgment: no later operation reaches the host
-until it arrives, so nothing the host does for a withdrawn call overlaps the
-next. A result that is not one settles its operation as failed rather than
-leaving it waiting. When the host's stream ends, every outstanding and later
-operation settles as `session-ended`, and so does every operation when the turn
-ends. The operation and result shapes are `src/contracts/browser-host.ts`.
+been sent is simply withdrawn; one it holds is withdrawn with
+`{"type": "browser-host-withdraw", "turnId", "id"}`, and the host stops it if it
+can and answers it as it ended. That answer is the acknowledgment: no later
+operation reaches the host until it arrives, so nothing the host does for a
+withdrawn call overlaps the next. A result that is not one settles its operation
+as failed rather than leaving it waiting. When the host's socket closes or it
+detaches, every outstanding and later operation settles as `session-ended`, and
+so does every operation when the turn ends. The operation and result shapes are
+`src/contracts/browser-host.ts`.
 
-The `/api/` routes answer only the console's own page and clients that are not
-browsers: a request a browser marks as a navigation, or as made by another
-site's page (`Sec-Fetch-Mode: navigate`, or a `Sec-Fetch-Site` other than
-`same-origin` or `none`), answers 403, so a page an agent opened can neither
-load a route nor reach one from elsewhere.
+`/api/health` and the socket answer only the console's own page and clients that
+are not browsers: a request a browser marks as a navigation, or as made by
+another site's page (`Sec-Fetch-Mode: navigate`, or a `Sec-Fetch-Site` other
+than `same-origin` or `none`), answers 403, and so does a socket a page of
+another origin opens, so a page an agent opened can neither load a route nor
+reach one from elsewhere.
 
 ## The live pane
 
@@ -740,12 +796,12 @@ relative to `/live/<sessionId>` (see below), so the slashed form would resolve
 them one level too deep; the `Location` is relative so it lands under whatever
 prefix a host fronts the console at, with no rewriting on the host's side.
 
-Both pages address the console RELATIVE to where they were opened — assets,
-`/api` fetches and the event stream all go under the mount `src/mount.ts` reads
-off the page's own address — so a host may serve the console under a prefix on
-its own origin (loom's daemon fronts it at `/harness-console`, rewriting `Host`
-to the loopback address this server insists on). At the console's own root the
-mount is empty and every path is what it always was.
+Both pages address the console RELATIVE to where they were opened — assets and
+the console socket both go under the mount `src/mount.ts` reads off the page's
+own address — so a host may serve the console under a prefix on its own origin
+(loom's daemon fronts it at `/harness-console`, rewriting `Host` to the loopback
+address this server insists on). At the console's own root the mount is empty
+and every path is what it always was.
 
 `?piecesBase=<url-prefix>` says where the host renders a piece. A piece's own
 address is the one `assign_slug` recorded, which is the Fabric API's; a host
@@ -760,14 +816,16 @@ relative path — is refused, the page says so, and the links stay on the record
 address. The console composes against a prefix it is given and knows nothing
 about the host that gave it.
 
-The pane reads the same event stream the console page reads, from sequence zero
-— so a pane opened halfway through a turn shows the steps that already happened
-rather than only the ones that follow, and a reconnect resumes from the last
-event it rendered. What the stream carries is the order and the outcome; what a
-call was given, what CFC decided about it, and what it withheld from the model
-come from the turn's own run, which the pane re-reads when one of its tool calls
-completes. The run id of a console turn is the turn id, so no route composes
-that address and no lookup stands between the two.
+The pane subscribes to the same events the console page reads, from sequence
+zero — so a pane opened halfway through a turn shows the steps that already
+happened rather than only the ones that follow, and a socket that closes after
+opening is replaced by one that resumes from the last event it rendered; one
+that does not open leaves the pane saying it is disconnected. What the events
+carry is the order and the outcome; what a call was given, what CFC decided
+about it, and what it withheld from the model come from the turn's own run,
+which the pane re-reads when one of its tool calls completes. The run id of a
+console turn is the turn id, so no route composes that address and no lookup
+stands between the two.
 
 Before the calls a model makes, and before what it says, the pane shows what it
 was thinking, as the provider's summary of its reasoning sums it up, set in
@@ -853,12 +911,12 @@ The tool takes `actions`, one to eight, in the order they should run:
   person to open a loom or a web address. A slash-command line (`command`) is a
   final action only and is refused here.
 
-Each action rides the ordinary `GET /api/events` stream as a
-`client_action_requested` event (`turnId`, `actionId`, `action`), and every
-settlement, whether the host's answer, a timeout, or a cancel, as a
-`client_action_resolved` event (`turnId`, `actionId`, `outcome`, `result?`, and
-for a typed action `settlement`). A reader replaying the log treats a request as
-open until a resolved event names its `actionId`.
+Each action rides the ordinary event subscription as a `client_action_requested`
+event (`turnId`, `actionId`, `action`), and every settlement, whether the host's
+answer, a timeout, or a cancel, as a `client_action_resolved` event (`turnId`,
+`actionId`, `outcome`, `result?`, and for a typed action `settlement`). A reader
+replaying the log treats a request as open until a resolved event names its
+`actionId`.
 
 `POST /api/client-actions` settles one, with one of two bodies:
 

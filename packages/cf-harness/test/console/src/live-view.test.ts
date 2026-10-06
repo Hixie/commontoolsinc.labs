@@ -32,6 +32,7 @@ import { HarnessInteractiveChatService } from "../../../src/interactive-chat-ser
 import { CfHarnessPromptLoop } from "../../../src/prompt-loop.ts";
 import { directPromptSlotBindingFor } from "../../support/prompt-slot-binding.ts";
 import { templateText } from "./template-text.ts";
+import { FakeConsoleSocket } from "./fake-socket.ts";
 
 describe("console/src/live-view", () => {
   /** The log a page reads, numbered in the order the events were emitted. */
@@ -1139,78 +1140,33 @@ describe("console/src/live-view", () => {
       }
     };
 
-    /** One `EventSource` the test drives instead of a server. */
-    class FakeEventSource {
-      static readonly CLOSED = 2;
-      static opened: FakeEventSource[] = [];
-      readyState = 0;
-      closed = false;
-      readonly listeners = new Map<string, (event: unknown) => void>();
-
-      constructor(readonly url: string) {
-        FakeEventSource.opened.push(this);
-      }
-
-      addEventListener(kind: string, listener: (event: unknown) => void) {
-        this.listeners.set(kind, listener);
-      }
-
-      close() {
-        this.closed = true;
-      }
-
-      /** Delivers one envelope the way the server's `chat` frame does. */
-      deliver(envelope: ConsoleChatEventEnvelope) {
-        this.listeners.get("chat")?.({ data: JSON.stringify(envelope) });
-      }
-
-      fail(readyState: number) {
-        this.readyState = readyState;
-        this.listeners.get("error")?.({});
-      }
-    }
-
-    /** Stands up the address, the stream and the fetch, and takes them down. */
+    /** Stands up the address and the console socket, and takes them down. */
     const paneAt = (
       pathname: string,
       search = "",
       runs: Record<string, unknown> = {},
     ): { view: TestConsoleLive; stop: () => void } => {
-      const realEventSource = globalThis.EventSource;
-      const realFetch = globalThis.fetch;
-      const realLocation = Object.getOwnPropertyDescriptor(
-        globalThis,
-        "location",
+      const uninstall = FakeConsoleSocket.install(
+        (frame) => {
+          const held = runs[
+            decodeURIComponent(
+              frame.path.replace("/api/runs/", ""),
+            )
+          ];
+          return held === undefined
+            ? { status: 404, body: "not found" }
+            : { status: 200, body: JSON.stringify(held) };
+        },
+        pathname,
+        search,
       );
-      FakeEventSource.opened = [];
-      Object.defineProperty(globalThis, "location", {
-        value: { pathname, search },
-        configurable: true,
-      });
-      // deno-lint-ignore no-explicit-any
-      globalThis.EventSource = FakeEventSource as any;
-      globalThis.fetch = (input: string | URL | Request) => {
-        const runId = String(input).replace("/api/runs/", "");
-        const held = runs[runId];
-        return Promise.resolve(
-          held === undefined
-            ? new Response("not found", { status: 404 })
-            : Response.json(held),
-        );
-      };
       const view = new TestConsoleLive();
       view.connectedCallback();
       return {
         view,
         stop: () => {
           view.disconnectedCallback();
-          globalThis.EventSource = realEventSource;
-          globalThis.fetch = realFetch;
-          if (realLocation === undefined) {
-            Reflect.deleteProperty(globalThis, "location");
-          } else {
-            Object.defineProperty(globalThis, "location", realLocation);
-          }
+          uninstall();
         },
       };
     };
@@ -1316,7 +1272,7 @@ describe("console/src/live-view", () => {
           onEvent: (envelope) => {
             const event = envelope.event;
             if (event.kind !== "turn_completed") {
-              FakeEventSource.opened.at(-1)!.deliver({ ...envelope, event });
+              FakeConsoleSocket.opened.at(-1)!.deliver({ ...envelope, event });
             }
             if (
               ending === "delivery_failed" && event.kind === "tool_completed" &&
@@ -1453,14 +1409,19 @@ describe("console/src/live-view", () => {
       expect(feed.scrolledTo).toBe(1000);
     });
 
-    it("subscribes to the session its address names, from the first event", () => {
-      const { view, stop } = paneAt("/live/session-1");
+    it("subscribes to the session its address names, from the first event", async () => {
+      const { view, stop } = paneAt("/harness-console/live/session-1");
       try {
+        const subscription = await FakeConsoleSocket.opened[0].subscription();
+
         expect(view.sessionId).toBe("session-1");
-        expect(FakeEventSource.opened).toHaveLength(1);
-        expect(FakeEventSource.opened[0].url).toBe(
-          "/api/events?sessionId=session-1&afterSequence=0",
-        );
+        expect(FakeConsoleSocket.opened.map((socket) => socket.url)).toEqual([
+          "ws://127.0.0.1:8100/harness-console/api/socket",
+        ]);
+        expect(subscription).toMatchObject({
+          sessionId: "session-1",
+          afterSequence: 0,
+        });
       } finally {
         stop();
       }
@@ -1475,10 +1436,10 @@ describe("console/src/live-view", () => {
       }
     });
 
-    it("opens no stream for an address that names no session", () => {
+    it("opens no socket for an address that names no session", () => {
       const { view, stop } = paneAt("/console");
       try {
-        expect(FakeEventSource.opened).toHaveLength(0);
+        expect(FakeConsoleSocket.opened).toHaveLength(0);
         expect(view.state).toBe("no session");
         expect(view.error).toBe("This address names no session.");
       } finally {
@@ -1486,15 +1447,16 @@ describe("console/src/live-view", () => {
       }
     });
 
-    it("draws the feed and the header from the events the stream delivers", () => {
+    it("draws the feed and the header from the events the stream delivers", async () => {
       const { view, stop } = paneAt("/live/session-1");
       try {
         const [started, tool] = log(
           turnStarted,
           toolStarted("call-1", "run_pattern"),
         );
-        FakeEventSource.opened[0].deliver(started);
-        FakeEventSource.opened[0].deliver(tool);
+        await FakeConsoleSocket.opened[0].subscription();
+        FakeConsoleSocket.opened[0].deliver(started);
+        FakeConsoleSocket.opened[0].deliver(tool);
 
         expect(view.entries.map((entry) => entry.kind)).toEqual([
           "turn",
@@ -1506,14 +1468,15 @@ describe("console/src/live-view", () => {
       }
     });
 
-    it("draws an event delivered twice once", () => {
+    it("draws an event delivered twice once", async () => {
       // A resumed stream and the live callback both carry the envelopes
       // emitted while the backfill was in flight.
       const { view, stop } = paneAt("/live/session-1");
       try {
         const [started] = log(turnStarted);
-        FakeEventSource.opened[0].deliver(started);
-        FakeEventSource.opened[0].deliver(started);
+        await FakeConsoleSocket.opened[0].subscription();
+        FakeConsoleSocket.opened[0].deliver(started);
+        FakeConsoleSocket.opened[0].deliver(started);
 
         expect(view.entries).toHaveLength(1);
       } finally {
@@ -1521,39 +1484,56 @@ describe("console/src/live-view", () => {
       }
     });
 
-    it("resumes a closed stream from the last event it drew", () => {
+    it("resumes a closed stream from the last event it drew", async () => {
       const { stop } = paneAt("/live/session-1");
       try {
         const [started] = log(turnStarted);
-        FakeEventSource.opened[0].deliver(started);
-        FakeEventSource.opened[0].fail(FakeEventSource.CLOSED);
+        await FakeConsoleSocket.opened[0].subscription();
+        FakeConsoleSocket.opened[0].deliver(started);
+        FakeConsoleSocket.opened[0].close();
+        const resumed = await (await FakeConsoleSocket.socket(1))
+          .subscription();
 
-        expect(FakeEventSource.opened).toHaveLength(2);
-        expect(FakeEventSource.opened[1].url).toBe(
-          "/api/events?sessionId=session-1&afterSequence=1",
-        );
+        expect(FakeConsoleSocket.opened).toHaveLength(2);
+        expect(resumed).toMatchObject({
+          sessionId: "session-1",
+          afterSequence: 1,
+        });
       } finally {
         stop();
       }
     });
 
-    it("holds a stream that reports an error it has not closed over", () => {
-      const { stop } = paneAt("/live/session-1");
+    it("says it is disconnected when its socket does not open, and opens no other", async () => {
+      const { view, stop } = paneAt("/live/session-1");
       try {
-        FakeEventSource.opened[0].fail(0);
+        const lost = Promise.withResolvers<void>();
+        const requestUpdate = view.requestUpdate.bind(view);
+        view.requestUpdate = (...update) => {
+          requestUpdate(...update);
+          if (view.state === "disconnected") lost.resolve();
+        };
+        FakeConsoleSocket.opened[0].close();
+        await lost.promise;
 
-        expect(FakeEventSource.opened).toHaveLength(1);
+        expect(FakeConsoleSocket.opened).toHaveLength(1);
+        expect(view.state).toBe("disconnected");
+        expect(view.error).toBe("the console socket closed");
       } finally {
         stop();
       }
     });
 
-    it("closes the stream when the pane goes away", () => {
+    it("ends its subscription when the pane goes away", async () => {
       const { stop } = paneAt("/live/session-1");
-      const stream = FakeEventSource.opened[0];
+      const socket = FakeConsoleSocket.opened[0];
+      const subscription = await socket.subscription();
       stop();
 
-      expect(stream.closed).toBe(true);
+      expect(socket.sent).toContainEqual({
+        type: "unsubscribe",
+        id: subscription.id,
+      });
     });
 
     it("reads the run of a turn whose call completed, and the child's", async () => {
@@ -1573,7 +1553,8 @@ describe("console/src/live-view", () => {
             childRunId: "turn-1.subagent.1",
           },
         });
-        FakeEventSource.opened[0].deliver(completed);
+        await FakeConsoleSocket.opened[0].subscription();
+        FakeConsoleSocket.opened[0].deliver(completed);
         await view.detailsWritten(2);
 
         expect([...view.details.keys()].sort()).toEqual([
@@ -1585,11 +1566,12 @@ describe("console/src/live-view", () => {
       }
     });
 
-    it("keeps the feed when a run has written no artifacts yet", () => {
+    it("keeps the feed when a run has written no artifacts yet", async () => {
       const { view, stop } = paneAt("/live/session-1");
       try {
         const [completed] = log(toolCompleted("call-1", "run_pattern"));
-        FakeEventSource.opened[0].deliver(completed);
+        await FakeConsoleSocket.opened[0].subscription();
+        FakeConsoleSocket.opened[0].deliver(completed);
 
         // A 404 is a run that has not written its artifacts yet, not a fault
         // to report; nothing can reach `details` for it, so there is no write

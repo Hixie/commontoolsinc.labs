@@ -3,8 +3,10 @@
 /**
  * The console surface: type a task, watch the harness work, open what it
  * built. One HTTP server holding one in-process
- * `HarnessInteractiveChatService`, one static page reading its events over
- * Server-Sent Events, and nothing else.
+ * `HarnessInteractiveChatService`, serving its pages and one WebSocket, the
+ * console socket, which carries every route and every event a client reads
+ * (`./socket-protocol.ts`). Besides the pages, plain HTTP answers only
+ * `/api/health`, for a script asking whether the server is up.
  *
  *   deno task --cwd packages/cf-harness console
  *   open http://127.0.0.1:8100
@@ -18,8 +20,9 @@
  * credential — a caller that reaches this socket is a caller the network
  * admitted. So the network is the boundary: run this where reaching it already
  * means being trusted, which on a shared host means a tailnet with an access
- * policy, and not behind a public address. A browser host's routes also take
- * the per-turn token their turn was given.
+ * policy, and not behind a public address. A turn's browser host is the
+ * client whose socket started the turn, and only that socket can answer the
+ * turn's browser operations.
  *
  * What a task runs under is not decided here. This server resolves flags, the
  * environment and the request body into a `HarnessSessionConfig` — the same
@@ -202,13 +205,18 @@ import {
   summarizeConsoleSessions,
 } from "./sessions.ts";
 import {
-  chatEventFrame,
+  BROWSER_HOST_ATTACH_PATH,
+  BROWSER_HOST_DETACH_PATH,
+  BROWSER_HOST_RESULT_PATH,
+  CONSOLE_SOCKET_PATH,
+  type ConsoleSocketRequestFrame,
+  type ConsoleSocketServerFrame,
+  type ConsoleSocketSubscribeFrame,
   envelopesAfter,
-  isUndelivered,
-  parseAfterSequence,
-  pingFrame,
-} from "./sse.ts";
+  readConsoleSocketClientFrame,
+} from "./socket-protocol.ts";
 import {
+  type ConsoleChatEventEnvelope,
   type ConsoleTurnCompletedEvent,
   type ConsoleTurnResult,
   readConsoleTurnResult,
@@ -229,6 +237,15 @@ const allowedHosts = (port: number): readonly string[] => [
   `localhost:${port}`,
   ...(port === 80 ? ["127.0.0.1", "localhost"] : []),
 ];
+
+/**
+ * The origins a page may open the console socket from: this server's own,
+ * under any name {@link allowedHosts} admits. A browser names the page's
+ * origin when it opens a socket, and a socket is not bound by the same-origin
+ * rule a fetch is, so this is what stops another site's page from opening one.
+ */
+const allowedOrigins = (port: number): readonly string[] =>
+  allowedHosts(port).map((host) => `http://${host}`);
 
 /**
  * The paths served from the built page rather than from an API route: the page
@@ -291,9 +308,6 @@ const DEFAULT_FABRIC_API_URL = "http://localhost:8000";
  * per-session move, so it has its own flag and no default here.
  */
 const DEFAULT_FABRIC_CFC_POSTURE: CfcPosture = "max-enforcement";
-
-/** How often the stream publishes a liveness tick, in milliseconds. */
-const PING_INTERVAL_MS = 15_000;
 
 /**
  * The owner every credential this server reads is filed under. `local` is the
@@ -1432,22 +1446,45 @@ export const createConsoleHealth = (
       : []),
   ]);
 
-/**
- * One connected browser. `deliveredSequence` is what it has been written so
- * far, and `pending` holds envelopes that arrived while its backfill was still
- * being read — a stream is registered before its backfill is fetched, so no
- * event can fall between the two, and the sequence check makes the overlap
- * harmless.
- */
-interface StreamClient {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  sessionId?: string;
-  deliveredSequence: number;
-  ready: boolean;
-  pending: HarnessChatEventEnvelope[];
+/** One client's end of the console socket, as {@link ConsoleServer.connect} returns it. */
+export interface ConsoleConnection {
+  /** Takes one message the client sent, or `undefined` for one not text. */
+  receive(text: string | undefined): void;
+
+  /** Says the client has gone. */
+  close(): void;
 }
 
-const encoder = new TextEncoder();
+/**
+ * One client of the console socket: what it sends through, and the
+ * subscriptions it holds, by the id the client gave each.
+ */
+interface SocketPeer {
+  send(frame: ConsoleSocketServerFrame): boolean;
+  subscriptions: Map<string, Subscription>;
+}
+
+/** One turn's browser host channel, and the socket whose client hosts it. */
+interface BrowserHostChannel {
+  host: ConsoleBrowserHost;
+  peer: SocketPeer;
+}
+
+/**
+ * One subscription to chat events. `deliveredSequence` is what it has been
+ * sent so far, and `pending` holds envelopes that arrived while its backfill
+ * was still being read — a subscription is registered before its backfill is
+ * fetched, so no event can fall between the two, and the sequence check makes
+ * the overlap harmless.
+ */
+interface Subscription {
+  send(envelope: ConsoleChatEventEnvelope): boolean;
+  sessionId?: string;
+  turnId?: string;
+  deliveredSequence: number;
+  ready: boolean;
+  pending: ConsoleChatEventEnvelope[];
+}
 
 /**
  * The events that close a turn. The run behind one is settled on disk once it
@@ -1460,41 +1497,32 @@ const TERMINAL_TURN_EVENT_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The largest body a browser host route reads: a screenshot's encoding, at
- * the most an attachment may be, with room for the rest of its result.
+ * `envelope` as the console sends it, when it is one that carries nothing the
+ * console adds: every event but a completed turn, which carries its result.
  */
-const MAX_BROWSER_HOST_BODY_BYTES = 32 * 1024 * 1024;
-
-/**
- * `request`'s body as text, or `undefined` once it runs past `limit` bytes,
- * which stops reading it there.
- */
-const boundedBodyText = async (
-  request: Request,
-  limit: number,
-): Promise<string | undefined> => {
-  if (request.body === null) {
-    return "";
-  }
-  const decoder = new TextDecoder();
-  let text = "";
-  let bytes = 0;
-  for await (const chunk of request.body) {
-    bytes += chunk.byteLength;
-    if (bytes > limit) {
-      return undefined;
-    }
-    text += decoder.decode(chunk, { stream: true });
-  }
-  return text + decoder.decode();
+const consoleEnvelopeWithoutResult = (
+  envelope: HarnessChatEventEnvelope,
+): ConsoleChatEventEnvelope | undefined => {
+  const event = envelope.event;
+  return event.kind === "turn_completed" ? undefined : { ...envelope, event };
 };
+
+/** Whether `subscription` asked for `envelope`. */
+const subscribesTo = (
+  subscription: Subscription,
+  envelope: Pick<HarnessChatEventEnvelope, "sessionId" | "turnId">,
+): boolean =>
+  (subscription.sessionId === undefined ||
+    subscription.sessionId === envelope.sessionId) &&
+  (subscription.turnId === undefined ||
+    subscription.turnId === envelope.turnId);
 
 /** The live event fan-out, and the routes that read and write through it. */
 export class ConsoleServer {
-  readonly #clients = new Set<StreamClient>();
+  readonly #subscriptions = new Set<Subscription>();
 
   /** Each running turn's browser host channel, by turn id. */
-  readonly #browserHosts = new Map<string, ConsoleBrowserHost>();
+  readonly #browserHosts = new Map<string, BrowserHostChannel>();
   readonly #config: ConsoleConfig;
   /** The client features this console serves, as launched. */
   readonly #clientFeatures: readonly HarnessClientFeature[];
@@ -1510,8 +1538,6 @@ export class ConsoleServer {
    * envelope reaches the streams on the call that broadcast it.
    */
   #heldFanOut: Promise<void> | undefined;
-
-  #beats = 0;
 
   /**
    * The service is built here rather than handed in because it is built
@@ -1578,11 +1604,13 @@ export class ConsoleServer {
     ) {
       this.#closeBrowserHost(envelope.turnId);
     }
+    const plain = consoleEnvelopeWithoutResult(envelope);
     if (
+      plain !== undefined &&
       !TERMINAL_TURN_EVENT_KINDS.has(envelope.event.kind) &&
       this.#heldFanOut === undefined
     ) {
-      this.#fanOut(envelope);
+      this.#fanOut(plain);
       return Promise.resolve();
     }
     const held = (this.#heldFanOut ?? Promise.resolve())
@@ -1598,27 +1626,24 @@ export class ConsoleServer {
 
   async #consoleEnvelope(
     envelope: HarnessChatEventEnvelope,
-  ): Promise<HarnessChatEventEnvelope> {
-    if (envelope.event.kind !== "turn_completed") {
-      return envelope;
+  ): Promise<ConsoleChatEventEnvelope> {
+    const event = envelope.event;
+    if (event.kind !== "turn_completed") {
+      return { ...envelope, event };
     }
     const result = await this.#readTurnResult(
       envelope.sessionId,
-      envelope.event.turnId,
+      event.turnId,
     ) ?? {
-      ...(envelope.event.outcome === "question"
-        ? { outcome: "question" as const, question: envelope.event.question }
-        : envelope.event.outcome === "gave-up"
-        ? { outcome: "gave-up" as const, reason: envelope.event.reason }
-        : envelope.event.outcome === "completed"
+      ...(event.outcome === "question"
+        ? { outcome: "question" as const, question: event.question }
+        : event.outcome === "gave-up"
+        ? { outcome: "gave-up" as const, reason: event.reason }
+        : event.outcome === "completed"
         ? {
           outcome: "completed" as const,
-          ...(envelope.event.answer !== undefined
-            ? { answer: envelope.event.answer }
-            : {}),
-          ...(envelope.event.actions !== undefined
-            ? { actions: envelope.event.actions }
-            : {}),
+          ...(event.answer !== undefined ? { answer: event.answer } : {}),
+          ...(event.actions !== undefined ? { actions: event.actions } : {}),
         }
         : { outcome: "completed" as const }),
       sessionId: envelope.sessionId,
@@ -1626,20 +1651,20 @@ export class ConsoleServer {
       pieces: [],
       looms: [],
       spaceName: this.#config.fabricSession.space,
-      finalText: envelope.event.finalText ?? "",
+      finalText: event.finalText ?? "",
     };
     const taskOutcome = readHarnessTaskOutcome(result);
     if (taskOutcome === undefined) {
       throw new Error("console result contains an invalid task outcome");
     }
-    const event: ConsoleTurnCompletedEvent = {
-      ...envelope.event,
+    const completed: ConsoleTurnCompletedEvent = {
+      ...event,
       ...taskOutcome,
       result,
     };
     return {
       ...envelope,
-      event,
+      event: completed,
     };
   }
 
@@ -1667,33 +1692,24 @@ export class ConsoleServer {
     });
   }
 
-  #fanOut(envelope: HarnessChatEventEnvelope): void {
-    for (const client of this.#clients) {
-      if (
-        client.sessionId !== undefined &&
-        client.sessionId !== envelope.sessionId
-      ) {
+  #fanOut(envelope: ConsoleChatEventEnvelope): void {
+    for (const subscription of this.#subscriptions) {
+      if (!subscribesTo(subscription, envelope)) {
         continue;
       }
-      if (!client.ready) {
-        client.pending.push(envelope);
+      if (!subscription.ready) {
+        subscription.pending.push(envelope);
         continue;
       }
-      this.#write(client, envelope);
+      this.#write(subscription, envelope);
     }
   }
 
-  /** Publishes a liveness tick so a quiet session still reads as alive. */
-  ping(): void {
-    const frame = encoder.encode(pingFrame(++this.#beats));
-    for (const client of this.#clients) {
-      this.#enqueue(client, frame);
-    }
-    for (const host of this.#browserHosts.values()) {
-      host.ping(this.#beats);
-    }
-  }
-
+  /**
+   * Answers one HTTP request: the pages, `/api/health` for a script asking
+   * whether the server is up, and the console socket, which carries every
+   * other route.
+   */
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const refusal = this.#refuse(request, url);
@@ -1715,14 +1731,10 @@ export class ConsoleServer {
       });
     }
     if (request.method === "GET" && url.pathname === "/api/health") {
-      return Response.json({
-        ok: true,
-        fabricApiUrl: this.#config.fabricSession.apiUrl,
-        fabricSession: "unverified",
-      });
+      return await this.route(request);
     }
-    if (request.method === "GET" && url.pathname === "/api/health/detail") {
-      return Response.json(this.#health.snapshot());
+    if (request.method === "GET" && url.pathname === CONSOLE_SOCKET_PATH) {
+      return this.#openSocket(request);
     }
     if (
       request.method === "GET" &&
@@ -1735,18 +1747,38 @@ export class ConsoleServer {
       );
       return response;
     }
+    return new Response("not found", { status: 404 });
+  }
+
+  /**
+   * Answers one call of a console route, as the console socket carries it.
+   * `peer` is the socket the call arrived on, which a task that declares a
+   * browser host makes that turn's host; a call with no socket behind it can
+   * host nothing.
+   */
+  async route(request: Request, peer?: SocketPeer): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      return Response.json({
+        ok: true,
+        fabricApiUrl: this.#config.fabricSession.apiUrl,
+        fabricSession: "unverified",
+      });
+    }
+    if (request.method === "GET" && url.pathname === "/api/health/detail") {
+      return Response.json(this.#health.snapshot());
+    }
     if (request.method === "POST" && url.pathname === "/api/task") {
-      return await this.#startTask(request);
+      return await this.#startTask(request, peer);
     }
     if (
-      request.method === "POST" && url.pathname === "/api/browser-host/stream"
+      request.method === "POST" &&
+      (url.pathname === BROWSER_HOST_ATTACH_PATH ||
+        url.pathname === BROWSER_HOST_DETACH_PATH ||
+        url.pathname === BROWSER_HOST_RESULT_PATH) &&
+      peer !== undefined
     ) {
-      return await this.#browserHostStream(request);
-    }
-    if (
-      request.method === "POST" && url.pathname === "/api/browser-host/result"
-    ) {
-      return await this.#browserHostResult(request);
+      return await this.#browserHostCall(request, url.pathname, peer);
     }
     if (request.method === "POST" && url.pathname === "/api/index/call") {
       return await this.#indexCall(request);
@@ -1780,9 +1812,6 @@ export class ConsoleServer {
       request.method === "GET" && url.pathname.startsWith("/api/turns/")
     ) {
       return await this.#turnResult(url);
-    }
-    if (request.method === "GET" && url.pathname === "/api/events") {
-      return this.#events(url);
     }
     if (request.method === "GET" && url.pathname === "/api/runs") {
       return Response.json({
@@ -1824,14 +1853,6 @@ export class ConsoleServer {
         fetchSite !== "none")
     ) {
       return new Response("forbidden", { status: 403 });
-    }
-    if (
-      request.method === "POST" &&
-      !(request.headers.get("content-type") ?? "").startsWith(
-        "application/json",
-      )
-    ) {
-      return new Response("unsupported media type", { status: 415 });
     }
     return undefined;
   }
@@ -2030,7 +2051,7 @@ export class ConsoleServer {
    * was closed, or its transcript did not survive a restart — is the service's
    * refusal to report, not this server's to anticipate.
    */
-  async #startTask(request: Request): Promise<Response> {
+  async #startTask(request: Request, peer?: SocketPeer): Promise<Response> {
     let parsed: unknown;
     try {
       parsed = await request.json();
@@ -2111,8 +2132,8 @@ export class ConsoleServer {
         error: error instanceof Error ? error.message : String(error),
       }, { status: 400 });
     }
-    let browserHost: ConsoleBrowserHost | undefined;
-    let browserHostToken: string | undefined;
+    const turnId = crypto.randomUUID();
+    let channel: BrowserHostChannel | undefined;
     if (body.browserHost !== undefined && body.browserHost !== null) {
       if (!this.#config.allowBrowserHost) {
         return Response.json({
@@ -2127,8 +2148,21 @@ export class ConsoleServer {
           status: 400,
         });
       }
-      browserHostToken = crypto.randomUUID();
-      browserHost = new ConsoleBrowserHost(browserHostToken);
+      // The socket the task arrived on is the channel, so a call that came
+      // over no socket has nowhere to send the turn's operations.
+      if (peer === undefined) {
+        return Response.json({
+          error: "a browser host is declared over the console socket",
+        }, { status: 400 });
+      }
+      // The channel is registered before anything is awaited, so a socket
+      // that closes from here on ends it, and nothing the turn does can
+      // reach its end before the channel exists.
+      channel = {
+        host: new ConsoleBrowserHost(turnId, (frame) => peer.send(frame)),
+        peer,
+      };
+      this.#browserHosts.set(turnId, channel);
     }
     let sessionId = body.sessionId;
     if (sessionId === undefined) {
@@ -2138,17 +2172,15 @@ export class ConsoleServer {
         artifactRoot: this.#config.artifactRoot,
         policy: this.#sessionPolicy(),
         ...(clientActions ? { clientActions } : {}),
+      }).catch((error: unknown) => {
+        this.#closeBrowserHost(turnId);
+        throw error;
       });
       if (!session.ok) {
+        this.#closeBrowserHost(turnId);
         return chatErrorResponse(session);
       }
       sessionId = session.result.sessionId;
-    }
-    // The channel is registered under the turn's id before the turn starts,
-    // so nothing the turn does can reach its end before the channel exists.
-    const turnId = crypto.randomUUID();
-    if (browserHost !== undefined) {
-      this.#browserHosts.set(turnId, browserHost);
     }
     const turn = await this.#service.startTurn(
       crypto.randomUUID(),
@@ -2165,7 +2197,7 @@ export class ConsoleServer {
           : {}),
         ...(patternRefs.length > 0 ? { patternRefs } : {}),
       },
-      browserHost !== undefined ? { browserHost } : {},
+      channel !== undefined ? { browserHost: channel.host } : {},
     ).catch((error: unknown) => {
       this.#closeBrowserHost(turnId);
       throw error;
@@ -2177,96 +2209,55 @@ export class ConsoleServer {
     return Response.json({
       sessionId,
       turnId: turn.result.turnId,
-      ...(browserHostToken !== undefined ? { browserHostToken } : {}),
+      ...(channel !== undefined ? { browserHost: true } : {}),
       protocol: harnessClientProtocolEcho(this.#clientFeatures),
     });
   }
 
   /**
-   * Reads a browser host request body: the turn it names and the token that
-   * proves the caller is that turn's host. Returns the channel, or the
-   * response refusing the request.
+   * A browser host's call about its turn: `POST /api/browser-host/attach`,
+   * `{turnId}`, saying it is ready for the turn's operations;
+   * `POST /api/browser-host/detach`, `{turnId}`, giving the turn up; or
+   * `POST /api/browser-host/result`, `{turnId, id, result}`, its answer to
+   * one. Only the socket that hosts the turn may make either; a turn with no
+   * channel and one another socket hosts are answered alike, so the routes
+   * say nothing about which turns have hosts.
    */
-  async #browserHostRequest(
+  async #browserHostCall(
     request: Request,
-  ): Promise<
-    | {
-      host: ConsoleBrowserHost;
-      body: Record<string, unknown>;
-      refusal?: undefined;
-    }
-    | { host?: undefined; body?: undefined; refusal: Response }
-  > {
-    const text = await boundedBodyText(request, MAX_BROWSER_HOST_BODY_BYTES);
-    if (text === undefined) {
-      return {
-        refusal: Response.json({
-          error:
-            `request body is larger than ${MAX_BROWSER_HOST_BODY_BYTES} bytes`,
-        }, { status: 413 }),
-      };
-    }
+    path: string,
+    peer: SocketPeer,
+  ): Promise<Response> {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = await request.json();
     } catch {
-      return {
-        refusal: Response.json({ error: "request body is not JSON" }, {
-          status: 400,
-        }),
-      };
+      return Response.json({ error: "request body is not JSON" }, {
+        status: 400,
+      });
     }
     if (!isObjectNotArray(parsed) || typeof parsed.turnId !== "string") {
-      return {
-        refusal: Response.json({ error: "turnId is required" }, {
-          status: 400,
-        }),
-      };
+      return Response.json({ error: "turnId is required" }, { status: 400 });
     }
-    const host = this.#browserHosts.get(parsed.turnId);
-    // A turn with no channel and a token that does not match are answered
-    // alike, so the route says nothing about which turns have hosts.
-    if (host === undefined || !host.admits(parsed.token)) {
-      return {
-        refusal: Response.json({ error: "no browser host for that turn" }, {
-          status: 404,
-        }),
-      };
+    const channel = this.#browserHosts.get(parsed.turnId);
+    if (channel === undefined || channel.peer !== peer) {
+      return Response.json({ error: "no browser host for that turn" }, {
+        status: 404,
+      });
     }
-    return { host, body: parsed };
-  }
-
-  /**
-   * `POST /api/browser-host/stream`: the host's end of its turn's channel, as
-   * Server-Sent Events. A POST because the body carries the token, which a
-   * query string would leave in every log between the two.
-   */
-  async #browserHostStream(request: Request): Promise<Response> {
-    const read = await this.#browserHostRequest(request);
-    if (read.refusal !== undefined) {
-      return read.refusal;
+    if (path === BROWSER_HOST_DETACH_PATH) {
+      this.#browserHosts.delete(parsed.turnId);
+      channel.host.detach();
+      return Response.json({ ok: true });
     }
-    const stream = read.host.attach();
-    if (stream === undefined) {
-      return Response.json({
-        error: "that turn's browser host is already attached, or has ended",
-      }, { status: 409 });
+    if (path === BROWSER_HOST_ATTACH_PATH) {
+      return channel.host.attach()
+        ? Response.json({ ok: true })
+        : Response.json({ error: "that turn's browser host has attached" }, {
+          status: 409,
+        });
     }
-    return new Response(stream, {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-store",
-      },
-    });
-  }
-
-  /** `POST /api/browser-host/result`: the host's answer to one operation. */
-  async #browserHostResult(request: Request): Promise<Response> {
-    const read = await this.#browserHostRequest(request);
-    if (read.refusal !== undefined) {
-      return read.refusal;
-    }
-    switch (read.host.acceptResult(read.body.id, read.body.result)) {
+    switch (channel.host.acceptResult(parsed.id, parsed.result)) {
       case "accepted":
         return Response.json({ ok: true });
       case "unknown":
@@ -2281,7 +2272,7 @@ export class ConsoleServer {
   }
 
   #closeBrowserHost(turnId: string): void {
-    this.#browserHosts.get(turnId)?.close();
+    this.#browserHosts.get(turnId)?.host.close();
     this.#browserHosts.delete(turnId);
   }
 
@@ -2531,94 +2522,198 @@ export class ConsoleServer {
   }
 
   /**
-   * Opens one event stream. The backfill is read after the stream is
-   * registered, so an envelope emitted in between is buffered rather than
-   * lost, and written in sequence order once the backfill has been sent.
+   * `GET /api/socket`: opens one console socket. A browser names the page it
+   * opens a socket from, and only this server's own pages may open one.
    */
-  #events(url: URL): Response {
-    const sessionId = url.searchParams.get("sessionId") ?? undefined;
-    let afterSequence: number | undefined;
-    try {
-      afterSequence = parseAfterSequence(url.searchParams.get("afterSequence"));
-    } catch (error) {
-      return Response.json({
-        error: error instanceof Error ? error.message : String(error),
-      }, { status: 400 });
+  #openSocket(request: Request): Response {
+    if ((request.headers.get("upgrade") ?? "").toLowerCase() !== "websocket") {
+      return new Response("the console socket is a WebSocket", {
+        status: 426,
+      });
     }
-    const resumeFrom = afterSequence ?? 0;
-    let client: StreamClient | undefined;
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        client = {
-          controller,
-          ...(sessionId !== undefined ? { sessionId } : {}),
-          deliveredSequence: resumeFrom,
-          ready: false,
-          pending: [],
-        };
-        this.#clients.add(client);
-        controller.enqueue(encoder.encode(": connected\n\n"));
-        this.#backfill(client, sessionId, resumeFrom);
-      },
-      cancel: () => {
-        if (client !== undefined) {
-          this.#clients.delete(client);
+    const origin = request.headers.get("origin");
+    if (
+      origin !== null && !allowedOrigins(this.#config.port).includes(origin)
+    ) {
+      return new Response("forbidden", { status: 403 });
+    }
+    // A client that answers no WebSocket ping for thirty seconds is closed,
+    // which ends its subscriptions and the browser hosts it holds.
+    const { socket, response } = Deno.upgradeWebSocket(request, {
+      idleTimeout: 30,
+    });
+    const connection = this.connect((frame) => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+      socket.send(JSON.stringify(frame));
+      return true;
+    });
+    socket.addEventListener("message", (message) => {
+      connection.receive(
+        typeof message.data === "string" ? message.data : undefined,
+      );
+    });
+    socket.addEventListener("close", () => connection.close());
+    return response;
+  }
+
+  /**
+   * One client of the console socket, whatever carries its frames: the
+   * console sends it frames through `send`, which answers whether the frame
+   * could be sent, and the returned connection takes each message the client
+   * sends (`undefined` for one that is not text) and is told when the client
+   * has gone, which ends its subscriptions and the browser hosts it holds.
+   */
+  connect(
+    send: (frame: ConsoleSocketServerFrame) => boolean,
+  ): ConsoleConnection {
+    const peer: SocketPeer = { send, subscriptions: new Map() };
+    return {
+      receive: (text) => {
+        if (text === undefined) {
+          peer.send({ type: "error", message: "a socket message is not text" });
+          return;
+        }
+        const read = readConsoleSocketClientFrame(text);
+        if (!read.ok) {
+          peer.send(read.answer);
+          return;
+        }
+        const frame = read.frame;
+        switch (frame.type) {
+          case "request":
+            void this.#answer(peer, frame);
+            return;
+          case "subscribe":
+            this.#subscribe(peer, frame);
+            return;
+          case "unsubscribe": {
+            const subscription = peer.subscriptions.get(frame.id);
+            if (subscription !== undefined) {
+              this.#subscriptions.delete(subscription);
+              peer.subscriptions.delete(frame.id);
+            }
+            return;
+          }
         }
       },
-    });
-    return new Response(stream, {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
+      close: () => {
+        for (const subscription of peer.subscriptions.values()) {
+          this.#subscriptions.delete(subscription);
+        }
+        peer.subscriptions.clear();
+        for (const [turnId, channel] of this.#browserHosts) {
+          if (channel.peer === peer) {
+            channel.host.detach();
+            this.#browserHosts.delete(turnId);
+          }
+        }
       },
+    };
+  }
+
+  /**
+   * Answers one request frame through the route it names, and sends the
+   * route's answer back on the socket it came from.
+   */
+  async #answer(
+    peer: SocketPeer,
+    frame: ConsoleSocketRequestFrame,
+  ): Promise<void> {
+    const request = new Request(new URL(frame.path, "http://console.invalid"), {
+      method: frame.method,
+      ...(frame.method === "POST"
+        ? {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(frame.body ?? null),
+        }
+        : {}),
+    });
+    let response: Response;
+    try {
+      response = await this.route(request, peer);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      response = new Response("internal error", { status: 500 });
+    }
+    peer.send({
+      type: "response",
+      id: frame.id,
+      status: response.status,
+      body: await response.text(),
     });
   }
 
-  #backfill(
-    client: StreamClient,
-    sessionId: string | undefined,
-    afterSequence: number,
-  ): void {
+  /**
+   * Starts one subscription. It is registered before its backfill is read,
+   * so an envelope emitted in between is buffered rather than lost, and sent
+   * in sequence order once the backfill has been.
+   */
+  #subscribe(peer: SocketPeer, frame: ConsoleSocketSubscribeFrame): void {
+    const afterSequence = frame.afterSequence ?? 0;
+    const subscription: Subscription = {
+      send: (envelope) =>
+        peer.send({ type: "event", subscription: frame.id, envelope }),
+      ...(frame.sessionId !== undefined ? { sessionId: frame.sessionId } : {}),
+      ...(frame.turnId !== undefined ? { turnId: frame.turnId } : {}),
+      deliveredSequence: afterSequence,
+      ready: false,
+      pending: [],
+    };
+    const previous = peer.subscriptions.get(frame.id);
+    if (previous !== undefined) {
+      this.#subscriptions.delete(previous);
+    }
+    peer.subscriptions.set(frame.id, subscription);
+    this.#subscriptions.add(subscription);
     this.#service.listEventsForReplay({
-      ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(frame.sessionId !== undefined ? { sessionId: frame.sessionId } : {}),
       afterSequence,
     }).then(async (replay) => {
       for (const envelope of envelopesAfter(replay.events, afterSequence)) {
-        this.#write(client, await this.#consoleEnvelope(envelope));
+        if (subscribesTo(subscription, envelope)) {
+          this.#write(subscription, await this.#consoleEnvelope(envelope));
+        }
       }
-      for (const envelope of envelopesAfter(client.pending, afterSequence)) {
-        this.#write(client, await this.#consoleEnvelope(envelope));
+      for (
+        const envelope of envelopesAfter(subscription.pending, afterSequence)
+      ) {
+        this.#write(subscription, envelope);
       }
-      client.pending.length = 0;
-      client.ready = true;
+      subscription.pending.length = 0;
+      subscription.ready = true;
     }).catch((error: unknown) => {
-      this.#clients.delete(client);
-      try {
-        client.controller.error(error);
-      } catch {
-        // The browser closed the stream first; nothing left to report to.
+      // A subscription its client already ended, or replaced under the same
+      // id, is owed nothing more.
+      if (!this.#subscriptions.delete(subscription)) {
+        return;
       }
+      peer.subscriptions.delete(frame.id);
+      peer.send({
+        type: "unsubscribed",
+        subscription: frame.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   }
 
-  #write(client: StreamClient, envelope: HarnessChatEventEnvelope): void {
-    if (!isUndelivered(envelope, client.deliveredSequence)) {
+  /**
+   * Sends one envelope a live subscription has not yet been sent. A backfill
+   * and the live fan-out both carry the envelopes emitted while the backfill
+   * was in flight, and the sequence check is what makes the overlap harmless.
+   * A subscription its client ended, or replaced under the same id, is sent
+   * nothing, though its backfill may still be finishing.
+   */
+  #write(subscription: Subscription, envelope: ConsoleChatEventEnvelope): void {
+    if (
+      !this.#subscriptions.has(subscription) ||
+      envelope.sequence <= subscription.deliveredSequence
+    ) {
       return;
     }
-    if (this.#enqueue(client, encoder.encode(chatEventFrame(envelope)))) {
-      client.deliveredSequence = envelope.sequence;
-    }
-  }
-
-  #enqueue(client: StreamClient, frame: Uint8Array): boolean {
-    try {
-      client.controller.enqueue(frame);
-      return true;
-    } catch {
-      // A dead controller is dropped rather than retried, so the set of
-      // clients cannot grow without bound.
-      this.#clients.delete(client);
-      return false;
+    if (subscription.send(envelope)) {
+      subscription.deliveredSequence = envelope.sequence;
     }
   }
 }
@@ -2813,7 +2908,6 @@ export const startConsoleServer = async (
   );
   await server.service.initializeFromStore();
 
-  const beat = setInterval(() => server.ping(), PING_INTERVAL_MS);
   Deno.serve({
     hostname: HOSTNAME,
     port: config.port,
@@ -2826,9 +2920,7 @@ export const startConsoleServer = async (
       console.error(error instanceof Error ? error.message : String(error));
       return new Response("internal error", { status: 500 });
     },
-  }, (request) => server.handle(request)).finished.finally(() => {
-    clearInterval(beat);
-  });
+  }, (request) => server.handle(request));
 };
 
 // Running the file serves; importing it (the tests do) serves nothing.

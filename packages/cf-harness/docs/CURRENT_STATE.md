@@ -578,8 +578,8 @@ The current package provides:
   carry validated client actions (`open_loom`, `command`, `open_url`). It ends
   the loop without another provider request, retaining the completed lifecycle
   and reusable conversation. Reports carry the canonical task outcome;
-  interactive `turn_completed` events, console polling and SSE carry the same
-  outcome with its answer and actions, session identity, and current
+  interactive `turn_completed` events and the console's result route carry the
+  same outcome with its answer and actions, session identity, and current
   continuation availability. The live pane renders the answer, question, or
   reason. Children report blockers to the parent. Missing-input discovery
   distinguishes released evidence, absence within an enumerated granted scope,

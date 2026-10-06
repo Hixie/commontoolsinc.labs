@@ -2777,8 +2777,8 @@ Weaver, that owns a web engine, shows its page to the owner, and executes the
 protocol is `src/contracts/browser-host.ts` (`HarnessBrowserHost`), and the
 tool's host backend is `src/tools/browser-host-backend.ts`. The interactive chat
 service takes a host per turn (`startTurn`'s `attached.browserHost`), which is
-how the console's [browser host routes](console/README.md#browser-hosts) reach
-it.
+how the console's [browser host channel](console/README.md#browser-hosts),
+carried over the client's console socket, reaches it.
 
 With a host, the tool offers more than a lease does, and the model is offered
 the host's descriptor rather than the lease's: `back`, `forward`, `reload`,
@@ -2791,7 +2791,7 @@ for the reason, never words an agent wrote. `press` takes only keys that move,
 submit, or dismiss, none of which puts a character into the page. A host waits
 for a ref, a load state, or a URL, never for a time, and takes no `timeoutMs` —
 an operation waits as long as the page or the owner takes. It ends when the host
-answers, when the host's stream or the turn ends (settling it as
+answers, when the host's connection or the turn ends (settling it as
 `session-ended`), or when the run's abort signal fires. A browser child in such
 a run holds the `browser` tool alone, with no skill scripts and no host
 execution. Every result carries the page: the address the host committed for it,

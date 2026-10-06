@@ -19,7 +19,7 @@ import {
   readRunFlow,
   startTask,
 } from "./api.ts";
-import { consolePath, pageMount } from "./mount.ts";
+import { followConsoleEvents } from "./socket.ts";
 import "./index-view.ts";
 import "./flow-view.ts";
 import "./run-view.ts";
@@ -122,7 +122,7 @@ export class ConsoleApp extends LitElement {
   /** The last sequence rendered; every reconnect resumes from it. */
   #lastSequence = 0;
 
-  #stream: EventSource | undefined;
+  #stream: { close(): void } | undefined;
 
   /** Run ids known before the running turn started, so its own is spottable. */
   #runIdsBeforeTurn = new Set<string>();
@@ -250,23 +250,17 @@ export class ConsoleApp extends LitElement {
 
   #subscribe(): void {
     this.#stream?.close();
-    const stream = new EventSource(
-      consolePath(
-        pageMount(),
-        `/api/events?sessionId=${
-          encodeURIComponent(this.sessionId ?? "")
-        }&afterSequence=${this.#lastSequence}`,
-      ),
+    const sessionId = this.sessionId;
+    this.#stream = followConsoleEvents(
+      () => ({
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        afterSequence: this.#lastSequence,
+      }),
+      (envelope) => this.#onEvent(envelope),
+      (reason) => {
+        this.error = reason;
+      },
     );
-    this.#stream = stream;
-    stream.addEventListener("chat", (message) => {
-      this.#onEvent(JSON.parse((message as MessageEvent<string>).data));
-    });
-    stream.addEventListener("error", () => {
-      if (stream.readyState === EventSource.CLOSED) {
-        this.#subscribe();
-      }
-    });
   }
 
   #onEvent(envelope: HarnessChatEventEnvelope): void {

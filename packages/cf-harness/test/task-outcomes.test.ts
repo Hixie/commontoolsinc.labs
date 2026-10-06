@@ -18,6 +18,7 @@ import { CfHarnessPromptLoop } from "../src/prompt-loop.ts";
 import type { SandboxRuntime } from "../src/sandbox/types.ts";
 import { openSqliteHarnessChatSessionStore } from "../src/sqlite-session-store.ts";
 import { directPromptSlotBindingFor } from "./support/prompt-slot-binding.ts";
+import { connectToConsole } from "./support/console-connection.ts";
 
 /** A prompt bound as context: it may inform the run but not command it. */
 const contextPromptSlotBinding = {
@@ -47,7 +48,7 @@ const finishCall = (input: unknown, id = "finish"): HarnessToolCall => ({
   function: { name: "finish_task", arguments: JSON.stringify(input) },
 });
 
-/** A same-origin request through the console's public HTTP handler. */
+/** A task request, as the console socket carries one to its route. */
 const taskRequest = (input: unknown): Request =>
   new Request("http://127.0.0.1:8100/api/task", {
     method: "POST",
@@ -532,7 +533,7 @@ describe("task-outcomes", () => {
             runIdForTurn: (_sessionId, turnId) => turnId,
           }),
       );
-      const started = await (await server.handle(
+      const started = await (await server.route(
         taskRequest({ text: "Make me a loom for the trip" }),
       )).json();
       await server.service.waitForTurn(started.sessionId, started.turnId);
@@ -546,7 +547,7 @@ describe("task-outcomes", () => {
         actions,
         finalText: answer,
       });
-      const polled = await (await server.handle(
+      const polled = await (await server.route(
         new Request(
           `http://127.0.0.1:8100/api/turns/${started.turnId}/result`,
         ),
@@ -635,7 +636,7 @@ describe("task-outcomes", () => {
             sessionStore: store,
           });
         let server = new ConsoleServer(config, createService);
-        const startedResponse = await server.handle(
+        const startedResponse = await server.route(
           taskRequest({ text: "Read my missing mailbox" }),
         );
         const started = await startedResponse.json();
@@ -645,7 +646,7 @@ describe("task-outcomes", () => {
           server = new ConsoleServer(config, createService);
           await server.service.initializeFromStore();
         }
-        const polledResponse = await server.handle(
+        const polledResponse = await server.route(
           new Request(
             `http://127.0.0.1:8100/api/turns/${started.turnId}/result`,
           ),
@@ -659,42 +660,19 @@ describe("task-outcomes", () => {
           sessionId: started.sessionId,
           continuable: true,
         });
-        const stream = await server.handle(
-          new Request(
-            `http://127.0.0.1:8100/api/events?sessionId=${started.sessionId}&afterSequence=0`,
-          ),
-        );
-        const reader = stream.body!.pipeThrough(new TextDecoderStream())
-          .getReader();
-        let buffer = "";
-        let terminal;
-        try {
-          while (terminal === undefined) {
-            const chunk = await reader.read();
-            if (chunk.done) {
-              throw new Error("stream ended without its terminal");
-            }
-            buffer += chunk.value;
-            for (let split; (split = buffer.indexOf("\n\n")) >= 0;) {
-              const block = buffer.slice(0, split);
-              buffer = buffer.slice(split + 2);
-              const data = block.split("\n").find((line) =>
-                line.startsWith("data: ")
-              );
-              if (data === undefined) continue;
-              const envelope = JSON.parse(data.slice(6));
-              if (envelope.event?.kind === "turn_completed") {
-                terminal = envelope;
-              }
-            }
-          }
-        } finally {
-          await reader.cancel();
-        }
+        const client = connectToConsole(server);
+        const terminal = await client.subscribe({
+          sessionId: started.sessionId,
+          afterSequence: 0,
+        }).next("turn_completed");
+        client.close();
         expect(terminal.turnId).toBe(started.turnId);
-        expect(terminal.event.outcome).toBe("question");
-        expect(terminal.event.result).toEqual(polled);
-        const continuedResponse = await server.handle(
+        expect(terminal.event).toMatchObject({
+          kind: "turn_completed",
+          outcome: "question",
+          result: polled,
+        });
+        const continuedResponse = await server.route(
           taskRequest({
             sessionId: started.sessionId,
             text: "Use the shared mailbox I will attach.",
@@ -714,7 +692,7 @@ describe("task-outcomes", () => {
           "Use the shared mailbox I will attach.",
         );
         await server.service.closeSession("close", started.sessionId, "done");
-        const closed = await server.handle(
+        const closed = await server.route(
           new Request(
             `http://127.0.0.1:8100/api/turns/${started.turnId}/result`,
           ),

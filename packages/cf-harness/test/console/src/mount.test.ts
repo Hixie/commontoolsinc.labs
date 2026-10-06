@@ -50,8 +50,8 @@ describe("console/src/mount", () => {
 
   describe("consolePath()", () => {
     it("addresses a console path under the mount", () => {
-      expect(consolePath("", "/api/events?sessionId=s")).toBe(
-        "/api/events?sessionId=s",
+      expect(consolePath("", "/api/socket")).toBe(
+        "/api/socket",
       );
       expect(consolePath("/harness-console", "/api/task")).toBe(
         "/harness-console/api/task",

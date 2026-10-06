@@ -156,11 +156,11 @@ whether the action happened.
 
 Keep one callback coordinator and one Weaver approval queue. Typed commands ride
 the chat event log: a `client_action_requested` event carries an
-`invoke_command` or `list_commands` action over `GET /api/events`, and the
-Weaver answers on `POST /api/client-actions` with a `settlement` in place of the
-final-action `outcome`. The browser-host channel (`console/browser-host.ts`),
-with its own pending map, settlement, withdrawal, and per-turn token-gated
-stream, stays separate. The coordinator commits request state
+`invoke_command` or `list_commands` action on the console socket's event
+subscription, and the Weaver answers with a request to `POST /api/client-actions`
+over that socket, with a `settlement` in place of the final-action `outcome`. The browser-host channel (`console/browser-host.ts`),
+with its own pending map, settlement, withdrawal, and frames on the socket of
+the client that hosts the turn, stays separate. The coordinator commits request state
 before delivering its event and keeps a settlement that arrives during that
 delivery, resolved event included, without a reentrant event-queue deadlock; the
 extraction preserves that. Extend the Weaver's existing per-run, in-memory
@@ -430,12 +430,12 @@ integration.
 **Question resolved:** can improvements be measured against the complete product
 flow without changing its communication architecture each time?
 
-`packages/cf-harness/scripts/run-measurement-batch.ts` is a single-turn HTTP
-client that starts a fresh session per task and has no host seam. The host seams
+`packages/cf-harness/scripts/run-measurement-batch.ts` is a single-turn console
+socket client that starts a fresh session per task and has no host seam. The host seams
 are the browser-host channel and the client-action callbacks this plan builds
 on. Extend it and its existing cell-spec/preflight machinery with multi-turn
 scenarios, driven by a scripted host stub on the browser-host channel first and
-the real Weaver adapter after. Reuse SSE parsing, run artifacts, policy/model
+the real Weaver adapter after. Reuse its subscription handling, run artifacts, policy/model
 snapshots, and `measure-runs.ts` cost/latency reporting. Add fixture-state and
 visible-outcome assertions; tool success and a final paragraph do not prove the
 requested change happened. Keep deterministic protocol faults separate from

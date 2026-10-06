@@ -3,7 +3,6 @@ import { join, toFileUrl } from "@std/path";
 import { describe, it } from "@std/testing/bdd";
 
 import { ConsoleServer, resolveConsoleConfig } from "../console/server.ts";
-import type { ConsoleChatEventEnvelope } from "../console/turn-result.ts";
 import { harnessChatTurnElapsedMs } from "../src/contracts/interactive-chat.ts";
 import type { HarnessToolCall } from "../src/contracts/transcript.ts";
 import { HarnessInteractiveChatService } from "../src/interactive-chat-service.ts";
@@ -15,6 +14,7 @@ import {
 } from "../src/prompt-loop.ts";
 import type { SandboxRuntime } from "../src/sandbox/types.ts";
 import { openSqliteHarnessChatSessionStore } from "../src/sqlite-session-store.ts";
+import { connectToConsole } from "./support/console-connection.ts";
 import { directPromptSlotBindingFor } from "./support/prompt-slot-binding.ts";
 
 /** The usage fixture reads a file without launching a sandbox process. */
@@ -46,30 +46,6 @@ const taskRequest = (text: string, sessionId?: string): Request =>
     body: JSON.stringify({ text, sessionId }),
   });
 
-/** Reads actual SSE frames until the requested turn event arrives. */
-const nextEvent = async (
-  reader: ReadableStreamDefaultReader<string>,
-  kind: string,
-): Promise<ConsoleChatEventEnvelope> => {
-  let buffer = "";
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) throw new Error(`stream ended before ${kind}`);
-    buffer += chunk.value;
-    for (let split; (split = buffer.indexOf("\n\n")) >= 0;) {
-      const block = buffer.slice(0, split);
-      buffer = buffer.slice(split + 2);
-      const data = block.split("\n").find((line) => line.startsWith("data: "));
-      if (data === undefined) continue;
-      const envelope: ConsoleChatEventEnvelope = JSON.parse(data.slice(6));
-      if (envelope.event.kind === kind) return envelope;
-      if (envelope.event.kind === "turn_completed") {
-        throw new Error(`turn completed before ${kind}`);
-      }
-    }
-  }
-};
-
 describe("turn-usage", () => {
   for (const childFails of [false, true]) {
     it(`streams research and child calls before the child ${childFails ? "fails" : "finishes"} and counts each once in the result`, async () => {
@@ -94,7 +70,7 @@ describe("turn-usage", () => {
       let childCalls = 0;
       let service: HarnessInteractiveChatService | undefined;
       let started: { sessionId: string; turnId: string } | undefined;
-      let reader: ReadableStreamDefaultReader<string> | undefined;
+      let client: ReturnType<typeof connectToConsole> | undefined;
       try {
         const config = await resolveConsoleConfig(
           [
@@ -198,7 +174,7 @@ describe("turn-usage", () => {
           return service;
         });
         started =
-          await (await server.handle(taskRequest("Read the note with help.")))
+          await (await server.route(taskRequest("Read the note with help.")))
             .json();
         const { sessionId, turnId } = started!;
         const done = server.service.waitForTurn(sessionId, turnId);
@@ -232,16 +208,13 @@ describe("turn-usage", () => {
         expect(server.service.status(sessionId).sessions[0].status).toBe(
           "turn_running",
         );
-        const stream = await server.handle(
-          new Request(
-            `http://127.0.0.1:8100/api/events?sessionId=${sessionId}&afterSequence=${
-              progress.at(-1)!.sequence
-            }`,
-          ),
-        );
-        reader = stream.body!.pipeThrough(new TextDecoderStream()).getReader();
-        const nextUsage = nextEvent(reader, "turn_usage");
-        const running = await server.handle(
+        client = connectToConsole(server);
+        const events = client.subscribe({
+          sessionId,
+          afterSequence: progress.at(-1)!.sequence,
+        });
+        const nextUsage = events.next("turn_usage");
+        const running = await server.route(
           new Request(`http://127.0.0.1:8100/api/turns/${turnId}/result`),
         );
         expect(running.status).toBe(409);
@@ -260,8 +233,8 @@ describe("turn-usage", () => {
         });
         expect(live.sequence).toBeGreaterThan(progress.at(-1)!.sequence);
         await done;
-        const terminal = await nextEvent(reader, "turn_completed");
-        const polled = await (await server.handle(
+        const terminal = await events.next("turn_completed");
+        const polled = await (await server.route(
           new Request(`http://127.0.0.1:8100/api/turns/${turnId}/result`),
         )).json();
         const total = childFails ? 176 : 231;
@@ -300,10 +273,10 @@ describe("turn-usage", () => {
         expect(childReport.totalUsage.totalTokens).toBe(childFails ? 44 : 99);
 
         const followup =
-          await (await server.handle(taskRequest("Another note?", sessionId)))
+          await (await server.route(taskRequest("Another note?", sessionId)))
             .json();
         await server.service.waitForTurn(sessionId, followup.turnId);
-        const followupResult = await (await server.handle(
+        const followupResult = await (await server.route(
           new Request(
             `http://127.0.0.1:8100/api/turns/${followup.turnId}/result`,
           ),
@@ -315,7 +288,7 @@ describe("turn-usage", () => {
         if (service !== undefined && started !== undefined) {
           await service.waitForTurn(started.sessionId, started.turnId);
         }
-        await reader?.cancel();
+        client?.close();
         store?.close();
         await Deno.remove(root, { recursive: true });
       }

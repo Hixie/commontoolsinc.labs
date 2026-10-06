@@ -16,13 +16,17 @@ import {
   preflightPosture,
   readAncestry,
   readServerMeta,
-  readSseFrames,
   readSupersededVisibility,
   renderBatchReport as renderBatchReportImpl,
   resolveImportedPatternOrigins,
   runTask,
 } from "../scripts/run-measurement-batch.ts";
 import { emptyTotals as emptyMeasurementTotals } from "../scripts/measure-runs.ts";
+import {
+  CONSOLE_SOCKET_PATH,
+  type ConsoleSocketServerFrame,
+  readConsoleSocketClientFrame,
+} from "../console/socket-protocol.ts";
 import observedStatus from "./support/measurement-console-status.json" with {
   type: "json",
 };
@@ -50,73 +54,32 @@ const renderBatchReport = (
     cellSpec: { kind: "unasked" },
   });
 
-/**
- * One event stream, delivered a chunk at a time.
- *
- * `pull` rather than `start` because a stream that enqueues everything and
- * then calls `error()` discards the queue, which is not what a socket does: a
- * client receives the bytes already sent and then sees the break. The
- * difference decides whether a fault counts as progress, which is what bounds
- * the client's reconnection.
- */
-const sseBody = (
-  frames: readonly string[],
-  keepOpen: boolean,
-  fault = false,
-): BodyInit => {
-  const encoder = new TextEncoder();
-  let index = -1;
-  return new ReadableStream<Uint8Array>({
-    pull(controller) {
-      index += 1;
-      if (index === 0) {
-        controller.enqueue(encoder.encode(": connected\n\n"));
-        return;
-      }
-      const frame = frames[index - 1];
-      if (frame !== undefined) {
-        controller.enqueue(encoder.encode(frame));
-        return;
-      }
-      if (fault) {
-        controller.error(new Error("the socket went away"));
-        return;
-      }
-      if (!keepOpen) {
-        controller.close();
-        return;
-      }
-      // Held open with nothing more to say, which is a live but quiet turn.
-      return new Promise<void>(() => {});
-    },
-  });
-};
-
-const chatFrame = (
+/** One chat event, as the console delivers it to a subscription. */
+const chatEnvelope = (
   sequence: number,
   sessionId: string,
   event: Record<string, unknown>,
-): string =>
-  `event: chat\nid: ${sequence}\ndata: ${
-    JSON.stringify({
-      type: "cf-harness.chat.event",
-      protocolVersion: 1,
-      sessionId,
-      sequence,
-      emittedAt: "2026-08-28T21:00:00.000Z",
-      event,
-    })
-  }\n\n`;
+): Record<string, unknown> => ({
+  type: "cf-harness.chat.event",
+  protocolVersion: 1,
+  sessionId,
+  sequence,
+  emittedAt: "2026-08-28T21:00:00.000Z",
+  event,
+});
 
 interface FakeConsoleOptions {
   /**
-   * The event streams the server hands out, in the order they are asked for.
-   * Once the list runs out the server hands out an empty, closed stream — a
-   * server with nothing more to say closes, and that is what lets a caller
-   * tell "still working" from "gone".
+   * What the console delivers to the subscriptions it is asked for, in the
+   * order they are asked for. After its envelopes, a subscription's socket is
+   * held open (`keepOpen`), closed, or closed with the reason a failing
+   * console gives (`fault`). Once the list runs out a subscription is
+   * delivered nothing and its socket closed — a console with nothing more to
+   * say goes away, and that is what lets a caller tell "still working" from
+   * "gone".
    */
-  streams: readonly {
-    frames: readonly string[];
+  subscriptions: readonly {
+    envelopes: readonly Record<string, unknown>[];
     keepOpen: boolean;
     fault?: boolean;
   }[];
@@ -127,6 +90,9 @@ interface FakeConsoleOptions {
   statusArtifactRoot?: unknown;
   statusSessions?: unknown;
   patterns?: readonly Record<string, unknown>[];
+
+  /** What a route answers in place of what the stand-in makes, by path. */
+  answers?: Readonly<Record<string, unknown>>;
 
   /** What `/api/index/call` answers, and with what status. */
   indexAnswer?: { status: number; body: unknown };
@@ -146,37 +112,35 @@ interface FakeConsoleOptions {
   /** What `getPattern` reports about each pattern's discoverability. */
   discoverable?: Readonly<Record<string, boolean>>;
 
-  /** A status for `/api/events` to refuse the stream with. */
-  eventStatus?: number;
-
-  /** Break the index response body mid-read, as a dropped connection does. */
-  indexFault?: boolean;
+  /** Why the console refuses every subscription, when it does. */
+  subscriptionError?: string;
 }
 
 interface FakeConsole {
   url: string;
   taskTexts: readonly string[];
-  eventRequests: readonly string[];
+
+  /** The sequence each subscription asked to resume after, in order. */
+  subscriptionRequests: readonly (number | undefined)[];
+
   close: () => Promise<void>;
 }
 
+/**
+ * A stand-in console. Like the real one, it answers `/api/health` over plain
+ * HTTP and every other route only over the console socket, so a client that
+ * reaches a route here reached it the way it reaches the real console.
+ * `/api/meta` is served over HTTP too, standing in for the fabric server.
+ */
 const startFakeConsole = (options: FakeConsoleOptions): FakeConsole => {
   const taskTexts: string[] = [];
-  const eventRequests: string[] = [];
-  let streamIndex = 0;
-  const server = Deno.serve({
-    port: 0,
-    onListen: () => {},
-  }, async (request) => {
+  const subscriptionRequests: (number | undefined)[] = [];
+  const sockets = new Set<WebSocket>();
+  let subscriptionIndex = 0;
+  const route = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    if (url.pathname === "/") {
-      return new Response("<!doctype html>");
-    }
-    if (url.pathname === "/api/meta") {
-      return Response.json(options.meta ?? META);
-    }
-    if (url.pathname === "/api/health") {
-      return Response.json({ ok: true });
+    if (Object.hasOwn(options.answers ?? {}, url.pathname)) {
+      return Response.json(options.answers?.[url.pathname]);
     }
     if (url.pathname === "/api/task") {
       const body = await request.json() as { text: string };
@@ -196,33 +160,6 @@ const startFakeConsole = (options: FakeConsoleOptions): FakeConsole => {
         sessionId: "session-1",
         turnId: options.runId ?? "turn-1",
       });
-    }
-    if (url.pathname === "/api/events") {
-      eventRequests.push(url.searchParams.get("afterSequence") ?? "");
-      if (options.eventStatus !== undefined) {
-        return new Response("no stream for you", {
-          status: options.eventStatus,
-        });
-      }
-      // A server with nothing more to say closes rather than repeating
-      // itself, which is what lets a caller tell "still working" from "gone".
-      const stream = options.streams[streamIndex++] ??
-        { frames: [], keepOpen: false };
-      return new Response(
-        sseBody(
-          stream.frames.map((frame) =>
-            frame.replaceAll(
-              '"turn-1"',
-              JSON.stringify(options.runId ?? "turn-1"),
-            )
-          ),
-          stream.keepOpen,
-          stream.fault ?? false,
-        ),
-        {
-          headers: { "content-type": "text/event-stream" },
-        },
-      );
     }
     if (url.pathname === "/api/status") {
       const observedSession = observedStatus.sessions[0];
@@ -249,16 +186,6 @@ const startFakeConsole = (options: FakeConsoleOptions): FakeConsole => {
         : Response.json(options.policy ?? POLICY);
     }
     if (url.pathname === "/api/index/call") {
-      if (options.indexFault) {
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            pull(controller) {
-              controller.error(new Error("the socket went away"));
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        );
-      }
       const answer = options.indexAnswer;
       if (answer !== undefined) {
         return Response.json(answer.body, { status: answer.status });
@@ -282,22 +209,105 @@ const startFakeConsole = (options: FakeConsoleOptions): FakeConsole => {
       return Response.json({ patterns: options.patterns ?? [] });
     }
     return new Response("not found", { status: 404 });
+  };
+  const serveSocket = (request: Request): Response => {
+    const { socket, response } = Deno.upgradeWebSocket(request);
+    sockets.add(socket);
+    socket.addEventListener("close", () => sockets.delete(socket));
+    const send = (frame: ConsoleSocketServerFrame) =>
+      socket.send(JSON.stringify(frame));
+    socket.addEventListener("message", async (message) => {
+      if (typeof message.data !== "string") return;
+      const read = readConsoleSocketClientFrame(message.data);
+      if (!read.ok) {
+        send(read.answer);
+        return;
+      }
+      const frame = read.frame;
+      if (frame.type === "request") {
+        const answer = await route(
+          new Request(new URL(frame.path, "http://console"), {
+            method: frame.method,
+            ...(frame.body === undefined
+              ? {}
+              : { body: JSON.stringify(frame.body) }),
+          }),
+        );
+        send({
+          type: "response",
+          id: frame.id,
+          status: answer.status,
+          body: await answer.text(),
+        });
+      } else if (frame.type === "subscribe") {
+        subscriptionRequests.push(frame.afterSequence);
+        if (options.subscriptionError !== undefined) {
+          send({
+            type: "unsubscribed",
+            subscription: frame.id,
+            error: options.subscriptionError,
+          });
+          return;
+        }
+        const subscription = options.subscriptions[subscriptionIndex++] ??
+          { envelopes: [], keepOpen: false };
+        for (const envelope of subscription.envelopes) {
+          socket.send(
+            JSON.stringify({ type: "event", subscription: frame.id, envelope })
+              .replaceAll(
+                '"turn-1"',
+                JSON.stringify(options.runId ?? "turn-1"),
+              ),
+          );
+        }
+        if (subscription.fault) {
+          socket.close(1000, "the console went away");
+        } else if (!subscription.keepOpen) {
+          socket.close();
+        }
+      }
+    });
+    return response;
+  };
+  const server = Deno.serve({
+    port: 0,
+    onListen: () => {},
+  }, (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/health") {
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/api/meta") {
+      return Response.json(options.meta ?? META);
+    }
+    if (url.pathname === CONSOLE_SOCKET_PATH) {
+      return serveSocket(request);
+    }
+    return new Response("not found", { status: 404 });
   });
   return {
-    url: `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`,
+    url: `http://127.0.0.1:${server.addr.port}`,
     taskTexts,
-    eventRequests,
-    close: () => server.shutdown(),
+    subscriptionRequests,
+    close: async () => {
+      await Promise.all([...sockets].map((socket) => {
+        const closed = Promise.withResolvers<void>();
+        socket.addEventListener("close", () => closed.resolve());
+        socket.close();
+        return closed.promise;
+      }));
+      await server.shutdown();
+    },
   };
 };
 
-const completedStream = (sequence = 7) => ({
-  frames: [
-    chatFrame(sequence - 1, "session-1", {
+const completedSubscription = (sequence = 7) => ({
+  envelopes: [
+    chatEnvelope(sequence - 1, "session-1", {
       kind: "turn_started",
       turn: { turnId: "turn-1" },
     }),
-    chatFrame(sequence, "session-1", {
+    chatEnvelope(sequence, "session-1", {
       kind: "turn_completed",
       turnId: "turn-1",
       finalText: "Your reading list is at /reading-list.",
@@ -556,41 +566,6 @@ describe("run-measurement-batch", () => {
     });
   });
 
-  describe("readSseFrames()", () => {
-    const streamOf = (text: string): ReadableStream<Uint8Array> => {
-      const encoder = new TextEncoder();
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          // One byte at a time, so a frame split across reads is exercised.
-          for (const byte of encoder.encode(text)) {
-            controller.enqueue(new Uint8Array([byte]));
-          }
-          controller.close();
-        },
-      });
-    };
-
-    it("returns each frame's event name, data and sequence", async () => {
-      const frames = [];
-      for await (
-        const frame of readSseFrames(
-          streamOf(': connected\n\nevent: chat\nid: 4\ndata: {"a":1}\n\n'),
-        )
-      ) {
-        frames.push(frame);
-      }
-      expect(frames).toEqual([{ event: "chat", data: '{"a":1}', id: 4 }]);
-    });
-
-    it("returns no frame for a comment-only stream", async () => {
-      const frames = [];
-      for await (const frame of readSseFrames(streamOf(": connected\n\n"))) {
-        frames.push(frame);
-      }
-      expect(frames).toEqual([]);
-    });
-  });
-
   describe("indexChangeOf()", () => {
     const before: IndexSnapshot = {
       kind: "read",
@@ -642,7 +617,9 @@ describe("run-measurement-batch", () => {
 
     describe("awaitTurn()", () => {
       it("returns the terminal event the console published for the turn", async () => {
-        const console_ = startFakeConsole({ streams: [completedStream()] });
+        const console_ = startFakeConsole({
+          subscriptions: [completedSubscription()],
+        });
         try {
           const client = await ConsoleClient.open(console_.url);
           const started = await client.startTask("Track my books.");
@@ -657,32 +634,33 @@ describe("run-measurement-batch", () => {
 
       it("resumes from the newest sequence it read when the stream is reopened", async () => {
         const console_ = startFakeConsole({
-          streams: [
-            // A stream the server closes having advanced the sequence: real
-            // progress, so the client reconnects rather than giving up. A
-            // liveness tick alone would not be — frames are not progress.
+          subscriptions: [
+            // A socket the console closes after the subscription advanced the
+            // sequence: real progress, so the client subscribes again on a
+            // fresh socket rather than giving up.
             {
-              frames: [
-                chatFrame(4, "session-1", {
+              envelopes: [
+                chatEnvelope(4, "session-1", {
                   kind: "assistant_completed",
                   text: "working",
                 }),
               ],
               keepOpen: false,
             },
-            completedStream(11),
+            completedSubscription(11),
           ],
         });
         try {
           const client = await ConsoleClient.open(console_.url);
           const started = await client.startTask("Track my books.");
           expect((await client.awaitTurn(started)).kind).toBe("turn_completed");
-          // The reconnect resumes from the sequence the first stream reached,
-          // which is both the resume contract and the progress measure.
-          expect(console_.eventRequests).toEqual(["0", "4"]);
+          // The second subscription resumes from the sequence the first one
+          // reached, which is both the resume contract and the progress
+          // measure.
+          expect(console_.subscriptionRequests).toEqual([0, 4]);
           const second = await client.startTask("Track my films.");
           await client.awaitTurn(second);
-          expect(console_.eventRequests[2]).toBe("11");
+          expect(console_.subscriptionRequests[2]).toBe(11);
         } finally {
           await console_.close();
         }
@@ -690,9 +668,9 @@ describe("run-measurement-batch", () => {
 
       it("returns the failure the console reported for a turn that failed", async () => {
         const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              chatFrame(5, "session-1", {
+          subscriptions: [{
+            envelopes: [
+              chatEnvelope(5, "session-1", {
                 kind: "turn_failed",
                 turnId: "turn-1",
                 error: { message: "the model refused the request" },
@@ -715,16 +693,16 @@ describe("run-measurement-batch", () => {
 
       it("keeps reading past `turn_canceled` until the console reports the session idle", async () => {
         const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              chatFrame(5, "session-1", {
+          subscriptions: [{
+            envelopes: [
+              chatEnvelope(5, "session-1", {
                 kind: "turn_canceled",
                 turnId: "turn-1",
                 reason: "canceled from the console page",
               }),
               // The service emits the cancel while the prompt loop is still
               // unwinding, so the run is not on disk until this arrives.
-              chatFrame(6, "session-1", {
+              chatEnvelope(6, "session-1", {
                 kind: "status_changed",
                 session: { sessionId: "session-1", status: "idle" },
               }),
@@ -746,11 +724,21 @@ describe("run-measurement-batch", () => {
 
       it("reports a canceled turn as unwitnessed when the console never says the session went idle", async () => {
         const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              chatFrame(5, "session-1", {
+          subscriptions: [{
+            envelopes: [
+              chatEnvelope(5, "session-1", {
                 kind: "turn_canceled",
                 turnId: "turn-1",
+              }),
+              // A status naming the turn still active is not the session at
+              // rest, so it settles nothing.
+              chatEnvelope(6, "session-1", {
+                kind: "status_changed",
+                session: {
+                  sessionId: "session-1",
+                  status: "busy",
+                  activeTurnId: "turn-1",
+                },
               }),
             ],
             keepOpen: false,
@@ -769,19 +757,19 @@ describe("run-measurement-batch", () => {
       });
 
       it("stops rather than reopening forever when a reconnect replays what it already read", async () => {
-        // Frames arriving is not progress. Two identical streams deliver
-        // frames and advance nothing; counting those as progress reopens the
-        // stream for as long as the console repeats itself.
+        // Envelopes arriving is not progress. Two identical subscriptions
+        // deliver envelopes and advance nothing; counting those as progress
+        // subscribes again for as long as the console repeats itself.
         const replay = {
-          frames: [
-            chatFrame(1, "session-1", {
+          envelopes: [
+            chatEnvelope(1, "session-1", {
               kind: "assistant_completed",
               text: "thinking",
             }),
           ],
           keepOpen: false,
         };
-        const replaying = startFakeConsole({ streams: [replay, replay] });
+        const replaying = startFakeConsole({ subscriptions: [replay, replay] });
         try {
           const client = await ConsoleClient.open(replaying.url);
           const started = await client.startTask("Track my books.");
@@ -789,7 +777,7 @@ describe("run-measurement-batch", () => {
           expect(outcome.kind).toBe("unwitnessed");
           expect(outcome.kind === "unwitnessed" ? outcome.reason : "")
             .toContain("without advancing past 1");
-          expect(replaying.eventRequests).toHaveLength(2);
+          expect(replaying.subscriptionRequests).toHaveLength(2);
         } finally {
           await replaying.close();
         }
@@ -797,15 +785,17 @@ describe("run-measurement-batch", () => {
 
       it("stops when a held cancel is followed by a replay that advances nothing", async () => {
         const canceled = {
-          frames: [
-            chatFrame(5, "session-1", {
+          envelopes: [
+            chatEnvelope(5, "session-1", {
               kind: "turn_canceled",
               turnId: "turn-1",
             }),
           ],
           keepOpen: false,
         };
-        const console_ = startFakeConsole({ streams: [canceled, canceled] });
+        const console_ = startFakeConsole({
+          subscriptions: [canceled, canceled],
+        });
         try {
           const client = await ConsoleClient.open(console_.url);
           const started = await client.startTask("Track my books.");
@@ -820,10 +810,10 @@ describe("run-measurement-batch", () => {
 
       it("reopens a stream that faulted part way and reads the turn from the next one", async () => {
         const console_ = startFakeConsole({
-          streams: [
+          subscriptions: [
             {
-              frames: [
-                chatFrame(3, "session-1", {
+              envelopes: [
+                chatEnvelope(3, "session-1", {
                   kind: "assistant_completed",
                   text: "working",
                 }),
@@ -831,7 +821,7 @@ describe("run-measurement-batch", () => {
               keepOpen: false,
               fault: true,
             },
-            completedStream(12),
+            completedSubscription(12),
           ],
         });
         try {
@@ -845,7 +835,7 @@ describe("run-measurement-batch", () => {
 
       it("reports a stream that faulted having read nothing as unwitnessed", async () => {
         const console_ = startFakeConsole({
-          streams: [{ frames: [], keepOpen: false, fault: true }],
+          subscriptions: [{ envelopes: [], keepOpen: false, fault: true }],
         });
         try {
           const client = await ConsoleClient.open(console_.url);
@@ -853,7 +843,9 @@ describe("run-measurement-batch", () => {
           const outcome = await client.awaitTurn(started);
           expect(outcome.kind).toBe("unwitnessed");
           expect(outcome.kind === "unwitnessed" ? outcome.reason : "")
-            .toContain("faulted without advancing past");
+            .toContain(
+              "without advancing past 0: the console socket closed: the console went away",
+            );
         } finally {
           await console_.close();
         }
@@ -861,9 +853,9 @@ describe("run-measurement-batch", () => {
 
       it("describes a completed turn that carried no final text", async () => {
         const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              chatFrame(5, "session-1", {
+          subscriptions: [{
+            envelopes: [
+              chatEnvelope(5, "session-1", {
                 kind: "turn_completed",
                 turnId: "turn-1",
               }),
@@ -880,37 +872,22 @@ describe("run-measurement-batch", () => {
         }
       });
 
-      it("returns an unwitnessed outcome naming the status when the console refuses the stream", async () => {
+      it("returns an unwitnessed outcome naming why when the console refuses the subscription", async () => {
         const console_ = startFakeConsole({
-          streams: [completedStream()],
-          eventStatus: 503,
+          subscriptions: [completedSubscription()],
+          subscriptionError: "the console could not read its events",
         });
         try {
           const client = await ConsoleClient.open(console_.url);
           const started = await client.startTask("Track my books.");
           expect(await client.awaitTurn(started)).toEqual({
             kind: "unwitnessed",
-            reason: "/api/events answered 503",
+            reason:
+              "the event subscription ended: the console could not read its events",
           });
-        } finally {
-          await console_.close();
-        }
-      });
-
-      it("reads past a liveness tick, which is not a chat envelope", async () => {
-        const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              "event: ping\ndata: 1\n\n",
-              ...completedStream(6).frames,
-            ],
-            keepOpen: true,
-          }],
-        });
-        try {
-          const client = await ConsoleClient.open(console_.url);
-          const started = await client.startTask("Track my books.");
-          expect((await client.awaitTurn(started)).kind).toBe("turn_completed");
+          // A refusal is an answer, not a dropped socket, so it is not asked
+          // again.
+          expect(console_.subscriptionRequests).toHaveLength(1);
         } finally {
           await console_.close();
         }
@@ -918,14 +895,14 @@ describe("run-measurement-batch", () => {
 
       it("reads past a terminal event belonging to another turn of the same session", async () => {
         const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              chatFrame(4, "session-1", {
+          subscriptions: [{
+            envelopes: [
+              chatEnvelope(4, "session-1", {
                 kind: "turn_completed",
                 turnId: "turn-earlier",
                 finalText: "an older turn",
               }),
-              ...completedStream(9).frames,
+              ...completedSubscription(9).envelopes,
             ],
             keepOpen: true,
           }],
@@ -944,7 +921,7 @@ describe("run-measurement-batch", () => {
 
       it("returns an unwitnessed outcome for a stream the console closes having said nothing", async () => {
         const console_ = startFakeConsole({
-          streams: [{ frames: [], keepOpen: false }],
+          subscriptions: [{ envelopes: [], keepOpen: false }],
         });
         try {
           const client = await ConsoleClient.open(console_.url);
@@ -952,7 +929,7 @@ describe("run-measurement-batch", () => {
           expect(await client.awaitTurn(started)).toEqual({
             kind: "unwitnessed",
             reason:
-              "the console closed the event stream without advancing past 0",
+              "the event subscription ended without advancing past 0: the console socket closed",
           });
         } finally {
           await console_.close();
@@ -961,13 +938,13 @@ describe("run-measurement-batch", () => {
 
       it("reads past an event belonging to another session", async () => {
         const console_ = startFakeConsole({
-          streams: [{
-            frames: [
-              chatFrame(3, "someone-else", {
+          subscriptions: [{
+            envelopes: [
+              chatEnvelope(3, "someone-else", {
                 kind: "turn_completed",
                 turnId: "turn-9",
               }),
-              ...completedStream(9).frames,
+              ...completedSubscription(9).envelopes,
             ],
             keepOpen: true,
           }],
@@ -1199,7 +1176,7 @@ describe("run-measurement-batch", () => {
   describe("resolveImportedPatternOrigins()", () => {
     it("resolves each identifier once, one dependency hop deep", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         dependencies: { alias: ["pub-rating"], other: ["unrelated"] },
       });
       try {
@@ -1253,7 +1230,9 @@ describe("run-measurement-batch", () => {
      * these paths: an HTTP error is an answer, and this is the absence of one.
      */
     const clientWithNoServer = async (): Promise<ConsoleClient> => {
-      const console_ = startFakeConsole({ streams: [completedStream()] });
+      const console_ = startFakeConsole({
+        subscriptions: [completedSubscription()],
+      });
       const client = await ConsoleClient.open(console_.url);
       await console_.close();
       return client;
@@ -1284,23 +1263,18 @@ describe("run-measurement-batch", () => {
 
   describe("status pre-flight response shapes", () => {
     it("refuses a status answer that is not an object", async () => {
-      const server = Deno.serve({ port: 0, onListen: () => {} }, (request) => {
-        const url = new URL(request.url);
-        if (url.pathname === "/api/health") {
-          return Response.json({ ok: true });
-        }
-        return Response.json("not an object");
+      const console_ = startFakeConsole({
+        subscriptions: [],
+        answers: { "/api/status": "not an object" },
       });
       try {
-        const client = await ConsoleClient.open(
-          `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`,
-        );
+        const client = await ConsoleClient.open(console_.url);
         expect(await client.preflightStatus()).toEqual({
           kind: "refused",
           reason: "/api/status did not return a JSON object",
         });
       } finally {
-        await server.shutdown();
+        await console_.close();
       }
     });
   });
@@ -1308,7 +1282,7 @@ describe("run-measurement-batch", () => {
   describe("indexSnapshot() shapes", () => {
     it("returns an unread snapshot for an answer that is not an object", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 200, body: "not an object" },
       });
       try {
@@ -1324,7 +1298,7 @@ describe("run-measurement-batch", () => {
 
     it("reads each listed pattern and the count the index left out of the listing", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: {
           status: 200,
           body: {
@@ -1361,22 +1335,17 @@ describe("run-measurement-batch", () => {
 
   describe("startTask()", () => {
     it("throws for a console that answered without a session and turn", async () => {
-      const server = Deno.serve({ port: 0, onListen: () => {} }, (request) => {
-        const url = new URL(request.url);
-        if (url.pathname === "/api/health") {
-          return Response.json({ ok: true });
-        }
-        return Response.json({ nothing: true });
+      const console_ = startFakeConsole({
+        subscriptions: [],
+        answers: { "/api/task": { nothing: true } },
       });
       try {
-        const client = await ConsoleClient.open(
-          `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`,
-        );
+        const client = await ConsoleClient.open(console_.url);
         await expect(client.startTask("do a thing")).rejects.toThrow(
           "answered without a session and turn",
         );
       } finally {
-        await server.shutdown();
+        await console_.close();
       }
     });
   });
@@ -1384,7 +1353,7 @@ describe("run-measurement-batch", () => {
   describe("readSupersededVisibility()", () => {
     it("returns whether each named pattern is still offered in search", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         discoverable: { archived: false, live: true },
       });
       try {
@@ -1412,7 +1381,7 @@ describe("run-measurement-batch", () => {
     };
 
     it("returns `unasked` for a batch that named no spec", async () => {
-      await withClient({ streams: [] }, async (client) => {
+      await withClient({ subscriptions: [] }, async (client) => {
         expect(await preflightCellSpec(client, undefined)).toEqual({
           kind: "unasked",
         });
@@ -1420,7 +1389,7 @@ describe("run-measurement-batch", () => {
     });
 
     it("returns a match for a spec every field of which the console satisfies", async () => {
-      await withClient({ streams: [] }, async (client) => {
+      await withClient({ subscriptions: [] }, async (client) => {
         const spec = {
           requiredToolIds: ["run_pattern", "search_patterns"],
           requiredSubagentProfiles: ["pattern-author"],
@@ -1432,7 +1401,7 @@ describe("run-measurement-batch", () => {
     });
 
     it("returns a refusal naming each mismatched field with expected against actual", async () => {
-      await withClient({ streams: [] }, async (client) => {
+      await withClient({ subscriptions: [] }, async (client) => {
         const preflight = await preflightCellSpec(client, {
           fabricSpace: "other-space",
           requiredToolIds: ["record_feedback"],
@@ -1454,7 +1423,7 @@ describe("run-measurement-batch", () => {
     });
 
     it("returns a refusal for a console that does not serve the policy route", async () => {
-      await withClient({ streams: [], policy: null }, async (client) => {
+      await withClient({ subscriptions: [], policy: null }, async (client) => {
         const preflight = await preflightCellSpec(client, {
           fabricSpace: "measurement",
         });
@@ -1467,7 +1436,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a refusal for a policy answer carrying no tool list", async () => {
       await withClient({
-        streams: [],
+        subscriptions: [],
         policy: { fabricSpace: "measurement", artifactRoot: "/console/runs" },
       }, async (client) => {
         const preflight = await preflightCellSpec(client, {
@@ -1482,7 +1451,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a refusal for a policy answer that is not a JSON object", async () => {
       await withClient(
-        { streams: [], policy: "measurement" },
+        { subscriptions: [], policy: "measurement" },
         async (client) => {
           const preflight = await preflightCellSpec(client, {
             fabricSpace: "measurement",
@@ -1498,7 +1467,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a refusal for a tool list holding something other than strings", async () => {
       await withClient({
-        streams: [],
+        subscriptions: [],
         policy: { ...POLICY, allowedToolIds: ["shell", 7] },
       }, async (client) => {
         const preflight = await preflightCellSpec(client, {
@@ -1513,7 +1482,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a refusal for a policy answer naming no space", async () => {
       await withClient({
-        streams: [],
+        subscriptions: [],
         policy: { ...POLICY, fabricSpace: undefined },
       }, async (client) => {
         const preflight = await preflightCellSpec(client, {
@@ -1532,7 +1501,7 @@ describe("run-measurement-batch", () => {
       // other says nothing at all.
 
       await withClient({
-        streams: [],
+        subscriptions: [],
         policy: { ...POLICY, systemPromptSha256: undefined },
       }, async (client) => {
         const preflight = await preflightCellSpec(client, {
@@ -1547,7 +1516,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a match for a console that reported an explicit `null` prompt and store", async () => {
       await withClient({
-        streams: [],
+        subscriptions: [],
         policy: { ...POLICY, systemPromptSha256: null, sessionDbPath: null },
       }, async (client) => {
         expect(
@@ -1562,7 +1531,9 @@ describe("run-measurement-batch", () => {
 
   describe("preflightIndex()", () => {
     it("returns the result and candidate counts for an index that answered", async () => {
-      const console_ = startFakeConsole({ streams: [completedStream()] });
+      const console_ = startFakeConsole({
+        subscriptions: [completedSubscription()],
+      });
       try {
         const client = await ConsoleClient.open(console_.url);
         expect(await client.preflightIndex("pattern")).toEqual({
@@ -1577,7 +1548,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a refusal naming the status for an index that refused the identity", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: {
           status: 403,
           body: { error: "DID is not allowlisted" },
@@ -1600,7 +1571,7 @@ describe("run-measurement-batch", () => {
 
     it("returns a refusal for an answer carrying no results array, which is not a count of nothing", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 200, body: { ok: true } },
       });
       try {
@@ -1617,7 +1588,7 @@ describe("run-measurement-batch", () => {
 
     it("returns an answer for an index that answered with nothing, which is a state to measure", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 200, body: { results: [] } },
       });
       try {
@@ -1635,7 +1606,7 @@ describe("run-measurement-batch", () => {
   describe("indexSnapshot()", () => {
     it("returns an unread snapshot naming the status for an index the console refused", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 404, body: { error: "no index configured" } },
       });
       try {
@@ -1652,7 +1623,7 @@ describe("run-measurement-batch", () => {
 
     it("returns an unread snapshot for an answer carrying no pattern list", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 200, body: { ok: true } },
       });
       try {
@@ -1670,7 +1641,7 @@ describe("run-measurement-batch", () => {
   describe("dependenciesOf()", () => {
     it("returns `undefined` for a pattern the index would not answer for, which classifies as unresolved", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 500, body: { error: "boom" } },
       });
       try {
@@ -1689,7 +1660,7 @@ describe("run-measurement-batch", () => {
   describe("runTask()", () => {
     it("measures the run family identified by the console turn", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
       });
@@ -1718,7 +1689,7 @@ describe("run-measurement-batch", () => {
 
     it("prefers the session artifact root to the console-wide fallback", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
         statusArtifactRoot: "/a/different/console-wide/root",
@@ -1742,7 +1713,7 @@ describe("run-measurement-batch", () => {
 
     it("records that the artifact root could not be listed rather than reporting no calls", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: "/no/such/artifact/root",
       });
@@ -1777,7 +1748,7 @@ describe("run-measurement-batch", () => {
           JSON.stringify({ skillsRoot: "/repo/skills", skills: "lots" }),
         );
         const console_ = startFakeConsole({
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           runId: "fixture-run",
           artifactRoot: dir,
         });
@@ -1810,7 +1781,7 @@ describe("run-measurement-batch", () => {
         );
         await Deno.mkdir(`${dir}/fixture-run/skill-registry.json`);
         const console_ = startFakeConsole({
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           runId: "fixture-run",
           artifactRoot: dir,
         });
@@ -1847,7 +1818,7 @@ describe("run-measurement-batch", () => {
           JSON.stringify({ type: "cf-harness.skill-registry", skills: [] }),
         );
         const console_ = startFakeConsole({
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           runId: "fixture-run",
           artifactRoot: dir,
         });
@@ -1880,7 +1851,7 @@ describe("run-measurement-batch", () => {
           "same task",
         );
         const console_ = startFakeConsole({
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           artifactRoot,
         });
         try {
@@ -1925,7 +1896,7 @@ describe("run-measurement-batch", () => {
           "{",
         );
         const console_ = startFakeConsole({
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           artifactRoot,
         });
         try {
@@ -1976,7 +1947,7 @@ describe("run-measurement-batch", () => {
             JSON.stringify(state),
           );
           const console_ = startFakeConsole({
-            streams: [completedStream()],
+            subscriptions: [completedSubscription()],
             artifactRoot,
           });
           try {
@@ -2007,7 +1978,7 @@ describe("run-measurement-batch", () => {
         );
         await Deno.writeTextFile(`${artifactRoot}/turn-1/run-state.json`, "[]");
         const console_ = startFakeConsole({
-          streams: [completedStream(), completedStream()],
+          subscriptions: [completedSubscription(), completedSubscription()],
           artifactRoot,
         });
         try {
@@ -2136,7 +2107,7 @@ describe("run-measurement-batch", () => {
 
     it("returns 0 and writes both reports for a batch whose tasks all completed", async () => {
       const { code, dir, logs } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
       }, ONE_TASK);
@@ -2204,7 +2175,7 @@ describe("run-measurement-batch", () => {
 
     it("returns 3 and runs no task when the index does not answer the pre-flight", async () => {
       const { code, dir, logs } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         indexAnswer: { status: 403, body: { error: "DID is not allowlisted" } },
       }, { ...ONE_TASK, supersededPatternIds: ["stale-one"] });
       try {
@@ -2248,7 +2219,7 @@ describe("run-measurement-batch", () => {
         forbiddenSubagentProfiles: ["pattern-author"],
       });
       const { code, dir, logs } = await runMain(
-        { streams: [completedStream()] },
+        { subscriptions: [completedSubscription()] },
         ONE_TASK,
         args,
       );
@@ -2290,7 +2261,7 @@ describe("run-measurement-batch", () => {
       });
       const { code, dir } = await runMain(
         {
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           runId: "fixture-run",
           artifactRoot: FIXTURE_ROOT,
         },
@@ -2310,7 +2281,7 @@ describe("run-measurement-batch", () => {
       const args = await cellSpecArgs(specDir, { fabricSpace: "measurement" });
       const { code, dir } = await runMain(
         {
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           policy: null,
         },
         ONE_TASK,
@@ -2326,13 +2297,13 @@ describe("run-measurement-batch", () => {
       temporaryDirectories.push(specDir);
       const args = await cellSpecArgs(specDir, { label: "asserts nothing" });
       await expect(
-        runMain({ streams: [completedStream()] }, ONE_TASK, args),
+        runMain({ subscriptions: [completedSubscription()] }, ONE_TASK, args),
       ).rejects.toThrow("a cell spec asserts nothing");
     });
 
     it("returns 4 and does not ask the index when the server is not the expected commit", async () => {
       const { code, dir } = await runMain(
-        { streams: [completedStream()] },
+        { subscriptions: [completedSubscription()] },
         ONE_TASK,
         ["--expect-git-sha=0000000"],
       );
@@ -2361,7 +2332,7 @@ describe("run-measurement-batch", () => {
       // that it does not hold the commit.
       const { code, dir } = await runMain(
         {
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           runId: "fixture-run",
           artifactRoot: FIXTURE_ROOT,
         },
@@ -2383,7 +2354,7 @@ describe("run-measurement-batch", () => {
     it("returns 4 for known divergence unless the explicit opt-out is passed", async () => {
       const postureReader = postureAsking(gitRun(true, false));
       const refused = await runMain(
-        { streams: [completedStream()] },
+        { subscriptions: [completedSubscription()] },
         ONE_TASK,
         [],
         postureReader,
@@ -2391,7 +2362,7 @@ describe("run-measurement-batch", () => {
       expect(refused.code).toBe(4);
       const allowed = await runMain(
         {
-          streams: [completedStream()],
+          subscriptions: [completedSubscription()],
           artifactRoot: FIXTURE_ROOT,
         },
         ONE_TASK,
@@ -2439,7 +2410,7 @@ describe("run-measurement-batch", () => {
       await git("update-ref", "refs/remotes/origin/main", current);
       const postureReader = postureAsking(runGit);
       const options = {
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
         meta: { ...META, gitSha: current },
@@ -2476,7 +2447,7 @@ describe("run-measurement-batch", () => {
 
     it("returns 5 and runs no task when status names no top-level artifact root", async () => {
       const { code, dir, logs } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         statusArtifactRoot: null,
       }, ONE_TASK);
       expect(code).toBe(5);
@@ -2489,7 +2460,7 @@ describe("run-measurement-batch", () => {
 
     it("returns 5 and runs no task when status names a relative artifact root", async () => {
       const { code, logs } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         statusArtifactRoot: "relative/runs",
       }, ONE_TASK);
       expect(code).toBe(5);
@@ -2498,7 +2469,7 @@ describe("run-measurement-batch", () => {
 
     it("returns 5 and runs no task when status sessions is not an array", async () => {
       const { code, logs } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         statusSessions: {},
       }, ONE_TASK);
       expect(code).toBe(5);
@@ -2507,7 +2478,7 @@ describe("run-measurement-batch", () => {
 
     it("returns 1 for a batch whose task did not complete", async () => {
       const { code, dir } = await runMain({
-        streams: [{ frames: [], keepOpen: false }],
+        subscriptions: [{ envelopes: [], keepOpen: false }],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
       }, ONE_TASK);
@@ -2523,7 +2494,7 @@ describe("run-measurement-batch", () => {
 
     it("records the notes, the seeded marks and the superseded visibility a full suite asks for", async () => {
       const { dir, code } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
         discoverable: { "stale-one": true, "stale-two": false },
@@ -2549,7 +2520,9 @@ describe("run-measurement-batch", () => {
     });
 
     it("writes its report under a dated directory when given no --out", async () => {
-      const console_ = startFakeConsole({ streams: [completedStream()] });
+      const console_ = startFakeConsole({
+        subscriptions: [completedSubscription()],
+      });
       const dir = await Deno.makeTempDir();
       const cwd = Deno.cwd();
       try {
@@ -2590,7 +2563,7 @@ describe("run-measurement-batch", () => {
 
     it("marks a composed pattern as seeded, and one that re-exports it as seeded via alias", async () => {
       const { dir } = await runMain({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
         dependencies: { "pub-reading-shelf": ["pub-rating"] },
@@ -2613,7 +2586,7 @@ describe("run-measurement-batch", () => {
   describe("renderBatchReport()", () => {
     const reportOf = async (): Promise<string> => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
       });
@@ -2670,7 +2643,7 @@ describe("run-measurement-batch", () => {
 
     it("marks a composed pattern as seeded or pre-existing when the suite named the seeds", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
       });
@@ -2712,7 +2685,7 @@ describe("run-measurement-batch", () => {
 
     it("marks origins for a suite that named only superseded seeds", async () => {
       const console_ = startFakeConsole({
-        streams: [completedStream()],
+        subscriptions: [completedSubscription()],
         runId: "fixture-run",
         artifactRoot: FIXTURE_ROOT,
       });

@@ -161,15 +161,23 @@ Without the file the console still builds Patterns, but it offers no Loom tools.
 Start a new session after changing the policy; existing sessions keep their
 recorded tool grants.
 
-Verify the console before opening Weaver, on the host it runs on:
+Verify the console before opening Weaver, on the host it runs on. The Weaver
+reaches every route over the
+[console socket](../console/README.md#the-console-socket), and
+`deno task --cwd packages/cf-harness console:call <console-url> GET <route>`
+calls one the same way:
 
 - `GET /api/health` reports `fabricApiUrl` as loom's toolshed.
 - `GET /api/status` names the run directory the launcher printed.
-- `GET /live/x` answers 200: the live pane the pill embeds is served.
+- `GET /live/x` over plain HTTP answers 200: the live pane the pill embeds is
+  served.
 
-A wire check without Weaver: `POST /api/task` with `{"text": "a hello card"}` —
-one request, no cookie and no `Origin` — and when the turn ends open
-`http://127.0.0.1:<loom-port>/pattern-pane/<space>/<slug>`.
+A wire check without Weaver:
+`console:call <console-url> POST /api/task
+'{"text": "a hello card"}'`, then
+`console:call <console-url> follow <sessionId>
+<turnId>` until the turn ends,
+and open `http://127.0.0.1:<loom-port>/pattern-pane/<space>/<slug>`.
 
 ## 3. The stack over a tailnet
 
@@ -200,15 +208,15 @@ toolshed on 8001, and a route left on 9900 and 8000 fronts nothing it owns. Read
 the ports off `pieces.json` before serving anything, never from this table.
 
 The console needs no serve entry of its own: loom's daemon reverse-proxies
-`/harness-console/*` to the loopback address the console binds, rewriting the
-`Host` header the console's own gate insists on. That rewrite is the whole of
-what the proxy has to do. It also re-scopes a `Set-Cookie` to its own prefix and
-declines to forward `Origin`, and a client may still fetch the page before
-calling `/api`; none of that is needed any more and none of it is an error — the
-console sets no cookie, reads none, and accepts any `Origin` or none. Weaver
-derives that URL from the loom base it resolved, so its harness console setting
-is left blank for a remote loom and holds `http://127.0.0.1:8135` for a local
-one.
+`/harness-console/*` to the loopback address the console binds, and relays the
+[console socket](../console/README.md#the-console-socket) the Weaver and the
+console's pages hold. It rewrites the `Host` header the console's own gate
+insists on, and an `Origin` naming the daemon itself to the console's own, so
+the console's page served through the daemon may open its socket and no other
+page may. It carries no cookie in either direction; the console sets none and
+reads none. Weaver derives that URL from the loom base it resolved, so its
+harness console setting is left blank for a remote loom and holds
+`http://127.0.0.1:8135` for a local one.
 
 The console's port is the one place the offset does not reach: it defaults to
 8135 whatever the instance's offset, because that is the port Weaver pairs with.
@@ -241,7 +249,7 @@ fronting its toolshed.
 
 ## 4. Pre-demo preflight
 
-Run all four from the operator's Mac, against the loom host's tailnet name, in
+Run all five from the operator's Mac, against the loom host's tailnet name, in
 this order. Each one fails in a way the next cannot diagnose.
 
 ```sh
@@ -261,6 +269,11 @@ curl -s -o /dev/null -w '%{http_code}\n' "$FRONT/harness-console/api/health"
 
 # 4. The live pane the pill embeds is served behind that prefix.
 curl -s -o /dev/null -w '%{http_code}\n' "$FRONT/harness-console/live/x"
+
+# 5. The console socket, which carries everything the Weaver says to the
+#    console, opens through the front and the daemon.
+deno task -q --cwd packages/cf-harness console:call \
+  "$FRONT/harness-console" GET /api/health
 ```
 
 Both `/api/health` and `/live/x` answer 200, and the toolshed URL `/config`

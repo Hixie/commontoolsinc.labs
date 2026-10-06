@@ -9,11 +9,11 @@
  * index change attributable to the task that caused it.
  *
  * Nothing here waits on a clock. A completed or failed turn settles on the
- * console's own `turn_completed` or `turn_failed` event, read off the
- * server-sent event stream. A canceled turn does not: the service emits
- * `turn_canceled` while the prompt loop is still unwinding, so the batch holds
- * that outcome and settles it on the session's own `status_changed` back to
- * idle, once the run's artifacts are on disk. A turn that never ends is a
+ * console's own `turn_completed` or `turn_failed` event, read off a
+ * subscription on the console socket. A canceled turn does not: the service
+ * emits `turn_canceled` while the prompt loop is still unwinding, so the batch
+ * holds that outcome and settles it on the session's own `status_changed` back
+ * to idle, once the run's artifacts are on disk. A turn that never ends is a
  * batch that never ends, which is a hang an operator can see and cancel rather
  * than a bound that turns a slow run into a failed one.
  *
@@ -47,14 +47,17 @@ import { isObjectNotArray, isObjectOrArray } from "@commonfabric/utils/types";
 
 import type { ConsolePolicyReport } from "../console/policy.ts";
 import {
+  CONSOLE_SOCKET_PATH,
+  type ConsoleSocketMethod,
+} from "../console/socket-protocol.ts";
+import { ConsoleSocket } from "../console/src/socket.ts";
+import type { ConsoleChatEventEnvelope } from "../console/turn-result.ts";
+import {
   recordUndeclaredFlags,
   refuseFlagsWithoutValue,
   refuseUndeclaredFlags,
 } from "../src/cli-flags.ts";
-import type {
-  HarnessChatEventEnvelope,
-  HarnessChatSessionStatus,
-} from "../src/contracts/interactive-chat.ts";
+import type { HarnessChatSessionStatus } from "../src/contracts/interactive-chat.ts";
 import {
   type CellSpec,
   type CellSpecPreflight,
@@ -70,7 +73,6 @@ import {
   type RunFamilyMeasurement,
 } from "./measure-runs.ts";
 
-const CHAT_SSE_EVENT = "chat";
 const DEFAULT_CONSOLE_URL = "http://127.0.0.1:8100";
 const DEFAULT_FABRIC_API_URL = "http://localhost:8000";
 
@@ -80,27 +82,6 @@ const DEFAULT_FABRIC_API_URL = "http://localhost:8000";
  * what it holds, and an answer of no results passes.
  */
 const PREFLIGHT_QUERY = "pattern";
-
-/**
- * The events that close a turn, and what each one settles.
- *
- * `turn_completed` and `turn_failed` are emitted after the turn's store commit,
- * so the run behind one is on disk when it arrives. `turn_canceled` is not: the
- * service emits it the moment it aborts the turn, while the prompt loop is
- * still unwinding, and the run's artifacts land afterwards. So a cancel is
- * settled by the session's own `status_changed` back to idle, which the
- * service emits from the finalizer once the turn has actually stopped.
- *
- * That distinction matters because cancel is the documented way to release a
- * hung batch. Measuring on the cancel event alone would read whatever half of
- * the run had reached disk and report it as the run.
- */
-const SETTLED_TERMINAL_EVENT_KINDS: ReadonlySet<string> = new Set([
-  "turn_completed",
-  "turn_failed",
-]);
-
-const CANCEL_EVENT_KIND = "turn_canceled";
 
 /**
  * What went wrong, as a line for a report.
@@ -273,70 +254,6 @@ export const parseMeasurementSuite = (input: unknown): MeasurementSuite => {
       : {}),
   };
 };
-
-/** One frame off a server-sent event stream. */
-export interface SseFrame {
-  /** The `event:` name, or `undefined` for a comment frame. */
-  event?: string;
-
-  data: string;
-  id?: number;
-}
-
-const decodeSseFrame = (block: string): SseFrame | undefined => {
-  let event: string | undefined;
-  let id: number | undefined;
-  const data: string[] = [];
-  for (const line of block.split("\n")) {
-    if (line === "" || line.startsWith(":")) continue;
-    const separator = line.indexOf(":");
-    const field = separator === -1 ? line : line.slice(0, separator);
-    const value = separator === -1 ? "" : line.slice(separator + 1).trimStart();
-    if (field === "event") event = value;
-    else if (field === "data") data.push(value);
-    else if (field === "id") id = Number(value);
-  }
-  if (event === undefined && data.length === 0) return undefined;
-  return {
-    ...(event !== undefined ? { event } : {}),
-    data: data.join("\n"),
-    ...(id !== undefined && Number.isSafeInteger(id) ? { id } : {}),
-  };
-};
-
-/**
- * The frames of a server-sent event stream, in order.
- *
- * A comment-only block — the `: connected` the console opens every stream with
- * — yields nothing, so a caller counting frames counts what the server said
- * rather than the fact that it answered at all.
- */
-export async function* readSseFrames(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<SseFrame> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        const frame = decodeSseFrame(buffer.slice(0, boundary));
-        buffer = buffer.slice(boundary + 2);
-        if (frame !== undefined) yield frame;
-        boundary = buffer.indexOf("\n\n");
-      }
-    }
-  } finally {
-    // Cancelling rather than releasing the lock is what tears the connection
-    // down when the consumer stops reading part way, which is the ordinary
-    // case here: the terminal envelope arrives and nothing after it is wanted.
-    await reader.cancel().catch(() => {});
-  }
-}
 
 /**
  * What the fabric server reports about itself.
@@ -731,72 +648,36 @@ const indexSnapshotOf = (answer: unknown): IndexSnapshot => {
 };
 
 /**
- * One console server, driven the way its own page drives it.
+ * One console server, driven the way its own page drives it: over the console
+ * socket, which carries every route the batch calls and the chat events it
+ * waits on.
  *
- * `/api` carries no credential, so opening one is a liveness question rather
- * than a handshake: `open` asks health, which is the cheapest answer that
- * distinguishes a console from nothing listening.
+ * The console carries no credential, so opening one is a liveness question
+ * rather than a handshake: `open` asks `/api/health` over plain HTTP, which is
+ * the cheapest answer that distinguishes a console from nothing listening.
  */
 export class ConsoleClient {
-  readonly #baseUrl: string;
-  readonly #fetch: typeof globalThis.fetch;
+  readonly #socketUrl: URL;
+  #currentSocket: ConsoleSocket | undefined;
 
   /**
-   * The sequence of the newest envelope this client has read. Every stream it
-   * opens resumes from here, so an envelope emitted between one read and the
-   * next arrives in the next stream's backfill rather than being missed.
+   * The sequence of the newest envelope this client has read. Every
+   * subscription it takes resumes from here, so an envelope emitted between
+   * one subscription and the next arrives in the next one's backfill rather
+   * than being missed.
    */
   #sequence = 0;
 
-  private constructor(
-    baseUrl: string,
-    fetchImpl: typeof globalThis.fetch,
-  ) {
-    this.#baseUrl = baseUrl.replace(/\/$/, "");
-    this.#fetch = fetchImpl;
-  }
-
-  static async open(
-    baseUrl: string,
-    fetchImpl: typeof globalThis.fetch = globalThis.fetch,
-  ): Promise<ConsoleClient> {
-    const url = baseUrl.replace(/\/$/, "");
-    const response = await fetchImpl(`${url}/api/health`);
-    await response.body?.cancel();
-    if (!response.ok) {
-      throw new Error(
-        `${url}/api/health answered ${response.status}; is a console server listening there?`,
-      );
-    }
-    return new ConsoleClient(url, fetchImpl);
-  }
-
-  async #json(
-    path: string,
-    init: RequestInit = {},
-  ): Promise<unknown> {
-    const response = await this.#fetch(`${this.#baseUrl}${path}`, {
-      ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        ...(init.body === undefined
-          ? {}
-          : { "content-type": "application/json" }),
-      },
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`${path} answered ${response.status}: ${text}`);
-    }
-    return JSON.parse(text);
+  private constructor(socketUrl: URL) {
+    this.#socketUrl = socketUrl;
   }
 
   /** Starts one task in a new session. */
   async startTask(text: string): Promise<StartedTask> {
-    const answer = await this.#json("/api/task", {
-      method: "POST",
-      body: JSON.stringify({ text }),
-    }) as Record<string, unknown>;
+    const answer = await this.#json("POST", "/api/task", { text }) as Record<
+      string,
+      unknown
+    >;
     if (
       typeof answer.sessionId !== "string" || typeof answer.turnId !== "string"
     ) {
@@ -814,6 +695,7 @@ export class ConsoleClient {
     sessionId: string,
   ): Promise<HarnessChatSessionStatus | undefined> {
     const answer = await this.#json(
+      "GET",
       `/api/status?sessionId=${encodeURIComponent(sessionId)}`,
     ) as { sessions?: readonly HarnessChatSessionStatus[] };
     return answer.sessions?.[0];
@@ -823,7 +705,7 @@ export class ConsoleClient {
   async preflightStatus(): Promise<ConsolePreflight> {
     let answer: unknown;
     try {
-      answer = await this.#json("/api/status");
+      answer = await this.#json("GET", "/api/status");
     } catch (error) {
       return {
         kind: "refused",
@@ -869,7 +751,7 @@ export class ConsoleClient {
   async policy(): Promise<ConsolePolicyReport | { error: string }> {
     let answer: unknown;
     try {
-      answer = await this.#json("/api/policy");
+      answer = await this.#json("GET", "/api/policy");
     } catch (error) {
       return {
         error: `/api/policy could not be read: ${describeError(error)}`,
@@ -922,9 +804,9 @@ export class ConsoleClient {
   async indexSnapshot(): Promise<IndexSnapshot> {
     try {
       return indexSnapshotOf(
-        await this.#json("/api/index/call", {
-          method: "POST",
-          body: JSON.stringify({ fn: "listPatterns", body: {} }),
+        await this.#json("POST", "/api/index/call", {
+          fn: "listPatterns",
+          body: {},
         }),
       );
     } catch (error) {
@@ -948,9 +830,9 @@ export class ConsoleClient {
   async preflightIndex(text: string): Promise<IndexPreflight> {
     let answer: unknown;
     try {
-      answer = await this.#json("/api/index/call", {
-        method: "POST",
-        body: JSON.stringify({ fn: "searchPatterns", body: { text } }),
+      answer = await this.#json("POST", "/api/index/call", {
+        fn: "searchPatterns",
+        body: { text },
       });
     } catch (error) {
       return {
@@ -994,9 +876,9 @@ export class ConsoleClient {
     patternId: string,
   ): Promise<Record<string, unknown> | undefined> {
     try {
-      const answer = await this.#json("/api/index/call", {
-        method: "POST",
-        body: JSON.stringify({ fn: "getPattern", body: { patternId } }),
+      const answer = await this.#json("POST", "/api/index/call", {
+        fn: "getPattern",
+        body: { patternId },
       }) as Record<string, unknown>;
       return (answer.pattern ?? answer) as Record<string, unknown>;
     } catch {
@@ -1023,104 +905,134 @@ export class ConsoleClient {
   /**
    * Waits for the turn to end, and returns how it ended.
    *
-   * The stream is opened after the turn is started rather than before, which
-   * is safe because the console backfills every envelope past the sequence the
-   * request names: an envelope emitted in the gap arrives in the backfill.
+   * `turn_completed` and `turn_failed` are emitted after the turn's store
+   * commit, so the run behind one is on disk when it arrives, and either
+   * settles the turn. `turn_canceled` is not: the service emits it the moment
+   * it aborts the turn, while the prompt loop is still unwinding, and the
+   * run's artifacts land afterwards. So a cancel is held and settled by the
+   * session's own `status_changed` back to idle, which the service emits from
+   * the finalizer once the turn has actually stopped. Cancel is the documented
+   * way to release a hung batch, and measuring on the cancel event alone would
+   * read whatever half of the run had reached disk and report it as the run.
    *
-   * A stream that ends or faults before the turn does is reopened, and what
-   * bounds that is progress rather than a count or a clock. A reconnection
-   * that reads no frame at all is a server that is not going to answer, and
-   * the turn is reported unwitnessed. A server that is answering delivers
-   * frames — its own liveness ticks if the turn itself is quiet — so a healthy
-   * quiet turn is never mistaken for one. A fault is treated the same as an
-   * end: an unattended batch that lost a socket should reopen it and carry on,
-   * not abort the night with no report written.
+   * The subscription is taken after the turn is started rather than before,
+   * which is safe because the console backfills every envelope past the
+   * sequence it names: an envelope emitted in the gap arrives in the backfill.
+   * It is scoped to the session, so a console holding months of turns does
+   * not replay all of them into the first subscription of a batch.
    *
-   * The stream is scoped to the session, so a console holding months of turns
-   * does not replay all of them into the first read of a batch.
+   * A subscription whose socket closes before the turn ends is taken again on
+   * a fresh socket, and what bounds that is progress rather than a count or a
+   * clock: the sequence advancing, not envelopes arriving. One that ends
+   * having advanced nothing is a console that is not going to answer, and so
+   * is one the console refused or one whose socket never opened; the turn is
+   * then reported unwitnessed, with why.
    */
   async awaitTurn(started: StartedTask): Promise<TurnOutcome> {
     let canceled: TurnOutcome | undefined;
-    for (;;) {
-      // Progress is the sequence advancing, not frames arriving. A reconnect
-      // that replays envelopes this client has already seen delivers frames
-      // and advances nothing, and counting those as progress reopens the
-      // stream forever — the same defect as a stand-in that never stops
-      // talking, on the client side of the same conversation.
-      const sequenceBefore = this.#sequence;
-      try {
-        const response = await this.#fetch(
-          `${this.#baseUrl}/api/events?sessionId=${
-            encodeURIComponent(started.sessionId)
-          }&afterSequence=${this.#sequence}`,
-          { headers: { accept: "text/event-stream" } },
-        );
-        if (!response.ok || response.body === null) {
-          return {
-            kind: "unwitnessed",
-            reason: `/api/events answered ${response.status}`,
-          };
-        }
-        for await (const frame of readSseFrames(response.body)) {
-          if (frame.event !== CHAT_SSE_EVENT) continue;
-          const envelope = JSON.parse(frame.data) as HarnessChatEventEnvelope;
-          this.#sequence = Math.max(this.#sequence, envelope.sequence);
-          if (envelope.sessionId !== started.sessionId) continue;
-          const event = envelope.event as { kind: string; turnId?: string };
-          if (
-            canceled !== undefined && event.kind === "status_changed" &&
-            this.#isIdle(envelope)
-          ) {
-            return canceled;
-          }
-          if (event.turnId !== undefined && event.turnId !== started.turnId) {
-            continue;
-          }
-          if (SETTLED_TERMINAL_EVENT_KINDS.has(event.kind)) {
-            return {
-              kind: event.kind as "turn_completed" | "turn_failed",
-              detail: describeTerminalEvent(
-                envelope.event as Parameters<typeof describeTerminalEvent>[0],
-              ),
-            };
-          }
-          if (event.kind === CANCEL_EVENT_KIND) {
-            // Hold the outcome and keep reading: the run is not on disk yet.
+    const read = (
+      envelope: ConsoleChatEventEnvelope,
+    ): TurnOutcome | undefined => {
+      this.#sequence = Math.max(this.#sequence, envelope.sequence);
+      if (envelope.sessionId !== started.sessionId) return undefined;
+      const event = envelope.event;
+      switch (event.kind) {
+        case "status_changed":
+          return event.session.activeTurnId === undefined
+            ? canceled
+            : undefined;
+        case "turn_completed":
+        case "turn_failed":
+          return event.turnId === started.turnId
+            ? { kind: event.kind, detail: describeTerminalEvent(event) }
+            : undefined;
+        case "turn_canceled":
+          if (event.turnId === started.turnId) {
             canceled = {
-              kind: "turn_canceled",
-              detail: describeTerminalEvent(
-                envelope.event as Parameters<typeof describeTerminalEvent>[0],
-              ),
+              kind: event.kind,
+              detail: describeTerminalEvent(event),
             };
           }
-        }
-      } catch (error) {
-        if (this.#sequence === sequenceBefore) {
-          return {
-            kind: "unwitnessed",
-            reason:
-              `the event stream faulted without advancing past ${sequenceBefore}: ${
-                describeError(error)
-              }`,
-          };
-        }
-        continue;
+          return undefined;
+        default:
+          return undefined;
       }
-      if (this.#sequence === sequenceBefore) {
-        return {
+    };
+    for (;;) {
+      const sequenceBefore = this.#sequence;
+      // Settled with the turn's outcome, or with `undefined` to subscribe
+      // again; whichever comes first is what this subscription decided.
+      const settled = Promise.withResolvers<TurnOutcome | undefined>();
+      const subscription = this.#socket().subscribe(
+        { sessionId: started.sessionId, afterSequence: sequenceBefore },
+        (envelope) => {
+          const outcome = read(envelope);
+          if (outcome !== undefined) settled.resolve(outcome);
+        },
+      );
+      void subscription.ended.then((end) => {
+        if (end.resumable && this.#sequence > sequenceBefore) {
+          settled.resolve(undefined);
+          return;
+        }
+        const why = end.resumable
+          ? `the event subscription ended without advancing past ${sequenceBefore}: ${end.reason}`
+          : `the event subscription ended: ${end.reason}`;
+        settled.resolve({
           kind: "unwitnessed",
           reason: canceled === undefined
-            ? `the console closed the event stream without advancing past ${sequenceBefore}`
-            : "the turn was canceled and the console never reported the session idle, so its run may be half written",
-        };
-      }
+            ? why
+            : `the turn was canceled and the console never reported the session idle, so its run may be half written (${why})`,
+        });
+      });
+      const outcome = await settled.promise;
+      subscription.close();
+      if (outcome !== undefined) return outcome;
     }
   }
 
-  /** Whether a `status_changed` envelope reports the session at rest. */
-  #isIdle(envelope: HarnessChatEventEnvelope): boolean {
-    const event = envelope.event as { session?: { activeTurnId?: string } };
-    return event.session?.activeTurnId === undefined;
+  /** Closes the socket this client holds. */
+  [Symbol.dispose](): void {
+    this.#currentSocket?.close();
+  }
+
+  /**
+   * The socket to the console, opened when first asked for and opened again
+   * when asked for after it closed, so an unattended batch that lost one
+   * carries on over the next.
+   */
+  #socket(): ConsoleSocket {
+    if (this.#currentSocket === undefined || this.#currentSocket.isClosed) {
+      this.#currentSocket = new ConsoleSocket(this.#socketUrl);
+    }
+    return this.#currentSocket;
+  }
+
+  async #json(
+    method: ConsoleSocketMethod,
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> {
+    const response = await this.#socket().request(method, path, body);
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`${path} answered ${response.status}: ${text}`);
+    }
+    return JSON.parse(text);
+  }
+
+  static async open(baseUrl: string): Promise<ConsoleClient> {
+    const url = baseUrl.replace(/\/$/, "");
+    const response = await fetch(`${url}/api/health`);
+    await response.body?.cancel();
+    if (!response.ok) {
+      throw new Error(
+        `${url}/api/health answered ${response.status}; is a console server listening there?`,
+      );
+    }
+    const socketUrl = new URL(`${url}${CONSOLE_SOCKET_PATH}`);
+    socketUrl.protocol = socketUrl.protocol === "https:" ? "wss:" : "ws:";
+    return new ConsoleClient(socketUrl);
   }
 }
 
@@ -1133,7 +1045,7 @@ export class ConsoleClient {
  */
 const describeTerminalEvent = (
   event: Extract<
-    HarnessChatEventEnvelope["event"],
+    ConsoleChatEventEnvelope["event"],
     { kind: "turn_completed" | "turn_failed" | "turn_canceled" }
   >,
 ): string => {
@@ -2067,7 +1979,7 @@ export const main = async (
   const spec = flags["cell-spec"] === undefined
     ? undefined
     : parseCellSpec(JSON.parse(await Deno.readTextFile(flags["cell-spec"])));
-  const client = await ConsoleClient.open(flags.console);
+  using client = await ConsoleClient.open(flags.console);
   const startedAt = new Date().toISOString();
   const consolePreflight = await client.preflightStatus();
   if (consolePreflight.kind === "refused") {

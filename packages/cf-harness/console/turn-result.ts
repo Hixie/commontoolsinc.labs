@@ -88,7 +88,7 @@ export type ConsoleTurnResult = HarnessTaskOutcome & {
   elapsedMs?: number;
 };
 
-/** The console's completed SSE event with its external result attached. */
+/** The console's completed-turn event with its external result attached. */
 export type ConsoleTurnCompletedEvent =
   & Extract<
     HarnessChatStructuredEvent,
@@ -96,12 +96,12 @@ export type ConsoleTurnCompletedEvent =
   >
   & { result: ConsoleTurnResult };
 
-/** A console SSE event, whose completed-turn case always carries a result. */
+/** A console event, whose completed-turn case always carries a result. */
 export type ConsoleChatStructuredEvent =
   | Exclude<HarnessChatStructuredEvent, { kind: "turn_completed" }>
   | ConsoleTurnCompletedEvent;
 
-/** The event envelope emitted by the console SSE route. */
+/** The event envelope the console socket delivers to a subscription. */
 export type ConsoleChatEventEnvelope =
   & Omit<
     HarnessChatEventEnvelope,

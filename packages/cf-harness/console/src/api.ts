@@ -1,11 +1,11 @@
 /**
- * The console server's HTTP surface, as the page calls it. The types come from
+ * The console server's routes, as the page calls them over its socket. The types come from
  * the server's own modules rather than being restated here, so a route that
  * changes shape is a type error in the page rather than a blank pane.
  */
 
 import type { HarnessChatEventEnvelope } from "../../src/contracts/interactive-chat.ts";
-import { consolePath, pageMount } from "./mount.ts";
+import { consoleSocket } from "./socket.ts";
 import type {
   PatternIndexEvent,
   PatternIndexListEventsRequest,
@@ -49,12 +49,13 @@ export type {
   PatternIndexSearchResponse,
 };
 
-/**
- * A server path as THIS page addresses it: under the mount the page was
- * opened at (`./mount.ts`). Written once here so no route is fetched from
- * the origin's root by habit.
- */
-const api = (path: string): string => consolePath(pageMount(), path);
+/** A GET of one route, over the page's socket. */
+const get = (path: string): Promise<Response> =>
+  consoleSocket().request("GET", path);
+
+/** A POST of `body` to one route, over the page's socket. */
+const post = (path: string, body: unknown): Promise<Response> =>
+  consoleSocket().request("POST", path, body);
 
 /** A started turn, and the session it runs in. */
 export interface StartedTask {
@@ -80,7 +81,7 @@ const json = async <Value>(response: Response): Promise<Value> => {
       typeof body?.error === "string"
         ? body.error
         : text.trim() === ""
-        ? response.statusText
+        ? `the console answered ${response.status}`
         : text,
     );
   }
@@ -92,13 +93,10 @@ export const startTask = async (
   sessionId?: string,
 ): Promise<StartedTask> =>
   await json<StartedTask>(
-    await fetch(api("/api/task"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(
-        sessionId === undefined ? { text } : { text, sessionId },
-      ),
-    }),
+    await post(
+      "/api/task",
+      sessionId === undefined ? { text } : { text, sessionId },
+    ),
   );
 
 /**
@@ -112,14 +110,10 @@ export const cancelTurn = async (
   turnId?: string,
 ): Promise<void> => {
   await json<unknown>(
-    await fetch(api("/api/cancel"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        turnId,
-        reason: "canceled from the console page",
-      }),
+    await post("/api/cancel", {
+      sessionId,
+      turnId,
+      reason: "canceled from the console page",
     }),
   );
 };
@@ -128,12 +122,12 @@ export const listSessions = async (): Promise<
   readonly ConsoleSessionSummary[]
 > =>
   (await json<{ sessions: readonly ConsoleSessionSummary[] }>(
-    await fetch(api("/api/sessions")),
+    await get("/api/sessions"),
   )).sessions;
 
 export const listRuns = async (): Promise<readonly ConsoleRunSummary[]> =>
   (await json<{ runs: readonly ConsoleRunSummary[] }>(
-    await fetch(api("/api/runs")),
+    await get("/api/runs"),
   )).runs;
 
 /** The durable external result of one completed turn. */
@@ -141,12 +135,12 @@ export const readTurnResult = async (
   turnId: string,
 ): Promise<ConsoleTurnResult> =>
   await json<ConsoleTurnResult>(
-    await fetch(api(`/api/turns/${encodeURIComponent(turnId)}/result`)),
+    await get(`/api/turns/${encodeURIComponent(turnId)}/result`),
   );
 
 export const readRun = async (runId: string): Promise<ConsoleRunDetail> =>
   await json<ConsoleRunDetail>(
-    await fetch(api(`/api/runs/${encodeURIComponent(runId)}`)),
+    await get(`/api/runs/${encodeURIComponent(runId)}`),
   );
 
 /**
@@ -156,13 +150,13 @@ export const readRun = async (runId: string): Promise<ConsoleRunDetail> =>
  */
 export const readRunGraph = async (runId: string): Promise<ConsoleGraph> =>
   await json<ConsoleGraph>(
-    await fetch(api(`/api/runs/${encodeURIComponent(runId)}/graph`)),
+    await get(`/api/runs/${encodeURIComponent(runId)}/graph`),
   );
 
 /** The conversation map of a run and the children beneath it. */
 export const readRunFlow = async (runId: string): Promise<ConsoleFlow> =>
   await json<ConsoleFlow>(
-    await fetch(api(`/api/runs/${encodeURIComponent(runId)}/flow`)),
+    await get(`/api/runs/${encodeURIComponent(runId)}/flow`),
   );
 
 /**
@@ -175,11 +169,7 @@ const callIndex = async <Value>(
   body?: Record<string, unknown>,
 ): Promise<Value> =>
   await json<Value>(
-    await fetch(api("/api/index/call"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body === undefined ? { fn } : { fn, body }),
-    }),
+    await post("/api/index/call", body === undefined ? { fn } : { fn, body }),
   );
 
 export const listIndexPatterns = (): Promise<
@@ -218,12 +208,10 @@ export const readRunFile = async (
   kind: "artifacts" | "tool-outputs",
   name: string,
 ): Promise<string> => {
-  const response = await fetch(
-    api(
-      `/api/runs/${encodeURIComponent(runId)}/${kind}/${
-        encodeURIComponent(name)
-      }`,
-    ),
+  const response = await get(
+    `/api/runs/${encodeURIComponent(runId)}/${kind}/${
+      encodeURIComponent(name)
+    }`,
   );
   if (!response.ok) {
     throw new Error(`${name} is not readable`);

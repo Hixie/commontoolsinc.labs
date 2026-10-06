@@ -131,15 +131,20 @@ measures such a server; a commit that cannot be checked remains a non-fatal
 refuses the whole batch before the first task when the console is something
 else. See [The cell spec](#the-cell-spec).
 
-The runner asks `/api/health` first, which is what distinguishes a console from
-nothing listening. Before reading the index or starting a paid model turn, it
-requires `/api/status` to carry an absolute top-level `artifactRoot` and a
-`sessions` array, and — when a cell spec was named — the console's `/api/policy`
-to satisfy every field of it. It then reads the index and runs each task in its
-own session. It waits on the console's own `turn_completed`, `turn_failed` or
-`turn_canceled` event, read off the server-sent event stream, and on nothing
-else. There is no timeout: a turn that hangs is a batch that hangs, which an
-operator can see and release with a `POST /api/cancel`, rather than a bound that
+The runner asks `/api/health` over plain HTTP first, which is what distinguishes
+a console from nothing listening, and reaches everything else over the
+[console socket](../console/README.md#the-console-socket), as the console's own
+pages do. Before reading the index or starting a paid model turn, it requires
+`/api/status` to carry an absolute top-level `artifactRoot` and a `sessions`
+array, and — when a cell spec was named — the console's `/api/policy` to satisfy
+every field of it. It then reads the index and runs each task in its own
+session. It waits on the console's own `turn_completed`, `turn_failed` or
+`turn_canceled` event, read off a subscription to the session's events, and on
+nothing else. A socket that closes after the subscription advanced is opened
+again and the subscription taken again from the last sequence read; one that
+closes having advanced nothing reports the turn unwitnessed. There is no
+timeout: a turn that hangs is a batch that hangs, which an operator can see and
+release by canceling the turn from the console page, rather than a bound that
 turns a slow run into a failed one.
 
 After a turn settles, the runner locates its root run under the session's

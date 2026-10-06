@@ -1,61 +1,68 @@
 import { afterEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { cancelTurn } from "../../../console/src/api.ts";
+import type { ConsoleSocketRequestFrame } from "../../../console/socket-protocol.ts";
+import { FakeConsoleSocket } from "./fake-socket.ts";
 
-const realFetch = globalThis.fetch;
+let uninstall: (() => void) | undefined;
 
-/** Answers every request with one response, and remembers what was asked. */
+/**
+ * Opens the page at `pathname` with a console that answers every request with
+ * `status` and `body`, and remembers what was asked.
+ */
 const answerWith = (
-  response: Response,
-): { calls: number; paths: string[]; bodies: unknown[] } => {
-  const record = { calls: 0, paths: [] as string[], bodies: [] as unknown[] };
-  globalThis.fetch = (input, init) => {
-    record.calls += 1;
-    record.bodies.push(
-      typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
-    );
-    if (typeof input === "string") {
-      record.paths.push(input);
-    } else if (input instanceof Request) {
-      record.paths.push(new URL(input.url).pathname);
-    } else {
-      record.paths.push(input.pathname);
-    }
-    return Promise.resolve(response);
-  };
-  return record;
+  status: number,
+  body: string,
+  pathname = "/",
+): ConsoleSocketRequestFrame[] => {
+  const asked: ConsoleSocketRequestFrame[] = [];
+  uninstall = FakeConsoleSocket.install((frame) => {
+    asked.push(frame);
+    return { status, body };
+  }, pathname);
+  return asked;
 };
 
 describe("console/src/api", () => {
   afterEach(() => {
-    globalThis.fetch = realFetch;
+    uninstall?.();
+    uninstall = undefined;
   });
 
   describe("cancelTurn", () => {
     it("resolves when the server takes the cancel", async () => {
-      const asked = answerWith(Response.json({ sessionId: "session-a" }));
+      const asked = answerWith(200, JSON.stringify({ sessionId: "session-a" }));
 
       await cancelTurn("session-a", "turn-a");
 
-      expect(asked.calls).toBe(1);
+      expect(asked).toHaveLength(1);
     });
 
     it("asks under the page's mount, which is the root outside a page", async () => {
-      // Every path goes through console/src/mount.ts; with no location (a
-      // test), the mount is the console's own root and the path is as it was.
-      const asked = answerWith(Response.json({ sessionId: "session-a" }));
+      // Every path goes through console/src/mount.ts: the socket opens under
+      // the mount, and the route it calls is the console's own.
+      const asked = answerWith(
+        200,
+        JSON.stringify({ sessionId: "session-a" }),
+        "/harness-console/",
+      );
 
       await cancelTurn("session-a", "turn-a");
 
-      expect(asked.paths).toEqual(["/api/cancel"]);
+      expect(FakeConsoleSocket.opened.map((socket) => socket.url)).toEqual([
+        "ws://127.0.0.1:8100/harness-console/api/socket",
+      ]);
+      expect(asked.map((frame) => [frame.method, frame.path])).toEqual([
+        ["POST", "/api/cancel"],
+      ]);
     });
 
     it("tells the server the console page asked for the cancel", async () => {
-      const asked = answerWith(Response.json({ sessionId: "session-a" }));
+      const asked = answerWith(200, JSON.stringify({ sessionId: "session-a" }));
 
       await cancelTurn("session-a", "turn-a");
 
-      expect(asked.bodies).toEqual([{
+      expect(asked.map((frame) => frame.body)).toEqual([{
         sessionId: "session-a",
         turnId: "turn-a",
         reason: "canceled from the console page",
@@ -64,9 +71,8 @@ describe("console/src/api", () => {
 
     it("rejects with the reason a refused cancel reported", async () => {
       answerWith(
-        Response.json({ error: "no turn is running", code: "turn_not_found" }, {
-          status: 404,
-        }),
+        404,
+        JSON.stringify({ error: "no turn is running", code: "turn_not_found" }),
       );
 
       await expect(cancelTurn("session-a", "turn-a")).rejects.toThrow(
@@ -75,9 +81,11 @@ describe("console/src/api", () => {
     });
 
     it("rejects with the status a refusal carrying no body reported", async () => {
-      answerWith(new Response("", { status: 403, statusText: "Forbidden" }));
+      answerWith(403, "");
 
-      await expect(cancelTurn("session-a")).rejects.toThrow("Forbidden");
+      await expect(cancelTurn("session-a")).rejects.toThrow(
+        "the console answered 403",
+      );
     });
   });
 });

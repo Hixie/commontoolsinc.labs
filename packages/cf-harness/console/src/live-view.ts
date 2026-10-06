@@ -26,7 +26,7 @@ import {
   type ConsoleRunDetail,
   readRun,
 } from "./api.ts";
-import { consolePath, pageMount } from "./mount.ts";
+import { followConsoleEvents } from "./socket.ts";
 import { markdownTemplate, revealedText } from "./markdown.ts";
 import { stepPolicyView, withheldView } from "./steps-view.ts";
 import type { ConsoleStep } from "../steps.ts";
@@ -667,7 +667,7 @@ export class ConsoleLive extends LitElement {
   /** The last sequence rendered; every reconnect resumes from it. */
   #lastSequence = 0;
 
-  #stream: EventSource | undefined;
+  #stream: { close(): void } | undefined;
   #elapsedTimer: ReturnType<typeof setInterval> | undefined;
 
   /** Which read of a run is the current one, by run id. */
@@ -737,29 +737,20 @@ export class ConsoleLive extends LitElement {
   }
 
   /**
-   * Opens the stream, replaying everything the session has already recorded.
-   * A reconnect asks from the last sequence rendered, so the feed a reader is
-   * watching is continuous across one.
+   * Opens the subscription, replaying everything the session has already
+   * recorded. A resumed subscription asks from the last sequence rendered, so
+   * the feed a reader is watching is continuous across a reconnect.
    */
   #subscribe(sessionId: string): void {
     this.#stream?.close();
-    const stream = new EventSource(
-      consolePath(
-        pageMount(),
-        `/api/events?sessionId=${
-          encodeURIComponent(sessionId)
-        }&afterSequence=${this.#lastSequence}`,
-      ),
+    this.#stream = followConsoleEvents(
+      () => ({ sessionId, afterSequence: this.#lastSequence }),
+      (envelope) => this.#onEvent(envelope),
+      (reason) => {
+        this.state = "disconnected";
+        this.error = reason;
+      },
     );
-    this.#stream = stream;
-    stream.addEventListener("chat", (message) => {
-      this.#onEvent(JSON.parse((message as MessageEvent<string>).data));
-    });
-    stream.addEventListener("error", () => {
-      if (stream.readyState === EventSource.CLOSED) {
-        this.#subscribe(sessionId);
-      }
-    });
   }
 
   #onEvent(envelope: ConsoleChatEventEnvelope): void {

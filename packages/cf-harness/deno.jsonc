@@ -7,6 +7,7 @@
     "console:watch": "cd console && deno run -A ../../felt/cli.ts dev .",
     "console": "deno task console:build && deno run -A console/server.ts",
     "console:launch": "deno task console:build && deno run -A console/launch.ts",
+    "console:call": "deno run -A console/call.ts",
     "test": "deno run --allow-read --allow-run=\"$(deno eval \"console.log(Deno.execPath())\")\" ../../tasks/run-member-tests.ts deno-test",
     "deno-test": "ENV=test deno test --shuffle=$(deno task -q test-seed) --no-check --allow-read --allow-write --allow-run --allow-ffi --allow-net --allow-env --allow-sys=networkInterfaces test audit/test",
     "cfc-audit": "deno run --allow-read --allow-net audit/cli.ts",

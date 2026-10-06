@@ -377,49 +377,49 @@ returns `{"$link":"/of:fid1:…"}`; stripping `/of:` gives the ID that
 `cf piece render` accepts, and success there is rendered HTML. Render by ID
 because render-by-slug currently crashes (CT-2185).
 
-## 6. Drive it from the web API
+## 6. Drive it from the console socket
 
-For the weaver, a script, or an agent that does not hold a browser. The
-[console routes](console/README.md#http-routes) take one request each: they
-carry no credential, and ask only that the request names the server's own host.
-Reaching this socket is what the network already decided.
+For the weaver, a script, or an agent that does not hold a browser. Every
+console route is reached over the
+[console socket](console/README.md#the-console-socket), one WebSocket that
+carries requests and events alike. It carries no credential, and asks only that
+the socket names the server's own host. Reaching this server is what the network
+already decided. `deno task console:call` opens one socket from a shell, calls
+one route or follows one turn, and closes it.
 
 ### Submit
 
 ```sh
 export CONSOLE_URL=http://127.0.0.1:<free-console-port>
+call() { deno task -q --cwd packages/cf-harness console:call "$CONSOLE_URL" "$@"; }
 
-TASK_RESPONSE=$(curl -sS \
-  -H 'Content-Type: application/json' \
-  -d '{"text": "Build me a reading list of three books with a checkbox next to each. Name the piece reading-list."}' \
-  "$CONSOLE_URL/api/task")
+TASK_RESPONSE=$(call POST /api/task \
+  '{"text": "Build me a reading list of three books with a checkbox next to each. Name the piece reading-list."}')
 printf '%s\n' "$TASK_RESPONSE" | jq
 export SESSION_ID=$(printf '%s' "$TASK_RESPONSE" | jq -r .sessionId)
 export TURN_ID=$(printf '%s' "$TASK_RESPONSE" | jq -r .turnId)
 ```
 
-Success is HTTP `200` with non-empty `sessionId` and `turnId`. Add `sessionId`
-to the body to continue a session, and `inputCells` to attach cells; section 7
+Success is exit status `0` with non-empty `sessionId` and `turnId`; a refusal
+prints the console's answer and its status, and exits `1`. Add `sessionId` to
+the body to continue a session, and `inputCells` to attach cells; section 7
 shows the shape.
 
-### Wait by polling
+### Follow the turn
 
-A script asks once and repeats only while it receives `409`:
-
-```sh
-curl -i -sS "$CONSOLE_URL/api/turns/$TURN_ID/result"
-```
-
-The whole rule is `409` keep asking, `200` read the result, `410` stop with the
-terminal failure. A `404` is either an unknown turn or a completed turn whose
-artifacts are unavailable; inspect its `code`. Once it is `200`, keep the body:
+`follow` subscribes to the turn's events, prints each as one JSON line, the
+recorded ones first, and exits after the event that ends the turn:
 
 ```sh
-TURN_RESULT=$(curl -sS "$CONSOLE_URL/api/turns/$TURN_ID/result")
+call follow "$SESSION_ID" "$TURN_ID" | tee /tmp/turn-events.jsonl | jq -c '.event.kind'
+TURN_RESULT=$(tail -n 1 /tmp/turn-events.jsonl | jq '.event.result')
 printf '%s\n' "$TURN_RESULT" | jq
 ```
 
-The successful result is:
+Every line is one envelope:
+`{"type":"…","sessionId":"…","turnId":"…","sequence":<n>,"emittedAt":"…","event":{"kind":"…",…}}`.
+The kinds that end a turn are `turn_completed`, whose `event.result` is the
+turn's result, and `turn_failed` and `turn_canceled`. The successful result is:
 
 ```json
 {
@@ -437,31 +437,9 @@ The successful result is:
 `pieces` is always present and may be empty. A caller opens `pieces[0].url`; it
 does not parse `finalText` to find a link.
 
-### Wait on the event stream
-
-The stream is what the page reads. It does not close when the turn ends: after
-the terminal event it keeps sending `event: ping` every fifteen seconds for as
-long as the connection is held, so a caller must disconnect on the terminal
-event rather than wait for end of stream.
-
-```sh
-curl -N "$CONSOLE_URL/api/events?sessionId=$SESSION_ID"
-```
-
-Every chat event is one frame:
-
-```text
-event: chat
-id: <sequence>
-data: {"type":"…","sessionId":"…","turnId":"…","sequence":<n>,"emittedAt":"…","event":{"kind":"…",…}}
-
-event: ping
-data: <beat>
-```
-
-The terminal kinds are `turn_completed`, whose `event.result` is the same object
-the poll returns, and `turn_failed` and `turn_canceled`. Reconnecting with
-`&afterSequence=<sequence>` resumes after the last frame read.
+A turn that has already ended still answers: `follow` replays its events, and
+`call GET "/api/turns/$TURN_ID/result"` returns the same result, `409` while the
+turn is running and `410` once it failed or was canceled.
 
 ## 7. Worked example: a labeled input cell through to the audit
 
@@ -538,21 +516,18 @@ export INPUT_CELL_REF="/of:${INPUT_PIECE_ID}/account"
 ### Submit with the cell attached
 
 ```sh
-TASK_RESPONSE=$(curl -sS \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg ref "$INPUT_CELL_REF" '{
+TASK_RESPONSE=$(call POST /api/task "$(jq -n --arg ref "$INPUT_CELL_REF" '{
     text: "Make me a budget dashboard from my transaction data — totals by category that update when the data changes.",
     inputCells: [{name: "transactions", ref: $ref}]
-  }')" \
-  "$CONSOLE_URL/api/task")
+  }')")
 export SESSION_ID=$(printf '%s' "$TASK_RESPONSE" | jq -r .sessionId)
 export TURN_ID=$(printf '%s' "$TASK_RESPONSE" | jq -r .turnId)
 ```
 
 Each `inputCells` entry is `{name, ref}`. `ref` must be an entity link such as
-`/of:fid1:…/path` (or `computed:`); an invalid form is HTTP `400` before a turn
-starts. Wait as in section 6, then resolve the piece as in section 5 to set
-`PIECE_ID`.
+`/of:fid1:…/path` (or `computed:`); an invalid form is refused with `400` before
+a turn starts. Wait as in section 6, then resolve the piece as in section 5 to
+set `PIECE_ID`.
 
 ### Read the labels back
 
@@ -678,10 +653,9 @@ The boundaries that affect this onboarding are:
 
 ## 11. Troubleshooting
 
-**The event stream never ends.** It is not meant to. `turn_completed`,
-`turn_failed`, and `turn_canceled` are the terminal events; after one of them
-the server keeps the connection open with `ping` frames. Disconnect on the
-terminal event, or poll `/api/turns/<turnId>/result` instead.
+**`follow` without a turn never ends.** A session subscription follows the
+session for as long as the console runs. Name the turn to stop after the event
+that ends it.
 
 **Parity mismatch on a shared toolshed.** The toolshed was started from another
 checkout. It is expected, and the run usually completes. Restart from your own

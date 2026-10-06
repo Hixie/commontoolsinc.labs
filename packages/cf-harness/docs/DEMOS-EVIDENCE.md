@@ -363,9 +363,8 @@ Ask the console's read-only index route — this makes no session and writes
 nothing:
 
 ```sh
-curl -sS -H 'Content-Type: application/json' \
-  -d '{"fn":"searchPatterns","body":{"text":"pomodoro","limit":5}}' \
-  "<console>/api/index/call"
+deno task --cwd packages/cf-harness console:call "<console>" POST /api/index/call \
+  '{"fn":"searchPatterns","body":{"text":"pomodoro","limit":5}}'
 ```
 
 A hit carries `patternId`, `quality`, and `kind`. `403` means the identity is

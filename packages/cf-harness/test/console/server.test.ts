@@ -44,19 +44,8 @@ import type {
   HarnessPromptLoopResult,
   RunHarnessTranscriptOptions,
 } from "../../src/prompt-loop.ts";
-import type {
-  BrowserHostResult,
-  HarnessBrowserHost,
-} from "../../src/contracts/browser-host.ts";
-import {
-  createHarnessChatErrorResponse,
-  createHarnessChatEventEnvelope,
-  createHarnessChatOkResponse,
-  type HarnessChatResponse,
-  type HarnessChatStartTurnParams,
-  type HarnessChatTurnStatus,
-} from "../../src/contracts/interactive-chat.ts";
-import type { HarnessTranscriptMessage } from "../../src/contracts/transcript.ts";
+import type { BrowserHostResult } from "../../src/contracts/browser-host.ts";
+import { artifactLoop, writeTurnTranscript } from "./turn-artifacts.ts";
 import {
   HARNESS_SUPPORTED_CLIENT_FEATURES,
   harnessClientProtocolEcho,
@@ -77,45 +66,6 @@ const answeringLoop: HarnessInteractivePromptLoopFactory = () => ({
     return {
       model: "gpt-test",
       finalAssistantText: answer.content,
-      transcript,
-      modelTurns: 1,
-      runState: {} as HarnessPromptLoopResult["runState"],
-    };
-  },
-});
-
-/**
- * A loop that records the supplied completion in the run artifact directory.
- * This is the production ordering the console depends on: the prompt loop
- * persists its transcript before the service emits `turn_completed`.
- */
-const artifactLoop = (
-  messages: readonly HarnessTranscriptMessage[],
-  onCompleted?: () => void,
-): HarnessInteractivePromptLoopFactory =>
-(loopOptions) => ({
-  runTranscript: async (
-    options: RunHarnessTranscriptOptions,
-  ): Promise<HarnessPromptLoopResult> => {
-    if (
-      loopOptions.artifactRoot === undefined || loopOptions.runId === undefined
-    ) {
-      throw new Error("artifact loop requires an artifact root and run id");
-    }
-    const transcript = [...options.transcript, ...messages];
-    await writeTurnTranscript(
-      loopOptions.artifactRoot,
-      loopOptions.runId,
-      transcript,
-      options.transcript.length,
-    );
-    const finalAssistantText =
-      transcript.findLast((message) => message.role === "assistant")?.content ??
-        "";
-    onCompleted?.();
-    return {
-      model: "gpt-test",
-      finalAssistantText,
       transcript,
       modelTurns: 1,
       runState: {} as HarnessPromptLoopResult["runState"],
@@ -216,34 +166,6 @@ const getRequest = (
   headers: Record<string, string> = {},
 ): Request => new Request(`http://127.0.0.1:8100${path}`, { headers });
 
-const writeTurnTranscript = async (
-  artifactRoot: string,
-  turnId: string,
-  transcript: readonly HarnessTranscriptMessage[],
-  firstGeneratedIndex = 0,
-): Promise<void> => {
-  const runRoot = join(artifactRoot, turnId);
-  await Deno.mkdir(runRoot, { recursive: true });
-  await Deno.writeTextFile(
-    join(runRoot, "transcript.json"),
-    JSON.stringify(transcript),
-  );
-  await Deno.writeTextFile(
-    join(runRoot, "run-report.json"),
-    JSON.stringify({
-      finalAssistantText: transcript.slice(firstGeneratedIndex).findLast(
-        (message) => message.role === "assistant",
-      )?.content ?? "",
-      timeline: transcript.map((message, transcriptIndex) => ({
-        kind: "transcript_message",
-        transcriptIndex,
-        role: message.role,
-        ...(transcriptIndex >= firstGeneratedIndex ? { modelTurn: 1 } : {}),
-      })),
-    }),
-  );
-};
-
 describe("console/server", () => {
   let server: ConsoleServer;
 
@@ -263,7 +185,7 @@ describe("console/server", () => {
   const startTask = async (
     body: unknown,
   ): Promise<{ sessionId: string; turnId: string }> => {
-    const response = await server.handle(
+    const response = await server.route(
       jsonRequest("/api/task", body),
     );
     expect(response.status).toBe(200);
@@ -273,7 +195,7 @@ describe("console/server", () => {
   };
 
   const listSessions = async (): Promise<ConsoleSessionListing> => {
-    const response = await server.handle(
+    const response = await server.route(
       getRequest("/api/sessions"),
     );
     expect(response.status).toBe(200);
@@ -311,7 +233,7 @@ describe("console/server", () => {
           onEvent,
         }),
     );
-    const response = await held.handle(
+    const response = await held.route(
       jsonRequest("/api/task", { text: "keep working" }),
     );
     expect(response.status).toBe(200);
@@ -377,57 +299,6 @@ describe("console/server", () => {
         ),
     );
     return { server: indexed, requests };
-  };
-
-  /** Reads one live completed event backed by its durable run transcript. */
-  const liveTurnResult = async (
-    messages: readonly HarnessTranscriptMessage[],
-  ): Promise<unknown> => {
-    const artifactRoot = await Deno.makeTempDir({
-      prefix: "cf-harness-console-result-event-",
-    });
-    let clock = Date.parse("2026-01-01T00:00:00.000Z");
-    try {
-      const resultConfig = await resolveConsoleConfig(
-        [
-          "--fabric-identity",
-          "key.pkcs8",
-          "--fabric-space",
-          "console-test",
-          "--session-db",
-          "none",
-          "--artifact-root",
-          artifactRoot,
-        ],
-        {},
-        "/console",
-      );
-      const resultServer = new ConsoleServer(
-        resultConfig,
-        (onEvent) =>
-          new HarnessInteractiveChatService({
-            basePromptLoopOptions: { artifactRoot },
-            createPromptLoop: artifactLoop(messages, () => clock += 1750),
-            now: () => new Date(clock).toISOString(),
-            onEvent,
-            runIdForTurn: (_sessionId, turnId) => turnId,
-          }),
-      );
-      const page = await resultServer.handle(getRequest("/"));
-      await page.body?.cancel();
-      const response = await resultServer.handle(getRequest(
-        "/api/events?afterSequence=0",
-        {},
-      ));
-      const startedResponse = await resultServer.handle(
-        jsonRequest("/api/task", { text: "track my books" }, {}),
-      );
-      expect(startedResponse.status).toBe(200);
-      return (await envelopesUntil(response, "turn_completed")).at(-1)!.event
-        .result;
-    } finally {
-      await Deno.remove(artifactRoot, { recursive: true });
-    }
   };
 
   describe("console prompt configuration", () => {
@@ -1052,7 +923,7 @@ describe("console/server", () => {
           const response = await new ConsoleServer(
             configured,
             () => server.service,
-          ).handle(getRequest("/api/health/detail"));
+          ).route(getRequest("/api/health/detail"));
           const { rows } = await response.json() as {
             rows: readonly ConsoleHealthRow[];
           };
@@ -1347,7 +1218,7 @@ describe("console/server", () => {
           () => server.service,
         );
 
-        const response = await runscServer.handle(
+        const response = await runscServer.route(
           getRequest("/api/health/detail"),
         );
         return (await response.json() as {
@@ -1498,7 +1369,7 @@ describe("console/server", () => {
 
   describe("GET /api/status", () => {
     it("answers with the configured artifact root before a task is started", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         getRequest("/api/status"),
       );
 
@@ -1513,7 +1384,7 @@ describe("console/server", () => {
 
   describe("GET /api/policy", () => {
     it("returns what a session started here would run under, before any session exists", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         getRequest("/api/policy"),
       );
 
@@ -1533,7 +1404,7 @@ describe("console/server", () => {
 
   describe("GET /api/health", () => {
     it("reports the configured Fabric API and unverified session liveness without a token", async () => {
-      const response = await server.handle(getRequest("/api/health"));
+      const response = await server.route(getRequest("/api/health"));
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
@@ -1593,7 +1464,7 @@ describe("console/server", () => {
         health,
       );
       try {
-        const response = await healthServer.handle(
+        const response = await healthServer.route(
           getRequest("/api/health/detail"),
         );
         expect(response.status).toBe(200);
@@ -1903,7 +1774,7 @@ describe("console/server", () => {
   describe("task Loom context", () => {
     it("rejects malformed Loom targets before starting a turn", async () => {
       for (const loomId of ["../private", {}, "loom-not-valid"]) {
-        const response = await server.handle(
+        const response = await server.route(
           jsonRequest("/api/task", { text: "Make a Loom", loomId }),
         );
         expect(response.status).toBe(400);
@@ -1931,19 +1802,19 @@ describe("console/server", () => {
 
   describe("GET /api/turns/<turnId>/result", () => {
     it("returns named errors for malformed and unknown turn paths", async () => {
-      const malformedRoute = await server.handle(getRequest(
+      const malformedRoute = await server.route(getRequest(
         "/api/turns/not-a-result",
         {},
       ));
       expect(malformedRoute.status).toBe(404);
 
-      const malformedEncoding = await server.handle(getRequest(
+      const malformedEncoding = await server.route(getRequest(
         "/api/turns/%/result",
         {},
       ));
       expect(malformedEncoding.status).toBe(404);
 
-      const unknownTurn = await server.handle(getRequest(
+      const unknownTurn = await server.route(getRequest(
         "/api/turns/turn-nobody-started/result",
         {},
       ));
@@ -1957,7 +1828,7 @@ describe("console/server", () => {
     it("returns a named error when completed-turn artifacts are unavailable", async () => {
       const started = await startTask({ text: "track my books" });
 
-      const response = await server.handle(getRequest(
+      const response = await server.route(getRequest(
         `/api/turns/${started.turnId}/result`,
         {},
       ));
@@ -2008,7 +1879,7 @@ describe("console/server", () => {
         );
         const page = await resultServer.handle(getRequest("/"));
         await page.body?.cancel();
-        const startedResponse = await resultServer.handle(
+        const startedResponse = await resultServer.route(
           jsonRequest("/api/task", {
             text: "track my books",
             loomId: "loom-1111111111111111",
@@ -2034,7 +1905,7 @@ describe("console/server", () => {
           { role: "assistant", content: "built it" },
         ]);
 
-        const response = await resultServer.handle(getRequest(
+        const response = await resultServer.route(getRequest(
           `/api/turns/${started.turnId}/result`,
           {},
         ));
@@ -2099,7 +1970,7 @@ describe("console/server", () => {
         );
         const firstPage = await firstServer.handle(getRequest("/"));
         await firstPage.body?.cancel();
-        const startedResponse = await firstServer.handle(
+        const startedResponse = await firstServer.route(
           jsonRequest("/api/task", { text: "persist this turn" }, {}),
         );
         const started = await startedResponse.json();
@@ -2117,7 +1988,7 @@ describe("console/server", () => {
         const restoredPage = await restoredServer.handle(getRequest("/"));
         await restoredPage.body?.cancel();
 
-        const response = await restoredServer.handle(getRequest(
+        const response = await restoredServer.route(getRequest(
           `/api/turns/${started.turnId}/result`,
           {},
         ));
@@ -2160,12 +2031,12 @@ describe("console/server", () => {
       );
       const page = await waitingServer.handle(getRequest("/"));
       await page.body?.cancel();
-      const startedResponse = await waitingServer.handle(
+      const startedResponse = await waitingServer.route(
         jsonRequest("/api/task", { text: "keep working" }, {}),
       );
       const started = await startedResponse.json();
       try {
-        const response = await waitingServer.handle(getRequest(
+        const response = await waitingServer.route(getRequest(
           `/api/turns/${started.turnId}/result`,
           {},
         ));
@@ -2201,7 +2072,7 @@ describe("console/server", () => {
       );
       const page = await failingServer.handle(getRequest("/"));
       await page.body?.cancel();
-      const startedResponse = await failingServer.handle(
+      const startedResponse = await failingServer.route(
         jsonRequest("/api/task", { text: "build it" }, {}),
       );
       const started = await startedResponse.json();
@@ -2210,7 +2081,7 @@ describe("console/server", () => {
         started.turnId,
       );
 
-      const response = await failingServer.handle(getRequest(
+      const response = await failingServer.route(getRequest(
         `/api/turns/${started.turnId}/result`,
         {},
       ));
@@ -2228,7 +2099,7 @@ describe("console/server", () => {
 
     it("answers 410 `turn_canceled` for a turn that was canceled", async () => {
       const held = await startHeldTurn();
-      const canceled = await held.server.handle(
+      const canceled = await held.server.route(
         jsonRequest("/api/cancel", {
           sessionId: held.sessionId,
           reason: "stopped by the test",
@@ -2237,7 +2108,7 @@ describe("console/server", () => {
       expect(canceled.status).toBe(200);
       await held.finish();
 
-      const response = await held.server.handle(getRequest(
+      const response = await held.server.route(getRequest(
         `/api/turns/${held.turnId}/result`,
       ));
 
@@ -2254,7 +2125,7 @@ describe("console/server", () => {
     /** What the turn's result route gives as the reason it was canceled. */
     const cancelReason = async (held: HeldTurn): Promise<unknown> => {
       await held.finish();
-      const response = await held.server.handle(getRequest(
+      const response = await held.server.route(getRequest(
         `/api/turns/${held.turnId}/result`,
       ));
       expect(response.status).toBe(410);
@@ -2264,7 +2135,7 @@ describe("console/server", () => {
     it("records the reason the caller gives for the cancel", async () => {
       const held = await startHeldTurn();
 
-      const canceled = await held.server.handle(
+      const canceled = await held.server.route(
         jsonRequest("/api/cancel", {
           sessionId: held.sessionId,
           turnId: held.turnId,
@@ -2279,7 +2150,7 @@ describe("console/server", () => {
     it("records only the route for a cancel that gives no reason", async () => {
       const held = await startHeldTurn();
 
-      const canceled = await held.server.handle(
+      const canceled = await held.server.route(
         jsonRequest("/api/cancel", { sessionId: held.sessionId }),
       );
 
@@ -2293,7 +2164,7 @@ describe("console/server", () => {
       const held = await startHeldTurn();
 
       for (const turnId of [7, null]) {
-        const refused = await held.server.handle(
+        const refused = await held.server.route(
           jsonRequest("/api/cancel", { sessionId: held.sessionId, turnId }),
         );
         expect(refused.status).toBe(400);
@@ -2301,7 +2172,7 @@ describe("console/server", () => {
           error: "turnId, when given, must be a string",
         });
       }
-      const canceled = await held.server.handle(
+      const canceled = await held.server.route(
         jsonRequest("/api/cancel", {
           sessionId: held.sessionId,
           turnId: held.turnId,
@@ -2317,7 +2188,7 @@ describe("console/server", () => {
       const held = await startHeldTurn();
 
       for (const reason of [42, "", "  ", null]) {
-        const refused = await held.server.handle(
+        const refused = await held.server.route(
           jsonRequest("/api/cancel", { sessionId: held.sessionId, reason }),
         );
         expect(refused.status).toBe(400);
@@ -2325,7 +2196,7 @@ describe("console/server", () => {
           error: "reason, when given, must be a non-empty string",
         });
       }
-      const canceled = await held.server.handle(
+      const canceled = await held.server.route(
         jsonRequest("/api/cancel", {
           sessionId: held.sessionId,
           reason: "stopped by the test",
@@ -2339,7 +2210,7 @@ describe("console/server", () => {
 
   describe("POST /api/client-actions", () => {
     it("returns 400 for malformed JSON before starting or settling a turn", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         new Request("http://127.0.0.1:8100/api/client-actions", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -2405,12 +2276,12 @@ describe("console/server", () => {
 
     it("settles a pending action through the service and answers 200", async () => {
       const { server, asked, actionId } = await askingServer();
-      const started = await (await server.handle(
+      const started = await (await server.route(
         jsonRequest("/api/task", { text: "open it", clientActions: true }),
       )).json();
       const { outcomes } = await asked.promise;
 
-      const response = await server.handle(jsonRequest("/api/client-actions", {
+      const response = await server.route(jsonRequest("/api/client-actions", {
         sessionId: started.sessionId,
         actionId: actionId(started.sessionId),
         outcome: "done",
@@ -2438,12 +2309,12 @@ describe("console/server", () => {
 
     it("answers 404 for an unknown action, 409 for a settled one, and 400 for a bad body", async () => {
       const { server, asked, actionId } = await askingServer();
-      const started = await (await server.handle(
+      const started = await (await server.route(
         jsonRequest("/api/task", { text: "open it", clientActions: true }),
       )).json();
       await asked.promise;
       const answer = (body: unknown) =>
-        server.handle(jsonRequest("/api/client-actions", body));
+        server.route(jsonRequest("/api/client-actions", body));
 
       const unknown = await answer({
         sessionId: started.sessionId,
@@ -2509,7 +2380,7 @@ describe("console/server", () => {
       const { server, asked, actionId } = await askingServer([
         wireAction("request-invoke-query"),
       ]);
-      const started = await (await server.handle(
+      const started = await (await server.route(
         jsonRequest("/api/task", { text: "what is here", clientActions: true }),
       )).json();
       const { outcomes } = await asked.promise;
@@ -2519,11 +2390,11 @@ describe("console/server", () => {
         actionId: actionId(started.sessionId),
       };
 
-      const response = await server.handle(
+      const response = await server.route(
         jsonRequest("/api/client-actions", body),
       );
       expect(response.status).toBe(200);
-      const resend = await server.handle(
+      const resend = await server.route(
         jsonRequest("/api/client-actions", body),
       );
       expect(resend.status).toBe(200);
@@ -2547,7 +2418,7 @@ describe("console/server", () => {
       const { server, asked, actionId } = await askingServer([
         wireAction("request-list-commands"),
       ]);
-      const started = await (await server.handle(
+      const started = await (await server.route(
         jsonRequest("/api/task", {
           text: "what can you do",
           clientActions: true,
@@ -2559,13 +2430,13 @@ describe("console/server", () => {
         actionId: actionId(started.sessionId),
       };
 
-      const wrong = await server.handle(jsonRequest("/api/client-actions", {
+      const wrong = await server.route(jsonRequest("/api/client-actions", {
         ...wire("resolve-declined"),
         ...address,
       }));
       expect(wrong.status).toBe(400);
       expect((await wrong.json()).error.code).toBe("invalid_request");
-      const response = await server.handle(jsonRequest("/api/client-actions", {
+      const response = await server.route(jsonRequest("/api/client-actions", {
         ...wire("resolve-executed-catalog"),
         ...address,
       }));
@@ -2580,7 +2451,7 @@ describe("console/server", () => {
 
     it("offers the tool only to a task that sets clientActions", async () => {
       const { server, options } = await askingServer();
-      const started = await (await server.handle(
+      const started = await (await server.route(
         jsonRequest("/api/task", { text: "no actions please" }),
       )).json();
       await server.service.waitForTurn(started.sessionId, started.turnId);
@@ -2589,7 +2460,7 @@ describe("console/server", () => {
         "weaver_action",
       );
 
-      const refused = await server.handle(
+      const refused = await server.route(
         jsonRequest("/api/task", { text: "x", clientActions: "yes" }),
       );
       expect(refused.status).toBe(400);
@@ -2598,7 +2469,7 @@ describe("console/server", () => {
 
   describe("POST /api/task", () => {
     it("returns 400 for malformed JSON before starting or settling a turn", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         new Request("http://127.0.0.1:8100/api/task", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -2613,7 +2484,7 @@ describe("console/server", () => {
     });
 
     it("refuses a host whose protocol requires an unserved feature, before any session starts", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "what is on this loom?",
         protocol: {
           protocolVersion: 1,
@@ -2633,7 +2504,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for a malformed protocol declaration", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "what is on this loom?",
         protocol: { protocolVersion: "1", requires: [] },
       }));
@@ -2643,7 +2514,7 @@ describe("console/server", () => {
     });
 
     it("echoes its protocol on an accepted task", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "track my books",
         clientActions: true,
         protocol: {
@@ -2677,7 +2548,7 @@ describe("console/server", () => {
     });
 
     it("answers 404 for a session that does not exist", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "track my books",
         sessionId: "session-nobody-started",
       }));
@@ -2687,7 +2558,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for a sessionId that is not a string", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "track my books",
         sessionId: 7,
       }));
@@ -2730,7 +2601,7 @@ describe("console/server", () => {
       const page = await capturing.handle(getRequest("/"));
       await page.body?.cancel();
 
-      const response = await capturing.handle(jsonRequest("/api/task", {
+      const response = await capturing.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: [{ name: "itinerary", ref: `/${CELL_ID}/days` }],
       }));
@@ -2760,7 +2631,7 @@ describe("console/server", () => {
             onEvent,
           }),
       );
-      const response = await capturing.handle(jsonRequest("/api/task", {
+      const response = await capturing.route(jsonRequest("/api/task", {
         text: "Start without an attached piece",
         inputCells: [],
       }));
@@ -2771,7 +2642,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for an input cell the flag's own grammar refuses", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: [{ name: "not a name", ref: `/${CELL_ID}/days` }],
       }));
@@ -2782,7 +2653,7 @@ describe("console/server", () => {
 
     it("answers 400 for an input-cell ref that names no entity, before any turn starts", async () => {
       // The mint would refuse this ref; refusing it here costs no turn.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "make a budget dashboard",
         inputCells: [{
           name: "transactions",
@@ -2800,7 +2671,7 @@ describe("console/server", () => {
     it("answers 400 for a piece address naming a space that is not this console's", async () => {
       // The caller cannot see which space this console runs against, so the
       // mismatch is this side's to explain — and it costs no turn to say it.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "make the headings readable",
         inputCells: [{
           name: "pattern_1",
@@ -2816,7 +2687,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for a piece address whose slug is malformed", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "make the headings readable",
         inputCells: [{ name: "pattern_1", ref: "pattern:console-test/Bills!" }],
       }));
@@ -2829,7 +2700,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for a bare slug the runtime's slug rule refuses", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "make the headings readable",
         inputCells: [{ name: "pattern_1", ref: "Bill Inbox" }],
       }));
@@ -2843,7 +2714,7 @@ describe("console/server", () => {
     it("answers 400 for a piece address naming a path under the piece", async () => {
       // A slug names a piece or it names nothing; the general cell case is
       // CT-2319's, and claiming it here would promise what nothing resolves.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "make the headings readable",
         inputCells: [{
           name: "pattern_1",
@@ -2858,7 +2729,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for input cells that are not a list of name and ref", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: [{ name: "itinerary" }],
       }));
@@ -2870,7 +2741,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for input cells that are not a list at all", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: { itinerary: `/${CELL_ID}/days` },
       }));
@@ -2880,7 +2751,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for an input cell that is not an object", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: [`itinerary=/${CELL_ID}/days`],
       }));
@@ -2894,7 +2765,7 @@ describe("console/server", () => {
     it("answers 400 for a name the request uses twice", async () => {
       // Two references under one name is a request that has not said which
       // cell the model's `itinerary` is.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: [
           { name: "itinerary", ref: `/${CELL_ID}/days` },
@@ -2941,7 +2812,7 @@ describe("console/server", () => {
             onEvent,
           }),
       );
-      const response = await granted.handle(jsonRequest("/api/task", {
+      const response = await granted.route(jsonRequest("/api/task", {
         text: "summarize the trip",
         inputCells: [{ name: "email", ref: `/${CELL_ID}/days` }],
       }));
@@ -3011,7 +2882,7 @@ describe("console/server", () => {
       await page.body?.cancel();
 
       try {
-        const response = await capturing.handle(jsonRequest("/api/task", {
+        const response = await capturing.route(jsonRequest("/api/task", {
           text: "use pat-expenses for a dice roller app",
           patternRefs: [{ patternId: "pat-expenses" }],
         }));
@@ -3035,7 +2906,7 @@ describe("console/server", () => {
     it("answers 400 for a pattern reference that is not an index id, before any turn starts", async () => {
       // The prose the person typed after `use` is not an id, and an id is
       // the whole of the reference grammar.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "use it for a dice roller app",
         patternRefs: [{ patternId: "it for a dice roller app" }],
       }));
@@ -3046,7 +2917,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for pattern references that are not a list at all", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "total my spending",
         patternRefs: { patternId: "pat-expenses" },
       }));
@@ -3060,7 +2931,7 @@ describe("console/server", () => {
     it("answers 400 for a pattern reference that is not an object at all", async () => {
       // A reference is a `{ patternId }`, so a bare id in the list is a
       // spelling the route refuses rather than one it reads through.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "total my spending",
         patternRefs: ["pat-expenses"],
       }));
@@ -3074,7 +2945,7 @@ describe("console/server", () => {
     it("answers 400 for a `null` sitting in the reference list", async () => {
       // Distinct from a `null` in place of the list itself, which is how a
       // body says it attaches no patterns and starts an ordinary task.
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "total my spending",
         patternRefs: [null],
       }));
@@ -3086,7 +2957,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for a pattern reference that carries no string patternId", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "total my spending",
         patternRefs: [{ id: "pat-expenses" }],
       }));
@@ -3098,7 +2969,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for an id the request names twice", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "total my spending",
         patternRefs: [
           { patternId: "pat-expenses" },
@@ -3113,7 +2984,7 @@ describe("console/server", () => {
     });
 
     it("answers 400 for more pattern references than a task may attach", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "total my spending",
         patternRefs: Array.from(
           { length: MAX_HARNESS_PATTERN_REFS + 1 },
@@ -3134,110 +3005,6 @@ describe("console/server", () => {
       });
 
       expect(started.turnId).toBeDefined();
-    });
-  });
-
-  describe("GET /api/events", () => {
-    it("replays a past session's whole history from sequence zero", async () => {
-      const started = await startTask({ text: "track my books" });
-
-      const response = await server.handle(getRequest(
-        `/api/events?sessionId=${started.sessionId}&afterSequence=0`,
-        {},
-      ));
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toBe("text/event-stream");
-      const kinds = await kindsUntil(response, "turn_completed");
-
-      expect(kinds).toEqual([
-        "session_started",
-        "turn_started",
-        "assistant_delta",
-        "assistant_completed",
-        "turn_completed",
-      ]);
-    });
-
-    it("adds the durable result to a completed turn", async () => {
-      expect(
-        await liveTurnResult([
-          {
-            role: "assistant",
-            content: "",
-            toolCalls: [{
-              id: "call-1",
-              type: "function",
-              function: { name: "assign_slug", arguments: "{}" },
-            }],
-          },
-          {
-            role: "tool",
-            toolCallId: "call-1",
-            toolName: "assign_slug",
-            content: JSON.stringify({
-              outputId: "run:assign_slug:1",
-              status: "ok",
-              slug: "reading-list",
-              url: "http://localhost:8000/console-test/reading-list",
-            }),
-          },
-          { role: "assistant", content: "built it" },
-        ]),
-      ).toEqual({
-        looms: [],
-        pieces: [{
-          slug: "reading-list",
-          url: "http://localhost:8000/console-test/reading-list",
-        }],
-        spaceName: "console-test",
-        outcome: "completed",
-        sessionId: expect.any(String),
-        continuable: true,
-        finalText: "built it",
-        elapsedMs: 1750,
-      });
-    });
-
-    it("adds `pieces: []` when a completed turn assigned no slug", async () => {
-      expect(
-        await liveTurnResult([
-          { role: "assistant", content: "calculated it" },
-        ]),
-      ).toEqual({
-        looms: [],
-        pieces: [],
-        spaceName: "console-test",
-        outcome: "completed",
-        sessionId: expect.any(String),
-        continuable: true,
-        finalText: "calculated it",
-        elapsedMs: 1750,
-      });
-    });
-
-    it("replays only the session the stream names", async () => {
-      await startTask({ text: "first task" });
-      const second = await startTask({ text: "second task" });
-
-      const response = await server.handle(getRequest(
-        `/api/events?sessionId=${second.sessionId}&afterSequence=0`,
-        {},
-      ));
-      const sessionIds = new Set(
-        (await envelopesUntil(response, "turn_completed")).map((envelope) =>
-          envelope.sessionId
-        ),
-      );
-
-      expect([...sessionIds]).toEqual([second.sessionId]);
-    });
-
-    it("answers 400 for an afterSequence that is not a sequence", async () => {
-      const response = await server.handle(
-        getRequest("/api/events?afterSequence=later"),
-      );
-
-      expect(response.status).toBe(400);
     });
   });
 
@@ -3484,7 +3251,7 @@ describe("console/server", () => {
       indexed: { server: ConsoleServer },
       body: unknown,
     ): Promise<Response> =>
-      await indexed.server.handle(
+      await indexed.server.route(
         jsonRequest("/api/index/call", body),
       );
 
@@ -3528,7 +3295,7 @@ describe("console/server", () => {
       );
       const page = await server.handle(getRequest("/"));
       await page.body?.cancel();
-      const response = await server.handle(
+      const response = await server.route(
         jsonRequest("/api/index/call", { fn: "listPatterns" }),
       );
       expect(response.status).toBe(502);
@@ -3638,7 +3405,7 @@ describe("console/server", () => {
     it("answers 400 for a body that is not JSON", async () => {
       const indexed = await indexServer([]);
 
-      const response = await indexed.server.handle(
+      const response = await indexed.server.route(
         new Request("http://127.0.0.1:8100/api/index/call", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3680,7 +3447,7 @@ describe("console/server", () => {
     });
 
     it("answers 404 when the server was started without an index", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         jsonRequest("/api/index/call", { fn: "listPatterns" }),
       );
 
@@ -3697,7 +3464,7 @@ describe("console/server", () => {
       indexed: { server: ConsoleServer },
       body: unknown,
     ): Promise<Response> =>
-      await indexed.server.handle(
+      await indexed.server.route(
         jsonRequest("/api/index/feedback", body),
       );
 
@@ -3775,7 +3542,7 @@ describe("console/server", () => {
     it("answers 400 for a body that is not JSON", async () => {
       const indexed = await indexServer([]);
 
-      const response = await indexed.server.handle(
+      const response = await indexed.server.route(
         new Request("http://127.0.0.1:8100/api/index/feedback", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -3799,7 +3566,7 @@ describe("console/server", () => {
     });
 
     it("answers 503 when the server was started without an index", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         jsonRequest("/api/index/feedback", {
           patternId: "ss-2w4nQ8",
           verdict: "up",
@@ -3877,12 +3644,12 @@ describe("console/server", () => {
             changed,
           };
           const indexed = await indexServer([Response.json(receipt)], root);
-          const artifact = await indexed.server.handle(getRequest(
+          const artifact = await indexed.server.route(getRequest(
             "/api/runs/run-1.subagent.1/tool-outputs/publication.json",
           ));
           expect(artifact.status).toBe(200);
           const publication = (await artifact.json()).patternPublication;
-          const response = await indexed.server.handle(
+          const response = await indexed.server.route(
             jsonRequest("/api/index/retract", {
               ...request,
               patternId: publication.patternId,
@@ -3908,7 +3675,7 @@ describe("console/server", () => {
       it(`returns 400 without contacting the index for an invalid ${field}`, async () => {
         const indexed = await indexServer([]);
         for (const value of [undefined, null, 7, "", "   "]) {
-          const response = await indexed.server.handle(
+          const response = await indexed.server.route(
             jsonRequest("/api/index/retract", { ...request, [field]: value }),
           );
           expect(response.status).toBe(400);
@@ -3926,7 +3693,7 @@ describe("console/server", () => {
     it("returns 400 for malformed JSON or a non-object body without contacting the index", async () => {
       const indexed = await indexServer([]);
       for (const body of ["not JSON", "null", "[]", '"pattern"']) {
-        const response = await indexed.server.handle(
+        const response = await indexed.server.route(
           new Request("http://127.0.0.1:8100/api/index/retract", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -3939,7 +3706,7 @@ describe("console/server", () => {
     });
 
     it("returns 503 when the console has no index", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         jsonRequest("/api/index/retract", request),
       );
       expect(response.status).toBe(503);
@@ -3953,7 +3720,7 @@ describe("console/server", () => {
         const indexed = await indexServer([
           Response.json({ error: "private index detail" }, { status }),
         ]);
-        const response = await indexed.server.handle(
+        const response = await indexed.server.route(
           jsonRequest("/api/index/retract", request),
         );
         expect(response.status).toBe(status === 500 ? 502 : status);
@@ -3975,7 +3742,7 @@ describe("console/server", () => {
           }),
         () => Promise.reject(new Error("private identity path")),
       );
-      const response = await unavailable.handle(
+      const response = await unavailable.route(
         jsonRequest("/api/index/retract", request),
       );
       expect(response.status).toBe(502);
@@ -4020,7 +3787,7 @@ describe("console/server", () => {
     });
 
     it("does not answer an API route with a page policy", async () => {
-      const response = await server.handle(
+      const response = await server.route(
         getRequest("/api/sessions"),
       );
       await response.json();
@@ -4096,31 +3863,20 @@ describe("console/server", () => {
   });
 
   describe("the host gate", () => {
-    it("answers an API request carrying no cookie", async () => {
-      const response = await server.handle(getRequest("/api/sessions"));
+    it("answers a health request carrying no cookie", async () => {
+      const response = await server.handle(getRequest("/api/health"));
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ sessions: [] });
+      expect(await response.json()).toMatchObject({ ok: true });
     });
 
-    it("answers an API request from any other origin", async () => {
+    it("answers a health request from any other origin", async () => {
       const response = await server.handle(
-        getRequest("/api/sessions", { origin: "http://elsewhere.test" }),
+        getRequest("/api/health", { origin: "http://elsewhere.test" }),
       );
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ sessions: [] });
-    });
-
-    it("starts a turn from a request carrying neither cookie nor origin", async () => {
-      const response = await server.handle(
-        jsonRequest("/api/task", { text: "track my books" }),
-      );
-
-      expect(response.status).toBe(200);
-      const started = await response.json();
-      await server.service.waitForTurn(started.sessionId, started.turnId);
-      expect((await listSessions()).sessions).toHaveLength(1);
+      expect(await response.json()).toMatchObject({ ok: true });
     });
 
     it("hands the page no cookie", async () => {
@@ -4146,23 +3902,9 @@ describe("console/server", () => {
 
       expect(response.status).toBe(403);
     });
-
-    it("answers 415 for a task posted as a form submission", async () => {
-      const response = await server.handle(
-        new Request("http://127.0.0.1:8100/api/task", {
-          method: "POST",
-          headers: { "content-type": "text/plain;charset=UTF-8" },
-          body: JSON.stringify({ text: "track my books" }),
-        }),
-      );
-
-      expect(response.status).toBe(415);
-    });
   });
 
   describe("the browser host routes", () => {
-    const PAGE = { url: "https://shop.example/", title: "Shop" };
-
     /**
      * A server whose one turn asks its browser host for a snapshot and answers
      * with what the host returned, so a test can play the host's part over
@@ -4216,129 +3958,13 @@ describe("console/server", () => {
       return { server: hosted, loopOptions, results };
     };
 
-    /** Reads `stream` until what it has delivered contains `text`. */
-    const readUntil = async (
-      reader: ReadableStreamDefaultReader<Uint8Array>,
-      text: string,
-    ): Promise<string> => {
-      const decoder = new TextDecoder();
-      let received = "";
-      while (!received.includes(text)) {
-        const { value, done } = await reader.read();
-        if (done) {
-          throw new Error(`stream ended before ${text}: ${received}`);
-        }
-        received += decoder.decode(value);
-      }
-      return received;
-    };
-
-    it("returns a host token only to a task that declares a host", async () => {
-      const { server: hosted, loopOptions } = await hostedServer();
-
-      const plain = await server.handle(
-        jsonRequest("/api/task", { text: "no browser" }),
-      );
-      const plainBody = await plain.json();
-      await server.service.waitForTurn(plainBody.sessionId, plainBody.turnId);
-      const declared = await hosted.handle(jsonRequest("/api/task", {
-        text: "use the web",
-        browserHost: { aFieldThisConsoleDoesNotKnow: true },
-      }));
-      const declaredBody = await declared.json();
-
-      expect(plainBody.browserHostToken).toBeUndefined();
-      expect(typeof declaredBody.browserHostToken).toBe("string");
-      expect(loopOptions[0]?.browserHost).toBeDefined();
-      expect(loopOptions[0]?.allowedSubagentProfiles).toContain("browser");
-
-      const stream = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: declaredBody.turnId,
-          token: declaredBody.browserHostToken,
-        }),
-      );
-      const reader = stream.body!.getReader();
-      await readUntil(reader, "event: request");
-      await hosted.handle(jsonRequest("/api/browser-host/result", {
-        turnId: declaredBody.turnId,
-        token: declaredBody.browserHostToken,
-        id: "1",
-        result: { status: "ok", page: PAGE, text: "" },
-      }));
-      await readUntil(reader, "event: close");
-      await reader.cancel();
-      await hosted.service.waitForTurn(
-        declaredBody.sessionId,
-        declaredBody.turnId,
-      );
-    });
-
-    it("writes each liveness tick to an attached host's stream", async () => {
-      const { server: hosted } = await hostedServer();
-      const started = await (await hosted.handle(jsonRequest("/api/task", {
-        text: "use the web",
-        browserHost: {},
-      }))).json();
-      const stream = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-        }),
-      );
-      const reader = stream.body!.getReader();
-      await readUntil(reader, "event: request");
-
-      hosted.ping();
-      const ticked = await readUntil(reader, ": 1\n\n");
-      await hosted.handle(jsonRequest("/api/browser-host/result", {
-        turnId: started.turnId,
-        token: started.browserHostToken,
-        id: "1",
-        result: { status: "ok", page: PAGE, text: "" },
-      }));
-      await readUntil(reader, "event: close");
-      await reader.cancel();
-      await hosted.service.waitForTurn(started.sessionId, started.turnId);
-
-      expect(ticked).toContain(": 1\n\n");
-    });
-
-    it("returns 400 for a host route body that is not JSON or names no turn", async () => {
-      const empty = await server.handle(
-        new Request("http://127.0.0.1:8100/api/browser-host/stream", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-        }),
-      );
-      const notJson = await server.handle(
-        new Request("http://127.0.0.1:8100/api/browser-host/stream", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{",
-        }),
-      );
-      const noTurn = await server.handle(
-        jsonRequest("/api/browser-host/result", { token: "t", id: "1" }),
-      );
-
-      expect(empty.status).toBe(400);
-      expect(await empty.json()).toEqual({ error: "request body is not JSON" });
-      expect(notJson.status).toBe(400);
-      expect(await notJson.json()).toEqual({
-        error: "request body is not JSON",
-      });
-      expect(noTurn.status).toBe(400);
-      expect(await noTurn.json()).toEqual({ error: "turnId is required" });
-    });
-
     it("serves browser_host only when it allows a browser host, and says so before a task", async () => {
       const { server: hosted } = await hostedServer();
       const features = async (console: ConsoleServer) =>
-        (await (await console.handle(getRequest("/api/status"))).json())
+        (await (await console.route(getRequest("/api/status"))).json())
           .protocol.features;
       const requiring = (console: ConsoleServer) =>
-        console.handle(jsonRequest("/api/task", {
+        console.route(jsonRequest("/api/task", {
           text: "use the web",
           protocol: { protocolVersion: 1, requires: ["browser_host"] },
         }));
@@ -4371,7 +3997,7 @@ describe("console/server", () => {
     });
 
     it("returns 403 for a host declaration a console that allows none is sent, and gives it no browser children", async () => {
-      const response = await server.handle(jsonRequest("/api/task", {
+      const response = await server.route(jsonRequest("/api/task", {
         text: "use the web",
         browserHost: {},
       }));
@@ -4382,7 +4008,7 @@ describe("console/server", () => {
           "this console takes no browser host; an operator allows one with --allow-browser-host",
       });
       expect(
-        (await (await server.handle(getRequest("/api/policy"))).json())
+        (await (await server.route(getRequest("/api/policy"))).json())
           .allowedSubagentProfiles,
       ).not.toContain("browser");
     });
@@ -4390,7 +4016,7 @@ describe("console/server", () => {
     it("runs a console's ordinary task without browser children, and gives a host's turn them", async () => {
       const { server: hosted, loopOptions } = await hostedServer();
 
-      const plain = await (await hosted.handle(
+      const plain = await (await hosted.route(
         jsonRequest("/api/task", { text: "no browser" }),
       )).json();
       await hosted.service.waitForTurn(plain.sessionId, plain.turnId);
@@ -4401,14 +4027,14 @@ describe("console/server", () => {
         "browser",
       );
       expect(
-        (await (await hosted.handle(getRequest("/api/policy"))).json())
+        (await (await hosted.route(getRequest("/api/policy"))).json())
           .allowedSubagentProfiles,
       ).not.toContain("browser");
     });
 
     it("returns 400 for a host declaration that is not an object", async () => {
       const { server: hosted } = await hostedServer();
-      const response = await hosted.handle(jsonRequest("/api/task", {
+      const response = await hosted.route(jsonRequest("/api/task", {
         text: "use the web",
         browserHost: ["profileFields"],
       }));
@@ -4418,302 +4044,5 @@ describe("console/server", () => {
         error: "browserHost must be an object",
       });
     });
-
-    it("returns 413 for a host route body larger than a result may be, without reading the rest", async () => {
-      const response = await server.handle(
-        new Request("http://127.0.0.1:8100/api/browser-host/result", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "x".repeat(32 * 1024 * 1024 + 1),
-        }),
-      );
-
-      expect(response.status).toBe(413);
-      expect(await response.json()).toEqual({
-        error: "request body is larger than 33554432 bytes",
-      });
-    });
-
-    it("carries an operation to the host and its result back to the run", async () => {
-      const { server: hosted, results } = await hostedServer();
-      const started = await (await hosted.handle(jsonRequest("/api/task", {
-        text: "use the web",
-        browserHost: {},
-      }))).json();
-
-      const refused = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: "not-the-token",
-        }),
-      );
-      const stream = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-        }),
-      );
-      const second = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-        }),
-      );
-      const reader = stream.body!.getReader();
-      const delivered = await readUntil(reader, "\n\n");
-      const posted = await hosted.handle(
-        jsonRequest("/api/browser-host/result", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-          id: "1",
-          result: { status: "ok", page: PAGE, text: '- button "Buy"' },
-        }),
-      );
-      const closing = await readUntil(reader, "event: close");
-      await hosted.service.waitForTurn(started.sessionId, started.turnId);
-
-      expect(refused.status).toBe(404);
-      expect(await refused.json()).toEqual({
-        error: "no browser host for that turn",
-      });
-      expect(stream.headers.get("content-type")).toBe("text/event-stream");
-      expect(second.status).toBe(409);
-      await second.body?.cancel();
-      expect(delivered).toBe(
-        `event: request\ndata: ${
-          JSON.stringify({
-            id: "1",
-            operation: { action: "snapshot", interactive: true },
-          })
-        }\n\n`,
-      );
-      expect(posted.status).toBe(200);
-      expect(closing).toContain("event: close");
-      expect(results).toEqual([
-        { status: "ok", page: PAGE, text: '- button "Buy"' },
-      ]);
-    });
-
-    it("answers 404 for a result under another token or for an id nobody waits on, and 400 for one that is not a result, which fails the operation", async () => {
-      const { server: hosted, results } = await hostedServer();
-      const started = await (await hosted.handle(jsonRequest("/api/task", {
-        text: "use the web",
-        browserHost: {},
-      }))).json();
-      const stream = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-        }),
-      );
-      const reader = stream.body!.getReader();
-      await readUntil(reader, "event: request");
-      const post = (id: string, result: unknown, token: string) =>
-        hosted.handle(jsonRequest("/api/browser-host/result", {
-          turnId: started.turnId,
-          token,
-          id,
-          result,
-        }));
-
-      const forged = await post(
-        "1",
-        { status: "ok", page: PAGE },
-        "not-the-token",
-      );
-      const unknown = await post(
-        "2",
-        { status: "ok", page: PAGE },
-        started.browserHostToken,
-      );
-      const malformed = await post(
-        "1",
-        { status: "ok" },
-        started.browserHostToken,
-      );
-      await readUntil(reader, "event: close");
-      await hosted.service.waitForTurn(started.sessionId, started.turnId);
-
-      expect(forged.status).toBe(404);
-      await forged.body?.cancel();
-      expect(unknown.status).toBe(404);
-      await unknown.body?.cancel();
-      expect(malformed.status).toBe(400);
-      await malformed.body?.cancel();
-      expect(results).toEqual([{
-        status: "failed",
-        message:
-          "the browser host answered with something that is not a result",
-      }]);
-    });
-
-    it("ends a turn's channel when the turn ends before its start returns, and when it fails to start or throws", async () => {
-      const attached: (HarnessBrowserHost | undefined)[] = [];
-      /** A service whose turn ends inside its own start, or never starts. */
-      class ShortTurnService extends HarnessInteractiveChatService {
-        readonly #onEvent: HarnessInteractiveChatEventListener;
-        readonly #start: "ends" | "refuses" | "throws";
-
-        constructor(
-          onEvent: HarnessInteractiveChatEventListener,
-          start: "ends" | "refuses" | "throws",
-        ) {
-          super({
-            createPromptLoop: () => {
-              throw new Error("no turn runs here");
-            },
-            onEvent,
-          });
-          this.#onEvent = onEvent;
-          this.#start = start;
-        }
-
-        override async startTurn(
-          requestId: string,
-          params: HarnessChatStartTurnParams,
-          extra: { browserHost?: HarnessBrowserHost } = {},
-        ): Promise<HarnessChatResponse<HarnessChatTurnStatus>> {
-          attached.push(extra.browserHost);
-          const turnId = params.turnId ?? "";
-          if (this.#start === "throws") {
-            throw new Error("this turn could not be started");
-          }
-          if (this.#start === "refuses") {
-            return createHarnessChatErrorResponse(requestId, {
-              code: "invalid_request",
-              message: "this turn does not start",
-            });
-          }
-          await this.#onEvent(createHarnessChatEventEnvelope({
-            sessionId: params.sessionId,
-            turnId,
-            sequence: 1,
-            event: { kind: "turn_canceled", turnId },
-          }));
-          const at = new Date().toISOString();
-          return createHarnessChatOkResponse(requestId, {
-            turnId,
-            status: "canceled",
-            startedAt: at,
-            updatedAt: at,
-          });
-        }
-      }
-      const task = async (start: "ends" | "refuses" | "throws") => {
-        const shortTurns = new ConsoleServer(
-          await configWithBrowserHost(),
-          (onEvent) => new ShortTurnService(onEvent, start),
-        );
-        const response = await shortTurns.handle(jsonRequest("/api/task", {
-          text: "use the web",
-          browserHost: {},
-        }));
-        return { server: shortTurns, response };
-      };
-
-      const ended = await task("ends");
-      const started = await ended.response.json();
-      const attach = await ended.server.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-        }),
-      );
-      const refused = await task("refuses");
-      await refused.response.body?.cancel();
-      await expect(task("throws")).rejects.toThrow(
-        "this turn could not be started",
-      );
-
-      expect(attach.status).toBe(404);
-      await attach.body?.cancel();
-      expect(refused.response.ok).toBe(false);
-      expect(attached).toHaveLength(3);
-      for (const host of attached) {
-        expect(await host?.perform({ action: "reload" })).toEqual({
-          status: "session-ended",
-          message: "the turn has ended",
-        });
-      }
-    });
-
-    it("ends the run's outstanding operation when the host's stream ends", async () => {
-      const { server: hosted, results } = await hostedServer();
-      const started = await (await hosted.handle(jsonRequest("/api/task", {
-        text: "use the web",
-        browserHost: {},
-      }))).json();
-      const stream = await hosted.handle(
-        jsonRequest("/api/browser-host/stream", {
-          turnId: started.turnId,
-          token: started.browserHostToken,
-        }),
-      );
-      const reader = stream.body!.getReader();
-      await readUntil(reader, "event: request");
-
-      await reader.cancel();
-      await hosted.service.waitForTurn(started.sessionId, started.turnId);
-
-      expect(results).toEqual([{
-        status: "session-ended",
-        message: "the browser host's connection ended",
-      }]);
-    });
   });
 });
-
-interface StreamedEnvelope {
-  sessionId: string;
-  sequence: number;
-  event: { kind: string; result?: unknown };
-}
-
-/**
- * The envelopes a stream writes up to and including the one of `finalKind`.
- * The reader resolves on each chunk the server enqueues, so the read ends when
- * the replay reaches that event rather than after any span of time.
- */
-const envelopesUntil = async (
-  response: Response,
-  finalKind: string,
-): Promise<readonly StreamedEnvelope[]> => {
-  const reader = response.body!.pipeThrough(new TextDecoderStream())
-    .getReader();
-  const envelopes: StreamedEnvelope[] = [];
-  let buffered = "";
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) {
-        return envelopes;
-      }
-      buffered += chunk.value;
-      const frames = buffered.split("\n\n");
-      buffered = frames.pop() ?? "";
-      for (const frame of frames) {
-        const data = frame.split("\n").find((line) =>
-          line.startsWith("data: ")
-        );
-        if (data === undefined || !frame.startsWith("event: chat")) {
-          continue;
-        }
-        const envelope: StreamedEnvelope = JSON.parse(data.slice(6));
-        envelopes.push(envelope);
-        if (envelope.event.kind === finalKind) {
-          return envelopes;
-        }
-      }
-    }
-  } finally {
-    await reader.cancel();
-  }
-};
-
-const kindsUntil = async (
-  response: Response,
-  finalKind: string,
-): Promise<readonly string[]> =>
-  (await envelopesUntil(response, finalKind)).map((envelope) =>
-    envelope.event.kind
-  );
