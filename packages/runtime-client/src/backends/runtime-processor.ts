@@ -943,6 +943,9 @@ export class RuntimeProcessor {
   #identity: Identity;
   #legacySpacesAdopted: Promise<void> | undefined;
   #privateInboxEnsured: Promise<void> | undefined;
+  // Aborted as disposal begins, so an inbox ensure still in flight sends
+  // nothing after it.
+  #disposal = new AbortController();
   #isDisposed = false;
   #disposingPromise: Promise<void> | undefined;
 
@@ -1077,8 +1080,8 @@ export class RuntimeProcessor {
    * The runtime and home context this processor was built over, the tables
    * it keeps by space, by client, and by session, the disposed flag, the
    * render policy and ceiling a mount inherits, the boot-time health check's
-   * verdict and whether `initialize()` waited for it, and the per-space
-   * context step, which a test drives directly.
+   * verdict and whether `initialize()` waited for it, the private inbox ensure
+   * in flight, and the per-space context step, which a test drives directly.
    */
   get accessForTestingOnly(): {
     runtime: Runtime;
@@ -1108,6 +1111,7 @@ export class RuntimeProcessor {
     readonly renderDeclassificationPolicy: RenderDeclassificationPolicy;
     readonly health: Promise<boolean>;
     readonly awaitedHealth: boolean;
+    readonly privateInboxEnsured: Promise<void> | undefined;
     getSpaceCtx(space: DID): PiecesController;
   } {
     // deno-lint-ignore no-this-alias
@@ -1124,6 +1128,9 @@ export class RuntimeProcessor {
       },
       get awaitedHealth() {
         return outerThis.#awaitedHealth;
+      },
+      get privateInboxEnsured() {
+        return outerThis.#privateInboxEnsured;
       },
       cc: this.#cc,
       spaces: this.#spaces,
@@ -1324,6 +1331,7 @@ export class RuntimeProcessor {
   dispose(): Promise<void> {
     if (this.#disposingPromise) return this.#disposingPromise;
     this.#isDisposed = true;
+    this.#disposal.abort();
     this.#disposingPromise = (async () => {
       this.#telemetry.removeEventListener("telemetry", this.#onTelemetry);
       try {
@@ -1360,6 +1368,11 @@ export class RuntimeProcessor {
         }
         this.#vdomMounts.clear();
 
+        // A private inbox ensure still in flight is not waited for: a remote
+        // read it has stalled on must not hold disposal. Disposal aborted its
+        // signal above, so it sends nothing once its reads return; a read that
+        // fails against the disposed runtime is dropped unreported; and the
+        // next worker's first bring-up of Home starts the ensure again.
         await this.#runtime.storageManager.synced();
         await this.#runtime.dispose();
       } catch (e) {
@@ -2698,8 +2711,9 @@ export class RuntimeProcessor {
   /**
    * Ensures the user's Home pattern is running and returns its result cell.
    * The first time in this worker, it also adopts the Home space list's
-   * name-only entries (see `PiecesController.adoptLegacySpaces`), and has Home
-   * ensure the user's private inbox (see `PiecesController.ensurePrivateInbox`).
+   * name-only entries (see `PiecesController.adoptLegacySpaces`), and starts
+   * Home's ensure of the user's private inbox (see
+   * `PiecesController.ensurePrivateInbox`) without waiting for it.
    */
   async #ensureHomePattern(): Promise<Cell<unknown>> {
     const homeCC = this.#homeController();
@@ -2713,13 +2727,19 @@ export class RuntimeProcessor {
       console.warn("[RuntimeProcessor] Adopting legacy Home spaces:", error);
     });
     await this.#legacySpacesAdopted;
-    this.#privateInboxEnsured ??= homeCC.ensurePrivateInbox().catch(
+    // The ensure reads every profile's pointer and loads inbox documents in
+    // other spaces, so Home opens without waiting for it. A failure is
+    // reported unless the processor has been disposed, as `dispose()` says,
+    // and the next ensure of Home in this worker starts it again.
+    this.#privateInboxEnsured ??= homeCC.ensurePrivateInbox(
+      this.#disposal.signal,
+    ).catch(
       (error) => {
         this.#privateInboxEnsured = undefined;
+        if (this.#isDisposed) return;
         console.warn("[RuntimeProcessor] Ensuring the private inbox:", error);
       },
     );
-    await this.#privateInboxEnsured;
     return home;
   }
 
