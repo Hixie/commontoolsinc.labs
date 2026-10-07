@@ -232,7 +232,12 @@ describe("browser-host-backend", () => {
         timeoutMs: 5_000,
       });
 
-      expect(wait).toMatchObject({ status: "error", code: "invalid_input" });
+      expect(wait).toMatchObject({
+        status: "error",
+        code: "invalid_input",
+        message:
+          "this run's browser waits for something to happen rather than for a time: wait for a ref, a loadState, or a urlPattern",
+      });
       expect(timeout).toMatchObject({ status: "error", code: "invalid_input" });
       expect(host.operations).toEqual([]);
     });
@@ -268,6 +273,10 @@ describe("browser-host-backend", () => {
           "open only allows http(s) URLs",
         ],
         [
+          { action: "open", url: " https://shop.example/" },
+          "open only allows http(s) URLs",
+        ],
+        [
           { action: "scroll", direction: "sideways" },
           "scroll requires a direction: up, down, left, right",
         ],
@@ -289,7 +298,7 @@ describe("browser-host-backend", () => {
         ],
         [
           { action: "wait", ref: "@e1", loadState: "load" },
-          "wait requires exactly one of ref, loadState, or urlPattern",
+          "wait requires exactly one of ms, ref, loadState, or urlPattern",
         ],
         [
           { action: "wait", ref: "e1" },
@@ -336,11 +345,11 @@ describe("browser-host-backend", () => {
         ],
         [
           { action: "fill", ref: "@e2", valueHandle: "cfh:a:aaaaa" },
-          "valueHandle takes a return referent (cfh:v:) on this run's browser: a browser host enters no value from the owner's space",
+          "valueHandle takes a return referent (cfh:v:) on this run's browser: a browser host takes no handle to the owner's space",
         ],
         [
           { action: "open", urlHandle: "cfh:a:aaaaa" },
-          "urlHandle takes a return referent (cfh:v:) on this run's browser: a browser host enters no value from the owner's space",
+          "urlHandle takes a return referent (cfh:v:) on this run's browser: a browser host takes no handle to the owner's space",
         ],
         ...[
           "http://127.0.0.1:8100/api/sessions",
@@ -430,25 +439,33 @@ describe("browser-host-backend", () => {
     it("refuses to open a returned string that is not a web address", async () => {
       const host = new FakeBrowserHost();
       const engine = createEngine(host);
-      const { table, token } = await mintReferentHandle(
-        createHarnessHandleTable(engine.getRunState().runId),
-        {
+      let table = createHarnessHandleTable(engine.getRunState().runId);
+      const tokens = [];
+      for (const value of ["javascript:alert(1)", " https://shop.example/"]) {
+        const minted = await mintReferentHandle(table, {
           kind: "return",
           source: "delegate_task:child",
           label: {},
           labelSource: "child",
-          value: "javascript:alert(1)",
-        },
-      );
+          value,
+        });
+        table = minted.table;
+        tokens.push(minted.token);
+      }
       await engine.recordHandleTable(table);
 
-      const output = await invoke(engine, { action: "open", urlHandle: token });
+      for (const token of tokens) {
+        const output = await invoke(engine, {
+          action: "open",
+          urlHandle: token,
+        });
 
-      expect(output).toMatchObject({
-        status: "error",
-        code: "invalid_input",
-        message: "open only allows http(s) URLs",
-      });
+        expect(output).toMatchObject({
+          status: "error",
+          code: "invalid_input",
+          message: "open only allows http(s) URLs",
+        });
+      }
       expect(host.operations).toEqual([]);
     });
 
@@ -585,7 +602,7 @@ describe("browser-host-backend", () => {
       await invoke(engine, {
         action: "fill",
         ref: "@e1",
-        valueHandle: quantity.token,
+        valueHandle: ` ${quantity.token} `,
       });
       const echoed = await invoke(engine, { action: "snapshot" });
       const later = await invoke(engine, { action: "snapshot" });
