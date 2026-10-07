@@ -176,6 +176,12 @@ export interface PullRequestView {
   /** The identities that manifest held back, against the reason. */
   withheld: ReadonlyMap<string, WithheldReason>;
 
+  /**
+   * The identities the packing held back because their unit runs whole
+   * and holds a test that manifest withholds.
+   */
+  heldWithUnit: ReadonlySet<string>;
+
   /** The identities the packing found no lane could hold. */
   unschedulable: ReadonlySet<string>;
 
@@ -210,6 +216,7 @@ export function unknownPullRequest(): PullRequestView {
     manifest: false,
     selected: new Set(),
     withheld: new Map(),
+    heldWithUnit: new Set(),
     unschedulable: new Set(),
     crowded: false,
     flakes: new Map(),
@@ -224,6 +231,7 @@ export type Selection =
   | "failed-there"
   | "skipped-there"
   | "withheld-flaky"
+  | "withheld-unit"
   | "unschedulable"
   | "crowded-out"
   | "not-selected"
@@ -428,6 +436,7 @@ export function selectionOf(
   // not say either way.
   const withheld = view.withheld.get(key);
   if (withheld === "flaky") return "withheld-flaky";
+  if (view.heldWithUnit.has(key)) return "withheld-unit";
   // With a manifest, the packing says whether the test was to have run:
   // an identity the packing reached, and one the store has never seen,
   // are both identities that run.
@@ -875,6 +884,10 @@ const SELECTION_PROSE: Record<ReportedSelection, string> = {
     "ones the change's edits reach, the ones the coverage gate forces, and " +
     "the ones the store has never seen, left no room in the lanes for " +
     "anything else.",
+  "withheld-unit": "This pull request did not run it: its unit runs as " +
+    "a whole, and the store holds back another test in that unit as too " +
+    "flaky to judge a change by, so a pull request runs the unit only " +
+    "where the change reaches it.",
   unschedulable: "This pull request did not run it: no lane can hold it, " +
     "because what a lane running nothing else would pay for it, its " +
     "suite's and unit's fixed charges included, is past the bound a lane " +

@@ -329,22 +329,26 @@ describe("report", () => {
     });
 
     it("separates each reason a run did not reach a test", () => {
-      const view = knows(["bakes", "slices"], {
+      const view = knows(["bakes", "slices", "proves"], {
         withheld: new Map([[key("kneads"), "flaky" as const]]),
+        heldWithUnit: new Set([key("proves")]),
         unschedulable: new Set([key("slices")]),
         flakes: new Map([
           [key("kneads"), undefined],
           [key("bakes"), undefined],
           [key("slices"), undefined],
+          [key("proves"), undefined],
         ]),
       });
       expect(selectionOf(view, key("kneads"))).toBe("withheld-flaky");
+      expect(selectionOf(view, key("proves"))).toBe("withheld-unit");
       expect(selectionOf(view, key("bakes"))).toBe("not-selected");
       expect(selectionOf(view, key("slices"))).toBe("unschedulable");
       const crowded = { ...view, crowded: true };
       expect(selectionOf(crowded, key("bakes"))).toBe("crowded-out");
       expect(selectionOf(crowded, key("slices"))).toBe("unschedulable");
       expect(selectionOf(crowded, key("kneads"))).toBe("withheld-flaky");
+      expect(selectionOf(crowded, key("proves"))).toBe("withheld-unit");
     });
 
     // Saying the selector passed over a test needs a manifest that holds
@@ -1285,6 +1289,22 @@ describe("report", () => {
       expect(body).toContain("nothing about this test decided that");
       expect(body).toContain("left no room in the lanes for anything else");
       expect(body).not.toContain("other tests, and this was not one");
+    });
+
+    it("says a test was held back with its unit", () => {
+      const body = renderReport(
+        buildReport(input({
+          previous: run([["proves", "pass"]]),
+          current: run([["proves", "fail"]]),
+          pullRequest: knows(["proves"], {
+            heldWithUnit: new Set([key("proves")]),
+            crowded: true,
+          }),
+        })),
+        context,
+      )!;
+      expect(body).toContain("holds back another test in that unit");
+      expect(body).not.toContain("no room");
     });
 
     it("says no lane can hold a test the packing found too costly", () => {

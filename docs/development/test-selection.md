@@ -1456,10 +1456,11 @@ itself.
   between changes. Withheld is the store holding the test back as too flaky to
   judge a change by. Otherwise the note says what the plan the lanes computed
   over that manifest says about leaving it out, which is never something the
-  author missed. Either no lane can hold the test, or the tests that had to run
-  left no room in the lanes for anything else, or the lanes filled what they
-  left with other tests. Only those three are said, because the plan records
-  nothing more specific about a test it did not place. A test the packing
+  author missed. Either its unit runs whole and holds a withheld test, or no
+  lane can hold the test, or the tests that had to run left no room in the lanes
+  for anything else, or the lanes filled what they left with other tests. Only
+  those four are said, because the plan records nothing more specific about a
+  test it did not place. A test the packing
   reached, or one the store has never seen, with no record either way is a run
   that recorded less than it ran — a test job that fails before it uploads
   leaves its share behind like that — which is said in those words rather than

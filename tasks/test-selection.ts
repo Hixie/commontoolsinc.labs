@@ -253,6 +253,9 @@ export interface PlanVerdict {
   /** How many times it would run, which a pass may have trimmed. */
   repeats?: number;
 
+  /** Set when its unit runs whole and holds a withheld test. */
+  heldWithUnit?: boolean;
+
   /** Set when no lane can hold it, whatever the budget. */
   unschedulable?: boolean;
 
@@ -338,6 +341,12 @@ export function explainLines(
   // packing, and only the packing knows it.
   if (verdict.selected) {
     lines.push("  this commit's manifest selects it");
+  } else if (verdict.heldWithUnit) {
+    lines.push(
+      "  held back with its unit: the unit runs whole and holds a test too " +
+        "flaky to judge a change by, so a pull request runs it only where " +
+        "the change reaches that unit",
+    );
   } else if (!verdict.unschedulable && held === undefined) {
     lines.push(
       verdict.crowded
@@ -446,6 +455,9 @@ export function verdictFor(
   };
   if (taken !== undefined) verdict.repeats = taken.repeats;
   if (placedOnlyMandatory(laid)) verdict.crowded = true;
+  if (laid.heldWithUnit.some((held) => testIdentityKey(held) === key)) {
+    verdict.heldWithUnit = true;
+  }
   const refused = laid.unschedulable.find((entry) =>
     testIdentityKey(entry.test) === key
   );

@@ -533,6 +533,7 @@ export function manifestView(
   const unschedulable = new Set(
     packed.unschedulable.map((entry) => testIdentityKey(entry.test)),
   );
+  const heldWithUnit = new Set(packed.heldWithUnit.map(testIdentityKey));
   const flakes = new Map<string, FlakeEvidence | undefined>();
   const catches = new Map<string, number>();
   const units = new Map<string, string>();
@@ -546,6 +547,7 @@ export function manifestView(
     manifest: true,
     selected,
     withheld,
+    heldWithUnit,
     unschedulable,
     crowded: placedOnlyMandatory(packed),
     flakes,

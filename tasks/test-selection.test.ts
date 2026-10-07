@@ -634,6 +634,20 @@ describe("verdictFor()", () => {
     );
   });
 
+  it("says a test was held back with its unit", async () => {
+    const test = { k: "unit", s: "memory", n: "space > writes" };
+    const roomy = await planned(manifestOf(entry("space > writes", 0.1)));
+    expect(verdictFor(roomy, test).heldWithUnit).toBeUndefined();
+    const verdict = verdictFor({
+      ...roomy,
+      laid: { ...roomy.laid, lanes: [], heldWithUnit: [test] },
+    }, test);
+    expect(verdict.heldWithUnit).toBe(true);
+    const text = explainLines(verdict.corpus, test, verdict).join("\n");
+    expect(text).toContain("held back with its unit");
+    expect(text).not.toContain("no room");
+  });
+
   it("reports a test no lane could hold as unschedulable, not selected", async () => {
     const verdict = verdictFor(
       await planned(manifestOf(entry("enormous", 100_000))),
