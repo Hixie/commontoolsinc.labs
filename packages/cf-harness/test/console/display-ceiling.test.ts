@@ -5,7 +5,10 @@ import {
   CFC_CONCEPT_KIND,
   cfcAtom,
 } from "@commonfabric/api/cfc";
-import { CFC_LABEL_READ_FAILED_ATOM } from "@commonfabric/runner/cfc";
+import {
+  CFC_LABEL_READ_FAILED_ATOM,
+  type IFCLabel,
+} from "@commonfabric/runner/cfc";
 
 import {
   ownerConsoleDisplay,
@@ -65,6 +68,12 @@ describe("console/display-ceiling", () => {
     it("returns `false` for a label that could not be read", () => {
       expect(fits({ confidentiality: [CFC_LABEL_READ_FAILED_ATOM] }))
         .toBe(false);
+    });
+
+    it("returns `false` for a label too malformed to fit at all", () => {
+      const malformed: IFCLabel = JSON.parse('{"confidentiality": 7}');
+
+      expect(fits(malformed)).toBe(false);
     });
   });
 

@@ -207,8 +207,8 @@ const elideLine = (line: ConsoleLiveLine): ConsoleLiveLine => {
       room -= part.text.length;
       continue;
     }
-    if (part.kind === "words") {
-      kept.push({ kind: "words", text: part.text.slice(0, room) });
+    if (part.kind === "words" || part.kind === "tool") {
+      kept.push({ kind: part.kind, text: part.text.slice(0, room) });
     }
     break;
   }
@@ -266,7 +266,12 @@ const handlePart = (
   const slug = detail?.handles.find((handle) => handle.token === token)?.slug;
   return slug === undefined
     ? { kind: "address", text: "a stored item", held: token, known: false }
-    : { kind: "address", text: slug, held: token, known: true };
+    : {
+      kind: "address",
+      text: cutFound(visibleFound(slug), NAME_LIMIT),
+      held: token,
+      known: true,
+    };
 };
 
 /**
@@ -456,13 +461,14 @@ const snapshotElements = (step: ConsoleStep): SnapshotElements => {
   for (const line of typeof text === "string" ? text.split("\n") : []) {
     const match = SNAPSHOT_ELEMENT.exec(line);
     if (match === null) continue;
-    let name: unknown;
+    // The pattern matches a JSON string literal, so a name that parses is a
+    // string.
+    let name: string;
     try {
       name = JSON.parse(match[2]);
     } catch {
       continue;
     }
-    if (typeof name !== "string") continue;
     const flat = oneLine(name);
     if (flat === "" || new RegExp(ANY_HANDLE_TOKEN_PATTERN).test(flat)) {
       continue;

@@ -844,17 +844,18 @@ A row CFC recorded anything about opens to say why, in words an owner can read.
 The explanation starts with the verdict. Then it gives a sentence for each
 reason CFC gave, such as "This work traces back to a request you made yourself.
 Agents act only on your own requests, never on instructions they read along the
-way." The first of those sentences says what the check read: the prompt slot the
-run's task was bound under, which records how the task was given and where it
-was entered. A task bound as the owner's direct command, as every task entered
-at the console is, traces back to a request the owner made "in the console" or
-"on the command line". A task given as background (`context`) or as a quotation
-(`quote`) is described as that, not as a request from the owner. A run that
-bound no prompt slot is described as having nothing that records who asked for
-its work. A helper agent's work traces back through the run that started it. The
-kind of effect the step has, and the reason codes themselves, are on hover, for
-an engineer who needs them. When part of a result was held back from the model,
-the row also opens to show what was held back.
+way." A reason about the run's task, like that one, opens with what the check
+read: the prompt slot the run's task was bound under, which records how the task
+was given and where it was entered. Any other reason, such as a tool the run may
+not use, has a sentence of its own. A task bound as the owner's direct command,
+as every task entered at the console is, traces back to a request the owner made
+"in the console" or "on the command line". A task given as background
+(`context`) or as a quotation (`quote`) is described as that, not as a request
+from the owner. A run that bound no prompt slot is described as having nothing
+that records who asked for its work. A helper agent's work traces back through
+the run that started it. The kind of effect the step has, and the reason codes
+themselves, are on hover, for an engineer who needs them. When part of a result
+was held back from the model, the row also opens to show what was held back.
 
 What a step did is the tool's name, followed by what the call was about: the
 numbered `run_pattern` attempt and the compiler's word on it, the slug

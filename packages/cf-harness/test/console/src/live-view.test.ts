@@ -1244,6 +1244,19 @@ describe("console/src/live-view", () => {
         "Click [“Buy now” from the page] button",
       );
       expect(at([older, newer], 1)).toBe("Click [“Old” from the page] button");
+      expect(at([older, newer], 2)).toBe(
+        "Click [“Buy now” from the page] button",
+      );
+      expect(at([snapshot(0, '- button "bad \\q escape" [@e3]')], 1))
+        .toBe("Click [ref an element of the page]");
+      expect(
+        at([
+          snapshot(0, '- button "Pay" [@e3]', {
+            url: "not an address",
+            title: "Cart",
+          }),
+        ], 1),
+      ).toBe("Click [“Pay” from the page] button");
       expect(at([snapshot(0, '- textbox "Name" [ref=e3]')], 1)).toBe(
         "Click [“Name” from the page] text field",
       );
@@ -2580,6 +2593,126 @@ describe("console/src/live-view", () => {
       );
       expect(text).toContain(
         "Blocked</span> Nothing records who asked for this work, so the check could not trace it back to a request from you.",
+      );
+    });
+
+    it("renders each kind of reference as what it stands for", async () => {
+      const step = (
+        toolCallId: string,
+        index: number,
+        input: Record<string, unknown>,
+        output?: Record<string, unknown>,
+      ): ConsoleStep => ({
+        index,
+        kind: "tool",
+        toolName: "browser",
+        toolCallId,
+        input,
+        ...(output === undefined ? {} : { output }),
+        handlesIntroduced: [],
+        handlesInScope: [],
+        status: "ok",
+        policyEvents: [],
+        withheld: { status: "recorded", locations: [] },
+      });
+      const view = new TestConsoleLive();
+      view.entries = consoleLiveEntries(log(
+        toolStarted("call-1", "browser"),
+        toolStarted("call-2", "browser"),
+        toolStarted("call-3", "research"),
+      ));
+      view.details = new Map([["turn-1", {
+        ...await runDetail(),
+        steps: [
+          step("call-1", 0, { action: "snapshot", interactive: true }, {
+            status: "ok",
+            output: '- textbox "Name" [@e3 at 0,0 10x10]',
+            page: { url: "https://shop.test/cart", title: "Cart" },
+          }),
+          step("call-2", 1, {
+            action: "fill",
+            ref: "@e3",
+            valueHandle: "cfh:v:k7m2q",
+          }),
+          {
+            ...step("call-3", 2, { task: "file it under cfh:a:k2345" }),
+            toolName: "research",
+          },
+        ],
+        handles: [{
+          token: "cfh:a:k2345",
+          slug: "delivery-addresses",
+          introducedAtStep: 0,
+          uses: [],
+          confidentiality: [],
+        }],
+        hidden: ["cfh:v:k7m2q"],
+      }]]);
+
+      const text = templateText(view.view());
+      expect(text).toContain(
+        "Fill <bdi class=live-reference quoted title=These words come from shop.test. The page gives this name to the element the agent chose. The agent referred to it as @e3.><span>Name</span></bdi> text field with <bdi class=live-reference vague sealed",
+      );
+      expect(text).toContain(
+        "This view does not show the value, because the rules on where it may go do not include this view.><span>a value hidden from this view</span></bdi>",
+      );
+      expect(text).toContain(
+        "file it under <bdi class=live-reference title=This is an item stored in your space. The agent referred to it as cfh:a:k2345.><span>delivery-addresses</span></bdi>",
+      );
+    });
+
+    it("renders why for a release CFC withheld, a commit it refused, and a task given in a way it does not know", async () => {
+      const step: (toolCallId: string, policy: unknown) => ConsoleStep = (
+        toolCallId,
+        policy,
+      ) =>
+        JSON.parse(JSON.stringify({
+          index: 0,
+          kind: "tool",
+          toolName: "browser",
+          toolCallId,
+          input: { action: "back" },
+          handlesIntroduced: [],
+          handlesInScope: [],
+          status: "ok",
+          policy,
+          policyEvents: [],
+          withheld: { status: "recorded", locations: [] },
+        }));
+      const view = new TestConsoleLive();
+      view.entries = consoleLiveEntries(log(
+        toolStarted("call-1", "browser"),
+        toolStarted("call-2", "browser"),
+        toolStarted("call-3", "browser"),
+      ));
+      view.details = new Map([["turn-1", {
+        ...await runDetail(),
+        steps: [
+          step("call-1", {
+            decision: "withheld",
+            reasonCodes: ["cfc_release_withheld"],
+          }),
+          step("call-2", {
+            decision: "denied",
+            reasonCodes: ["cfc_commit_refused"],
+          }),
+          step("call-3", {
+            decision: "denied",
+            reasonCodes: ["cfc_enforce_strict_requires_direct_command"],
+            promptSlot: { role: "dictated", surface: "phone" },
+          }),
+        ],
+      }]]);
+
+      const text = templateText(view.view());
+      expect(text).toContain(
+        "Part of the step's result was held back from the agent. It held information the agent may not read.</p>",
+      );
+      expect(text).toContain(
+        "The step's result was not saved. It held information that may not be stored where it was going.</p>",
+      );
+      expect(text).toContain(
+        "Blocked</span> The record of who asked for this work does not say it was you.",
       );
     });
 

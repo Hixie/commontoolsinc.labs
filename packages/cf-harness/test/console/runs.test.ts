@@ -1,7 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { join } from "@std/path";
-import { CFC_CONCEPT_KIND, cfcAtom } from "@commonfabric/api/cfc";
+import { CFC_CONCEPT_KIND, type CfcAtom, cfcAtom } from "@commonfabric/api/cfc";
 import type { IFCLabel } from "@commonfabric/runner/cfc";
 import type { FabricValue } from "@commonfabric/data-model";
 import { consoleRunLens, summarizeConsoleRun } from "../../console/runs.ts";
@@ -355,13 +355,39 @@ describe("console/runs", () => {
           theirs.table,
           referent({ street: "12 Main St" }, {}),
         );
+        const caveat = (source: CfcAtom) => ({
+          confidentiality: [
+            cfcAtom.caveat(
+              CFC_CONCEPT_KIND.PromptInjectionRiskUnscreened,
+              source,
+            ),
+          ],
+        });
+        const sourcedElsewhere = await mintReferentHandle(
+          structured.table,
+          referent("from a person", caveat(cfcAtom.user(owner))),
+        );
+        const opaquePage = await mintReferentHandle(
+          sourcedElsewhere.table,
+          referent(
+            "from an opaque page",
+            caveat(cfcAtom.resource("WebPage", "opaque origin")),
+          ),
+        );
+        const document = await mintReferentHandle(opaquePage.table, {
+          kind: "document",
+          source: "loom_search",
+          value: "a row",
+          label: {},
+          labelSource: "row",
+        });
         const runRoot = join(root, "r1");
         await Deno.mkdir(runRoot, { recursive: true });
         await Deno.writeTextFile(
           join(runRoot, "run-state.json"),
           JSON.stringify({
             ...runState("r1", "2026-01-01T00:00:01.000Z"),
-            handleTable: structured.table,
+            handleTable: document.table,
           }),
         );
         await Deno.writeTextFile(join(runRoot, "transcript.json"), "[]");
@@ -376,20 +402,29 @@ describe("console/runs", () => {
         expect(shown?.revealed).toEqual({
           [page.token]: "12 Main St",
           [mine.token]: "my note",
+          [sourcedElsewhere.token]: "from a person",
+          [opaquePage.token]: "from an opaque page",
         });
         expect(shown?.sites).toEqual({
           [page.token]: ["shop.test"],
           [mine.token]: [],
+          [sourcedElsewhere.token]: [],
+          [opaquePage.token]: [],
         });
         expect(shown?.hidden).toEqual([theirs.token, structured.token]);
-        expect(shown?.runState.handleTable?.referents).toEqual([]);
         expect(unowned?.revealed).toEqual({});
         expect(unowned?.hidden).toEqual([
           page.token,
           mine.token,
           theirs.token,
           structured.token,
+          sourcedElsewhere.token,
+          opaquePage.token,
         ]);
+        expect(
+          shown?.runState.handleTable?.referents?.map(({ token }) => token),
+        )
+          .toEqual([document.token]);
       });
     });
 

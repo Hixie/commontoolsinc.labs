@@ -81,7 +81,8 @@ export type ConsoleTurnResult = HarnessTaskOutcome & {
 
   /**
    * What each return referent `finalText` names stands for, by token, for
-   * showing to the owner beside the text. Absent when it names none.
+   * showing to the owner beside the text: each one whose label fits the
+   * console's display ceiling. Absent when it names none, or none that fits.
    */
   revealed?: Readonly<Record<string, string>>;
 

@@ -51,7 +51,6 @@
 
 import { readLoomAuthoringConfig } from "../src/loom-authoring.ts";
 import { parseArgs } from "@std/cli/parse-args";
-import { Identity } from "@commonfabric/identity";
 import { isDID } from "@commonfabric/identity/did";
 import {
   dirname,
@@ -223,6 +222,7 @@ import {
   ownerConsoleDisplay,
   publicConsoleDisplay,
 } from "./display-ceiling.ts";
+import { loadHarnessIdentity } from "../src/identity-key.ts";
 import {
   type ConsoleTurnCompletedEvent,
   type ConsoleTurnResult,
@@ -1749,9 +1749,9 @@ export class ConsoleServer {
    * shows only what names no one.
    */
   #display(): Promise<ConsoleDisplayFit> {
-    this.#ownerDisplay ??= Deno.readFile(
+    this.#ownerDisplay ??= loadHarnessIdentity(
       this.#config.fabricSession.identityKeyPath,
-    ).then(Identity.fromPkcs8).then(
+    ).then(
       (identity) => ownerConsoleDisplay(identity.did()),
       () => publicConsoleDisplay,
     );

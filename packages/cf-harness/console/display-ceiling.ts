@@ -3,42 +3,45 @@
  * fit the console's display ceiling before the value reaches a page.
  *
  * The ceiling is the default one a display has when no authored policy covers
- * it, the same one the shell gives its own display. Its audience is the
+ * it, built by the same `defaultDisplayCeiling` the shell builds its own
+ * display's from, so the two cannot drift apart. Its audience is the
  * console's owner, the identity the console's fabric session signs as, which
  * is the person viewing it only while the console is served to that one
  * person. The ceiling admits the atoms naming exactly the owner, and the whole
- * family of prompt caveats (SC-54, proposed §8.10.6, whose ruling on the
- * material-risk kinds is still open as 13-11 decision #33). A prompt caveat
- * says not to trust content as instructions to a model, and a display shows
- * the content to a person, so admitting the caveat does not discharge it. A
- * label naming anyone or anything else does not fit, and neither does a label
- * that could not be read. The fit is atom by atom, without the exchange rules
- * that would admit a space the owner reads, so it is never wider than the
- * shell's.
+ * family of prompt caveats, as the CFC specification owner ruled for the
+ * default display ceiling (SC-54 in `docs/specs/cfc-spec-changes.md`, whose
+ * edit to §8.10.6 is pending). A label naming anyone or anything else does not
+ * fit, and neither does a label that could not be read. The fit is the
+ * display fit's own, atom by atom, without the exchange rules that would
+ * admit a space the owner reads, so it is never wider than the shell's.
  */
 
-import { cfcAtom } from "@commonfabric/api/cfc";
 import type { DID } from "@commonfabric/identity";
 import {
   canRenderLabelUnderPolicy,
-  rootRenderPolicyFor,
+  type RenderPolicy,
 } from "@commonfabric/html/worker";
-import {
-  type IFCLabel,
-  PROMPT_CAVEAT_FAMILY_KINDS,
-} from "@commonfabric/runner/cfc";
+import type { CfcConfClause, IFCLabel } from "@commonfabric/runner/cfc";
+import { defaultDisplayCeiling } from "@commonfabric/runner/cfc/default-display-ceiling";
 
 /** Whether a value with a label may be shown on the console. */
 export type ConsoleDisplayFit = (label: IFCLabel) => boolean;
 
 /**
- * The fit of `label` under the ceiling `configured` describes. A label too
- * malformed to fit at all does not fit.
+ * The fit of `label` under a ceiling of `atoms`, and of caveats of the
+ * `caveatKinds` listed, as a display's root render policy fits it. A label
+ * too malformed to fit at all does not fit.
  */
-const fitsCeiling = (configured: object) => {
-  const policy = rootRenderPolicyFor(configured);
-  return (label: IFCLabel): boolean => {
-    if (policy === undefined) return false;
+const fitsCeiling = (ceiling: {
+  atoms: readonly CfcConfClause[];
+  caveatKinds: readonly string[];
+}): ConsoleDisplayFit => {
+  const policy: RenderPolicy = {
+    declassifyConfidentiality: [],
+    maxConfidentiality: ceiling.atoms,
+    caveatKindAllow: ceiling.caveatKinds,
+  };
+  return (label) => {
     try {
       return canRenderLabelUnderPolicy(
         label.confidentiality ?? [],
@@ -57,11 +60,11 @@ const fitsCeiling = (configured: object) => {
  * The fit of a console whose owner it does not know: only a label naming no
  * one, which any display may show.
  */
-export const publicConsoleDisplay: ConsoleDisplayFit = fitsCeiling({});
+export const publicConsoleDisplay: ConsoleDisplayFit = fitsCeiling({
+  atoms: [],
+  caveatKinds: [],
+});
 
 /** The fit of the console `owner` sees. */
 export const ownerConsoleDisplay = (owner: DID): ConsoleDisplayFit =>
-  fitsCeiling({
-    atoms: [cfcAtom.user(owner), cfcAtom.personalSpace(owner), owner],
-    caveatKinds: [...PROMPT_CAVEAT_FAMILY_KINDS],
-  });
+  fitsCeiling(defaultDisplayCeiling(owner));
