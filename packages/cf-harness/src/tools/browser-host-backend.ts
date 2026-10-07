@@ -138,15 +138,29 @@ const LOCAL_NAME_SUFFIXES = [
 ];
 
 /**
- * Whether `hostname`, a parsed URL's, names this device, its network, or an
- * address written as an IP literal. A name is judged by its spelling; the
- * host refuses what it resolves to.
+ * Whether `host`, with or without a port, names this device, its network, or
+ * an address written as an IP literal, or is no host at all. It is judged as a
+ * URL parser reads it, so an address in any form the parser accepts, such as
+ * `0x7f.1`, `2130706433`, or `%31%32%37.0.0.1`, is the address it denotes. A
+ * name is judged by its spelling; the host refuses what it resolves to.
  */
-const isLocalHost = (hostname: string): boolean => {
-  const name = hostname.toLowerCase().replace(/\.$/, "");
-  return name === "localhost" || !name.includes(".") ||
-    name.startsWith("[") || /^[\d.]+$/.test(name) ||
-    LOCAL_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix));
+const isLocalHost = (host: string): boolean => {
+  const name = URL.parse(`http://${host}/`)?.hostname.replace(/\.$/, "");
+  return name === undefined || !name.includes(".") || name.startsWith("[") ||
+    /^[\d.]+$/.test(name) ||
+    LOCAL_NAME_SUFFIXES.some((suffix) => `.${name}`.endsWith(suffix));
+};
+
+/**
+ * Whether `host`, the host and port a URL pattern names, may stand for this
+ * device, its network, or an IP address. A glob may only stand for the labels
+ * leading a name, as in `*.shop.example`, which is judged with one label in
+ * place of the glob; anywhere else, as in `127.0.0.*`, `*.*`, or a port of
+ * `*`, it may stand for a local address.
+ */
+const mayMatchLocalHost = (host: string): boolean => {
+  const name = host.replace(/^\*\./, "x.");
+  return /[*?[\]{}\\]/.test(name) || isLocalHost(name);
 };
 
 /**
@@ -214,17 +228,15 @@ const isPoint = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 /**
- * The host a URL pattern names, as `scheme://host/...` does, a glob for its
- * scheme included, or `undefined` for a pattern that names none. A bracketed
- * IPv6 literal is returned bracketed.
+ * The host and port a URL pattern names, as `scheme://host:port/...` does, a
+ * glob for its scheme included, or `undefined` for a pattern that names none.
+ * A pattern names a host when its first `/` begins a `//`, and everything from
+ * there to the next `/` is the authority, since a URL glob may treat `?` as a
+ * wildcard.
  */
 const patternHost = (pattern: string): string | undefined => {
-  const authority = /^[^/?#]*:\/\/([^/?#]*)/.exec(pattern)?.[1];
-  if (authority === undefined) {
-    return undefined;
-  }
-  const host = authority.slice(authority.lastIndexOf("@") + 1);
-  return host.startsWith("[") ? host : host.split(":")[0];
+  const authority = /^[^/]*\/\/([^/]*)/.exec(pattern)?.[1];
+  return authority?.slice(authority.lastIndexOf("@") + 1);
 };
 
 /**
@@ -368,7 +380,7 @@ const planHostOperation = (
         return { error: "wait urlPattern requires a non-file pattern" };
       }
       const named = patternHost(urlPattern);
-      return named !== undefined && isLocalHost(named)
+      return named !== undefined && mayMatchLocalHost(named)
         ? {
           error:
             "wait urlPattern names the open web only: not this device, its network, or an IP address",
