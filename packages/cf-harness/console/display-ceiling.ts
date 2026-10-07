@@ -19,7 +19,7 @@
 import type { DID } from "@commonfabric/identity";
 import {
   canRenderLabelUnderPolicy,
-  type RenderPolicy,
+  rootRenderPolicyFor,
 } from "@commonfabric/html/worker";
 import type { CfcConfClause, IFCLabel } from "@commonfabric/runner/cfc";
 import { defaultDisplayCeiling } from "@commonfabric/runner/cfc/default-display-ceiling";
@@ -36,20 +36,17 @@ const fitsCeiling = (ceiling: {
   atoms: readonly CfcConfClause[];
   caveatKinds: readonly string[];
 }): ConsoleDisplayFit => {
-  const policy: RenderPolicy = {
-    declassifyConfidentiality: [],
-    maxConfidentiality: ceiling.atoms,
-    caveatKindAllow: ceiling.caveatKinds,
-  };
+  const policy = rootRenderPolicyFor(ceiling);
   return (label) => {
     try {
-      return canRenderLabelUnderPolicy(
-        label.confidentiality ?? [],
-        label.integrity ?? [],
-        () => [],
-        policy,
-        {},
-      );
+      return policy !== undefined &&
+        canRenderLabelUnderPolicy(
+          label.confidentiality ?? [],
+          label.integrity ?? [],
+          () => [],
+          policy,
+          {},
+        );
     } catch {
       return false;
     }
