@@ -94,6 +94,7 @@ export const GOVERNED_SOURCE: readonly RegExp[] = [
   /^packages\/cf-harness\/src\/cfc-[^/]*\.ts$/,
   /^packages\/cf-harness\/src\/contracts\/cfc-[^/]*\.ts$/,
   /^packages\/cf-harness\/src\/sandbox\/runsc-cfc-result\.ts$/,
+  /^packages\/cf-harness\/console\/display-ceiling\.ts$/,
 ];
 
 /** Whether `path` is one the CFC rule governs. */

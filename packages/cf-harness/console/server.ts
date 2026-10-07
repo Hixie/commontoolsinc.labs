@@ -51,6 +51,7 @@
 
 import { readLoomAuthoringConfig } from "../src/loom-authoring.ts";
 import { parseArgs } from "@std/cli/parse-args";
+import { Identity } from "@commonfabric/identity";
 import { isDID } from "@commonfabric/identity/did";
 import {
   dirname,
@@ -217,6 +218,11 @@ import {
   parseAfterSequence,
   pingFrame,
 } from "./sse.ts";
+import {
+  type ConsoleDisplayFit,
+  ownerConsoleDisplay,
+  publicConsoleDisplay,
+} from "./display-ceiling.ts";
 import {
   type ConsoleTurnCompletedEvent,
   type ConsoleTurnResult,
@@ -1574,6 +1580,12 @@ export class ConsoleServer {
    */
   #heldFanOut: Promise<void> | undefined;
 
+  /**
+   * What the console may show its owner, once the identity its fabric session
+   * signs as has been read.
+   */
+  #ownerDisplay: Promise<ConsoleDisplayFit> | undefined;
+
   #beats = 0;
 
   /**
@@ -1727,7 +1739,23 @@ export class ConsoleServer {
       turnId,
       spaceName: this.#config.fabricSession.space,
       timing: turn?.turn,
+      display: await this.#display(),
     });
+  }
+
+  /**
+   * What the console may show its owner: the display ceiling of the identity
+   * its fabric session signs as. A console that cannot read that identity
+   * shows only what names no one.
+   */
+  #display(): Promise<ConsoleDisplayFit> {
+    this.#ownerDisplay ??= Deno.readFile(
+      this.#config.fabricSession.identityKeyPath,
+    ).then(Identity.fromPkcs8).then(
+      (identity) => ownerConsoleDisplay(identity.did()),
+      () => publicConsoleDisplay,
+    );
+    return this.#ownerDisplay;
   }
 
   #fanOut(envelope: HarnessChatEventEnvelope): void {
@@ -1974,7 +2002,7 @@ export class ConsoleServer {
     }
     const root = this.#config.artifactRoot;
     if (kind === undefined || kind === "") {
-      const detail = await readConsoleRun(root, runId);
+      const detail = await readConsoleRun(root, runId, await this.#display());
       return detail === undefined
         ? new Response("not found", { status: 404 })
         : Response.json(detail);
