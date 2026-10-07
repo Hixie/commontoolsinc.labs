@@ -399,6 +399,24 @@ Deno.test("the commit Gantt page contains only one commit selection", () => {
   assert(!empty.includes("/ci-gantt.svg?"));
 });
 
+Deno.test("the commit Gantt page stars a commit the green branch is at, and no commit it was never at", () => {
+  const held = "f".repeat(40);
+  const page = (sha: string) =>
+    ciCommitGanttPage(
+      new URL(`http://d/ci-gantt?repo=loom&sha=${sha}&run=701:1`),
+      (repo, asked) =>
+        repo === LOOM_REPO && asked === held
+          ? { branch: "main-green", current: true }
+          : undefined,
+    );
+  assertStringIncludes(
+    page(held),
+    `${LOOM_REPO} · <span class="green-star" role="img" aria-label="main-green is at this commit" title="main-green is at this commit">★</span><a class="commit"`,
+  );
+  assertStringIncludes(page(held), "span.green-star{color:var(--status-good)");
+  assert(!page("9".repeat(40)).includes(`<span class="green-star"`));
+});
+
 Deno.test("commit Gantt URL normalization preserves only renderer themes", () => {
   const selection = `repo=labs&sha=${"e".repeat(40)}&run=42:1`;
   for (const theme of ["dark", "light"]) {
