@@ -473,8 +473,7 @@ come up.
 - Export types explicitly using `export type { ... }`.
 - Prefer strong typing with interfaces or types instead of `any`.
 - Do not use a type assertion (`as T`, `as unknown as T`, or a detour through
-  `any`) to make types line up; change the APIs so that they line up. `as const`
-  is not an assertion. A test stand-in may be asserted where it is passed in, as
+  `any`) to make types line up; change the APIs so that they line up. A test stand-in may be asserted where it is passed in, as
   "Making a private member reachable from a test" describes. A value that
   arrives untyped at a serialization boundary is validated, as "Validating a
   value that arrived through a decode" describes, not asserted.
