@@ -30,6 +30,7 @@ import {
   sparkline,
 } from "../lib.ts";
 import {
+  CI_RUNS_MAX_AGE_DAYS,
   CI_WORKFLOW,
   DUR_GOOD,
   DUR_MAX_AGE_HOURS,
@@ -637,7 +638,11 @@ function redirectGanttImage(url: URL, pathname: string): Response {
 const ganttRoutes: Route[] = [
   {
     path: "/ci-gantt",
-    handler(_request, url) {
+    async handler(_request, url) {
+      // The page does not change once served, so the green branch is read
+      // before it is drawn rather than after.
+      await greenBranchOf(ciHistorySource(url.searchParams.get("repo")).repo)
+        ?.refresh(Date.now() - CI_RUNS_MAX_AGE_DAYS * 86_400_000);
       return new Response(ciCommitGanttPage(url), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
