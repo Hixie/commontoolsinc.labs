@@ -345,7 +345,7 @@ export function explainLines(
     lines.push(
       "  held back with its unit: the unit runs whole and holds a test too " +
         "flaky to judge a change by, so a pull request runs it only where " +
-        "the change reaches that unit",
+        "that unit is one that must run",
     );
   } else if (!verdict.unschedulable && held === undefined) {
     lines.push(

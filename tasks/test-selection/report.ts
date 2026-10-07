@@ -887,7 +887,7 @@ const SELECTION_PROSE: Record<ReportedSelection, string> = {
   "withheld-unit": "This pull request did not run it: its unit runs as " +
     "a whole, and the store holds back another test in that unit as too " +
     "flaky to judge a change by, so a pull request runs the unit only " +
-    "where the change reaches it.",
+    "where it is one that must run.",
   unschedulable: "This pull request did not run it: no lane can hold it, " +
     "because what a lane running nothing else would pay for it, its " +
     "suite's and unit's fixed charges included, is past the bound a lane " +
