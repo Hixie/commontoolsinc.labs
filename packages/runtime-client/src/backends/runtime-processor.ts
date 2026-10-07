@@ -262,7 +262,6 @@ import {
   type PresenceLeaveRequest,
   type PresencePublishRequest,
   type PresenceWireEvent,
-  type RecreateSpaceRootPatternRequest,
   type RegisterSpaceHostDetailedRequest,
   type RegisterSpaceHostRequest,
   RequestType,
@@ -2925,16 +2924,6 @@ export class RuntimeProcessor {
     };
   }
 
-  async handleRecreateSpaceRootPattern(
-    request: RecreateSpaceRootPatternRequest,
-  ): Promise<PieceResponse> {
-    const cc = this.#getSpaceCtx(request.space);
-    const piece = await cc.recreateDefaultPattern();
-    return {
-      piece: createPieceRef(piece.getCell()),
-    };
-  }
-
   /**
    * Handles a `PieceGetRequest`. The answer is an address — a cell carrying
    * the schema it is read under — so what this loads is what deciding the
@@ -3741,10 +3730,6 @@ export class RuntimeProcessor {
         );
       case RequestType.GetSpaceRootPattern:
         return await this.handleGetSpaceRootPattern(
-          request,
-        );
-      case RequestType.RecreateSpaceRootPattern:
-        return await this.handleRecreateSpaceRootPattern(
           request,
         );
       case RequestType.PieceGet:
