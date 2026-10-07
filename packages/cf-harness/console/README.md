@@ -258,8 +258,8 @@ A session stays on the runtime it started on. After a restart under another
 runtime, a follow-up turn on a session started before it is refused as
 `provider-mismatch`, naming the runtime the session started on: restart the
 console with that runtime named, or start a new session. The
-[cf-harness README](../README.md#sandbox-runtimes) sets out how runs and sessions
-are bound.
+[cf-harness README](../README.md#sandbox-runtimes) sets out how runs and
+sessions are bound.
 
 With no runtime named on macOS, the console and `console:launch` refuse to start
 unless the store holds a `config.json` and each piece no setting replaces: an
