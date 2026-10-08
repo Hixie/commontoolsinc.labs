@@ -1785,5 +1785,6 @@ of the same variant claim. A file that looks like a test and is not one,
 such as a project a test drives as a fixture, is listed in
 `NOT_A_TEST_SURFACE` in `tasks/check-test-topology.ts` with the reason, and
 an entry the tree no longer holds fails. A unit the run's records never
-reached is reported rather than failed. Every run, on a pull request or on
-the default branch, runs the check in `Status` against that run's records.
+reached is reported rather than failed. Every run for a pull request or a
+push runs the check in `Status` against that run's records. A run another
+workflow calls has no `Status` job and runs no check.
