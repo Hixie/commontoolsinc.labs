@@ -89,6 +89,7 @@ import {
   ciJobHistoryResponse,
 } from "../ci-job-history.ts";
 import { RunLists } from "../github-runs.ts";
+import { dashboardCacheFile } from "../history-files.ts";
 import {
   concDot,
   dashboardGitHubCredential,
@@ -158,15 +159,19 @@ const BENCHMARK_FETCH_CONCURRENCY = 8;
 
 interface BenchmarkGitHub extends GitHubJson {
   download(path: string, credential: GitHubCredential): Promise<GitHubDownload>;
+  /** The file in the cache directory that keeps the runs this client read. */
+  runLists: string;
 }
 
 const ordinaryBenchmarkGitHub: BenchmarkGitHub = {
   json: github,
   download: githubDownload,
+  runLists: "fabric-wall-run-lists-benchmarks.json",
 };
 const performanceBenchmarkGitHub: BenchmarkGitHub = {
   json: performanceGithub,
   download: performanceGithubDownload,
+  runLists: "fabric-wall-run-lists-benchmarks-drill-down.json",
 };
 
 // deno bench reports these seven timings per benchmark (all nanoseconds).
@@ -424,7 +429,7 @@ async function pageBenchmarkRuns(
   const read = ++benchmarkReadsStarted;
   let lists = benchmarkRuns.get(github);
   if (!lists) {
-    lists = new RunLists();
+    lists = new RunLists(dashboardCacheFile(github.runLists));
     benchmarkRuns.set(github, lists);
   }
   const runs = await lists.runs(
@@ -1405,12 +1410,18 @@ function benchmarkLastRequestError(): string | null {
 }
 
 /**
- * Makes the tiles hold no runs, so that the next list paged is read afresh
- * rather than joined to the runs an earlier test listed.
+ * Makes the tiles hold no runs, in memory or in the cache directory, so that
+ * the next list paged is read afresh rather than joined to the runs an earlier
+ * test listed.
  */
-export function forgetBenchmarkRunsForTest(): void {
+export async function forgetBenchmarkRunsForTest(): Promise<void> {
   benchmarkRuns = new WeakMap();
   latestBenchmarkRuns = [];
+  for (const github of [ordinaryBenchmarkGitHub, performanceBenchmarkGitHub]) {
+    await Deno.remove(dashboardCacheFile(github.runLists)).catch((error) => {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    });
+  }
 }
 
 function benchmarkServerContext(): Ctx {
