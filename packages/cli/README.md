@@ -1264,9 +1264,22 @@ home directory. The Fabric lane uses the `context` prompt role, so the default
 
 A run's sandbox, and a local job's, is the one `cf-harness` selects from the
 environment: `CF_HARNESS_SANDBOX_RUNTIME` names `docker` or `runsc`, and with
-none named a Mac runs on its native runtime and every other platform on Docker.
-The runner derives that selection as it starts, before either lane serves, and
-exits with the harness's refusal where the harness would refuse its jobs.
+none named a Mac with Apple silicon and Linux run on their native runtime and
+every other platform on Docker. The native runtime needs its store set up (the
+cfc-vm store on a Mac, `~/.local/share/runsc-cfc` on Linux), though a named
+`runsc` binary, rootfs or policy replaces that piece of it. On Linux its default
+network needs `pasta` (passt) and `setpriv` (util-linux) on `PATH`, and
+`unshare` for a root runner, and a refusal names the one missing; a named `none`
+or `host` network needs none of the three. A runner that is not root runs the
+store's `runsc` rootless, and pasta in a user namespace even with a `runsc`
+named by `CF_HARNESS_RUNSC_BINARY`, which runs as it is, so it needs a host that
+allows unprivileged user namespaces; where `user.max_user_namespaces` is 0,
+`kernel.unprivileged_userns_clone` is 0 or
+`kernel.apparmor_restrict_unprivileged_userns` is 1, the refusal names the
+`sudo sysctl -w` that allows them, or running as root. A Mac that is not Apple
+silicon has no native runtime. The runner derives that selection as it starts,
+before either lane serves, and exits with the harness's refusal where the
+harness would refuse its jobs.
 
 What the Fabric lane does, in order:
 
