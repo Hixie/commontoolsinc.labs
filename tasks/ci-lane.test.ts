@@ -392,6 +392,38 @@ describe("turning a lane's selections into batches", () => {
     }]);
   });
 
+  it("keeps the describes around a chosen test off the skip list", () => {
+    // A describe that failed as a whole is recorded under its title. The
+    // preload ignores the outermost describe by that title, which would
+    // ignore every test inside it, the chosen ones included.
+    const manifest = manifestOf([
+      { test: { k: "unit", s: "bakery", n: "glaze" }, cost: 1 },
+      { test: { k: "unit", s: "bakery", n: "glaze > sets" }, cost: 2 },
+      { test: { k: "unit", s: "bakery", n: "glaze > browns" }, cost: 4 },
+      { test: { k: "unit", s: "bakery", n: "glazed" }, cost: 8 },
+      { test: { k: "unit", s: "bakery", n: "icing" }, cost: 16 },
+      { test: { k: "unit", s: "bakery", n: "icing > sets" }, cost: 32 },
+      { test: { k: "unit", s: "bakery", n: "icing > browns" }, cost: 64 },
+    ]);
+    const unitFor = (...chosen: string[]) =>
+      batchesOf(
+        [bakery],
+        pricedFor([bakery], manifest),
+        chosen.map((n) => ({
+          entry: manifest.entries.find((entry) => entry.test.n === n)!,
+          reason: "changed" as const,
+          repeats: 1,
+        })),
+      )[0]!.units[0]!;
+    // A name sharing only its first characters encloses nothing, and a
+    // chosen describe runs its hooks without the tests inside it.
+    expect(unitFor("glaze > sets", "icing")).toEqual({
+      unit: "packages/bakery/glaze.test.ts",
+      skip: ["glaze > browns", "glazed", "icing > sets", "icing > browns"],
+      cost: 2 + 16,
+    });
+  });
+
   it("skips nothing inside a unit its suite declares whole", () => {
     // The runner of such a unit reads no skip list. The batch therefore carries
     // none, and the lane's report of what it ran lists every test in the unit.
@@ -3016,6 +3048,11 @@ describe("what a lane records about itself", () => {
         "bakes",
         "frosts",
       ]);
+      // What the lane skipped comes back apart, for accounting alone.
+      expect(result.passedOver.map((kept) => kept.test.n)).toEqual([
+        "glazes",
+        "sugars",
+      ]);
       expect(result.silent).toEqual([]);
     } finally {
       await Deno.remove(workDir, { recursive: true });
@@ -3335,6 +3372,29 @@ describe("reading a batch's records against what it was asked to run", () => {
     expect(found.unaccounted).toEqual([
       testIdentityKey({ k: "unit", s: "bakery", n: "glaze > sets" }),
     ]);
+  });
+
+  it("accounts for a describe by a record of a test inside it", () => {
+    // Ingestion drops the case a describe reports for itself wherever a
+    // test inside it reports, skipped or not, so a describe that passed
+    // leaves no record under its own title.
+    const key = (n: string) => testIdentityKey({ k: "unit", s: "bakery", n });
+    const found = accountFor(
+      batch(),
+      [
+        ...asked("glaze"),
+        ...asked("glaze > icing"),
+        ...asked("glazed"),
+        ...asked("glaze > icing > sets > firmly"),
+      ],
+      [record("glaze > icing > sets", "pass")],
+      new Set(),
+    );
+    // A name sharing only its first characters encloses nothing, and a
+    // test inside the one recorded is not accounted for by it.
+    expect(found.unaccounted).toEqual(
+      [key("glaze > icing > sets > firmly"), key("glazed")].sort(),
+    );
   });
 
   it("reads only the selections its own suite was given", () => {

@@ -1578,6 +1578,20 @@ An invocation unit is usually one test file. A lane that wants part of
 one registers the rest of the file's tests as ignored, and ships no
 record of them.
 
+A `describe()` that fails as a whole, for example in its `beforeAll`, is
+recorded under its own title. The outermost `describe()` of a file
+registers a single `Deno.test` under its title, so ignoring that title
+ignores every test inside it. Where a file declares a hook outside every
+`describe()`, that outermost one is the `global` suite the runner
+invents. A lane therefore never lists the title of a `describe()`
+holding a test the lane runs. A `describe()` a lane chose runs its hooks
+with the tests inside it ignored. Ingestion drops the case a
+`describe()` reports for itself wherever a test inside it reports,
+ignored or not, so a record of any test inside a `describe()` accounts
+for it, including one the lane's own skip list named and does not ship.
+A `describe()` whose `beforeAll` fails reports no test inside it, so its
+own failing case is the record that stands.
+
 Some units hold more than one test and cannot be split. These are a
 workspace member whose test task takes no file list, a member's browser
 half, the reload suite's directory, and a section of the FUSE

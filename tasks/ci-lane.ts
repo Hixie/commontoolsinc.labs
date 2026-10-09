@@ -39,6 +39,7 @@ import { exists } from "@std/fs";
 import * as path from "@std/path";
 import {
   FragmentWriter,
+  NAME_SEPARATOR,
   recordsDir,
   testIdentityKey,
   type TestRecord,
@@ -424,10 +425,21 @@ export function unitsForRun(batch: Batch, run: number): UnitRequest[] {
 }
 
 /**
+ * The names of every `describe` enclosing the test a name identifies,
+ * outermost first: `"a > b > c"` is inside `"a"` and `"a > b"`.
+ */
+function enclosingNames(name: string): string[] {
+  const chain = name.split(NAME_SEPARATOR);
+  return chain.slice(1).map((_, depth) =>
+    chain.slice(0, depth + 1).join(NAME_SEPARATOR)
+  );
+}
+
+/**
  * Turns a lane's selections into batches. A unit runs once carrying the
- * skip list of everything inside it that was not selected, so choosing
- * one test out of a file leaves its siblings registered as ignored rather
- * than missing.
+ * skip list of everything inside it that was not selected and encloses
+ * nothing that was, so choosing one test out of a file leaves its
+ * siblings registered as ignored rather than missing.
  *
  * A unit its suite declares whole carries no skip list, because its runner runs
  * every identity in it and reads no list.
@@ -473,9 +485,17 @@ export function batchesOf(
     // A unit declared whole runs every identity in it, chosen or not.
     const whole = wholeOf.get(suite)!.has(unit);
     const runs = whole ? all : all.filter((entry) => names.has(entry.test.n));
+    // A `describe` that fails as a whole is recorded under its own title,
+    // and the outermost `describe` registers one test under its title, so
+    // skipping that title skips every leaf inside it. A title enclosing a
+    // chosen name therefore stays off the list.
+    const around = new Set([...names].flatMap(enclosingNames));
     const request: UnitRequest = {
       unit,
-      skip: whole ? [] : all.filter((entry) => !names.has(entry.test.n))
+      skip: whole ? [] : all
+        .filter((entry) =>
+          !names.has(entry.test.n) && !around.has(entry.test.n)
+        )
         .map((entry) => entry.test.n),
       cost: runs.reduce((total, entry) => total + entry.cost, 0),
     };
@@ -814,8 +834,15 @@ export async function runBatch(
   seconds: number;
   unexplained: number;
   silent: string[];
+  /**
+   * What the tests this batch's own skip lists named recorded. None of it
+   * ships, but a skipped test reported inside a `describe` shows that
+   * `describe` ran as far as its tests.
+   */
+  passedOver: TestRecord[];
 }> {
   const records: TestRecord[] = [];
+  const passedOver: TestRecord[] = [];
   const conflicts: TestRecord[] = [];
   let ok = true;
   let seconds = 0;
@@ -916,7 +943,10 @@ export async function runBatch(
           if (
             record.outcome === "skip" &&
             skipped.has(`${location.unit}\t${record.test.n}`)
-          ) continue;
+          ) {
+            passedOver.push(record);
+            continue;
+          }
           ran += record.durationMs / 1000;
         }
         records.push(record);
@@ -996,6 +1026,7 @@ export async function runBatch(
     seconds,
     unexplained,
     silent: [...silent].sort(),
+    passedOver,
   };
 }
 
@@ -1026,11 +1057,11 @@ export interface Accounting {
 /**
  * Reads one batch's records against what it was asked to run.
  *
- * An identity is accounted for by a record naming it. A stand-in is
- * accounted for by its unit recording anything at all: a stand-in is what
- * the packer places for a unit no manifest has seen, and no record will
- * ever carry its name, because a real record is named for a test rather
- * than for a file.
+ * An identity is accounted for by a record naming it or naming a test
+ * inside it. A stand-in is accounted for by its unit recording anything
+ * at all: a stand-in is what the packer places for a unit no manifest
+ * has seen, and no record will ever carry its name, because a real record
+ * is named for a test rather than for a file.
  *
  * An identity that went unaccounted for while its unit recorded is
  * ordinary churn — a manifest is hours old by construction, and a test
@@ -1058,6 +1089,12 @@ export function accountFor(
     if (location?.level === "unit") heardUnits.add(location.unit);
     const key = testIdentityKey(record.test);
     heard.add(key);
+    // Ingestion drops the case a `describe` reports for itself wherever a
+    // leaf inside it reports, so a leaf's record, skipped or not, is what
+    // accounts for every `describe` enclosing it.
+    for (const outer of enclosingNames(record.test.n)) {
+      heard.add(testIdentityKey({ ...record.test, n: outer }));
+    }
     if (record.outcome !== "fail") continue;
     if (location?.level === "unit") failedUnits.add(location.unit);
     (nonGating.has(key) ? excused : gating).push(key);
@@ -1854,7 +1891,7 @@ export async function runLane(
       const accounting = accountFor(
         batch,
         mine.selections,
-        result.records,
+        [...result.records, ...result.passedOver],
         nonGating,
       );
       // An invocation is excused only when it accounted for every
