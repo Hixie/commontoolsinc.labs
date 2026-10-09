@@ -444,7 +444,8 @@ export class LocalJobLane {
               }
               // The harness reports a turn's tool results once every call of
               // the turn has returned, so a result hands the loop's model the
-              // turn: the loop's step stays, marked returned.
+              // turn: the loop's step stays, marked returned, and a child's
+              // return is its latest activity.
               if (message.role !== "tool") return;
               const step = loop === undefined
                 ? parentStep
@@ -452,7 +453,10 @@ export class LocalJobLane {
               if (step !== undefined) {
                 const waiting = { ...step, returned: true };
                 if (loop === undefined) parentStep = waiting;
-                else childSteps.set(loop, waiting);
+                else {
+                  childSteps.delete(loop);
+                  childSteps.set(loop, waiting);
+                }
               }
               reportActive();
             },

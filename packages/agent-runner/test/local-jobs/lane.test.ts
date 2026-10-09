@@ -659,6 +659,34 @@ describe("local-jobs/lane", () => {
       await reached(store, id, "failed");
     });
 
+    it("reports a child's return as its latest activity when a sibling acted after its call", async () => {
+      const { store, lane, nextRun, enqueue } = laneWith();
+      lane.start();
+      const id = enqueue("sibling returns");
+      const run = await nextRun(0);
+      const events = delegatedBrowse();
+      const sibling = {
+        ...browserChild,
+        parentToolCallId: "delegate-2",
+        childRunId: "job-browse.subagent.2",
+      };
+      await run.options.onEvent?.(events[0]);
+      await run.options.onEvent?.({ ...events[1], subagent: sibling });
+      await run.options.onEvent?.(events[1]);
+      expect(store.get(id)!.step).toMatchObject({
+        child: { childRunId: browserChild.childRunId },
+      });
+      await run.options.onEvent?.({ ...events[2], subagent: sibling });
+      expect(store.get(id)!.step).toMatchObject({
+        tool: "browser",
+        action: "open",
+        returned: true,
+        child: { childRunId: sibling.childRunId },
+      });
+      run.settle({ outcome: "failed", errorCode: "LIMIT_REACHED" });
+      await reached(store, id, "failed");
+    });
+
     it("keeps a pending sibling's step when the most recently active child returns", async () => {
       const { store, lane, nextRun, enqueue } = laneWith();
       lane.start();
