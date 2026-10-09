@@ -85,8 +85,8 @@ export class RunListFile {
   /**
    * Puts the heads `heads` returns in place of the heads of the same lists the
    * file holds, except where the file's head was read from the top of its list
-   * more recently, and replaces the file with the result, less the heads last
-   * used before `since`. `heads` is called once the file is locked, and what it
+   * more recently, or at the same moment and holds more runs, and replaces the
+   * file with the result, less the heads last used before `since`. `heads` is called once the file is locked, and what it
    * returns is serialized before anything else runs.
    */
   async save(heads: () => SavedHead[], since: number): Promise<void> {
@@ -101,7 +101,10 @@ export class RunListFile {
         if (head.runs.length === 0) continue;
         const key = headKey(head.repo, head.workflow);
         const held = kept.get(key);
-        if (held === undefined || head.readAt >= held.readAt) {
+        if (
+          held === undefined || head.readAt > held.readAt ||
+          head.readAt === held.readAt && head.runs.length >= held.runs.length
+        ) {
           kept.set(key, head);
         }
       }

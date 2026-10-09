@@ -221,6 +221,8 @@ let snapshot: BenchmarkSeries[] = [];
 // performance views' rate budget. Each keeps its own, so that neither waits
 // behind the other's reading.
 let benchmarkRuns = new WeakMap<BenchmarkGitHub, RunLists>();
+// Whether those runs are kept in the cache directory as well as in memory.
+let benchmarkRunsSaved = true;
 // The last benchmarks.yml run list a collection paged. The drill-down reads it
 // to name the run its rerun hand-off points at. Only a fetch that worked
 // replaces it, so the hand-off keeps naming the failed run while a later fetch
@@ -429,7 +431,9 @@ async function pageBenchmarkRuns(
   const read = ++benchmarkReadsStarted;
   let lists = benchmarkRuns.get(github);
   if (!lists) {
-    lists = new RunLists(dashboardCacheFile(github.runLists));
+    lists = new RunLists(
+      benchmarkRunsSaved ? dashboardCacheFile(github.runLists) : undefined,
+    );
     benchmarkRuns.set(github, lists);
   }
   const runs = await lists.runs(
@@ -1410,18 +1414,14 @@ function benchmarkLastRequestError(): string | null {
 }
 
 /**
- * Makes the tiles hold no runs, in memory or in the cache directory, so that
- * the next list paged is read afresh rather than joined to the runs an earlier
- * test listed.
+ * Makes the tiles hold no runs, and keep the runs they read from then on in
+ * memory alone, so that the next list paged is read afresh rather than joined
+ * to the runs an earlier test listed, whether in memory or in a file.
  */
-export async function forgetBenchmarkRunsForTest(): Promise<void> {
+export function forgetBenchmarkRunsForTest(): void {
   benchmarkRuns = new WeakMap();
+  benchmarkRunsSaved = false;
   latestBenchmarkRuns = [];
-  for (const github of [ordinaryBenchmarkGitHub, performanceBenchmarkGitHub]) {
-    await Deno.remove(dashboardCacheFile(github.runLists)).catch((error) => {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
-    });
-  }
 }
 
 function benchmarkServerContext(): Ctx {

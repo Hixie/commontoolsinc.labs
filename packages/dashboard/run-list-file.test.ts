@@ -273,6 +273,27 @@ describe("RunListFile", () => {
         expect(await load()).toEqual(head(runs(40, 20), { readAt: NOW }));
       });
 
+      it("keeps of two heads of a list whose tops were read at the same moment the one holding more runs", async () => {
+        await new RunListFile(path).save(
+          () => [head(runs(30, 1), { readAt: NOW, readers: DEEP })],
+          0,
+        );
+
+        await new RunListFile(path).save(
+          () => [head(runs(30, 20), { readAt: NOW })],
+          0,
+        );
+
+        expect(ids((await loadHead()).runs)).toEqual(ids(runs(30, 1)));
+
+        await new RunListFile(path).save(
+          () => [head(runs(31, 1), { readAt: NOW, readers: DEEP })],
+          0,
+        );
+
+        expect(ids((await loadHead()).runs)).toEqual(ids(runs(31, 1)));
+      });
+
       it("keeps the file's head of a list when its top was read more recently", async () => {
         await new RunListFile(path).save(
           () => [head(runs(40, 20), { readAt: NOW })],
