@@ -1425,6 +1425,43 @@ describe("publish() over a day that has been compacted", () => {
     expect(state.pendingMain).toEqual([]);
   });
 
+  it("settles how every day is read before folding any of it", async () => {
+    // A rollup the compactor writes while a long run is folding is left
+    // for a later run, rather than taken for a day part way through.
+    const EARLIER = "2026/08/19";
+    const { store } = fakeStore({
+      [CI(EARLIER, "1")]: object("c1", "fail", "2026-08-19T01:00:00.000Z"),
+      [ROLLUP]: object("c2", "pass", "2026-08-20T01:00:00.000Z"),
+    }, { [DAY]: [ROLLUP] });
+    const happened: string[] = [];
+    const watched: StoreAccess = {
+      ...store,
+      rollupShards: (day) => {
+        happened.push(`asked ${day}`);
+        return store.rollupShards(day);
+      },
+      read: (name) => {
+        happened.push(`read ${name}`);
+        return store.read(name);
+      },
+    };
+    expect(
+      await publish(
+        ["--bootstrap", "--days", "2"],
+        watched,
+        NOW,
+        suites,
+        noPrevious,
+      ),
+    ).toBe(0);
+    expect(happened).toEqual([
+      `asked ${EARLIER}`,
+      `asked ${DAY}`,
+      `read ${CI(EARLIER, "1")}`,
+      `read ${ROLLUP}`,
+    ]);
+  });
+
   it("still reads the local submissions of a settled day", async () => {
     // Rollups cover the continuous-integration area alone. A receipt
     // naming the day by itself would say the day is accounted for, and

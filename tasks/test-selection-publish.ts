@@ -775,10 +775,16 @@ export async function publish(
   // look a day or two either side of it, and back at what the default
   // branch last said, so a day folded after a later one would be judged
   // against what happened after it.
-  let rollupDays = 0;
-  let fromRollups = 0;
+  //
+  // How each day is read is settled for the whole window before any of it
+  // is folded, so a rollup the compactor writes while this run is folding
+  // is left for a later run rather than taken part way through.
+  const choices: Array<{
+    date: string;
+    choice: InputChoice;
+    shards?: readonly string[];
+  }> = [];
   for (const date of partitions) {
-    const locals = local.filter((name) => partitionOf(name) === date);
     const settled = fold.settled(CI_SOURCE, date);
     const foldedRaw = fold.hasRaw(CI_SOURCE, date);
     const shards = settled || foldedRaw
@@ -789,12 +795,18 @@ export async function publish(
       foldedRaw,
       rollup: shards !== undefined,
     });
-    if (choice === "rollup") {
+    choices.push({ date, choice, ...(shards === undefined ? {} : { shards }) });
+  }
+  let rollupDays = 0;
+  let fromRollups = 0;
+  for (const { date, choice, shards } of choices) {
+    const locals = local.filter((name) => partitionOf(name) === date);
+    if (choice === "rollup" && shards !== undefined) {
       rollupDays++;
       try {
         // The day's local submissions go into the same batch, which the
         // fold replays in time order.
-        await fold.addUnordered(readRollup(shards!, locals));
+        await fold.addUnordered(readRollup(shards, locals));
         fold.markSettled(CI_SOURCE, date);
         fromRollups++;
         continue;
