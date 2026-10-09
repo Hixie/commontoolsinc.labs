@@ -774,19 +774,16 @@ same place.
 Reading a day the long way costs more than the one run it happens on.
 Every object of that day goes into the aggregate's list of folded
 objects, where the rollup path would have written one receipt, and that
-list is carried in every state object written from then on. The day is
-also folded after the rollup days that follow it, because every rollup
-day is read before the raw pass begins. The rules that decide whether a
-failure is a catch look a day or two either side of it, and the fold has
-by then aged its cross-batch context past the day being folded, so that
-evidence is not in view. The day's local submissions are folded with it,
-in the raw pass, for the same reason. The day's own records are all there
-and none of them is counted twice; what the day loses is some of the
-evidence that would have classified them.
+list is carried in every state object written from then on.
 
-A day read from its rollup is folded together with that day's local
-submissions, in one batch replayed in time order, so a workstation's
-failure is judged against what the default branch said that day.
+The window is folded one day at a time, oldest first, whichever way each
+day is read. The rules that decide whether a failure is a catch look a
+day or two either side of it, and back at what the default branch last
+said, so a day folded after a later one would be judged against what
+happened after it. A day read from its rollup is folded in one batch
+with that day's local submissions, which the fold replays in time order.
+A day read the long way is folded in chunks of whole workflow runs, its
+local submissions among them.
 
 What the fallback rests on is that the shards that did read reached the
 batch and nothing else. Replaying the spooled observations is a read of

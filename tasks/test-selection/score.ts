@@ -123,8 +123,8 @@ export interface IdentityState {
   /**
    * Failures on `main` that no later `main` run has judged yet. A
    * failure that the next `main` run passes was fixed by the change
-   * between them, which makes it a catch; one that is still failing is
-   * the same breakage continuing, and waits.
+   * between them, which makes it a catch unless it arrived in a crowd;
+   * one that is still failing is the same breakage continuing, and waits.
    */
   pendingMain: Array<PendingMainFailure>;
 }
@@ -220,7 +220,9 @@ const LONGEST_WINDOW_DAYS = Math.max(CHURN_WINDOW_DAYS, FLAKE_WINDOW_DAYS);
  * else is waiting beside them.
  * Nothing separates a failure a change fixed from one that healed
  * itself, so a failure that healed itself in one order is credited as a
- * catch as well.
+ * catch as well. A breakage that arrived in a crowd is no catch however
+ * it ends, since whichever of the crowd a change runs would have found
+ * it.
  */
 function resolvePendingMain(
   state: IdentityState,

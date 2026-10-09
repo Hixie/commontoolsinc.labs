@@ -303,35 +303,6 @@ async function mapConcurrent<T, R>(
 }
 
 /**
- * Every submission object of the continuous-integration days given,
- * beside the local ones already listed. A continuous-integration
- * object's day is a path segment, so its day is a prefix and one listing
- * per day is exact.
- *
- * The two areas are asked for different days because the rule answers
- * differently for them. A continuous-integration day whose rollup is
- * folded owes nothing more; no local day is ever in that position, since
- * rollups cover the continuous-integration area alone.
- */
-async function listSubmissions(
-  store: StoreAccess,
-  ciDays: readonly string[],
-  local: readonly string[],
-): Promise<string[]> {
-  const names = [...local];
-  // A listing that fails is not an empty day. Folding what did list and
-  // publishing from it would score every identity in the missing day as
-  // though it had not run, and the manifest saying so would become the
-  // one every lane obeys. The run ends instead, and the previous manifest
-  // stays newest.
-  for (const day of ciDays) {
-    const listed = await store.list(`${ciSubmissionsPrefix()}/v1/${day}/`);
-    for (const name of listed) names.push(name);
-  }
-  return [...new Set(names)].sort(byDayThenName);
-}
-
-/**
  * Every local submission object of the days given. A local object's path
  * puts the reporting person ahead of the day, so that area is listed once
  * and filtered.
@@ -475,6 +446,12 @@ type AggregateRead =
  * slowly — so an unreadable state is told apart from an absent one rather
  * than both becoming an empty one.
  *
+ * The one empty aggregate a run starts from while a state exists is
+ * the one it folds every day of that state's history into, when the
+ * state's catches were credited under other rules (see `CATCH_RULE`).
+ * That reads every record those catches came from, so none of them is
+ * lost.
+ *
  * Passing over a state this publisher cannot read is what keeps one from
  * stopping it for good. Nothing but the publisher creates a state, and it
  * creates one only where it folded, so a newest state it cannot read is
@@ -588,8 +565,8 @@ function refusal(
   lines.push(
     `do not bootstrap before establishing that no stored state reads at ` +
       `all: it starts from an empty aggregate, and the catches the stored ` +
-      `states hold accumulate over unbounded history and are not in the ` +
-      `records any window reads`,
+      `states hold accumulate over unbounded history, so a window that ` +
+      `does not reach the first day of that history drops the ones before it`,
   );
   return lines;
 }
@@ -750,28 +727,6 @@ export async function publish(
   // one the store is asked about — and it is asked only where the answer
   // could be a rollup, so a run over days it has already read raw asks
   // nothing.
-  const rollups = new Map<string, readonly string[]>();
-  const ciDays: string[] = [];
-  for (const date of partitions) {
-    const settled = fold.settled(CI_SOURCE, date);
-    const foldedRaw = fold.hasRaw(CI_SOURCE, date);
-    const shards = settled || foldedRaw
-      ? undefined
-      : await store.rollupShards(date);
-    switch (
-      inputChoice({ settled, foldedRaw, rollup: shards !== undefined })
-    ) {
-      case "rollup":
-        rollups.set(date, shards!);
-        break;
-      case "raw":
-        ciDays.push(date);
-        break;
-      case "settled":
-        break;
-    }
-  }
-
   // Every day of the window for the local area: no local pair is ever
   // settled, so the rule answers `raw` for each of them.
   let local: string[];
@@ -783,17 +738,16 @@ export async function publish(
     return 1;
   }
 
+  const concurrency = options.concurrency;
+
   /**
-   * Reads and consumes each batch before fetching the next shards, and
-   * then the day's local submissions, so that the fold judges those in
-   * time order with the day's runs rather than after every rollup day.
+   * Reads a day's rollup, consuming each batch before fetching the next
+   * shards, and then the day's local submissions.
    */
   async function* readRollup(
-    date: string,
     shards: readonly string[],
-    concurrency: number,
+    locals: readonly string[],
   ) {
-    const names = local.filter((name) => partitionOf(name) === date);
     for (let at = 0; at < shards.length; at += SHARD_CHUNK) {
       const reports = await mapConcurrent(
         shards.slice(at, at + SHARD_CHUNK),
@@ -805,95 +759,121 @@ export async function publish(
         yield report;
       }
     }
-    for (
-      const report of await mapConcurrent(
-        names,
-        concurrency,
-        (objectName) => store.read(objectName),
-      )
-    ) {
+    const reports = await mapConcurrent(
+      locals,
+      concurrency,
+      (objectName) => store.read(objectName),
+    );
+    for (const report of reports) {
       noteReport(report);
       yield report;
     }
   }
 
-  let settled = 0;
-  for (const [date, shards] of rollups) {
-    try {
-      await fold.addUnordered(readRollup(date, shards, options.concurrency));
-    } catch (error) {
-      console.warn(
-        `test selection: reading the rollup of ${date} failed: ${error}`,
-      );
-      // A failure that left part of the day in the fold is the one this
-      // cannot read its way out of: reading the day again, by any route,
-      // would count that part twice.
-      if (!fold.intact) {
-        console.warn(PARTIAL_WINDOW);
-        return 1;
+  // The window is folded one day at a time, oldest first, whichever way
+  // each day is read. The rules that decide whether a failure is a catch
+  // look a day or two either side of it, and back at what the default
+  // branch last said, so a day folded after a later one would be judged
+  // against what happened after it.
+  let rollupDays = 0;
+  let fromRollups = 0;
+  for (const date of partitions) {
+    const locals = local.filter((name) => partitionOf(name) === date);
+    const settled = fold.settled(CI_SOURCE, date);
+    const foldedRaw = fold.hasRaw(CI_SOURCE, date);
+    const shards = settled || foldedRaw
+      ? undefined
+      : await store.rollupShards(date);
+    const choice = inputChoice({
+      settled,
+      foldedRaw,
+      rollup: shards !== undefined,
+    });
+    if (choice === "rollup") {
+      rollupDays++;
+      try {
+        // The day's local submissions go into the same batch, which the
+        // fold replays in time order.
+        await fold.addUnordered(readRollup(shards!, locals));
+        fold.markSettled(CI_SOURCE, date);
+        fromRollups++;
+        continue;
+      } catch (error) {
+        console.warn(
+          `test selection: reading the rollup of ${date} failed: ${error}`,
+        );
+        // A failure that left part of the day in the fold is the one this
+        // cannot read its way out of: reading the day again, by any
+        // route, would count that part twice.
+        if (!fold.intact) {
+          console.warn(PARTIAL_WINDOW);
+          return 1;
+        }
+        // Ending the run here would end every later one the same way:
+        // the store holds create and nothing else, so a shard that will
+        // not read stays where it is, and the day is never recorded as
+        // folded. The day's raw objects are all still there, so it is
+        // read the long way instead. The pair is left open rather than
+        // settled, so later runs read the day the same way.
+        console.warn(
+          `test selection: reading ${date} from its raw objects instead, ` +
+            `as a day with no rollup is read`,
+        );
       }
-      // Ending the run here would end every later one the same way: the
-      // store holds create and nothing else, so a shard that will not
-      // read stays where it is, and the day is never recorded as folded.
-      // The day's raw objects are all still there, so it is read the long
-      // way instead. The pair is left open rather than settled, so later
-      // runs read the day the same way.
-      console.warn(
-        `test selection: reading ${date} from its raw objects instead, ` +
-          `as a day with no rollup is read`,
-      );
-      ciDays.push(date);
-      continue;
     }
-    fold.markSettled(CI_SOURCE, date);
-    settled++;
+
+    let names: string[];
+    try {
+      // A listing that fails is not an empty day. Folding what did list
+      // and publishing from it would score every identity in the missing
+      // day as though it had not run, and the manifest saying so would
+      // become the one every lane obeys. The run ends instead, and the
+      // previous manifest stays newest.
+      names = choice === "settled"
+        ? locals
+        : (await store.list(`${ciSubmissionsPrefix()}/v1/${date}/`))
+          .concat(locals);
+    } catch (error) {
+      console.warn(`test selection: listing the submissions failed: ${error}`);
+      console.warn(PARTIAL_WINDOW);
+      return 1;
+    }
+    const fresh = [...new Set(names)]
+      .filter((name) => !fold.knows(name))
+      .sort(byDayThenName);
+    // Read and fold in chunks rather than all at once. A day holds
+    // thousands of objects, each holding hundreds of executions, and
+    // holding them all would be bounded by the number of runs rather
+    // than by the number of tests.
+    try {
+      for (const chunk of chunksByRun(fresh, CHUNK)) {
+        const reports = await mapConcurrent(
+          chunk,
+          options.concurrency,
+          // A read that fails is not an object with no records, so it is
+          // not swallowed: the same partial-history argument as the
+          // listing.
+          (objectName) => store.read(objectName),
+        );
+        for (const report of reports) noteReport(report);
+        fold.add(reports);
+      }
+    } catch (error) {
+      console.warn(`test selection: reading a submission failed: ${error}`);
+      console.warn(PARTIAL_WINDOW);
+      return 1;
+    }
+    if (fresh.length > 0) {
+      console.log(
+        `test selection: folded ${fresh.length} object(s) of ${date}`,
+      );
+    }
   }
-  if (rollups.size > 0) {
+  if (rollupDays > 0) {
     console.log(
-      `test selection: folded ${settled} of ${rollups.size} day(s) from ` +
+      `test selection: folded ${fromRollups} of ${rollupDays} day(s) from ` +
         `their rollups`,
     );
-  }
-
-  let listed: string[];
-  try {
-    listed = await listSubmissions(store, ciDays, local);
-  } catch (error) {
-    console.warn(`test selection: listing the submissions failed: ${error}`);
-    console.warn(PARTIAL_WINDOW);
-    return 1;
-  }
-  const fresh = listed.filter((name) => !fold.knows(name));
-  console.log(
-    `test selection: ${listed.length} object(s) under ${ciDays.length} ` +
-      `open day(s), ${fresh.length} not yet folded`,
-  );
-
-  // Read and fold in chunks rather than all at once. A bootstrap reads
-  // tens of thousands of objects, each holding hundreds of executions,
-  // and holding them all would be bounded by the number of runs rather
-  // than by the number of tests.
-  try {
-    let done = 0;
-    for (const chunk of chunksByRun(fresh, CHUNK)) {
-      const reports = await mapConcurrent(
-        chunk,
-        options.concurrency,
-        // A read that fails is not an object with no records, so it is not
-        // swallowed: the same partial-history argument as the listing.
-        (objectName) => store.read(objectName),
-      );
-      for (const report of reports) noteReport(report);
-      fold.add(reports);
-      done += chunk.length;
-      console.log(
-        `test selection: folded ${done} of ${fresh.length} object(s)`,
-      );
-    }
-  } catch (error) {
-    console.warn(`test selection: reading a submission failed: ${error}`);
-    console.warn(PARTIAL_WINDOW);
-    return 1;
   }
   const folded = fold.finish();
 

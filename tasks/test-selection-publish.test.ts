@@ -1398,6 +1398,33 @@ describe("publish() over a day that has been compacted", () => {
     expect(state.localCatches).toBe(0);
   });
 
+  it("folds a day read raw before a later day read from its rollup", async () => {
+    // The default branch broke the test on the earlier day, which has no
+    // rollup, and the later day's rollup holds the fix. Folded after the
+    // fix, the failure would wait for a pass that has already gone by.
+    const EARLIER = "2026/08/19";
+    const { store, created } = fakeStore({
+      [CI(EARLIER, "1")]: object("c1", "fail", "2026-08-19T01:00:00.000Z"),
+      [ROLLUP]: object("c2", "pass", "2026-08-20T01:00:00.000Z"),
+    }, { [DAY]: [ROLLUP] });
+    expect(
+      await publish(
+        ["--bootstrap", "--days", "2"],
+        store,
+        NOW,
+        suites,
+        noPrevious,
+      ),
+    ).toBe(0);
+    const written = [...created.keys()].find((name) =>
+      name.startsWith(statePrefix())
+    )!;
+    const state = parseAggregate(await gunzipToText(created.get(written)!))!
+      .states[JSON.stringify(["unit", "memory", "space > writes"])]!;
+    expect(state.mainCatches).toBe(1);
+    expect(state.pendingMain).toEqual([]);
+  });
+
   it("still reads the local submissions of a settled day", async () => {
     // Rollups cover the continuous-integration area alone. A receipt
     // naming the day by itself would say the day is accounted for, and
