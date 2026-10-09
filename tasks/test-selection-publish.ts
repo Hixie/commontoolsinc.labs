@@ -21,7 +21,13 @@
  * newest one behind it that it can. A bootstrap in any of those cases
  * would publish from an empty aggregate and throw away the catches the
  * stored ones hold, which accumulate over unbounded history and which no
- * window of records rebuilds.
+ * window narrower than that history rebuilds.
+ *
+ * A stored aggregate whose catches were credited under rules other than
+ * these (see `CATCH_RULE`) is the one an ordinary run does not fold onto.
+ * It folds every day that aggregate's history holds again instead, into
+ * an empty one, since a catch is held as a count that cannot be judged
+ * again by itself, and every record behind it is still in the store.
  *
  * That is the whole of what the flag does. What to read is `inputChoice`
  * asked of each source and date the window covers, and both modes ask it
@@ -64,6 +70,7 @@ import {
   dayOf,
   departed,
   emptyAggregate,
+  firstDay,
   Fold,
   locateSurfaces,
   parseAggregate,
@@ -77,6 +84,7 @@ import {
   wholeUnits,
 } from "./test-topology.ts";
 import { baselinesOf, mergeBaselines } from "./test-selection/baselines.ts";
+import { CATCH_RULE, daysBetween } from "./test-selection/score.ts";
 import { measuredCostLines } from "./test-selection/coverage.ts";
 import type { Suite } from "./test-topology/suite.ts";
 import {
@@ -295,11 +303,10 @@ async function mapConcurrent<T, R>(
 }
 
 /**
- * Every submission object of the days each area was asked for. A
- * continuous-integration object's day is a path segment, so its day is a
- * prefix and one listing per day is exact. A local object's path puts the
- * reporting person ahead of the day, so that area is listed once and
- * filtered.
+ * Every submission object of the continuous-integration days given,
+ * beside the local ones already listed. A continuous-integration
+ * object's day is a path segment, so its day is a prefix and one listing
+ * per day is exact.
  *
  * The two areas are asked for different days because the rule answers
  * differently for them. A continuous-integration day whose rollup is
@@ -309,10 +316,9 @@ async function mapConcurrent<T, R>(
 async function listSubmissions(
   store: StoreAccess,
   ciDays: readonly string[],
-  localDays: readonly string[],
+  local: readonly string[],
 ): Promise<string[]> {
-  const wanted = new Set(localDays);
-  const names: string[] = [];
+  const names = [...local];
   // A listing that fails is not an empty day. Folding what did list and
   // publishing from it would score every identity in the missing day as
   // though it had not run, and the manifest saying so would become the
@@ -322,12 +328,25 @@ async function listSubmissions(
     const listed = await store.list(`${ciSubmissionsPrefix()}/v1/${day}/`);
     for (const name of listed) names.push(name);
   }
-  const local = `${storePrefix()}/submissions/local/`;
-  for (const name of await store.list(local)) {
+  return [...new Set(names)].sort(byDayThenName);
+}
+
+/**
+ * Every local submission object of the days given. A local object's path
+ * puts the reporting person ahead of the day, so that area is listed once
+ * and filtered.
+ */
+async function listLocal(
+  store: StoreAccess,
+  days: readonly string[],
+): Promise<string[]> {
+  const wanted = new Set(days);
+  const names: string[] = [];
+  for (const name of await store.list(`${storePrefix()}/submissions/local/`)) {
     const day = partitionOf(name);
     if (day.length > 0 && wanted.has(day)) names.push(name);
   }
-  return [...new Set(names)].sort(byDayThenName);
+  return names;
 }
 
 /** What one source and date still owes the aggregate. */
@@ -365,6 +384,35 @@ export function inputChoice(
   if (known.settled) return "settled";
   if (known.foldedRaw || !known.rollup) return "raw";
   return "rollup";
+}
+
+/**
+ * The workflow run a continuous-integration object came from, and the
+ * object itself for anything else.
+ */
+export function workflowRunOf(objectName: string): string {
+  return objectName.match(/\/run-(\d+)-[^/]*$/)?.[1] ?? objectName;
+}
+
+/**
+ * Splits objects listed in order into chunks of `size`, except that a
+ * chunk goes on until the workflow run its last object came from ends.
+ * What one run saw is then folded in one batch, and judged as a whole.
+ */
+export function* chunksByRun(
+  names: readonly string[],
+  size: number,
+): Generator<string[]> {
+  for (let at = 0, end = 0; at < names.length; at = end) {
+    end = Math.min(at + size, names.length);
+    while (
+      end < names.length &&
+      workflowRunOf(names[end]!) === workflowRunOf(names[end - 1]!)
+    ) {
+      end++;
+    }
+    yield names.slice(at, end);
+  }
 }
 
 /**
@@ -609,7 +657,7 @@ export async function publish(
 
   const startedAt = now;
   const today = startedAt.toISOString().slice(0, 10);
-  const partitions = dayPartitions(startedAt, options.days);
+  let partitions = dayPartitions(startedAt, options.days);
   let previous: Manifest | undefined;
   try {
     previous = await previousManifest(startedAt);
@@ -661,6 +709,22 @@ export async function publish(
       );
     }
     aggregate = read.state;
+    if (aggregate.catchRule !== CATCH_RULE) {
+      // Its catches were credited under other rules and are held as
+      // counts, which cannot be judged again by themselves. Every record
+      // behind them is still in the store, so all of them are folded
+      // again into an empty aggregate.
+      const since = firstDay(aggregate) ?? today;
+      console.log(
+        `test selection: ${read.name} credited its catches under other ` +
+          `rules, so this run folds every day from ${since} again`,
+      );
+      partitions = dayPartitions(
+        startedAt,
+        Math.max(options.days, daysBetween(since, today) + 1),
+      );
+      aggregate = emptyAggregate(today);
+    }
   }
   const resolver = await loadAliasResolver();
   const fold = new Fold(aggregate, resolver, today);
@@ -708,8 +772,28 @@ export async function publish(
     }
   }
 
-  /** Reads and consumes each batch before fetching the next shards. */
-  async function* readRollup(shards: readonly string[], concurrency: number) {
+  // Every day of the window for the local area: no local pair is ever
+  // settled, so the rule answers `raw` for each of them.
+  let local: string[];
+  try {
+    local = await listLocal(store, partitions);
+  } catch (error) {
+    console.warn(`test selection: listing the submissions failed: ${error}`);
+    console.warn(PARTIAL_WINDOW);
+    return 1;
+  }
+
+  /**
+   * Reads and consumes each batch before fetching the next shards, and
+   * then the day's local submissions, so that the fold judges those in
+   * time order with the day's runs rather than after every rollup day.
+   */
+  async function* readRollup(
+    date: string,
+    shards: readonly string[],
+    concurrency: number,
+  ) {
+    const names = local.filter((name) => partitionOf(name) === date);
     for (let at = 0; at < shards.length; at += SHARD_CHUNK) {
       const reports = await mapConcurrent(
         shards.slice(at, at + SHARD_CHUNK),
@@ -721,12 +805,22 @@ export async function publish(
         yield report;
       }
     }
+    for (
+      const report of await mapConcurrent(
+        names,
+        concurrency,
+        (objectName) => store.read(objectName),
+      )
+    ) {
+      noteReport(report);
+      yield report;
+    }
   }
 
   let settled = 0;
   for (const [date, shards] of rollups) {
     try {
-      await fold.addUnordered(readRollup(shards, options.concurrency));
+      await fold.addUnordered(readRollup(date, shards, options.concurrency));
     } catch (error) {
       console.warn(
         `test selection: reading the rollup of ${date} failed: ${error}`,
@@ -763,9 +857,7 @@ export async function publish(
 
   let listed: string[];
   try {
-    // Every day of the window for the local area: no local pair is ever
-    // settled, so the rule answers `raw` for each of them.
-    listed = await listSubmissions(store, ciDays, partitions);
+    listed = await listSubmissions(store, ciDays, local);
   } catch (error) {
     console.warn(`test selection: listing the submissions failed: ${error}`);
     console.warn(PARTIAL_WINDOW);
@@ -782,8 +874,8 @@ export async function publish(
   // and holding them all would be bounded by the number of runs rather
   // than by the number of tests.
   try {
-    for (let at = 0; at < fresh.length; at += CHUNK) {
-      const chunk = fresh.slice(at, at + CHUNK);
+    let done = 0;
+    for (const chunk of chunksByRun(fresh, CHUNK)) {
       const reports = await mapConcurrent(
         chunk,
         options.concurrency,
@@ -793,9 +885,9 @@ export async function publish(
       );
       for (const report of reports) noteReport(report);
       fold.add(reports);
+      done += chunk.length;
       console.log(
-        `test selection: folded ${at + chunk.length} of ${fresh.length} ` +
-          `object(s)`,
+        `test selection: folded ${done} of ${fresh.length} object(s)`,
       );
     }
   } catch (error) {
