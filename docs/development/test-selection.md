@@ -1403,20 +1403,21 @@ rerun asks the same tests the same thing. A [unit that runs
 whole](#units-that-run-whole) runs whole again, and the records of every test
 in it ship. Coverage is off for a rerun, since nothing scores what a rerun
 would measure. A test that has already passed beside its failure in the lane,
-because its unit was repeated, has the evidence already and is not run again.
+because its unit was repeated, has the evidence already and is no reason to
+run its unit again. It still runs again where another test in its unit is.
 
-What a lane spends on reruns is bounded by `RERUN_BUDGET_SECONDS`. Each round
-offers the budget first to the units that have run again least, so it is
-spread over the lane's failures rather than spent on the first. A unit starts
-only where what the packer charges for it fits in what is left of the budget,
-and the time the reruns take is what comes off it. A unit that fits on its
-own but not beside the units a round already holds waits for a later round.
-The charge is read from passing runs, so a rerun that hangs runs for as long
-as the hang, and the lane's step timeout is what bounds that. The lane's
-job summary says what the reruns took, which tests passed on a rerun, which
-never did, and which tests' units did not fit. A pull request's lanes rerun
-nothing, unless the pull request is labelled `ci: full`, which runs its lanes
-as the full run.
+What a lane spends on reruns is bounded by `RERUN_BUDGET_SECONDS`. Each rerun
+goes to the unit that has run again least across all of the lane's suites, so
+the budget is spread over the lane's failures rather than spent on the first. A
+unit starts only where what the packer charges for it fits in what is left of
+the budget, and the time the reruns take is what comes off it. A rerun takes
+along any other waiting units of the same suite that fit beside it. The charge
+is read from passing runs, so a rerun that hangs runs for as long as the hang,
+and the lane's step timeout is what bounds that. The lane's job summary says
+what the reruns took, which tests passed on a rerun, which never did, which no
+rerun recorded, and which tests' units did not fit. A pull request's lanes
+rerun nothing, unless the pull request is labelled `ci: full`, which runs its
+lanes as the full run.
 
 A lane decides all of this from the records its batches gathered rather
 than from what a command exited with. A runner that failed only on

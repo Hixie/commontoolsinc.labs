@@ -50,6 +50,7 @@ import {
   parseLaneArgs,
   PATTERN_COVERAGE_DIR,
   planOver,
+  rerunFailures,
   runBatch,
   runInvocation,
   runLane,
@@ -4158,15 +4159,64 @@ describe("what a lane does with the batches it was given", () => {
           .map((line) => JSON.parse(line) as TestRecord);
         const runsOf = (n: string) =>
           written.filter((record) => record.test.n === n).length;
-        expect(runsOf("glaze > sets")).toBeGreaterThan(1);
-        expect(runsOf("glaze > cools")).toBeGreaterThan(1);
-        expect(runsOf("glaze > sets") + runsOf("glaze > cools")).toBe(
-          2 + RERUN_EXECUTIONS,
-        );
+        expect(runsOf("glaze > sets")).toBe(1 + RERUN_EXECUTIONS);
+        expect(runsOf("glaze > cools")).toBe(1 + RERUN_EXECUTIONS);
       } finally {
         console.log = log;
         restore();
         await Deno.remove(spool, { recursive: true });
+      }
+    });
+
+    it("tells a rerun that recorded nothing from one that failed", async () => {
+      // A rerun that crashed before recording anything says nothing about
+      // the test, so it is not reported as the test failing again.
+      const manifest = manifestOf([{ unit: UNIT }]);
+      const quiet = suite({
+        id: "workspace-unit",
+        units: [UNIT],
+        locate: () => ({ level: "unit" as const, unit: UNIT }),
+        command: (_units, context) =>
+          Promise.resolve([{
+            command: [Deno.execPath(), "eval", "Deno.exit(1);"],
+            cwd: context.root,
+          }]),
+      });
+      const workDir = await Deno.makeTempDir({ prefix: "lane-quiet-rerun-" });
+      const log = console.log;
+      console.log = () => {};
+      try {
+        const reruns = await rerunFailures(
+          [{
+            batch: {
+              suite: quiet,
+              units: [{ unit: UNIT, skip: [], cost: 1 }],
+              runs: new Map([[UNIT, 1]]),
+              projected: 1,
+            },
+            env: {},
+            failing: new Map([[UNIT, new Set([glaze])]]),
+          }],
+          manifest,
+          [{ entry: manifest.entries[0]!, reason: "full", repeats: 1 }],
+          {
+            lane: 1,
+            of: 1,
+            full: true,
+            dryRun: false,
+            laneCount: false,
+            root: REPOSITORY,
+          },
+          workDir,
+          undefined,
+        );
+        expect(reruns.unrecorded).toEqual([glaze]);
+        expect(reruns.failed).toEqual([]);
+        expect(reruns.passed).toEqual([]);
+        expect(reruns.unrun).toEqual([]);
+      } finally {
+        console.log = log;
+        await Deno.remove(workDir, { recursive: true });
       }
     });
 

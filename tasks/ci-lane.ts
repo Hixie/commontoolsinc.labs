@@ -18,6 +18,11 @@
  * which identities inside a unit are skipped — is the same code, so the
  * two runs cannot come to different answers about the same tree.
  *
+ * Once its plan has run and its verdict is settled, a lane of the full run
+ * also runs again the units holding a test that failed every time, and
+ * ships what those reruns record. That is evidence for the publisher, and
+ * it changes neither the plan nor the verdict.
+ *
  * `main` cannot fix its number of lanes ahead of time the way a pull
  * request does, because the number depends on how much work there is and
  * the job matrix has to exist before anything starts. So one job asks
@@ -1172,11 +1177,17 @@ export interface Reruns {
   /** Tests that passed on a rerun. */
   passed: string[];
 
-  /** Tests that were run again and never passed. */
+  /** Tests a rerun recorded, and that never passed. */
   failed: string[];
+
+  /** Tests whose unit ran again, and that no rerun recorded. */
+  unrecorded: string[];
 
   /** Tests whose unit was not run again, for want of budget. */
   unrun: string[];
+
+  /** Records the reruns kept as written, as `runBatch()` reports them. */
+  conflicts: TestRecord[];
 }
 
 /**
@@ -1195,11 +1206,12 @@ export interface Reruns {
  * runs whole again, and is charged for every test it holds. Coverage is
  * off, since nothing scores what a rerun would measure.
  *
- * Each round offers the budget first to the units that have run again
- * least, so it is spread over the lane's failures before it is spent on
- * one of them. A unit starts only where what the packer charges for it
- * fits in what the reruns have left of `RERUN_BUDGET_SECONDS`, and the
- * reruns' own time is what they take off it.
+ * Each rerun goes to the batch holding the unit that has run again least,
+ * across every batch, and offers that batch's units the budget in the same
+ * order, so the budget is spread over the lane's failures before it is
+ * spent on one of them. A unit starts only where what the packer charges
+ * for it fits in what the reruns have left of `RERUN_BUDGET_SECONDS`, and
+ * the reruns' own time is what they take off it.
  */
 export async function rerunFailures(
   reruns: readonly Rerun[],
@@ -1210,96 +1222,122 @@ export async function rerunFailures(
   spool: string | undefined,
 ): Promise<Reruns> {
   let seconds = 0;
+  let passes = 0;
   const passed = new Set<string>();
-  const tried = new Set<string>();
+  const recorded = new Set<string>();
+  const reached = new Set<string>();
+  const conflicts: TestRecord[] = [];
   const waiting = reruns.map(({ failing }) => new Map(failing));
   // How many times each batch's units have run again.
   const counts = reruns.map(() => new Map<Unit, number>());
-  for (let round = 1; round <= RERUN_EXECUTIONS; round++) {
-    for (const [index, { batch, env }] of reruns.entries()) {
+  /** What the packer charges for one pass of `batch` over `requests`. */
+  const chargeFor = (
+    batch: Batch,
+    requests: readonly UnitRequest[],
+  ): number => {
+    const held = new Set(requests.map(({ unit }) => unit));
+    return suiteCharge(
+      manifest,
+      batch.suite.id,
+      selections
+        .filter(({ entry }) =>
+          entry.suite === batch.suite.id && held.has(entry.unit)
+        )
+        .map(({ entry }) => ({ entry, repeats: 1 })),
+    );
+  };
+  for (;;) {
+    const left = RERUN_BUDGET_SECONDS - seconds;
+    let next: number | undefined;
+    let least = Infinity;
+    for (const [index, { batch }] of reruns.entries()) {
       const pending = waiting[index]!;
-      const count = counts[index]!;
-      const chosen: UnitRequest[] = [];
-      let charge = 0;
-      /** What the packer charges for one pass over `requests`. */
-      const chargeFor = (requests: readonly UnitRequest[]): number => {
-        const held = new Set(requests.map(({ unit }) => unit));
-        return suiteCharge(
-          manifest,
-          batch.suite.id,
-          selections
-            .filter(({ entry }) =>
-              entry.suite === batch.suite.id && held.has(entry.unit)
-            )
-            .map(({ entry }) => ({ entry, repeats: 1 })),
-        );
-      };
-      const left = RERUN_BUDGET_SECONDS - seconds;
-      // The units that have run again least are offered the budget first,
-      // so one left out of a round for want of room goes ahead in the next.
-      const offered = batch.units
-        .filter(({ unit }) => pending.has(unit))
-        .sort((a, b) => (count.get(a.unit) ?? 0) - (count.get(b.unit) ?? 0));
-      for (const request of offered) {
+      for (const request of batch.units) {
+        if (!pending.has(request.unit)) continue;
+        const times = counts[index]!.get(request.unit) ?? 0;
         // What is left only shrinks, so a unit that does not fit on its
-        // own now never will. One that fits on its own but not beside the
-        // units this round already holds waits for a later round.
-        if (chargeFor([request]) > left) {
+        // own now never will.
+        if (
+          times >= RERUN_EXECUTIONS || chargeFor(batch, [request]) > left
+        ) {
           pending.delete(request.unit);
           continue;
         }
-        const charged = chargeFor([...chosen, request]);
-        if (charged > left) continue;
-        chosen.push(request);
-        charge = charged;
+        if (times < least) {
+          least = times;
+          next = index;
+        }
       }
-      if (chosen.length === 0) continue;
-      // Handed over in the batch's own order, as the batch was.
-      const units = batch.units.filter((request) => chosen.includes(request));
-      for (const { unit } of units) count.set(unit, (count.get(unit) ?? 0) + 1);
-      const startedAt = performance.now();
-      const result = await runBatch(
-        {
-          suite: batch.suite,
-          units,
-          runs: new Map(units.map(({ unit }) => [unit, 1])),
-          projected: charge,
-        },
-        options,
-        path.join(workDir, `rerun-${round}`),
-        undefined,
-        env,
-      );
-      seconds += (performance.now() - startedAt) / 1000;
-      if (spool !== undefined) spoolRecords(spool, result.records);
-      for (const record of result.records) {
-        if (record.outcome === "pass") passed.add(testIdentityKey(record.test));
-      }
-      for (const { unit } of units) {
-        const keys = [...pending.get(unit)!];
-        for (const key of keys) tried.add(key);
-        const still = keys.filter((key) => !passed.has(key));
-        if (still.length === 0) pending.delete(unit);
-        else pending.set(unit, new Set(still));
-      }
+    }
+    if (next === undefined) break;
+    const { batch, env } = reruns[next]!;
+    const pending = waiting[next]!;
+    const count = counts[next]!;
+    // The first unit offered fits on its own, so something is chosen. One
+    // that fits on its own but not beside those already chosen waits for
+    // a later rerun, where it is offered ahead of them.
+    const chosen: UnitRequest[] = [];
+    let charge = 0;
+    const offered = batch.units
+      .filter(({ unit }) => pending.has(unit))
+      .sort((a, b) => (count.get(a.unit) ?? 0) - (count.get(b.unit) ?? 0));
+    for (const request of offered) {
+      const charged = chargeFor(batch, [...chosen, request]);
+      if (charged > left) continue;
+      chosen.push(request);
+      charge = charged;
+    }
+    // Handed over in the batch's own order, as the batch was.
+    const units = batch.units.filter((request) => chosen.includes(request));
+    for (const { unit } of units) count.set(unit, (count.get(unit) ?? 0) + 1);
+    passes += 1;
+    const startedAt = performance.now();
+    const result = await runBatch(
+      {
+        suite: batch.suite,
+        units,
+        runs: new Map(units.map(({ unit }) => [unit, 1])),
+        projected: charge,
+      },
+      options,
+      path.join(workDir, `rerun-${passes}`),
+      undefined,
+      env,
+    );
+    seconds += (performance.now() - startedAt) / 1000;
+    if (spool !== undefined) spoolRecords(spool, result.records);
+    for (const conflict of result.conflicts) conflicts.push(conflict);
+    for (const record of result.records) {
+      const key = testIdentityKey(record.test);
+      recorded.add(key);
+      if (record.outcome === "pass") passed.add(key);
+    }
+    for (const { unit } of units) {
+      const keys = [...pending.get(unit)!];
+      for (const key of keys) reached.add(key);
+      const still = keys.filter((key) => !passed.has(key));
+      if (still.length === 0) pending.delete(unit);
+      else pending.set(unit, new Set(still));
     }
   }
   const failing = reruns.flatMap(({ failing }) =>
     [...failing.values()].flatMap((keys) => [...keys])
-  );
+  ).sort();
   return {
     seconds,
-    passed: failing.filter((key) => passed.has(key)).sort(),
-    failed: failing.filter((key) => tried.has(key) && !passed.has(key))
-      .sort(),
-    unrun: failing.filter((key) => !tried.has(key)).sort(),
+    passed: failing.filter((key) => passed.has(key)),
+    failed: failing.filter((key) => recorded.has(key) && !passed.has(key)),
+    unrecorded: failing.filter((key) => reached.has(key) && !recorded.has(key)),
+    unrun: failing.filter((key) => !reached.has(key)),
+    conflicts,
   };
 }
 
 /** Says what rerunning a lane's failures came to, where it came to anything. */
 export function describeReruns(reruns: Reruns): void {
   if (
-    reruns.passed.length + reruns.failed.length + reruns.unrun.length === 0
+    reruns.passed.length + reruns.failed.length + reruns.unrecorded.length +
+        reruns.unrun.length === 0
   ) {
     return;
   }
@@ -1321,6 +1359,11 @@ export function describeReruns(reruns: Reruns): void {
     reruns.passed,
   );
   section("Run again and never passed:", reruns.failed);
+  section(
+    "Their unit ran again and no rerun recorded them, so nothing was " +
+      "learned about them:",
+    reruns.unrecorded,
+  );
   section(
     "Not run again, because their unit did not fit what was left of the " +
       "budget:",
@@ -1364,7 +1407,8 @@ export function describeConflicts(conflicts: readonly TestRecord[]): void {
     "These records name a surface the suite that ran them does not " +
     "declare, so they were kept as written rather than marked:",
     "",
-    ...conflicts.map((record) => `- ${testIdentityKey(record.test)}`),
+    ...[...new Set(conflicts.map((record) => testIdentityKey(record.test)))]
+      .map((key) => `- ${key}`),
   ]);
 }
 
@@ -2117,6 +2161,7 @@ export async function runLane(
         workDir,
         spool,
       );
+      for (const conflict of rerun.conflicts) conflicts.push(conflict);
     }
   } catch (error) {
     // A lane whose loop threw has failed, whatever the batches it got
