@@ -1267,6 +1267,60 @@ describe("github-runs", () => {
             expect(github.pages).toEqual(["1@20"]);
           });
 
+          it("logs a write of the file that fails, and writes it again after the next reading", async () => {
+            const github = new FakeGitHub(runs(30, 1));
+            const lists = new RunLists(join(directory, "absent", "lists.json"));
+            const logged: string[] = [];
+            const realError = console.error;
+            console.error = (...parts: unknown[]) =>
+              logged.push(parts.map(String).join(" "));
+            try {
+              const read1 = await read(lists, github);
+              expect(ids(read1)).toEqual(ids(runs(30, 1)));
+            } finally {
+              console.error = realError;
+            }
+            expect(logged.length).toBe(1);
+            expect(logged[0]).toContain("run lists could not be saved to");
+            await Deno.mkdir(join(directory, "absent"));
+
+            await read(lists, github, { reader: "second" });
+
+            github.paths = [];
+            await read(
+              new RunLists(join(directory, "absent", "lists.json")),
+              github,
+            );
+            expect(github.pages).toEqual(["1@20"]);
+          });
+
+          it("keeps in the file the heads of readings that finish together", async () => {
+            // The heads are held already, so the three readings finish while
+            // the file is still being written for the first of them.
+            const github = new FakeGitHub(runs(30, 1));
+            const lists = new RunLists(file);
+            const workflows = ["a.yml", "b.yml", "c.yml"];
+            const reading = (on: RunLists, workflow: string) =>
+              on.runs(github.request, REPO, workflow, {
+                reader: "reader",
+                recheck: [],
+                wants: () => true,
+                until: () => false,
+              });
+            for (const workflow of workflows) await reading(lists, workflow);
+            github.list = runs(32, 1);
+            await Deno.remove(file);
+
+            await Promise.all(
+              workflows.map((workflow) => reading(lists, workflow)),
+            );
+
+            github.paths = [];
+            const again = new RunLists(file);
+            for (const workflow of workflows) await reading(again, workflow);
+            expect(github.pages).toEqual(["1@20", "1@20", "1@20"]);
+          });
+
           it("forgets a reader in the file that has not read for a day", async () => {
             using time = new FakeTime();
             const github = new FakeGitHub(runs(300, 1));

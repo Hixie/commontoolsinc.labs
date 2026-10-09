@@ -114,6 +114,27 @@ describe("RunListFile", () => {
         expect(await load()).toBeUndefined();
       });
 
+      it("returns no heads when the file holds JSON that does not list heads", async () => {
+        await write([head(runs(30, 21))]);
+
+        expect(await load()).toBeUndefined();
+      });
+
+      it("drops a head that is not an object, or whose reader or newest run is not one", async () => {
+        await write({
+          heads: [
+            7,
+            { ...head(runs(30, 21), { repo: "example/reader" }), readers: [7] },
+            { ...head(runs(30, 21), { repo: "example/run" }), runs: [7] },
+            head(runs(30, 21), { repo: "example/kept" }),
+          ],
+        });
+
+        expect(await load("ci.yml", "example/kept")).toBeDefined();
+        expect(await load("ci.yml", "example/reader")).toBeUndefined();
+        expect(await load("ci.yml", "example/run")).toBeUndefined();
+      });
+
       it("returns a run whose name and path GitHub left out without them", async () => {
         // A run read from GitHub holds every field, even one GitHub left out.
         const bare = { ...run(30), name: undefined, path: undefined };
@@ -200,6 +221,20 @@ describe("RunListFile", () => {
     });
 
     describe("save()", () => {
+      it("rejects, leaving no temporary file, when it cannot replace the file", async () => {
+        await Deno.mkdir(join(path, "in-the-way"), { recursive: true });
+
+        await expect(
+          new RunListFile(path).save(() => [head(runs(30, 21))], 0),
+        ).rejects.toThrow();
+
+        const names: string[] = [];
+        for await (const entry of Deno.readDir(directory)) {
+          names.push(entry.name);
+        }
+        expect(names.sort()).toEqual(["run-lists.json", "run-lists.json.lock"]);
+      });
+
       it("replaces a file that is not JSON", async () => {
         await Deno.writeTextFile(path, "{ not json");
 
