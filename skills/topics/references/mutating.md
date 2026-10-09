@@ -15,7 +15,7 @@ retry may come from a later tool call. Mint it once, at the start of the run,
 into a file at a path private to this run:
 
 ```bash
-(umask 077 && set -C && s="$(deno task cf invocation-session new)" && printf '%s\n' "$s" > '<run session file>')
+(umask 077 && set -C && s="$(deno task cf invocation-session new)" && echo "$s" > '<run session file>')
 ```
 
 The file is written only once the mint succeeds. `set -C` makes a second mint
