@@ -462,7 +462,6 @@ export function buildCapture(
         ...(dir === undefined ? {} : { dir }),
         names: Object.fromEntries(unwritten),
       };
-      unwritten = new Map();
       try {
         Deno.mkdirSync(spool, { recursive: true });
         // A random name rather than a sortable one: nothing orders these,
@@ -476,7 +475,9 @@ export function buildCapture(
           ),
           JSON.stringify(map),
         );
+        unwritten = new Map();
       } catch (error) {
+        // The names stay unwritten, and the next write carries them.
         console.warn(`test records: cannot write a name map: ${error}`);
       }
     },

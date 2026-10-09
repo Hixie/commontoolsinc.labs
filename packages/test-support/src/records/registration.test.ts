@@ -714,7 +714,8 @@ describe("what the capture does when it cannot write", () => {
 
   it("says so and carries on when the spool cannot be made", async () => {
     // A file where the directory should be. Failing to record must not
-    // fail the test run that was recording.
+    // fail the test run that was recording, and what it could not write
+    // the next write carries.
     const parent = await Deno.makeTempDir();
     const spool = join(parent, "in-the-way");
     await Deno.writeTextFile(spool, "");
@@ -725,11 +726,18 @@ describe("what the capture does when it cannot write", () => {
       const { capture } = buildCapture({ registrar, spool });
       capture.attribute("a test", "packages/a/one.test.ts");
       capture.flush();
+      await Promise.resolve();
+      expect(said.join("\n")).toContain("cannot write a name map");
+      await Deno.remove(spool);
+      capture.attribute("another test", "packages/a/two.test.ts");
+      capture.flush();
+      const names = await readNameMaps(spool);
+      expect(names.get("a test")).toBe("packages/a/one.test.ts");
+      expect(names.get("another test")).toBe("packages/a/two.test.ts");
     } finally {
       console.warn = warn;
       await Deno.remove(parent, { recursive: true });
     }
-    expect(said.join("\n")).toContain("cannot write a name map");
   });
 });
 

@@ -2328,6 +2328,9 @@ export async function runLane(
     ? await convertCoverage(options)
     : { ok: true, reports: [] };
   if (!converted.ok) ok = false;
+  // A signal can arrive while the conversion runs, and a lane told to stop
+  // has failed whenever it was told.
+  if (stop.signal !== undefined) ok = false;
   const marked = await markMeasuredFailures(options, suites, failedUnits);
   if (compileCacheState !== undefined) {
     await writeCompileCacheState(options, compileCacheState);
