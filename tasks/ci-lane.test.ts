@@ -3022,6 +3022,69 @@ describe("what a lane records about itself", () => {
     }
   });
 
+  it("counts no time for a test its own skip list named in what the batch's tests took", async () => {
+    // A skip the lane registered is another lane's share, so its time is
+    // not a test this batch ran. A skip a test registers itself is.
+    const workDir = await Deno.makeTempDir({ prefix: "lane-skip-ran-" });
+    const spool = await Deno.makeTempDir({ prefix: "lane-spool-" });
+    const record = (n: string, outcome: string, durationMs: number) =>
+      JSON.stringify({
+        line: "record",
+        test: { k: "unit", s: "bakery", n },
+        outcome,
+        durationMs,
+      }) + "\n";
+    try {
+      await runBatch(
+        {
+          suite: suite({
+            id: "workspace-unit",
+            units: ["a-unit"],
+            locate: () => ({ level: "unit", unit: "a-unit" }),
+            command: (_units, context) =>
+              Promise.resolve([{
+                command: [
+                  Deno.execPath(),
+                  "eval",
+                  `Deno.writeTextFileSync(
+                    Deno.env.get("CF_TEST_RECORDS_DIR") + "/fragment-a.ndjson",
+                    ${
+                    JSON.stringify(
+                      record("bakes", "pass", 250) +
+                        record("glazes", "skip", 4000) +
+                        record("frosts", "skip", 30),
+                    )
+                  },
+                  )`,
+                ],
+                cwd: context.root,
+              }]),
+          }),
+          units: [{ unit: "a-unit", skip: ["glazes"] }],
+          runs: new Map([["a-unit", 1]]),
+          projected: 0,
+        },
+        lane,
+        workDir,
+        spool,
+        {},
+      );
+      const written: string[] = [];
+      for await (const entry of Deno.readDir(spool)) {
+        if (entry.isFile) {
+          written.push(await Deno.readTextFile(`${spool}/${entry.name}`));
+        }
+      }
+      expect(written.join("")).toContain(
+        '"n":"ci-lane ran batch workspace-unit"},"outcome":"pass"' +
+          ',"durationMs":280',
+      );
+    } finally {
+      await Deno.remove(workDir, { recursive: true });
+      await Deno.remove(spool, { recursive: true });
+    }
+  });
+
   it("reports a producer's own variant in a default batch", async () => {
     // The execution was a default one, so a marker on its record
     // describes a configuration that did not run.

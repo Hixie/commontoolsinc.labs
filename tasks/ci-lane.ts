@@ -913,11 +913,11 @@ export async function runBatch(
         const location = batch.suite.locate(record);
         if (location?.level === "unit") {
           heard.add(location.unit);
-          ran += record.durationMs / 1000;
           if (
             record.outcome === "skip" &&
             skipped.has(`${location.unit}\t${record.test.n}`)
           ) continue;
+          ran += record.durationMs / 1000;
         }
         records.push(record);
       }

@@ -1066,11 +1066,13 @@ charged](../specs/test-selection.md#what-a-lane-is-charged) says how.
 
 The second counts the records the suite places in one of its units, which are
 the identities a manifest holds and the packer charges by. A record the suite
-places in no unit is left out of it. Such a record is the one a wrapper writes
+places in no unit is left out of it, and so is the skip a lane registers for a
+test it was not given. A record placed in no unit is the one a wrapper writes
 for a whole invocation, which holds its units' time a second time, or a phase
-every unit of a script runs, or one off the suite's surfaces. What a batch
-spends on those is part of what it spent beyond its units' tests, which the
-per-pass charge carries.
+that several units of a script share, or one off the suite's surfaces. What a
+batch spends on those is part of what it spent beyond its units' tests, which
+the per-pass and per-unit charges carry: a wrapper's run once for each pass,
+and a shared phase once for each unit that runs it.
 
 What its tests took, rather than what the packer expected them to take.
 The two differ by however wrong the manifest's costs are, and a unit
@@ -1148,8 +1150,9 @@ A batch run with coverage on is fitted apart from what the suite's batches cost
 without coverage, because instrumenting a run costs it time and how much is a
 property of the suite. The manifest carries the two fits in two maps of its
 calibration: `suites` for batches run without coverage, and `suitesWithCoverage`
-for batches run with it. The line counts each suite once whether
-it has one fit or two, and the last figure is how many have a coverage-on fit.
+for batches run with it. A stored batch that does not say whether coverage was on
+is read into neither. The line counts each suite once whether it has one fit or
+two, and the last figure is how many have a coverage-on fit.
 
 A capability's `setupCost` is the ninetieth percentile of how long its
 openings took in the window, the same percentile a test's own cost is read at.
@@ -1159,10 +1162,16 @@ lane pays. The percentile is the observation at its rank rather than a value
 between two, so over nine or fewer openings it is the slowest of them.
 
 A suite's three figures are fitted to what its batches spent by least squares:
-`overhead` for each pass, `unitOverhead` for each time a pass opened a
-unit, and `correction` for each second of its units' tests, none of them below
-zero. A batch is then charged what a batch of its shape spends on average, and
-a lane what the batches it holds spend between them on average. Lanes spend
+`overhead` for each pass, `unitOverhead` for each time a pass opened a unit, and
+`correction` for each second of its units' tests, none of them below zero. The
+correction is fitted only from at least `MIN_CORRECTION_SAMPLES` batches whose
+tests' times span at least `MIN_CORRECTION_SPAN_SECONDS`, and only where it
+comes out above zero; otherwise it is one, and the other two are fitted to what
+the batches spent beyond their tests. The fit is what a batch of its shape
+spends on average. The packer charges a batch the fit, except that it charges
+the batch's tests no less than what the longest unit of each pass takes, added
+together, since a pass does not finish before its longest unit does. So a lane
+is charged about what the batches it holds spend between them on average. Lanes spend
 either side of that. The safety margin `LANE_SAFETY_SECONDS` absorbs a lane
 that spends more by up to its own size, and one that spends more than that runs
 past its bound. The packer also reads each test at the ninetieth percentile of

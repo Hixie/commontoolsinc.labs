@@ -71,10 +71,9 @@ function finite(value: unknown): boolean {
 
 /**
  * Whether a stored value is one observation, which is what a stored
- * aggregate is read back through. A figure that will not read as a
- * finite number reaches the fit as one all the same, and a single such
- * entry moves what every lane is charged for the suite it names. A batch
- * lacking a figure the fit reads is not one.
+ * aggregate is read back through. Every figure the fit reads has to be a
+ * finite number, since a single entry moves what every lane is charged
+ * for the suite it names, and a batch lacking one is not an observation.
  */
 export function isLaneObservation(value: unknown): value is LaneObservation {
   if (!isObjectOrArray(value)) return false;

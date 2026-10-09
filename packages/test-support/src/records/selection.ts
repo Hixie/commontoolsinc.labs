@@ -326,8 +326,8 @@ export interface CoverageBaseline {
 export interface SuiteHealth {
   /**
    * Seconds a lane pays before it runs anything of the suite: its
-   * overhead, one unit's charge, the setup of the process its unit runs
-   * in where it names one, and the setup of every capability it needs.
+   * overhead, one unit's charge, and the setup of every capability it
+   * needs.
    */
   fixed: number;
 
