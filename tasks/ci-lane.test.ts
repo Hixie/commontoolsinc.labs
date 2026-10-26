@@ -3178,7 +3178,12 @@ describe("the lane's own housekeeping", () => {
     );
     const lines: string[] = [];
     const log = console.log;
-    const restore = setEnv({ RUNNER_TEMP: undefined });
+    // As it runs outside a job, whatever job runs this test.
+    const restore = setEnv({
+      RUNNER_TEMP: undefined,
+      GITHUB_ACTIONS: undefined,
+      GITHUB_STEP_SUMMARY: undefined,
+    });
     console.log = (line: string) => lines.push(line);
     try {
       const ok = await runLane(
@@ -6609,10 +6614,18 @@ describe("the summary a lane ends with", () => {
     };
 
     const stepSummary = Deno.makeTempFileSync({ prefix: "lane-step-" });
-    const local = printedUnder({});
+    // The step summary of whatever job runs this test is not written to.
+    const outsideJob = setEnv({ GITHUB_STEP_SUMMARY: undefined });
+    let local: string[];
+    let actions: string[];
+    try {
+      local = printedUnder({});
+      actions = printedUnder({ GITHUB_ACTIONS: "true" });
+    } finally {
+      outsideJob();
+    }
     expect(local.some((line) => line.startsWith("::error"))).toBe(false);
     expect(local).toContain("FAIL unit/runner: t0");
-    const actions = printedUnder({ GITHUB_ACTIONS: "true" });
     expect(actions.filter((line) => line.startsWith("::error")).length)
       .toBe(ANNOTATED_FAILURES);
     // The step summary holds the block, fenced so that it renders as the
