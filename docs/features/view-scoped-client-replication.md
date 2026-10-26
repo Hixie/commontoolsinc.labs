@@ -207,10 +207,20 @@ scope for each accepted plan. A synchronous currency proof checks each reached
 producer once and records its basis as wake dependencies. The reads of one
 transaction share a proof, and each validation pass makes its own, so a commit
 validates current replica and local scheduler state again and fails a read an
-earlier proof let through before that state changed. Fingerprints may be
-reused for an unchanged primitive or a value proven deeply frozen. Every check
-still observes the current value and path reachability. Mutable values are
-rehashed.
+earlier proof let through before that state changed. The scheduler validates
+a run's transaction once just before committing it, and the validations the
+commit makes itself stand on that pass while the transaction reads and
+requires nothing new and the synchronous stretch they share lasts. The stretch
+ends at the next microtask checkpoint, and sooner at anything that can change
+what the pass proved: the transaction handing its writes to the replica, the
+replica applying a frame, the scheduler's commit call returning, and a producer
+ceasing to be current, as when it begins a run, leaves the scheduler, or is set
+to anything but clean. A commit that reads more first, as preparing it can,
+makes the validations after that read check again. Fingerprints may be reused
+for an unchanged primitive or a value proven deeply frozen. A check observes the
+current value and path reachability, except in the deep-frozen document version
+its basis value was last observed in, which can observe nothing different.
+Mutable values are rehashed.
 
 Shallow observations use conservative deep fingerprints for this currency check,
 so an unrelated nested change can postpone a preview.
