@@ -3795,9 +3795,10 @@ const linkEntrySuperseded = (
  * in `@commonfabric/memory/v2`).
  *
  * This is an enumeration of two id classes rather than a rule about documents
- * the runtime mints. The runtime mints many more, and route 2 (§8.12.5) is
- * what most of them take: the document anchoring splits out of a value has an
- * id derived from its parent's, which no author named either, and it is
+ * the runtime mints. The runtime mints many more, and runtime-owned-store
+ * admission (§8.12.5) is what most of them take: a document anchoring splits
+ * out of a value has an id derived from its parent's, which no author named,
+ * and it is
  * measured. Adding a class here means arguing that case on its own.
  *
  * A class is enumerable here only while its ids say which class they are. A
@@ -11858,11 +11859,9 @@ export function* prepareBoundaryCommitSteps(
     );
   }
   const targetKeys = new Set([...candidates.keys(), ...linkWrites.keys()]);
-  // Only the strict rung's §8.12.5 route-2 declaration asks whether a target
-  // is a store the runtime owns, and only where the flow join is stamped, so
-  // no other posture pays for the question — and every rung below keeps the
-  // persist-and-flag diagnostic that is its rollout signal, storing no
-  // declared policy it could never take back.
+  // Only the strict rung's runtime-owned admission asks whether a target is
+  // a store the runtime owns, and only where the flow join is stamped. Lower
+  // rungs keep their persist-and-flag diagnostic and the same derived stamps.
   const askRuntimeOwnership = flowPersist && writerFitRejects;
   // A vouched ingest writes its provenance mark even when the payload write
   // carries no schema candidate and flow labels are off, so the ingest target
@@ -12022,6 +12021,9 @@ export function* prepareBoundaryCommitSteps(
     //   is one per-tx union with no per-atom attribution, so a single
     //   foreign labeled contribution makes the WHOLE stamped entry eligible
     //   — ambiguous provenance fails toward protection.
+    // - runtime-owned declarations retained for transaction-only markers:
+    //   these come from the flow join, not an authored schema, so the same
+    //   cross-space protection applies.
     //
     // NOT eligible (persist verbatim): AUTHORED `declared` entries (schema
     // policy — the schema document replicates to the destination anyway, so
@@ -12031,12 +12033,7 @@ export function* prepareBoundaryCommitSteps(
     // schema mints (`minted` — no observation feeds them at all), and the
     // local external-ingest mark (minted from this tx's own channel stamp —
     // no cross-space observation feeds it; its atoms commit like any others
-    // if they later flow into a foreign target through the join). The
-    // §8.12.5 route-2 declaration below is the one `declared` entry that IS
-    // eligible: its content comes from the flow join rather than from an
-    // author's schema, so leaving it verbatim beside a committed derived
-    // stamp carrying those same clauses would publish in one entry what the
-    // other protects.
+    // if they later flow into a foreign target through the join).
     const crossSpaceEligible = labelProtectionMode !== "off"
       ? new Set<LabelMapEntry>()
       : undefined;
@@ -12537,11 +12534,7 @@ export function* prepareBoundaryCommitSteps(
     // this walk is about to persist replaces the stored declared entry at
     // the same path (the carry-forward below skips replaced paths), so this
     // is where a schema-minted store policy changes — compare against the
-    // stored entries per canUpdateStoreLabel before it does. The §8.12.5
-    // route-2 declaration in the flow-persist stamping below adds clauses
-    // after this point rather than replacing any, which is the restricting
-    // direction; it coalesces with the carried-forward stored entry instead
-    // of standing in for it. The stored
+    // stored entries per canUpdateStoreLabel before it does. The stored
     // metadata was read above under the internal-verifier meta
     // (storedMetadataFor), so the gate consumes no additional reads. Under
     // `enforce` a violation records fail-closed reasons and skips persisting
@@ -13154,11 +13147,10 @@ export function* prepareBoundaryCommitSteps(
       const declaredPolicyEntries = flowConfidentiality.length > 0
         ? persistedLabelEntries.filter(isDeclaredValuePolicyEntry)
         : [];
-      // Whether a misfit below is answered by declaring a covering policy
-      // (§8.12.5 route 2) instead of refusing: this document is a store the
-      // runtime owns, at a rung that would reject.
-      // `cfc-enforcement-matrix.md` §4 states the route; the rest of the
-      // conditions on it are at the mint below.
+      // Whether runtime ownership can admit a misfit at a rung that would
+      // reject. Only lifetime enrollment keeps it solely in derived stamps.
+      // `cfc-enforcement-matrix.md` §4 states the admission boundary; the
+      // remaining conditions are checked below.
       //
       // The route ACTS on the runtime's claim rather than measuring it, which
       // is why the transaction answers only for markers that arrived carrying
@@ -13361,66 +13353,35 @@ export function* prepareBoundaryCommitSteps(
               )
             )
           ) {
-            // §8.12.5 route 2, the monotone-safe upgrade: the transaction
-            // writing the join onto this path also declares, in that same
-            // transaction, a policy covering it. What lands is the ceiling
-            // resolved above plus exactly the clauses that had nowhere to
-            // go, so the store's promise becomes the audience of what it
-            // holds. What lands is what the ceiling did not already cover,
-            // so a clause residency satisfies stays in the stamp alone.
-            // A store the runtime owns is filled by the runtime out of what
-            // the writing transaction read — a piece's argument document,
-            // the internal documents and streams its result projects to,
-            // and the state documents a builtin mints from its own node's
-            // cause — and no value schema can carry that declaration,
-            // because the atoms are a property of the transaction rather
-            // than of the pattern.
-            //
-            // The declaration only ever grows by CLAUSE, which is what
-            // §8.12.1 asks of a declared component. `declaredCeiling`
-            // resolves over the entries this walk is about to persist,
-            // carried-forward stored declared entries among them, so the
-            // union below contains every clause the path already declared,
-            // and adding clauses is the restricting direction.
-            //
-            // Growing a stored clause's ALTERNATIVES would be the other
-            // thing: it enlarges that clause's reader set, which §8.12.7
-            // and safety invariant 1 admit only through a grant record or
-            // an intent-gated declassification event. `foldedUnique` folds
-            // clause LISTS — `normalizeClause` works inside one clause and
-            // never merges two — so a stored disjunction comes back with
-            // the alternatives it went in with.
-            //
-            // Growth is also what makes the route safe to run on every
-            // write rather than only while the runtime is setting a piece
-            // up. A clause list is read two ways, and the two agree: as a
-            // ceiling §8.12.4's `canWrite` admits a label clause when SOME
-            // declared clause subsumes it, and as a reader's floor that
-            // same section taints a reader with at least the declared
-            // label. Subsumption means satisfying the declared clause
-            // implies satisfying the label, so a reader of this store
-            // satisfies every clause the store admits. Adding a clause
-            // therefore admits more data AND narrows the audience by the
-            // same step, however many times it happens — §8.12.5's own
-            // argument for option 2, applied per write.
-            //
-            // Marked like a flow stamp rather than like an authored
-            // declaration: the content is the join, so it carries whatever
-            // foreign label metadata the join carries.
-            persistedLabelEntries.push(markFlowStampEntry({
-              path,
-              label: {
-                confidentiality: foldedUnique([
-                  ...declaredCeiling as readonly CfcConfClause[],
-                  ...offending as readonly CfcConfClause[],
-                ]),
-              },
-              origin: "declared",
-            }));
+            const enrolled = tx.isEnrolledRuntimeOwnedStore(
+              target.space,
+              id,
+              runtimeWritePolicyAuthorization,
+            );
+            // A store enrolled for a running piece keeps this attempt's
+            // misfit solely in the derived stamps below:
+            // https://github.com/commonfabric/specs/pull/78
+            // A transaction-only marker can describe a handoff to authored
+            // clients, including an AgentRun record or an anchored child;
+            // retain its declaration until those lifecycles are covered.
+            if (!enrolled) {
+              persistedLabelEntries.push(markFlowStampEntry({
+                path,
+                label: {
+                  confidentiality: foldedUnique([
+                    ...declaredCeiling as readonly CfcConfClause[],
+                    ...offending as readonly CfcConfClause[],
+                  ]),
+                },
+                origin: "declared",
+              }));
+            }
             tx.noteCfcDiagnostic(
-              `writer-fit(runtime-owned-store-declared): ${id} at /${
-                path.join("/")
-              } (§8.12.5 route 2): ${offending.map(renderCfcAtom).join(", ")}`,
+              `writer-fit(runtime-owned-store-${
+                enrolled ? "derived" : "declared"
+              }): ${id} at /${path.join("/")} (§8.12.5): ${
+                offending.map(renderCfcAtom).join(", ")
+              }`,
             );
             continue;
           }
