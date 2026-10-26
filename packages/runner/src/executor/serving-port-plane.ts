@@ -52,6 +52,7 @@ import type {
   ListedServedAclChange,
   WaveCommitRejection,
   WaveCommitSink,
+  WaveReadQuery,
   WaveSpaceCommit,
 } from "./wave.ts";
 
@@ -268,6 +269,15 @@ class PlaneWaveCommitSink implements WaveCommitSink, WaveCommitSinkReads {
     holder: string | undefined,
   ): Promise<boolean> {
     return this.#reads.intrusionSince(space, doc, sinceSeq, holder);
+  }
+
+  /** @inheritDoc */
+  staleReads(
+    space: MemorySpace,
+    reads: ReadonlyArray<WaveReadQuery>,
+    holder: string | undefined,
+  ): Promise<ReadonlyArray<{ read: WaveReadQuery; seq: number }>> {
+    return this.#reads.staleReads(space, reads, holder);
   }
 
   /** @inheritDoc */
