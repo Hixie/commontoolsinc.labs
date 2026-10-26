@@ -34,8 +34,9 @@ covers trees no package's own check reaches.
 The root `deno task test`, `deno task integration`, and every
 continuous-integration lane end with a block headed `test summary`, built by
 `tasks/test-summary.ts`. A passing run's block is one line of counts. A failing
-run's block gives, for each failing test, its name, its file, a command that
-runs it again, and the first lines of its error. For a command that failed
+run's block gives, for each of its first twenty failing tests, its name, its
+file, a command that runs it again where its kind of test has one, and the first
+lines of its error, and counts the rest. For a command that failed
 without a failing test to explain it, the block quotes the end of that
 command's output. The block ends with where the full logs are, so reading the
 end of the output is enough to know what failed and what to run next.

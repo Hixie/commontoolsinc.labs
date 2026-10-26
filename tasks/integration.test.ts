@@ -732,7 +732,7 @@ Deno.test("precompilePatternTests treats a run that cannot spawn as that group's
   assertEquals(logged.includes("   Error: no such binary"), true);
 });
 
-Deno.test("a run ends with the summary, naming a target that reported no test", async () => {
+Deno.test("a run whose selection names no pattern test fails, and says so last", async () => {
   // A spool of the test's own makes the run join it rather than record.
   const spool = await Deno.makeTempDir();
   try {
@@ -751,14 +751,14 @@ Deno.test("a run ends with the summary, naming a target that reported no test", 
     }).output();
     const lines = new TextDecoder().decode(stdout).split("\n");
     const at = lines.findIndex((line) => line.includes("test summary"));
-    assertEquals(code, 0);
+    assertEquals(code, 1);
     assert(at >= 0);
     assert(
-      lines[at + 1]!.startsWith("PASSED: 0 failed, 0 passed, 0 skipped ("),
+      lines[at + 1]!.startsWith("FAILED: 0 failed, 0 passed, 0 skipped, "),
     );
     assertEquals(
-      lines[at + 2],
-      "Not counted, because they report no tests: pattern-tests",
+      lines[at + 3],
+      "FAIL pattern-tests (exit code 1): failed with no failing test",
     );
   } finally {
     await Deno.remove(spool, { recursive: true });

@@ -39,9 +39,7 @@ import {
   startRunRecording,
 } from "./test-records.ts";
 import {
-  ERROR_LINES,
   type FailedCommand,
-  lastLines,
   passed,
   printSummary,
   shellQuote,
@@ -535,7 +533,7 @@ async function runPatternTests(
         }
         results.push({
           record: { ...record, file: testFile },
-          message: lastLines(output, ERROR_LINES - 1).join("\n"),
+          message: output,
           rerun: integrationRerun("pattern-tests", testFile),
         });
       })().finally(() => {
@@ -832,8 +830,10 @@ export async function runPackageIntegration(
   let result: { success: boolean; code: number };
 
   if (pkg === "pattern-tests") {
+    // A selection that names no file ran nothing, which is not a pass.
     const tests = await runPatternTests(rootDir, junitDir, filter, only);
-    const success = tests.every(({ record }) => record.outcome !== "fail");
+    const success = tests.length > 0 &&
+      tests.every(({ record }) => record.outcome !== "fail");
     return { success, code: success ? 0 : 1, tests };
   } else if (pkg === "cli") {
     // CLI uses a special shell script

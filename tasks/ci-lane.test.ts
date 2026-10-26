@@ -6561,6 +6561,25 @@ describe("the summary a lane ends with", () => {
     }]);
   });
 
+  it("takes a failure's message from whichever of its records carries one", () => {
+    // A producer's spool can record a failure the JUnit report records
+    // again, and only the report's record carries the message.
+    const tests = new Map();
+    const spooled = record("unit", "runner", "breaks", "fail");
+    const reported = record("unit", "runner", "breaks", "fail");
+    addLaneResults(
+      tests,
+      [spooled, reported],
+      new Map([[reported, "Uncaught Error: broke"]]),
+      new Set([JSON.stringify(["unit", "runner", "breaks"])]),
+    );
+
+    expect([...tests.values()]).toEqual([{
+      record: spooled,
+      message: "Uncaught Error: broke",
+    }]);
+  });
+
   it("leaves out a failure the lane excused", () => {
     const tests = new Map();
     addLaneResults(

@@ -3027,8 +3027,9 @@ export function laneRerun(
 /**
  * Adds a batch's records to `tests`, by identity. A failure whose identity
  * is in `failing`, which is what the lane fails for, takes the place of
- * any other outcome of the same test, with its message. Any other failure
- * was excused and does not fail the lane, so it is left out.
+ * any other outcome of the same test, with the first message any of its
+ * failing records carries. Any other failure was excused and does not
+ * fail the lane, so it is left out.
  */
 export function addLaneResults(
   tests: Map<string, TestResult>,
@@ -3041,10 +3042,13 @@ export function addLaneResults(
     const known = tests.get(key);
     if (record.outcome !== "fail") {
       if (known === undefined) tests.set(key, { record });
-    } else if (failing.has(key) && known?.record.outcome !== "fail") {
-      const message = failures.get(record);
-      tests.set(key, message === undefined ? { record } : { record, message });
+      continue;
     }
+    if (!failing.has(key)) continue;
+    const kept = known?.record.outcome === "fail" ? known : { record };
+    const message = kept.message ?? failures.get(record);
+    if (message !== undefined) kept.message = message;
+    tests.set(key, kept);
   }
 }
 
