@@ -907,10 +907,10 @@ export interface DiffFileLanguages {
  * Decides the language of both sides of every file in a diff, aligned with
  * `model.files`. A language that claims a side's path settles that side.
  * Otherwise the side's content does: a hunk that starts at its first line,
- * which shows that side exactly, and then its complete file when `ws` has one
- * (the workspace file for the new side, the old Git blob for the old side). A
- * side that neither settles takes the other side's language, and plain text
- * when that is unsettled too.
+ * which shows that side exactly, and then, for a file with hunks, its complete
+ * file when `ws` has one (the workspace file for the new side, the old Git blob
+ * for the old side). A side that neither settles takes the other side's
+ * language, and plain text when that is unsettled too.
  */
 export function diffLanguages(
   text: string,
