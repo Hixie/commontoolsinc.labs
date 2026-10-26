@@ -143,6 +143,20 @@ export type ReplicaLoadFailure = {
   permanentEvidence: boolean;
 };
 
+/**
+ * Thrown by `IStorageProvider.serverAuthoredSeq()` against a server that
+ * advertises server execution without reporting authored commit boundaries,
+ * as one built before it reported them does: what a read would wait for to
+ * see the serving runtime's runs cannot be known from it.
+ */
+export class UnreportedAuthoredBoundaryError extends Error {
+  override readonly name = "UnreportedAuthoredBoundaryError";
+
+  constructor() {
+    super("The serving server does not report authored commit boundaries");
+  }
+}
+
 export class ReplicaLoadFailureError extends Error {
   override readonly name = "ReplicaLoadFailureError";
 
@@ -1058,6 +1072,23 @@ export interface IStorageProvider {
    * still shadow those inputs. This does not wait for commit durability.
    */
   pullToServerHead?(): Promise<void>;
+
+  /**
+   * The server's commit sequence for this space as of one ordered round
+   * trip, which applies every frame the server had published before it, as
+   * `pullToServerHead` does. To wait for serving coverage, resolve the authored
+   * boundary through `serverAuthoredSeq`; the head can include bookkeeping
+   * commits beyond the watermark.
+   */
+  serverHeadSeq?(): Promise<number>;
+
+  /**
+   * Highest authored commit at or below `head`, or undefined when the server
+   * does not advertise server execution. Bookkeeping commits are excluded.
+   * Rejects with `UnreportedAuthoredBoundaryError` against a server that
+   * serves without reporting the boundary.
+   */
+  serverAuthoredSeq?(head: number): Promise<number | undefined>;
 
   /** List live space-scoped entity identifiers without loading their values. */
   listEntityIds?(): Promise<string[] | undefined>;

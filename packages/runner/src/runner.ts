@@ -13736,6 +13736,7 @@ export class Runner {
     // window (per-pattern coalescing, W3). The result cell is stable per
     // instance, so all of one instance's handlers share this id.
     const instanceLink = resultCell.getAsNormalizedFullLink();
+    const demandRootIds = this.#demandRootChainFor(instanceLink.id);
     const wrappedHandler = Object.assign(handler, {
       implementationSelection: schedulerRehydration.implementationSelection,
       viewNodeId: schedulerRehydration.viewNodeId,
@@ -13754,6 +13755,11 @@ export class Runner {
         ownerSpace: instanceLink.space,
         // Raw root id for the per-(action × instance) run supply.
         pieceRootId: instanceLink.id,
+        // The pieces that instantiated this one, as its nodes carry them:
+        // a served event's actor demands each while the event is queued
+        // (`Scheduler.transientEventDemandersFor`), so a nested handler's
+        // inputs that an enclosing piece derives run for the actor too.
+        ...(demandRootIds.length > 1 ? { demandRootIds } : {}),
       },
       ...(presyncInputs !== undefined && { presyncInputs }),
     });

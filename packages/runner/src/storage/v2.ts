@@ -192,6 +192,7 @@ import {
   toReplicaLoadFailureError,
   UnexaminedAbsence,
   Unit,
+  UnreportedAuthoredBoundaryError,
   type ViewInterestLease,
 } from "./interface.ts";
 import { endLocalReadValidationStretch } from "./local-read-policy.ts";
@@ -4725,6 +4726,18 @@ class Provider
     return this.#followReplacement((replica) => replica.pullToServerHead());
   }
 
+  /** @inheritDoc */
+  serverHeadSeq(): Promise<number> {
+    return this.#followReplacement((replica) => replica.serverHeadSeq());
+  }
+
+  /** @inheritDoc */
+  serverAuthoredSeq(head: number): Promise<number | undefined> {
+    return this.#followReplacement((replica) =>
+      replica.serverAuthoredSeq(head)
+    );
+  }
+
   sqliteQuery(
     db: SqliteDbRef,
     sql: string,
@@ -6253,6 +6266,11 @@ export class SpaceReplica
   }
 
   async pullToServerHead(): Promise<void> {
+    await this.serverHeadSeq();
+  }
+
+  /** @inheritDoc */
+  async serverHeadSeq(): Promise<number> {
     const { session } = await this.#activeSessionHandle();
     // An empty-root graph query fetches no document but still crosses the wire
     // and returns the server's current sequence. Because a WebSocket delivers a
@@ -6262,7 +6280,20 @@ export class SpaceReplica
     // caught up to everything the server had sent" barrier. `graph.query` is an
     // unconditional round trip (it cannot be answered from the local replica),
     // unlike the entity-id listing calls, which a server may decline by flag.
-    await session.queryGraph({ roots: [] });
+    return (await session.queryGraph({ roots: [] })).serverSeq;
+  }
+
+  /** @inheritDoc */
+  async serverAuthoredSeq(head: number): Promise<number | undefined> {
+    const { client, session } = await this.#activeSessionHandle();
+    if (client.serverFlags?.serverExecution !== true) return undefined;
+    const { authoredSeq } = await session.queryGraph({
+      roots: [],
+      atSeq: head,
+      includeAuthoredSeq: true,
+    });
+    if (authoredSeq === undefined) throw new UnreportedAuthoredBoundaryError();
+    return authoredSeq;
   }
 
   /**
