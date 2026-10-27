@@ -67,7 +67,10 @@ describe("space access across runtimes", () => {
 
   /**
    * Has the owner grant the guest access to `room`, after checking that the
-   * guest is refused before the grant.
+   * guest is refused before the grant. The guest's runtime retains that
+   * refusal; with one connection per space the refused open closed the
+   * connection the server's `session/admissible` hint would ride, so it
+   * retries the space as its shell's Retry would.
    */
   async function grantGuest(room: PieceAddress): Promise<void> {
     await expect(guest.read(["title"], { piece: room })).rejects.toThrow(
@@ -80,6 +83,7 @@ describe("space access across runtimes", () => {
       { piece: room },
     );
     await harness.settle();
+    await guest.retrySpaceAccess(room.space);
   }
 
   it("throws on a non-member's read of a room in its own space", async () => {

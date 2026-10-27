@@ -1115,6 +1115,22 @@ const handlers: Record<
   },
 
   /**
+   * Make this runtime reconsider a space it was refused, as the shell's Retry
+   * does (`Runtime.retrySpaceAccess()`). A permanent refusal is retained
+   * until an ACL notice, the server's `session/admissible` hint, or an
+   * explicit retry; with one connection per space the refused open closed
+   * the connection the hint would ride, so only the retry reaches it.
+   */
+  async retrySpaceAccess({ space }) {
+    if (typeof space !== "string") {
+      throw new TypeError("retrySpaceAccess takes a space DID.");
+    }
+    await controller().runtime.retrySpaceAccess(space as MemorySpace);
+    await idle();
+    return {};
+  },
+
+  /**
    * Inspect the normalized link (id, space, scope) of a cell reached from
    * the piece result by `path`, resolving links along the way. Lets tests
    * assert the storage addressing (e.g. scope) of pattern state.
