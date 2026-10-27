@@ -737,7 +737,8 @@ export async function commentAction(
   // A comment like an earlier one confirms nothing: the count has to grow,
   // unless an earlier run of this invocation already made it.
   const like = (topic: Topic) =>
-    topic.comments.filter((c) => c.body.trim() === text.trim()).length;
+    topic.comments.filter((c) => c.body.trim() === text.trim() && !c.removed)
+      .length;
   await writeTopic(
     deps,
     options,
@@ -763,7 +764,7 @@ export async function bodyAction(
     reference,
     "setBody",
     (agentName) => ({ body: text, agentName }),
-    (_, after) => after.body.trim() === text.trim(),
+    (_, after) => after.body === text,
     "Replaced the body of",
   );
 }

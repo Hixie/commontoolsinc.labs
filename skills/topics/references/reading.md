@@ -1,8 +1,8 @@
 # Read one Topic by address
 
 Part of `skills/topics/SKILL.md`, which is the map. This is the detail on
-reading a Topic through `cf` directly, which `deno task -q topics show` does for
-every field a reader usually wants.
+reading a Topic through `cf` directly. `deno task -q topics show` gives every
+field a reader usually wants without it, from the client's local copy.
 
 Survey the board with `deno task -q topics search`, not with a `cf cell get` of
 the board's `index`. The index is computed: reading it runs the board in the

@@ -110,6 +110,47 @@ describe("events", () => {
     });
   });
 
+  describe("changes() for links and references", () => {
+    const link = {
+      kind: "pr",
+      url: "https://x/1",
+      label: "Fix",
+      addedBy: "Sol",
+      addedAt: 600,
+      removed: false,
+    };
+
+    it("returns a link taken back, dated now", () => {
+      const after = topic({ links: [{ ...link, removed: true }] });
+
+      expect(changes([topic({ links: [link] })], [after], 999)).toEqual([
+        { kind: "unlinked", topic: after, link: after.links[0], at: 999 },
+      ]);
+    });
+
+    it("returns a reference once the Topic it names is on the board, and not again", () => {
+      const before = topic({ mentions: ["of:fid1:entry-2"] });
+      const other = topic({ number: "2", address: "of:fid1:entry-2" });
+
+      expect(changes([before], [before, other], 999)).toEqual([
+        { kind: "filed", topic: other, at: 100 },
+        { kind: "mention", topic: before, other, at: 999 },
+      ]);
+      expect(changes([before, other], [before, other], 999)).toEqual([]);
+    });
+
+    it("returns a reference removed, and nothing when only the Topic it named is gone", () => {
+      const other = topic({ number: "2", address: "of:fid1:entry-2" });
+      const before = topic({ mentions: ["of:fid1:entry-2"] });
+      const after = topic({ mentions: [] });
+
+      expect(changes([before, other], [after, other], 999)).toEqual([
+        { kind: "unmentioned", topic: after, other, at: 999 },
+      ]);
+      expect(changes([before, other], [before], 999)).toEqual([]);
+    });
+  });
+
   describe("history()", () => {
     it("returns the newest Topics filed, comments, and links by their own times, oldest first", () => {
       const link = {

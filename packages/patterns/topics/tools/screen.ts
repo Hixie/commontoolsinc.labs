@@ -43,7 +43,9 @@ const KINDS: Record<TopicEvent["kind"], { label: string; color: Rgb }> = {
   retitled: { label: "renamed", color: C.yellow },
   body: { label: "body rewritten", color: C.purple },
   link: { label: "link", color: C.cyan },
+  unlinked: { label: "link removed", color: C.red },
   mention: { label: "mention", color: C.orange },
+  unmentioned: { label: "mention removed", color: C.red },
 };
 
 /** How long a new card glows, and a changed Topic stays highlighted. */
@@ -420,8 +422,12 @@ function byline(event: TopicEvent, bg: Rgb): Row {
             : [span(` added by ${event.link.addedBy}`, dim)]
         ),
       ];
+    case "unlinked":
+      return [span(`${event.link.kind} link taken back`, dim)];
     case "mention":
       return [span("now references", dim)];
+    case "unmentioned":
+      return [span("no longer references", dim)];
     case "retitled":
       return [
         span("was ", dim),
@@ -465,19 +471,12 @@ function layOut(
     case "edited":
       return clipRows(markdown(event.comment.body, width), lines);
     case "retracted":
-      return clipRows(
-        markdown(event.comment.body, width).map((row) =>
-          row.map((s) => ({
-            ...s,
-            style: { ...s.style, fg: C.fgDim, strikethrough: true },
-          }))
-        ),
-        lines,
-      );
+      return clipRows(markdown(event.comment.body, width).map(struck), lines);
     case "filed":
       return clipRows(markdown(event.topic.body, width), lines);
     case "link":
-      return [[
+    case "unlinked": {
+      const row = [
         span(event.link.label || event.link.url, { fg: C.fgBright }),
         ...(event.link.label === "" || event.link.label === event.link.url
           ? []
@@ -485,9 +484,12 @@ function layOut(
             span("  "),
             span(event.link.url, { fg: C.blue, underline: true }),
           ]),
-      ]];
+      ];
+      return [event.kind === "link" ? row : struck(row)];
+    }
     case "mention":
-      return [[
+    case "unmentioned": {
+      const row = [
         span(
           `top/${event.other.number}`,
           { fg: C.yellow, bold: true },
@@ -495,12 +497,22 @@ function layOut(
         ),
         span("  "),
         span(event.other.title, { fg: C.fgBright }),
-      ]];
+      ];
+      return [event.kind === "mention" ? row : struck(row)];
+    }
     case "retitled":
       return [[span(event.topic.title, { fg: C.green, bold: true })]];
     case "body":
       return clipRows(bodyChange(event.before, event.topic.body, width), lines);
   }
+}
+
+/** `row` dimmed and struck through, as what was taken back is. */
+function struck(row: Row): Row {
+  return row.map((s) => ({
+    ...s,
+    style: { ...s.style, fg: C.fgDim, strikethrough: true },
+  }));
 }
 
 /** The lines a body gained and lost, tinted as a diff is. */

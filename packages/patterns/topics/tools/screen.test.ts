@@ -322,6 +322,19 @@ describe("screen", () => {
           at: NOW,
         },
         { kind: "mention", topic: fryer, other, at: NOW },
+        {
+          kind: "unlinked",
+          topic: fryer,
+          link: {
+            kind: "pr",
+            url: "https://x/1",
+            label: "Fix",
+            addedBy: "Sol",
+            removed: true,
+          },
+          at: NOW,
+        },
+        { kind: "unmentioned", topic: fryer, other, at: NOW },
       ];
       const text = (event: TopicEvent) =>
         rows(render(state({ feed: [live(event)] }), 100, 24, NOW + 9000))
@@ -343,6 +356,12 @@ describe("screen", () => {
         /pr link added by Sol[\s\S]*Fix {2}https:\/\/x\/1/,
       );
       expect(text(events[6])).toMatch(/now references[\s\S]*top\/3 {2}Donuts/);
+      expect(text(events[7])).toMatch(
+        /link removed[\s\S]*pr link taken back[\s\S]*Fix {2}https:\/\/x\/1/,
+      );
+      expect(text(events[8])).toMatch(
+        /mention removed[\s\S]*no longer references[\s\S]*top\/3 {2}Donuts/,
+      );
     });
 
     it("links each Topic's number to where a browser opens it, in the list, a card, and a mention", () => {

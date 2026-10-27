@@ -581,7 +581,10 @@ export function boardFile(
   const root = kind === "copy"
     ? env("XDG_CACHE_HOME") ?? join(home, ".cache")
     : env("XDG_STATE_HOME") ?? join(home, ".local", "state");
-  const name = (part: string) => part.replace(/[^A-Za-z0-9._-]/g, "_");
+  // Percent-encoded, dots included, so that no two names share a file and no
+  // name climbs out of the directory.
+  const name = (part: string) =>
+    encodeURIComponent(part).replaceAll(".", "%2E");
   return join(
     root,
     "commonfabric",

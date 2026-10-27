@@ -459,8 +459,30 @@ describe("sync", () => {
           env,
         ),
       ).toBe(
-        "/cache/commonfabric/topics/estuary.example_8000/my_space/of_fid1_a_b.json",
+        "/cache/commonfabric/topics/estuary%2Eexample%3A8000/my%20space/" +
+          "of%3Afid1%3Aa%2Fb.json",
       );
+    });
+
+    it("gives different hosts, spaces, and boards different files, none outside its directory", () => {
+      const files = [
+        ["a_b", "b"],
+        ["a/b", "b"],
+        ["a:b", "b"],
+        ["..", "b"],
+        ["s", ".."],
+        ["s", "../b"],
+      ].map(([space, board]) =>
+        boardFile("copy", "https://h", space, board, env)
+      );
+
+      expect(new Set(files).size).toBe(files.length);
+      for (const file of files) {
+        expect(file).toMatch(
+          /^\/cache\/commonfabric\/topics\/h\/[^/]+\/[^/]+\.json$/,
+        );
+        expect(file.split("/")).not.toContain("..");
+      }
     });
 
     it("returns the session under `XDG_STATE_HOME`, apart from the copy", () => {

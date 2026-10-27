@@ -68,12 +68,13 @@ behavior of every authored-content verb.
 So treat every call envelope, and every absence of one, as an observation rather
 than proof of durable state, and read back after every mutation. For `addTopic`,
 use a distinctive title and search for it before and after the call; if the
-result is uncertain, recover the Topic's address there rather than blindly
+result is uncertain, recover the Topic's address from `show` rather than blindly
 creating another Topic. Retrying under a new id on the strength of a timeout is
 how one Topic becomes two.
 
 ```bash
 deno task -q topics search '<distinctive title>'
+TOPIC="$(deno task -q topics show top/<number> | sed -n 's/^Address: //p')"
 deno task cf cell get --cell "$TOPIC" title --input
 ```
 

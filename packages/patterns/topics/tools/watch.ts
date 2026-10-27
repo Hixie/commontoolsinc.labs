@@ -193,8 +193,11 @@ export async function watchBoard(
     frame?.();
     for (const undone of undo) undone();
     await typed?.cancel();
-    terminal.write(GIVE);
-    terminal.setRaw(false);
+    try {
+      terminal.write(GIVE);
+    } finally {
+      terminal.setRaw(false);
+    }
     if (connection === undefined) {
       // A session that opens after the view has gone is closed unused, and
       // one that fails to open no longer matters.

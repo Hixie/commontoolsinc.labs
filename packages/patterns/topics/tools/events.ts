@@ -17,7 +17,9 @@ export type TopicEvent =
     | { kind: "retitled"; before: string }
     | { kind: "body"; before: string }
     | { kind: "link"; link: TopicLink }
+    | { kind: "unlinked"; link: TopicLink }
     | { kind: "mention"; other: Topic }
+    | { kind: "unmentioned"; other: Topic }
   );
 
 /**
@@ -69,21 +71,45 @@ export function changes(
         });
       }
     }
-    for (const link of topic.links.slice(was.links.length)) {
-      if (!link.removed) {
-        events.push({ kind: "link", topic, link, at: link.addedAt ?? now });
+    for (const [index, link] of topic.links.entries()) {
+      const old = was.links[index];
+      if (old === undefined) {
+        if (!link.removed) {
+          events.push({ kind: "link", topic, link, at: link.addedAt ?? now });
+        }
+      } else if (link.removed && !old.removed) {
+        events.push({ kind: "unlinked", topic, link, at: now });
       }
     }
-    const mentioned = new Set(was.mentions);
+    // A reference counts from when the Topic it names is on the board, so
+    // one made before that Topic was read is reported once it is.
     for (const id of topic.mentions) {
-      if (mentioned.has(id)) continue;
-      const other = after.find((t) => t.address === id || t.piece === id);
-      if (other !== undefined) {
+      const other = named(after, id);
+      if (
+        other !== undefined &&
+        !(was.mentions.includes(id) && named(before, id) !== undefined)
+      ) {
         events.push({ kind: "mention", topic, other, at: now });
+      }
+    }
+    for (const id of was.mentions) {
+      const other = named(before, id);
+      if (other !== undefined && !topic.mentions.includes(id)) {
+        events.push({
+          kind: "unmentioned",
+          topic,
+          other: named(after, id) ?? other,
+          at: now,
+        });
       }
     }
   }
   return events.sort((a, b) => a.at - b.at);
+}
+
+/** The Topic among `topics` that the reference `id` names, if any. */
+function named(topics: readonly Topic[], id: string): Topic | undefined {
+  return topics.find((t) => t.address === id || t.piece === id);
 }
 
 /**

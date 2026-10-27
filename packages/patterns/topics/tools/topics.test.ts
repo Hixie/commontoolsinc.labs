@@ -446,9 +446,9 @@ describe("topics command", () => {
         "2 Topics; the server sent 0 changed documents.\nLocal copy: " +
           join(
             dir,
-            "cache/commonfabric/topics/localhost_1",
-            SPACE.replaceAll(":", "_"),
-            "of_fid1_topics-board.json",
+            "cache/commonfabric/topics/localhost%3A1",
+            encodeURIComponent(SPACE),
+            "of%3Afid1%3Atopics-board.json",
           ),
       );
     });
@@ -536,6 +536,33 @@ describe("topics command", () => {
 
       await expect(commentAction({ agentName: "Sol" }, "1", "Done.", deps))
         .rejects.toThrow(/does not read back/);
+    });
+
+    it("does not take a retracted identical comment as the one a repeated invocation wrote", async () => {
+      await board.write({
+        "of:fid1:input-1": {
+          value: {
+            ...INPUT_1,
+            comments: [link("of:fid1:comment-1"), {
+              author: { kind: "agent", name: "Sol" },
+              body: "Done.",
+              sentAt: 4000,
+              removedAt: 5000,
+            }],
+          },
+        },
+      });
+      applyWrites = false;
+      const options = { agentName: "Sol", invocation: "topics-retracted" };
+      await expect(commentAction(options, "1", "Done.", deps)).rejects
+        .toThrow(/does not read back/);
+
+      await expect(commentAction(options, "1", "Done.", deps)).rejects
+        .toThrow(/does not read back/);
+      expect(calls.map((call) => call.invocation)).toEqual([
+        "topics-retracted",
+        "topics-retracted",
+      ]);
     });
 
     it("throws when the call does not settle, saying how to settle the write", async () => {

@@ -57,7 +57,13 @@ class FakeTerminal implements Terminal {
   });
   #waiting: { shows: string; arrived: (screen: string) => void }[] = [];
 
+  /** Set to make writing what gives the terminal back fail. */
+  failsToLeave = false;
+
   write(text: string): void {
+    if (this.failsToLeave && text.includes(LEAVE)) {
+      throw new Error("The terminal is gone.");
+    }
     this.writes.push(text);
     const parts = text.split(ROW);
     for (let at = 1; at < parts.length; at += 2) {
@@ -378,6 +384,17 @@ describe("watch", () => {
       // The first frame is drawn; the one going live is not.
       await expect(watch()).rejects.toThrow("The terminal is gone.");
       expect(terminal.writes.at(-1)).toContain(LEAVE);
+      expect(terminal.raw).toEqual([true, false]);
+    });
+
+    it("leaves raw mode when giving the terminal back fails, and throws", async () => {
+      terminal.failsToLeave = true;
+      const live = terminal.showing("● LIVE");
+      const watching = watch();
+      await live;
+      terminal.type("q");
+
+      await expect(watching).rejects.toThrow("The terminal is gone.");
       expect(terminal.raw).toEqual([true, false]);
     });
 

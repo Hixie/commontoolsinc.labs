@@ -174,8 +174,8 @@ export async function boardServer(): Promise<BoardServer> {
         addresses.push(address(SPACE).href);
       }
 
-      create(_space: MemorySpace, _signer?: Signer, options?: MountOptions) {
-        return mount(options);
+      create(space: MemorySpace, _signer?: Signer, options?: MountOptions) {
+        return mount(options, space);
       }
     },
     async close() {

@@ -56,13 +56,15 @@ it as an agent.
 
 ## What holds throughout
 
-- Every command first brings a local copy of the board up to date, asking the
-  server only for documents whose revision moved: a few seconds when nothing
-  changed, and about fifteen the first time on a machine. `--offline` reads the
-  copy as it stands, and `deno task -q topics sync` refreshes it alone and
-  prints where it is kept (`--rebuild` reads the whole board again). A read runs
-  no pattern and commits nothing, so a search is cheap enough to run directly
-  rather than through a subagent.
+- Commands read through a local copy of the board, brought up to date first by
+  asking the server only for documents whose revision moved: a few seconds when
+  nothing changed, and about fifteen the first time on a machine. `new` brings
+  it up to date once the Topic is filed, and `watch` opens on the copy as it
+  stands and then follows the board. `--offline` reads the copy as it stands,
+  and `deno task -q topics sync` refreshes it alone and prints where it is kept
+  (`--rebuild` reads the whole board again). A read runs no pattern and commits
+  nothing, so a search is cheap enough to run directly rather than through a
+  subagent.
 - Do not survey the board with `cf cell get` on its `index`. That runs the board
   in the CLI's runtime and writes one commit per Topic every time, which is the
   cost the client exists to avoid.

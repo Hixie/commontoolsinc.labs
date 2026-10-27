@@ -46,15 +46,15 @@ what fails when the pattern changes where it stores a Topic.
 
 `watch` takes over the whole terminal and shows each change to the board as it
 happens: a card per new Topic, comment, edit, retraction, rename, rewritten
-body, link, and reference, newest at the top, its content typing itself in, and
-beside it the Topics in order of their last activity, the one that changed lit
-for a moment. Every Topic's number is a hyperlink that opens the Topic in a
-browser, on the deployment the board is on. It opens on the local copy as it
-stands, with the copy's recent history as dimmed cards, and goes live once its
-session is open. `q` or Control-C quits, as does the terminal hanging up or the
-process being signaled to end, and the terminal is given back before the session
-closes. The session ending of its own accord, or the copy failing to save, ends
-the view with the error.
+body, and link or reference added or taken back, newest at the top, its content
+typing itself in, and beside it the Topics in order of their last activity, the
+one that changed lit for a moment. Every Topic's number is a hyperlink that
+opens the Topic in a browser, on the deployment the board is on. It opens on the
+local copy as it stands, with the copy's recent history as dimmed cards, and
+goes live once its session is open. `q` or Control-C quits, as does the terminal
+hanging up or the process being signaled to end, and the terminal is given back
+before the session closes. The session ending of its own accord, or the copy
+failing to save, ends the view with the error.
 
 `live.ts` keeps the copy current over one memory session. It watches every
 document the copy holds or knows to be missing, and the server pushes each
