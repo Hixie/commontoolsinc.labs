@@ -33,6 +33,8 @@ export function changes(
   now: number,
 ): TopicEvent[] {
   const earlier = new Map(before.map((topic) => [topic.number, topic]));
+  const namedBefore = byReference(before);
+  const namedAfter = byReference(after);
   const events: TopicEvent[] = [];
   for (const topic of after) {
     const was = earlier.get(topic.number);
@@ -84,21 +86,21 @@ export function changes(
     // A reference counts from when the Topic it names is on the board, so
     // one made before that Topic was read is reported once it is.
     for (const id of topic.mentions) {
-      const other = named(after, id);
+      const other = namedAfter.get(id);
       if (
         other !== undefined &&
-        !(was.mentions.includes(id) && named(before, id) !== undefined)
+        !(was.mentions.includes(id) && namedBefore.get(id) !== undefined)
       ) {
         events.push({ kind: "mention", topic, other, at: now });
       }
     }
     for (const id of was.mentions) {
-      const other = named(before, id);
+      const other = namedBefore.get(id);
       if (other !== undefined && !topic.mentions.includes(id)) {
         events.push({
           kind: "unmentioned",
           topic,
-          other: named(after, id) ?? other,
+          other: namedAfter.get(id) ?? other,
           at: now,
         });
       }
@@ -107,9 +109,14 @@ export function changes(
   return events.sort((a, b) => a.at - b.at);
 }
 
-/** The Topic among `topics` that the reference `id` names, if any. */
-function named(topics: readonly Topic[], id: string): Topic | undefined {
-  return topics.find((t) => t.address === id || t.piece === id);
+/** Each of `topics` by the references that name it, its address and piece. */
+function byReference(topics: readonly Topic[]): Map<string, Topic> {
+  const named = new Map<string, Topic>();
+  for (const topic of topics) {
+    named.set(topic.address, topic);
+    named.set(topic.piece, topic);
+  }
+  return named;
 }
 
 /**
