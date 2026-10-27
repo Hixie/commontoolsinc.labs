@@ -109,12 +109,16 @@ export function changes(
   return events.sort((a, b) => a.at - b.at);
 }
 
-/** Each of `topics` by the references that name it, its address and piece. */
+/**
+ * Each of `topics` by the references that name it, its address and piece,
+ * the first Topic a reference names where two share it.
+ */
 function byReference(topics: readonly Topic[]): Map<string, Topic> {
   const named = new Map<string, Topic>();
   for (const topic of topics) {
-    named.set(topic.address, topic);
-    named.set(topic.piece, topic);
+    for (const reference of [topic.address, topic.piece]) {
+      if (!named.has(reference)) named.set(reference, topic);
+    }
   }
   return named;
 }

@@ -415,9 +415,10 @@ const SNIPPET_WIDTH = 200;
 
 /**
  * The Topics matching every one of `patterns` somewhere in the title, the
- * body, a comment, a link, or the name of an author, newest activity first.
- * Retracted comments and links are not searched. With no patterns, every
- * Topic matches.
+ * body, a comment, a link, or the name of an author, or in those of them
+ * `fields` names, newest activity first, less those whose titles match a
+ * pattern of `exclude`. Retracted comments and links are not searched. With
+ * no patterns, every Topic not excluded matches.
  */
 export function searchTopics(
   topics: readonly Topic[],

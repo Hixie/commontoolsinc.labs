@@ -47,12 +47,12 @@ material.
 | reference another Topic       | `deno task -q topics mention top/42 top/7`                                             |
 
 A search term is a case-insensitive regular expression; a Topic matches when
-every term matches its title, body, a comment, a link, or an author's name.
-`--json` on `search` and `show` prints the same as JSON for a program to read.
-Each Topic listed shows when it was last active: its age within the last day
-(`12m ago`, `5h ago`), and otherwise the day in the local time zone. Text
-holding Markdown, backticks, or quotes goes on stdin through a quoted
-here-document (`<<'EOF'`), which the shell leaves unexpanded.
+every term matches its title, body, a comment, a link, or an author's name, or
+one of those that `--in` names. `--json` on `search` and `show` prints the same
+as JSON for a program to read. Each Topic listed shows when it was last active:
+its age within the last day (`12m ago`, `5h ago`), and otherwise the day in the
+local time zone. Text holding Markdown, backticks, or quotes goes on stdin
+through a quoted here-document (`<<'EOF'`), which the shell leaves unexpanded.
 
 `deno task -q topics watch` shows the board live on the whole terminal, for a
 person to watch; it takes over the terminal until a key quits it, so do not run
