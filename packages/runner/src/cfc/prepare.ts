@@ -5481,6 +5481,15 @@ const declaredObservesClass = (
     : undefined;
 };
 
+/** The `ifc` keys the specification types as lists of atoms or clauses. */
+const LABEL_LIST_KEYS = [
+  "confidentiality",
+  "integrity",
+  "addIntegrity",
+  "requiredIntegrity",
+  "maxConfidentiality",
+] as const;
+
 const unsupportedTrustSensitiveReason = (
   schema: JSONSchema,
   path: readonly string[],
@@ -5513,13 +5522,37 @@ const unsupportedTrustSensitiveReason = (
   ) {
     return `malformed writePolicyAnyOf at /${path.join("/")}`;
   }
+  // A label list declared as anything but a list is malformed (§4.2.1, §8.8).
+  // Its readers skip what is not a list, so it would be enforced as no label,
+  // no floor, or no ceiling, or crash the commit; a malformed declaration
+  // fails here instead (§8.10.3).
+  for (const key of LABEL_LIST_KEYS) {
+    if (ifc[key] !== undefined && !Array.isArray(ifc[key])) {
+      return `malformed ${key} at /${path.join("/")}`;
+    }
+  }
+  if (!writesEventIntegrityAsList(ifc.uiContract)) {
+    return `malformed uiContract.requiredEventIntegrity at /${path.join("/")}`;
+  }
   return undefined;
 };
 
 /**
+ * Whether `contract`, a UI contract as a schema declares it, writes its
+ * `requiredEventIntegrity`, where it writes one, as a list. Its parse
+ * (`uiContractFromSchema()`) keeps only a list, so a requirement written as
+ * anything else would be dropped.
+ */
+const writesEventIntegrityAsList = (contract: unknown): boolean =>
+  !isObjectNotArray(contract) ||
+  contract.requiredEventIntegrity === undefined ||
+  Array.isArray(contract.requiredEventIntegrity);
+
+/**
  * Whether the `writePolicyAnyOf` that `ifc` declares is one this runner
  * enforces: a nonempty list of alternatives, each a writer claim with at most a
- * UI contract that parses beside it, and no writer or contract of the
+ * UI contract that parses beside it, its event integrity written as a list
+ * where it writes one, and no writer or contract of the
  * position's own beside the list, which would leave unclear which of the two
  * governs.
  */
@@ -5533,7 +5566,8 @@ const isWellFormedWritePolicyAnyOf = (ifc: Record<string, unknown>) => {
         key === "writeAuthorizedBy" || key === "uiContract"
       ) &&
       (policy.uiContract === undefined ||
-        uiContractFromSchema({ ifc: policy } as JSONSchema) !== undefined)
+        (uiContractFromSchema({ ifc: policy } as JSONSchema) !== undefined &&
+          writesEventIntegrityAsList(policy.uiContract)))
     );
 };
 
