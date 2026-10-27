@@ -783,9 +783,11 @@ does not carry the jobs, nor a job its annotations, so each tile requests the
 job listing of every cancelled attempt it reaches, up to the page holding the
 first job a runner ran that did not succeed for a reason of its own, and the
 annotations of each job a runner ran that was cancelled, up to and including
-that one, page by page until one gives the concurrency group as the reason. Each answer is
-requested once and held while the run stays in the tile's window. No other
-conclusion takes those requests.
+that one, page by page until one gives the concurrency group as the reason.
+Each answer is requested once and held while the run stays in the tile's
+window. No other conclusion takes those requests, except that the ci trust
+tiles read the whole job listing of an earlier attempt GitHub returns without a
+conclusion, as described below, and treat it as cancelled when its jobs say so.
 
 The **ci** tile reads each workflow's runs on the default branch, of any
 status, newest first, and decides the job from the newest completed one

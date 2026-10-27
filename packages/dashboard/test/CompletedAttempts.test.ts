@@ -118,19 +118,34 @@ describe("CompletedAttempts", () => {
         );
       });
 
-      it("rejects the latest attempt GitHub returns in progress without reading its jobs", async () => {
+      it("rejects the latest attempt GitHub returns other than completed with a conclusion, without reading its jobs", async () => {
         // A run listed as completed whose attempt endpoint says otherwise has
         // no later attempt to show that this one ended.
         const listed = run(1);
-        const urls = await withGithubAttempt(
+        const answers = [
           inProgress(listed, 1),
-          async (urls) => {
+          { ...inProgress(listed, 1), conclusion: "success" },
+          { ...listed, conclusion: null },
+        ];
+        for (const answer of answers) {
+          const urls = await withGithubAttempt(answer, async (urls) => {
             await expect(new CompletedAttempts(REPO).get(listed, 1)).rejects
               .toThrow("did not include a completed conclusion");
             return urls;
-          },
-        );
-        expect(urls).toEqual([attemptUrl(listed, 1)]);
+          });
+          expect(urls).toEqual([attemptUrl(listed, 1)]);
+        }
+      });
+
+      it("returns an earlier attempt GitHub gives a conclusion as it is, without reading its jobs", async () => {
+        const rerun = run(2);
+        const first = { ...inProgress(rerun, 1), conclusion: "failure" };
+        const urls = await withGithubAttempt(first, async (urls) => {
+          const attempt = await new CompletedAttempts(REPO).get(rerun, 1);
+          expect(attempt.conclusion).toBe("failure");
+          return urls;
+        });
+        expect(urls).toEqual([attemptUrl(rerun, 1)]);
       });
 
       it("rejects an answer for another run or another attempt", async () => {

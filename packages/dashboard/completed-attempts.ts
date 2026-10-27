@@ -109,12 +109,13 @@ export class CompletedAttempts {
 
   /**
    * Returns attempt `attempt` of `run`, requesting it from GitHub unless it is
-   * already held. An attempt GitHub returns without a conclusion that is
-   * earlier than `run`'s latest has ended, since GitHub reruns only a run that
-   * has completed, so it is returned as completed with the conclusion
+   * already held. An attempt earlier than `run`'s latest has ended, since
+   * GitHub reruns only a run that has completed, so when GitHub returns it
+   * without a conclusion it is returned as completed with the conclusion
    * `#concludedByJobs` reads from its jobs. Rejects when a request fails, when
    * GitHub returns another run's attempt or another attempt, when it returns
-   * the latest attempt without a conclusion, or as `#concludedByJobs` does.
+   * the latest attempt other than completed with a conclusion, or as
+   * `#concludedByJobs` does.
    */
   async get(run: Run, attempt: number): Promise<Run> {
     const attempts = this.#held(run).attempts;
@@ -130,8 +131,11 @@ export class CompletedAttempts {
           `when asked for run ${run.id} attempt ${attempt}`,
       );
     }
-    const conclusion = answer.conclusion ??
-      (attempt < run.run_attempt ? await this.#concludedByJobs(answer) : null);
+    const conclusion = attempt < run.run_attempt
+      ? answer.conclusion ?? await this.#concludedByJobs(answer)
+      : answer.status === "completed"
+      ? answer.conclusion
+      : null;
     if (!conclusion) {
       throw new Error(
         `GitHub run ${run.id} attempt ${attempt} did not include a completed conclusion`,
