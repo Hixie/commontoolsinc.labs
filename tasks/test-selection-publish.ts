@@ -178,9 +178,8 @@ export function liveStore(
         headers: { "accept-encoding": "identity" },
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      // Let Cloud Storage decode the stored gzip object. Deno cannot read
-      // the full aggregate from the compressed response once its decoded
-      // body grows beyond the encoded Content-Length.
+      // Let Cloud Storage decode the stored gzip object: Deno 2.9.8 fails
+      // to read the complete large aggregate with automatic decompression.
       return await response.text();
     },
     create: async (name, body) => {
