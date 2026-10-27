@@ -241,10 +241,11 @@ describe("check-test-shuffle", () => {
       expect(shuffles('["deno", "test", "--shuffle=" + seed]')).toEqual([true]);
     });
 
-    it("returns a list asking for a random order as unshuffled", () => {
+    it("returns a list whose shuffle flag names no seed as unshuffled", () => {
       // `--shuffle` with no seed picks a new order on every run, which is
-      // not the commit's order.
+      // not the commit's order, and `--shuffle=` names nothing.
       expect(shuffles('["deno", "test", "--shuffle", "-A"]')).toEqual([false]);
+      expect(shuffles('["deno", "test", "--shuffle=", "-A"]')).toEqual([false]);
     });
 
     it("returns a `deno` command it cannot read as unshuffled", () => {

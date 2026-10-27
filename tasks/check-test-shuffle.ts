@@ -507,15 +507,22 @@ function calls(node: ts.Node, name: string): boolean {
 }
 
 /**
- * Whether a node is a string that starts with `prefix`: a literal, a
- * template, or a concatenation whose first operand is one of those.
+ * Whether a node is a string that writes `prefix` with a value after it: a
+ * literal with text after the prefix, or a template or concatenation that
+ * starts with the prefix and goes on with an expression.
  */
-function startsWithText(node: ts.Node, prefix: string): boolean {
-  if (isPlainString(node)) return node.text.startsWith(prefix);
+function writesOption(node: ts.Node, prefix: string): boolean {
+  if (isPlainString(node)) {
+    return node.text.startsWith(prefix) && node.text.length > prefix.length;
+  }
   if (ts.isTemplateExpression(node)) return node.head.text.startsWith(prefix);
-  return ts.isBinaryExpression(node) &&
-    node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    startsWithText(node.left, prefix);
+  if (
+    !ts.isBinaryExpression(node) ||
+    node.operatorToken.kind !== ts.SyntaxKind.PlusToken
+  ) return false;
+  return isPlainString(node.left)
+    ? node.left.text.startsWith(prefix)
+    : writesOption(node.left, prefix);
 }
 
 /** Whether a node names the `deno` program: `"deno"` or `Deno.execPath()`. */
@@ -570,7 +577,7 @@ function isDenoTestList(list: ts.ArrayLiteralExpression): boolean {
 function listShuffles(list: ts.ArrayLiteralExpression): boolean {
   return list.elements.map(unwrapped)
     .some((element) =>
-      startsWithText(element, "--shuffle=") || calls(element, "shuffleFlag")
+      writesOption(element, "--shuffle=") || calls(element, "shuffleFlag")
     );
 }
 

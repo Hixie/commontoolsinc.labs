@@ -342,9 +342,9 @@ implementation of a runner that forwards its caller's flags. In those files it
 looks at two kinds of array: one that starts `"deno", "test"` or
 `Deno.execPath(), "test"`, and the `args` array of a `new Deno.Command()`
 whose program is `deno`, when that array starts with `"test"`. Such an array
-passes when one of its elements is a string starting `--shuffle=` or a call to
-`shuffleFlag()`. A spread element never counts, because the check cannot see
-what it holds. An array that starts with `"deno"` or `Deno.execPath()` and goes
+passes when one of its elements is a string writing `--shuffle=` and a seed, or
+a call to `shuffleFlag()`. A spread element never counts, because the check
+cannot see what it holds. An array that starts with `"deno"` or `Deno.execPath()` and goes
 on with anything other than a plain string, such as `["deno", ...args]`, may
 run `deno test`, so it is held to the same rule; write a `deno test` command as
 one array.
