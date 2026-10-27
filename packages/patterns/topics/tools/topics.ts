@@ -19,11 +19,15 @@ import { debugStr } from "@commonfabric/data-model";
 import { isObjectNotArray } from "@commonfabric/utils/types";
 
 import {
+  FIELDS,
   formatTopic,
   formatTopicLine,
   type Now,
+  type SearchScope,
   searchTopics,
+  type ThreadWindow,
   type Topic,
+  topicRecord,
 } from "./mirror.ts";
 import {
   boardFile,
@@ -602,25 +606,39 @@ async function writeTopic(
 
 /** Runs the `search` command. */
 export async function searchAction(
-  options: TopicsOptions & { limit?: number },
+  options: TopicsOptions & SearchScope & { limit?: number; json?: boolean },
   terms: string[],
   deps: TopicsDeps = defaultDeps,
 ): Promise<void> {
-  const patterns = terms.map((term) => {
-    try {
-      return new RegExp(term, "i");
-    } catch {
-      return new RegExp(RegExp.escape(term), "i");
-    }
-  });
   const { topics } = await readTopics(
     deps,
     boardFrom(deps, options),
     { offline: options.offline },
   );
-  const hits = searchTopics(topics, patterns);
+  const hits = searchTopics(topics, terms.map(patternOf), options);
   const limit = options.limit ?? DEFAULT_LIMIT;
-  const lines = hits.slice(0, limit).flatMap(({ topic, snippets }) => [
+  const listed = hits.slice(0, limit);
+  if (options.json) {
+    deps.write(JSON.stringify(
+      {
+        matching: hits.length,
+        topics: listed.map(({ topic, snippets }) => ({
+          number: topic.number,
+          address: `/${topic.address}`,
+          title: topic.title,
+          createdAt: topic.createdAt,
+          createdBy: topic.createdBy,
+          lastActivityAt: topic.lastActivityAt,
+          comments: topic.comments.filter((c) => !c.removed).length,
+          matches: snippets,
+        })),
+      },
+      null,
+      2,
+    ));
+    return;
+  }
+  const lines = listed.flatMap(({ topic, snippets }) => [
     formatTopicLine(topic, nowFor(deps)),
     ...snippets.map((snippet) => `    ${snippet}`),
   ]);
@@ -634,11 +652,23 @@ export async function searchAction(
 }
 
 /**
+ * The case-insensitive pattern `term` is, or that matches it literally when
+ * it is not a valid regular expression.
+ */
+function patternOf(term: string): RegExp {
+  try {
+    return new RegExp(term, "i");
+  } catch {
+    return new RegExp(RegExp.escape(term), "i");
+  }
+}
+
+/**
  * Runs the `show` command: prints each Topic named that the board holds, in
  * the order named, then fails naming any it does not.
  */
 export async function showAction(
-  options: TopicsOptions,
+  options: TopicsOptions & { window?: ThreadWindow; json?: boolean },
   references: readonly string[],
   deps: TopicsDeps = defaultDeps,
 ): Promise<void> {
@@ -648,10 +678,20 @@ export async function showAction(
     { offline: options.offline },
   );
   const found = references.map((reference) => lookUp(read, reference));
-  const shown = found.flatMap((topic) =>
-    topic === undefined ? [] : [formatTopic(topic, `/${topic.address}`)]
-  );
-  if (shown.length > 0) deps.write(shown.join("\n\n"));
+  const present = found.flatMap((topic) => topic === undefined ? [] : [topic]);
+  if (options.json) {
+    deps.write(JSON.stringify(
+      present.map((topic) => topicRecord(topic, options.window)),
+      null,
+      2,
+    ));
+  } else if (present.length > 0) {
+    deps.write(
+      present.map((topic) =>
+        formatTopic(topic, `/${topic.address}`, options.window)
+      ).join("\n\n"),
+    );
+  }
   const missing = references.filter((_, index) => found[index] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -858,8 +898,8 @@ export async function mentionAction(
 
 /** The options each command takes, beyond `--identity` and `--help`. */
 const OPTIONS: Record<string, readonly string[]> = {
-  search: ["limit", "offline"],
-  show: ["offline"],
+  search: ["limit", "offline", "in", "exclude", "json"],
+  show: ["offline", "json", "last", "comments-since"],
   sync: ["rebuild"],
   watch: [],
   new: ["agent-name", "invocation"],
@@ -885,12 +925,21 @@ Reading:
                             is a case-insensitive regular expression; with no
                             terms, the most recently active Topics.
       -n, --limit <count>   How many Topics to list (default ${DEFAULT_LIMIT}).
+      --in <fields>         Match only in these, comma-separated: title,
+                            body, comments, links, authors (default all).
+      --exclude <pattern>   Leave out Topics whose title matches, such as
+                            '^\\[(RESOLVED|DUPLICATE|OBSOLETE)'. Repeatable.
   show <topic>...           Each Topic as Markdown: body, links, and comments.
+      --last <count>        Only the last this many comments of each.
+      --comments-since <date>
+                            Only comments sent since then: 2026-10-27 or
+                            2026-10-27T14:00 in local time, or ...Z in UTC.
   sync                      Bring the copy up to date and say where it is.
       --rebuild             Read the whole board again.
   watch                     The board, live, on the whole terminal: each
                             change shown as it happens. q quits.
   --offline                 Read the copy as it stands (search, show).
+  --json                    Print JSON for a program to read (search, show).
 
 Writing:
   new <title> [body]        File a Topic.
@@ -922,8 +971,20 @@ export async function main(
   deps: TopicsDeps = defaultDeps,
 ): Promise<void> {
   const flags = parseArgs([...args], {
-    string: ["_", "identity", "agent-name", "invocation", "limit", "kind"],
-    boolean: ["offline", "rebuild", "help"],
+    string: [
+      "_",
+      "identity",
+      "agent-name",
+      "invocation",
+      "limit",
+      "kind",
+      "in",
+      "exclude",
+      "last",
+      "comments-since",
+    ],
+    boolean: ["offline", "rebuild", "json", "help"],
+    collect: ["exclude"],
     alias: { i: "identity", n: "limit", h: "help" },
     unknown: (arg) => {
       if (arg.startsWith("-")) {
@@ -964,12 +1025,24 @@ export async function main(
       debugStr`Unknown command $quote${command}; see \`--help\`.`,
     );
   }
-  for (const option of ["agent-name", "invocation", "limit", "kind"] as const) {
+  const valued = [
+    "agent-name",
+    "invocation",
+    "limit",
+    "kind",
+    "in",
+    "last",
+    "comments-since",
+  ] as const;
+  for (const option of valued) {
     if (flags[option] !== undefined && !allowed.includes(option)) {
       throw new Error(`\`${command}\` takes no \`--${option}\`.`);
     }
   }
-  for (const option of ["offline", "rebuild"] as const) {
+  if (flags.exclude.length > 0 && !allowed.includes("exclude")) {
+    throw new Error(`\`${command}\` takes no \`--exclude\`.`);
+  }
+  for (const option of ["offline", "rebuild", "json"] as const) {
     if (flags[option] && !allowed.includes(option)) {
       throw new Error(`\`${command}\` takes no \`--${option}\`.`);
     }
@@ -980,11 +1053,51 @@ export async function main(
       if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
         throw new Error("`--limit` takes a positive whole number.");
       }
-      return await searchAction({ ...options, limit }, operands, deps);
+      const fields = flags.in?.split(",").map((named) => {
+        const field = FIELDS.find((field) => field === named.trim());
+        if (field === undefined) {
+          throw new Error(
+            `\`--in\` takes a comma-separated list of ${FIELDS.join(", ")}.`,
+          );
+        }
+        return field;
+      });
+      return await searchAction(
+        {
+          ...options,
+          limit,
+          fields,
+          exclude: flags.exclude.map(patternOf),
+          json: flags.json,
+        },
+        operands,
+        deps,
+      );
     }
-    case "show":
+    case "show": {
       take(1, Infinity);
-      return await showAction(options, operands, deps);
+      const last = flags.last === undefined ? undefined : Number(flags.last);
+      if (last !== undefined && !(Number.isInteger(last) && last > 0)) {
+        throw new Error("`--last` takes a positive whole number.");
+      }
+      // A day alone is the start of that day where the command runs, as a
+      // time without a zone is.
+      const given = flags["comments-since"];
+      const since = given === undefined ? undefined : Date.parse(
+        /^\d{4}-\d{2}-\d{2}$/.test(given) ? `${given}T00:00` : given,
+      );
+      if (since !== undefined && Number.isNaN(since)) {
+        throw new Error(
+          "`--comments-since` takes a date or time, such as 2026-10-27 or " +
+            "2026-10-27T14:00.",
+        );
+      }
+      return await showAction(
+        { ...options, window: { since, last }, json: flags.json },
+        operands,
+        deps,
+      );
+    }
     case "watch": {
       take(0, 0);
       if (!deps.stdin.isTerminal()) {

@@ -387,15 +387,17 @@ describe("watch", () => {
       expect(terminal.raw).toEqual([true, false]);
     });
 
-    it("leaves raw mode when giving the terminal back fails, and throws", async () => {
+    it("leaves raw mode and closes the session when giving the terminal back fails, and throws", async () => {
       terminal.failsToLeave = true;
+      const closed = Promise.withResolvers<void>();
       const live = terminal.showing("● LIVE");
-      const watching = watch();
+      const watching = watch(() => closing(closed));
       await live;
       terminal.type("q");
 
       await expect(watching).rejects.toThrow("The terminal is gone.");
       expect(terminal.raw).toEqual([true, false]);
+      await closed.promise;
     });
 
     it("throws when the terminal cannot be taken over, having started nothing", async () => {

@@ -42,6 +42,9 @@ interface Call {
   args: readonly string[];
 }
 
+/** A comment's time on the second day the board's comments span. */
+const DAY_TWO = Date.UTC(2026, 9, 27, 12);
+
 /** How far a failing `cf piece call` got before it failed. */
 type Phase = "initial_sync" | "dispatched" | "committed";
 
@@ -1024,6 +1027,98 @@ describe("topics command", () => {
         "`--limit` takes a positive whole number",
       );
       expect(calls).toEqual([]);
+    });
+
+    it("searches only the parts `--in` names, leaving out Topics whose titles match `--exclude`", async () => {
+      await run("search", "reproduced", "--in", "title, body");
+      const inTitleOrBody = printed();
+      await run("search", "reproduced", "--in", "comments");
+      const inComments = printed();
+      await run("search", "--exclude", "^Flaky", "--exclude", "nothing");
+
+      expect(inTitleOrBody).toBe("0 of 2 Topics match.");
+      expect(inComments).toMatch(/^top\/1 [\s\S]*1 of 2 Topics match\.$/);
+      expect(printed()).toMatch(/^top\/2 .*\n1 of 2 Topics match\.$/);
+      await expect(run("search", "--in", "title,bodies")).rejects.toThrow(
+        "`--in` takes a comma-separated list of title, body, comments, " +
+          "links, authors.",
+      );
+    });
+
+    it("prints JSON for `search --json` and `show --json`", async () => {
+      await run("search", "cold", "--json");
+      const found = JSON.parse(printed());
+      await run("show", "1", "2", "--json");
+      const shown = JSON.parse(printed());
+
+      expect(found).toEqual({
+        matching: 1,
+        topics: [{
+          number: "1",
+          address: "/of:fid1:topic-alias-1",
+          title: "Flaky fryer test",
+          createdAt: 1000,
+          createdBy: "Sol (agent)",
+          lastActivityAt: expect.any(Number),
+          comments: 1,
+          matches: [
+            "body: when the oil is cold.",
+            "comment 1 (Ada (person)): Reproduced with cold oil.",
+          ],
+        }],
+      });
+      expect(shown.map((topic: { number: string }) => topic.number)).toEqual(
+        ["1", "2"],
+      );
+      expect(shown[0].comments).toEqual([{
+        number: 1,
+        author: "Ada (person)",
+        body: "Reproduced with cold oil.",
+        sentAt: 2000,
+      }]);
+    });
+
+    it("shows only the comments `--last` and `--comments-since` leave", async () => {
+      await board.write({
+        "of:fid1:input-1": {
+          value: {
+            ...INPUT_1,
+            comments: [
+              link("of:fid1:comment-1"),
+              { author: { name: "Bo" }, body: "Day two.", sentAt: DAY_TWO },
+              { author: { name: "Cy" }, body: "Later.", sentAt: DAY_TWO + 1 },
+            ],
+          },
+        },
+      });
+      const numbers = () =>
+        [...printed().matchAll(/^### (\d+)\./gm)].map((match) => match[1]);
+      await run("show", "1", "--last", "2");
+      const last = numbers();
+      await run("show", "1", "--comments-since", "2026-10-27");
+      const sinceDay = numbers();
+      await run("show", "1", "--comments-since", "2026-10-27T12:00:00.001Z");
+      const sinceTime = numbers();
+
+      expect(last).toEqual(["2", "3"]);
+      expect(sinceDay).toEqual(
+        Date.parse("2026-10-27T00:00") <= DAY_TWO ? ["2", "3"] : ["3"],
+      );
+      expect(sinceTime).toEqual(["3"]);
+      await expect(run("show", "1", "--last", "0")).rejects.toThrow(
+        "`--last` takes a positive whole number.",
+      );
+      await expect(run("show", "1", "--comments-since", "soon")).rejects
+        .toThrow("`--comments-since` takes a date or time");
+      await expect(run("search", "--last", "2")).rejects.toThrow(
+        "`search` takes no `--last`.",
+      );
+      await expect(run("show", "1", "--exclude", "x")).rejects.toThrow(
+        "`show` takes no `--exclude`.",
+      );
+      await expect(run("sync", "--json")).rejects.toThrow(
+        "`sync` takes no `--json`.",
+      );
     });
   });
 

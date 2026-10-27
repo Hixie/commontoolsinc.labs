@@ -422,48 +422,78 @@ const SNIPPET_WIDTH = 200;
 export function searchTopics(
   topics: readonly Topic[],
   patterns: readonly RegExp[],
+  { fields = FIELDS, exclude = [] }: SearchScope = {},
 ): SearchHit[] {
   const hits: SearchHit[] = [];
   for (const topic of topics) {
-    const sections = topicSections(topic);
-    const matches = (pattern: RegExp) =>
-      sections.some(({ text, author }) =>
-        pattern.test(text) || pattern.test(author)
-      );
-    if (!patterns.every(matches)) continue;
-    const snippets = sections.flatMap(({ label, text }) =>
-      label === "title" ? [] : text.split("\n").flatMap((line) => {
-        const at = firstMatch(line, patterns);
-        return at === undefined ? [] : [`${label}: ${excerpt(line, at)}`];
-      })
+    if (exclude.some((pattern) => pattern.test(topic.title))) continue;
+    const sections = topicSections(topic).filter(({ field }) =>
+      fields.includes(field)
+    );
+    if (!patterns.every((p) => sections.some(({ text }) => p.test(text)))) {
+      continue;
+    }
+    const snippets = sections.flatMap(({ field, label, text }) =>
+      field === "title" || field === "authors"
+        ? []
+        : text.split("\n").flatMap((line) => {
+          const at = firstMatch(line, patterns);
+          return at === undefined ? [] : [`${label}: ${excerpt(line, at)}`];
+        })
     ).slice(0, SNIPPETS_PER_TOPIC);
     hits.push({ topic, snippets });
   }
   return hits.sort((a, b) => b.topic.lastActivityAt - a.topic.lastActivityAt);
 }
 
+/** The parts of a Topic a search term can match. */
+export const FIELDS = [
+  "title",
+  "body",
+  "comments",
+  "links",
+  "authors",
+] as const;
+
+/** One of {@link FIELDS}. */
+export type Field = typeof FIELDS[number];
+
+/** Where a search looks, and which Topics it leaves out by their titles. */
+export interface SearchScope {
+  /** The parts a term may match, every part when not given. */
+  fields?: readonly Field[];
+
+  /** Patterns a Topic's title matches to be left out. */
+  exclude?: readonly RegExp[];
+}
+
 /**
- * The searchable parts of a Topic: each has a label, text that a match can
- * be shown from, and the author, which matches without being shown.
+ * The searchable parts of a Topic: each is one of {@link FIELDS}, with a
+ * label a match is shown under and the text it matches.
  */
 function topicSections(
   topic: Topic,
-): { label: string; text: string; author: string }[] {
+): { field: Field; label: string; text: string }[] {
+  const comments = presentComments(topic);
+  const links = topic.links.filter((link) => !link.removed);
   return [
-    { label: "title", text: topic.title, author: topic.createdBy },
-    { label: "body", text: topic.body, author: "" },
-    ...presentComments(topic).map((comment, index) => ({
+    { field: "title", label: "title", text: topic.title },
+    { field: "body", label: "body", text: topic.body },
+    ...comments.map((comment, index) => ({
+      field: "comments" as const,
       label: `comment ${index + 1} (${comment.author})`,
       text: comment.body,
-      author: comment.author,
     })),
-    ...topic.links.flatMap((link) =>
-      link.removed ? [] : [{
-        label: "link",
-        text: `${link.label} ${link.url}`,
-        author: link.addedBy,
-      }]
-    ),
+    ...links.map((link) => ({
+      field: "links" as const,
+      label: "link",
+      text: `${link.label} ${link.url}`,
+    })),
+    ...[
+      topic.createdBy,
+      ...comments.map((comment) => comment.author),
+      ...links.map((link) => link.addedBy),
+    ].map((text) => ({ field: "authors" as const, label: "author", text })),
   ];
 }
 
@@ -556,8 +586,13 @@ export function formatTopicLine(topic: Topic, now: Now): string {
  * Retracted comments and links are left out, as the Topic's own view leaves
  * them out.
  */
-export function formatTopic(topic: Topic, address: string): string {
+export function formatTopic(
+  topic: Topic,
+  address: string,
+  window: ThreadWindow = {},
+): string {
   const comments = presentComments(topic);
+  const shown = threadOf(topic, window);
   const links = topic.links.filter((link) => !link.removed);
   const lines = [
     `# top/${topic.number}: ${topic.title}`,
@@ -584,13 +619,16 @@ export function formatTopic(topic: Topic, address: string): string {
   }
   if (comments.length > 0) {
     lines.push("", "## Comments");
-    for (const [index, comment] of comments.entries()) {
+    if (shown.length < comments.length) {
+      lines.push("", `${shown.length} of ${comments.length} shown.`);
+    }
+    for (const { number, comment } of shown) {
       const edited = comment.editedAt === undefined
         ? ""
         : `, edited ${minute(comment.editedAt)}`;
       lines.push(
         "",
-        `### ${index + 1}. ${comment.author || "unknown"}, ` +
+        `### ${number}. ${comment.author || "unknown"}, ` +
           `${minute(comment.sentAt)}${edited}`,
         "",
         comment.body.trimEnd(),
@@ -598,4 +636,61 @@ export function formatTopic(topic: Topic, address: string): string {
     }
   }
   return lines.join("\n");
+}
+
+/** Which of a long thread's comments to show. */
+export interface ThreadWindow {
+  /** Only comments sent at or after this time, in milliseconds. */
+  since?: number;
+
+  /** Only the last this many comments, after `since`. */
+  last?: number;
+}
+
+/**
+ * The comments of `topic` that `window` shows, oldest first, each with its
+ * number in the whole thread.
+ */
+export function threadOf(
+  topic: Topic,
+  { since, last }: ThreadWindow,
+): { number: number; comment: TopicComment }[] {
+  const numbered = presentComments(topic).map((comment, index) => ({
+    number: index + 1,
+    comment,
+  })).filter(({ comment }) => since === undefined || comment.sentAt >= since);
+  return last === undefined
+    ? numbered
+    : numbered.slice(Math.max(0, numbered.length - last));
+}
+
+/**
+ * A Topic as plain data for a program to read: its present comments, those
+ * `window` shows, numbered in the whole thread, and its present links.
+ */
+export function topicRecord(topic: Topic, window: ThreadWindow = {}) {
+  return {
+    number: topic.number,
+    address: `/${topic.address}`,
+    title: topic.title,
+    body: topic.body,
+    createdAt: topic.createdAt,
+    createdBy: topic.createdBy,
+    lastActivityAt: topic.lastActivityAt,
+    comments: threadOf(topic, window).map(({ number, comment }) => ({
+      number,
+      author: comment.author,
+      body: comment.body,
+      sentAt: comment.sentAt,
+      ...(comment.editedAt === undefined ? {} : { editedAt: comment.editedAt }),
+    })),
+    links: topic.links.filter((link) => !link.removed).map((link) => ({
+      kind: link.kind,
+      url: link.url,
+      label: link.label,
+      addedBy: link.addedBy,
+      ...(link.addedAt === undefined ? {} : { addedAt: link.addedAt }),
+    })),
+    mentions: topic.mentions,
+  };
 }

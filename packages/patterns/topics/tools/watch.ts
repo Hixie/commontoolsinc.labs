@@ -196,15 +196,17 @@ export async function watchBoard(
     try {
       terminal.write(GIVE);
     } finally {
+      // The terminal leaves raw mode and the session closes even when
+      // giving the terminal back failed.
       terminal.setRaw(false);
-    }
-    if (connection === undefined) {
-      // A session that opens after the view has gone is closed unused, and
-      // one that fails to open no longer matters.
-      connecting?.then((late) => late.close()).catch(() => {});
-    } else {
-      await connection.close();
-      await following;
+      if (connection === undefined) {
+        // A session that opens after the view has gone is closed unused, and
+        // one that fails to open no longer matters.
+        connecting?.then((late) => late.close()).catch(() => {});
+      } else {
+        await connection.close();
+        await following;
+      }
     }
   }
 }

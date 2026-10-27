@@ -31,21 +31,25 @@ Do not search for keys, mint an agent key, use another human's key, or use the
 publicly derivable `implicit trust` identity, and never print or inspect key
 material.
 
-| To                      | Run                                                                   |
-| ----------------------- | --------------------------------------------------------------------- |
-| find Topics             | `deno task -q topics search <term>...`                                |
-| list recent activity    | `deno task -q topics search`                                          |
-| read Topics             | `deno task -q topics show top/42 top/7`                               |
-| file a Topic            | `deno task -q topics new --agent-name <name> '<title>' < body.md`     |
-| post an update          | `deno task -q topics comment --agent-name <name> top/42 < update.md`  |
-| replace the body        | `deno task -q topics body --agent-name <name> top/42 < body.md`       |
-| rename                  | `deno task -q topics title --agent-name <name> top/42 '<title>'`      |
-| link a pull request     | `deno task -q topics link --agent-name <name> top/42 <url> --kind pr` |
-| reference another Topic | `deno task -q topics mention top/42 top/7`                            |
+| To                            | Run                                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| find Topics                   | `deno task -q topics search <term>...`                                                 |
+| list recent activity          | `deno task -q topics search`                                                           |
+| search titles only            | `deno task -q topics search --in title <term>...`                                      |
+| skip settled Topics           | `deno task -q topics search --exclude '^\[RESOLVED' --exclude '^\[OBSOLETE' <term>...` |
+| read Topics                   | `deno task -q topics show top/42 top/7`                                                |
+| read the end of a long thread | `deno task -q topics show top/167 --last 10`                                           |
+| file a Topic                  | `deno task -q topics new --agent-name <name> '<title>' < body.md`                      |
+| post an update                | `deno task -q topics comment --agent-name <name> top/42 < update.md`                   |
+| replace the body              | `deno task -q topics body --agent-name <name> top/42 < body.md`                        |
+| rename                        | `deno task -q topics title --agent-name <name> top/42 '<title>'`                       |
+| link a pull request           | `deno task -q topics link --agent-name <name> top/42 <url> --kind pr`                  |
+| reference another Topic       | `deno task -q topics mention top/42 top/7`                                             |
 
 A search term is a case-insensitive regular expression; a Topic matches when
-every term matches its title, body, a comment, a link, or an author's name. Each
-Topic listed shows when it was last active: its age within the last day
+every term matches its title, body, a comment, a link, or an author's name.
+`--json` on `search` and `show` prints the same as JSON for a program to read.
+Each Topic listed shows when it was last active: its age within the last day
 (`12m ago`, `5h ago`), and otherwise the day in the local time zone. Text
 holding Markdown, backticks, or quotes goes on stdin through a quoted
 here-document (`<<'EOF'`), which the shell leaves unexpanded.

@@ -5,6 +5,7 @@ import { FabricBytes } from "@commonfabric/data-model/fabric-primitives";
 import {
   assembleTopic,
   DocReader,
+  type Field,
   formatTopic,
   formatTopicLine,
   linkOf,
@@ -12,8 +13,10 @@ import {
   type Plain,
   searchTopics,
   storedAsExpected,
+  type ThreadWindow,
   type Topic,
   topicPieces,
+  topicRecord,
   toPlain,
 } from "./mirror.ts";
 
@@ -451,6 +454,37 @@ describe("mirror", () => {
       expect(searchTopics([fryer], [/Sol/]).length).toBe(1);
     });
 
+    it("matches only in the parts `fields` names", () => {
+      const numbers = (patterns: RegExp[], fields: Field[]) =>
+        searchTopics([fryer, donut], patterns, { fields }).map((hit) =>
+          hit.topic.number
+        );
+
+      expect(numbers([/oil/i], ["title"])).toEqual([]);
+      expect(numbers([/fryer/i], ["title"])).toEqual(["1"]);
+      expect(numbers([/oil/i], ["body"])).toEqual(["2", "1"]);
+      expect(numbers([/warm/i], ["body", "links"])).toEqual([]);
+      expect(numbers([/warm/i], ["comments"])).toEqual(["1"]);
+      expect(numbers([/example\.com/], ["links"])).toEqual(["1"]);
+      expect(numbers([/Cy/], ["authors"])).toEqual(["1"]);
+      expect(numbers([/Cy/], ["title", "body", "comments", "links"]))
+        .toEqual([]);
+      expect(
+        searchTopics([fryer], [/oil/i], { fields: ["comments"] })[0].snippets,
+      ).toEqual(["comment 1 (Bo (agent)): warm oil fixes it"]);
+    });
+
+    it("leaves out the Topics whose titles match a pattern of `exclude`", () => {
+      expect(
+        searchTopics([fryer, donut], [/oil/i], { exclude: [/^donut/i] }).map((
+          hit,
+        ) => hit.topic.number),
+      ).toEqual(["1"]);
+      expect(
+        searchTopics([fryer, donut], [], { exclude: [/sugar/i] }).length,
+      ).toBe(2);
+    });
+
     it("returns at most three lines per Topic", () => {
       const busy = topic({ body: "oil\noil\noil\noil" });
 
@@ -525,6 +559,75 @@ describe("mirror", () => {
       expect(
         column(lateEvening, { now: NOW, timeZone: "America/Los_Angeles" }),
       ).toBe("2026-10-19");
+    });
+  });
+
+  describe("topicRecord()", () => {
+    it("returns the Topic as plain data, with its present comments the window holds and its present links", () => {
+      const record = topicRecord(
+        topic({
+          number: "7",
+          address: "of:entry-7",
+          title: "T",
+          body: "B",
+          createdAt: 1,
+          createdBy: "Sol (agent)",
+          lastActivityAt: 4,
+          comments: [
+            { author: "A", body: "One", sentAt: 2, removed: false },
+            { author: "B", body: "Gone", sentAt: 3, removed: true },
+            {
+              author: "C",
+              body: "Two",
+              sentAt: 4,
+              editedAt: 5,
+              removed: false,
+            },
+          ],
+          links: [
+            {
+              kind: "pr",
+              url: "https://x/1",
+              label: "Fix",
+              addedBy: "Sol",
+              addedAt: 3,
+              removed: false,
+            },
+            {
+              kind: "web",
+              url: "https://x/2",
+              label: "",
+              addedBy: "",
+              removed: true,
+            },
+          ],
+          mentions: ["of:entry-2"],
+        }),
+        { last: 1 },
+      );
+
+      expect(record).toEqual({
+        number: "7",
+        address: "/of:entry-7",
+        title: "T",
+        body: "B",
+        createdAt: 1,
+        createdBy: "Sol (agent)",
+        lastActivityAt: 4,
+        comments: [
+          { number: 2, author: "C", body: "Two", sentAt: 4, editedAt: 5 },
+        ],
+        links: [
+          {
+            kind: "pr",
+            url: "https://x/1",
+            label: "Fix",
+            addedBy: "Sol",
+            addedAt: 3,
+          },
+        ],
+        mentions: ["of:entry-2"],
+      });
     });
   });
 
@@ -605,6 +708,30 @@ describe("mirror", () => {
         "",
         "Edited",
       ].join("\n"));
+    });
+
+    it("shows the comments a window holds, numbered in the whole thread, saying how many of them", () => {
+      const thread = topic({
+        comments: [1000, 2000, 3000, 4000].map((sentAt) => ({
+          author: "A",
+          body: `At ${sentAt}.`,
+          sentAt,
+          removed: false,
+        })),
+      });
+      const shown = (window: ThreadWindow) =>
+        [...formatTopic(thread, "/of:e", window).matchAll(/^### (\d+)\./gm)]
+          .map((match) => match[1]);
+
+      expect(shown({})).toEqual(["1", "2", "3", "4"]);
+      expect(shown({ last: 2 })).toEqual(["3", "4"]);
+      expect(shown({ since: 2000 })).toEqual(["2", "3", "4"]);
+      expect(shown({ since: 2000, last: 1 })).toEqual(["4"]);
+      expect(shown({ since: 9000 })).toEqual([]);
+      expect(formatTopic(thread, "/of:e", { last: 2 })).toContain(
+        "## Comments\n\n2 of 4 shown.\n\n### 3.",
+      );
+      expect(formatTopic(thread, "/of:e")).not.toContain("shown.");
     });
 
     it("lists comments oldest first, numbering them as a search labels them", () => {
