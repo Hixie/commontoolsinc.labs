@@ -559,15 +559,19 @@ curl -s "$API_URL/api/health/stats" | jq 'has("servingLoop")'
 ```
 
 ```bash
-curl -s "$API_URL/api/meta" | jq .shellServerExecutionDefine
+curl -s "$API_URL/api/meta" | jq '{shellServerExecutionDefine, serverExecution: .experimental.serverExecution}'
 ```
 
 The first is true exactly when that process is serving. The second says what the
-browser shell was _built_ with — the define is baked at build time, so a
-source-run toolshed serves the OFF-arm shell whatever its own environment says.
-Clients declare their own posture from their own environment too: `cf` and the
-integration harnesses announce `serverExecution=false` unless
-`EXPERIMENTAL_SERVER_EXECUTION=true` is set for them as well.
+browser shell was _built_ with, and what arm the toolshed publishes. A define
+baked at build time pins the shell's arm; without one, the shell runs the arm the
+toolshed serving it publishes as `experimental.serverExecution`. Where that is
+absent, as from a toolshed with no Runtime yet (`experimental: null`) or one that
+predates the flag, the shell runs the first-party default, and this document
+does not say which arm the server is on: read `servingLoop` instead. Clients declare their own
+posture from their own environment too: the integration harnesses announce
+`serverExecution=false` unless `EXPERIMENTAL_SERVER_EXECUTION=true` is set for
+them as well.
 
 A client on the other arm from its server is worth naming precisely, because it
 is more dangerous than a broken instrument. Every probe keeps reporting
