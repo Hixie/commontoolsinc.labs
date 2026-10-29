@@ -1,3 +1,10 @@
+---
+status: historical
+created: 2026-05-06
+archived: 2026-10-29
+reason: "Guide for agents in the Build phase of Pattern Factory, whose repository was archived on 2026-10-29."
+---
+
 # Pattern Factory Build Guide
 
 This guide is for agents implementing the Build phase in a Pattern Factory
