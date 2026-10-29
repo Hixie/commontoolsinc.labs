@@ -186,6 +186,31 @@ describe("approximateJsonSize()", () => {
     );
   });
 
+  it("stops partway through an object's members at the node limit", () => {
+    const value = { a: 1, b: 2, c: 3 };
+
+    const partial = approximateJsonSize(value, { nodeLimit: 2 });
+
+    expect(partial).toEqual({
+      bytes: JSON.stringify({ a: 1 }).length - "1".length + 8,
+      nodes: 2,
+      complete: false,
+    });
+    expect(approximateJsonSize(value, { nodeLimit: 4 }).complete).toBe(true);
+  });
+
+  it("leaves out an enumerable property the object inherits, as JSON does", () => {
+    const value: Record<string, unknown> = Object.create({ inherited: "x" });
+    value.own = "y";
+    expect("inherited" in value).toBe(true);
+
+    expect(approximateJsonSize(value)).toEqual({
+      bytes: JSON.stringify(value).length,
+      nodes: 2,
+      complete: true,
+    });
+  });
+
   it("walks a value deeper than a recursive walk could", () => {
     let value: unknown[] = [];
     for (let depth = 0; depth < 100_000; depth++) value = [value];
