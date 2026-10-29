@@ -7,7 +7,7 @@ import {
   describeCompileErrors,
   describeFailures,
   dumperConfig,
-  workspaceExports,
+  workspacePackages,
 } from "./check-cause-assignments.ts";
 import {
   assignmentDigest,
@@ -492,11 +492,14 @@ describe("check-cause-assignments", () => {
         "deno.jsonc": JSON.stringify({ workspace: ["./base/a", "./base/b"] }),
         "base/b/deno.jsonc": JSON.stringify({
           name: "@t/b",
+          imports: { "@/": "./src/" },
           exports: { ".": "./src/index.ts", "./n": "./src/n.ts" },
         }),
-        "base/b/src/index.ts": "export const b = 2;\n",
+        "base/b/src/index.ts": 'export { n as b } from "@/n.ts";\n',
         "base/b/src/n.ts": "export const n = 3;\n",
-        "tasks/use.ts": 'import { n } from "@t/b/n";\nconsole.log(n);\n',
+        "tasks/use.ts":
+          'import { n } from "@t/b/n";\nimport { b } from "@t/b";\n' +
+          "console.log(n, b);\n",
       });
       try {
         await test({ base, head });
@@ -510,7 +513,7 @@ describe("check-cause-assignments", () => {
         expect(await dumperConfig(head, head)).toBe(join(head, "deno.jsonc"));
       }));
 
-    it("adds an import for each module of a package only the change has, and none for one both have", () =>
+    it("adds an import for each module of a package only the change has, and that package's own imports, and nothing for one both have", () =>
       withCheckouts(async ({ base, head }) => {
         const config = JSON.parse(
           await Deno.readTextFile(await dumperConfig(base, head)),
@@ -521,13 +524,11 @@ describe("check-cause-assignments", () => {
           "@t/b": toFileUrl(join(head, "base/b/src/index.ts")).href,
           "@t/b/n": toFileUrl(join(head, "base/b/src/n.ts")).href,
         });
-        expect((await workspaceExports(base)).get("@t/a"))
-          .toEqual(
-            new Map([[
-              "@t/a/m",
-              toFileUrl(join(base, "base/a/src/m.ts")).href,
-            ]]),
-          );
+        expect(config.scopes).toEqual({
+          [toFileUrl(join(head, "base/b/")).href]: {
+            "@/": toFileUrl(join(head, "base/b/src/")).href,
+          },
+        });
       }));
 
     it("lets a module of the change name its new package while the base checkout's configuration is in force", () =>
@@ -542,10 +543,11 @@ describe("check-cause-assignments", () => {
         const without = await run(join(base, "deno.jsonc"));
         expect(without.code).not.toBe(0);
         expect(new TextDecoder().decode(without.stderr)).toContain(
-          'Import "@t/b/n" not a dependency',
+          'not a dependency and not in import map from "' +
+            toFileUrl(join(head, "tasks/use.ts")).href,
         );
         const withAdded = await run(await dumperConfig(base, head));
-        expect(new TextDecoder().decode(withAdded.stdout)).toBe("3\n");
+        expect(new TextDecoder().decode(withAdded.stdout)).toBe("3 3\n");
       }));
   });
 });

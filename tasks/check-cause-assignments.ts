@@ -308,18 +308,30 @@ async function git(...args: string[]): Promise<string> {
   return new TextDecoder().decode(stdout);
 }
 
-/**
- * The specifiers each workspace package of the checkout at `root` exports, by
- * package name, each mapped to the URL of the file it names.
- */
-export async function workspaceExports(
+/** What the dumper needs of a workspace package to load it by name. */
+export interface WorkspacePackage {
+  /** The URL of the package's directory, with a trailing slash. */
+  dir: string;
+
+  /** Each specifier the package exports, mapped to the URL of its file. */
+  exports: Map<string, string>;
+
+  /**
+   * The package's own import map, which its modules resolve through, with
+   * each relative target made a URL.
+   */
+  imports: Record<string, string>;
+}
+
+/** The workspace packages of the checkout at `root`, by package name. */
+export async function workspacePackages(
   root: string,
-): Promise<Map<string, Map<string, string>>> {
+): Promise<Map<string, WorkspacePackage>> {
   const config = parseJsonc(await Deno.readTextFile(join(root, "deno.jsonc")));
   const members = isObjectNotArray(config) && Array.isArray(config.workspace)
     ? config.workspace
     : [];
-  const packages = new Map<string, Map<string, string>>();
+  const packages = new Map<string, WorkspacePackage>();
   for (const member of members) {
     if (typeof member !== "string") continue;
     const manifest = await memberManifest(join(root, member));
@@ -327,6 +339,7 @@ export async function workspaceExports(
       continue;
     }
     const name = manifest.name;
+    const dir = toFileUrl(join(root, member, "/")).href;
     const exports = typeof manifest.exports === "string"
       ? { ".": manifest.exports }
       : isObjectNotArray(manifest.exports)
@@ -337,10 +350,19 @@ export async function workspaceExports(
       if (typeof file !== "string") continue;
       specifiers.set(
         key === "." ? name : `${name}${key.slice(1)}`,
-        toFileUrl(join(root, member, file)).href,
+        new URL(file, dir).href,
       );
     }
-    packages.set(name, specifiers);
+    const imports: Record<string, string> = {};
+    if (isObjectNotArray(manifest.imports)) {
+      for (const [key, target] of Object.entries(manifest.imports)) {
+        if (typeof target !== "string") continue;
+        imports[key] = target.startsWith(".")
+          ? new URL(target, dir).href
+          : target;
+      }
+    }
+    packages.set(name, { dir, exports: specifiers, imports });
   }
   return packages;
 }
@@ -362,28 +384,36 @@ async function memberManifest(dir: string): Promise<unknown> {
  * The dumper's own modules come from the change at `head`, so they may name a
  * package that the change adds and `root` lacks. The configuration is the
  * checkout's own, with an import for every module of each such package, which
- * then comes from the change as the dumper does. It is written beside the
- * checkout's own, so that the paths of its workspace members still resolve.
+ * then comes from the change as the dumper does, and that package's own
+ * import map scoped to its directory. It is written beside the checkout's
+ * own, so that the paths of its workspace members still resolve.
  */
 export async function dumperConfig(
   root: string,
   head: string,
 ): Promise<string> {
   const own = join(root, "deno.jsonc");
-  const present = await workspaceExports(root);
+  const present = await workspacePackages(root);
   const added: Record<string, string> = {};
-  for (const [name, specifiers] of await workspaceExports(head)) {
+  const scopes: Record<string, Record<string, string>> = {};
+  for (const [name, pkg] of await workspacePackages(head)) {
     if (present.has(name)) continue;
-    for (const [specifier, url] of specifiers) added[specifier] = url;
+    for (const [specifier, url] of pkg.exports) added[specifier] = url;
+    if (Object.keys(pkg.imports).length > 0) scopes[pkg.dir] = pkg.imports;
   }
   if (Object.keys(added).length === 0) return own;
   const config = parseJsonc(await Deno.readTextFile(own));
   if (!isObjectNotArray(config)) throw new Error(`${own} is not an object`);
   const imports = isObjectNotArray(config.imports) ? config.imports : {};
+  const ownScopes = isObjectNotArray(config.scopes) ? config.scopes : {};
   const path = join(root, "deno.cause-assignments.json");
   await Deno.writeTextFile(
     path,
-    JSON.stringify({ ...config, imports: { ...imports, ...added } }),
+    JSON.stringify({
+      ...config,
+      imports: { ...imports, ...added },
+      scopes: { ...ownScopes, ...scopes },
+    }),
   );
   return path;
 }
