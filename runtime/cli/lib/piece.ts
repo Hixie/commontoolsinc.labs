@@ -607,7 +607,8 @@ async function makeSession(config: SpaceConfig): Promise<Session> {
 export interface ConnectionOutput {
   /**
    * Takes each line the connection writes for itself: the navigate callback's
-   * three, and the two warnings a failed connect's own cleanup writes.
+   * three, the two warnings a failed connect's own cleanup writes, and the
+   * warning that the profile delegations Home records could not be loaded.
    */
   readonly report?: (message: string) => void;
 
@@ -751,6 +752,21 @@ export async function loadPieces(
       throw new Error(
         `Could not connect to "${config.apiUrl.toString()}".` +
           memoryHostNote(memoryHost, new URL(config.apiUrl)),
+      );
+    }
+    // The delegations Home records for the user's profiles, so a profile
+    // space that owns itself opens under its own grant. Best effort: a
+    // runtime that cannot read them opens the space on its key's own grant.
+    try {
+      await timeCliPhase(
+        "loadPieces.profileDelegations",
+        () => runtime.loadProfileDelegations(),
+      );
+    } catch (error) {
+      (output.report ?? console.warn)(
+        `Could not load the profile delegations: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
 

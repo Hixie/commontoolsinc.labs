@@ -3215,8 +3215,8 @@ export class Server {
          * chain and resolves the session's capability, READ, WRITE and
          * OWNER alike, from the access list's grant to the chain's root
          * issuer, while the session's principal stays the key that opened
-         * it. Off (the default), an open presenting a chain is refused, and
-         * the server does not advertise `sessionOpenProofs`.
+         * it. On unless set `false`; a server set `false` refuses an open
+         * presenting a chain and does not advertise `sessionOpenProofs`.
          */
         delegations?: boolean;
       };
@@ -3369,7 +3369,7 @@ export class Server {
       serverExecution: this.#serverExecutionObserver !== undefined,
       operationCodecs: this.#operationCodecs.ids(),
       connectionAuth: this.options.authorizeConnection !== undefined,
-      sessionOpenProofs: this.options.acl?.delegations === true,
+      sessionOpenProofs: this.#admitsDelegations(),
       routedAuthV1: false,
       routedCompressionV1: false,
     };
@@ -3459,6 +3459,11 @@ export class Server {
     return this.options.acl?.serviceDids?.includes(principal) ?? false;
   }
 
+  /** Whether a `session.open` may present a proof chain (`acl.delegations`). */
+  #admitsDelegations(): boolean {
+    return this.options.acl?.delegations !== false;
+  }
+
   #isDelegatingPrincipal(principal: string): boolean {
     return this.options.acl?.delegatingDids?.includes(principal) ?? false;
   }
@@ -3479,7 +3484,15 @@ export class Server {
     engine: Engine.Engine,
     space: string,
   ): string | undefined {
-    return resolveSpaceOwnerOf(engine, space);
+    const owner = resolveSpaceOwnerOf(engine, space);
+    // A self-owned space with a declared kind is not a home: a profile owns
+    // itself (docs/specs/profile-delegation.md), and its DID is no user to
+    // act as. The binding then resolves nothing, and the envelope
+    // principal's own capability applies.
+    if (owner === space && this.#spaceKindOf(engine) !== undefined) {
+      return undefined;
+    }
+    return owner;
   }
 
   /**
@@ -3488,21 +3501,24 @@ export class Server {
    * #6209 §4 option (b)): the ensure's creation run carries an
    * owner-resolved per-run CFC trust snapshot — the follow-up OW59's
    * Q3 caveat pre-named — and derives its home-space predicate from
-   * the ACL (self-owned = home), because a serving runtime's
-   * `userIdentityDID` is the SERVICE DID. This is the same resolution
-   * the delegated READ binding uses ({@link #resolveSpaceOwnerBinding}),
-   * exposed as a first-class read: it IS the ruled "ACL can be read
-   * with service identity" (OW31, RULED 2026-08-19). `undefined` means
-   * no valid concrete-owner ACL resolves (missing, invalid, retracted,
-   * or ANYONE-only) — callers fail closed, never substitute the
-   * service DID (OW53's ruled shape; `homeSpacePrincipalFor`'s
-   * posture).
+   * the ACL and the declared kind (self-owned and declaring none =
+   * home), because a serving runtime's `userIdentityDID` is the SERVICE
+   * DID. This is the ACL read the
+   * delegated READ binding ({@link #resolveSpaceOwnerBinding}) starts
+   * from, exposed as a first-class read: it IS the ruled "ACL can be
+   * read with service identity" (OW31, RULED 2026-08-19). A self-owned
+   * space resolves to its own DID whatever kind it declares; only the
+   * binding reads the kind, and a caller deciding whether a space is a
+   * home reads it too. `undefined` means no valid concrete-owner ACL
+   * resolves (missing, invalid, retracted, or ANYONE-only) — callers
+   * fail closed, never substitute the service DID (OW53's ruled shape;
+   * `homeSpacePrincipalFor`'s posture).
    */
   resolveSpaceOwner(
     engine: Engine.Engine,
     space: string,
   ): string | undefined {
-    return this.#resolveSpaceOwnerBinding(engine, space);
+    return resolveSpaceOwnerOf(engine, space);
   }
 
   #invalidateAclCapabilities(space: string): void {
@@ -5730,7 +5746,7 @@ export class Server {
       let capabilityPrincipal: string | undefined;
       let delegationEnd: number | undefined;
       if (presentsChain) {
-        if (this.options.acl?.delegations !== true) {
+        if (!this.#admitsDelegations()) {
           throw authorizationError(
             "memory session.open proofs refused: this server admits no " +
               "delegations",
