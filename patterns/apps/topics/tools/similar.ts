@@ -1,4 +1,4 @@
-import type { SearchScope, Topic } from "./mirror.ts";
+import { matches, type SearchScope, type Topic } from "./mirror.ts";
 
 /** A Topic like a text, how like it, and the words they share. */
 export interface SimilarHit {
@@ -50,7 +50,7 @@ export function similarTopics(
   const asked = weigh(wordCounts(text));
   const hits: SimilarHit[] = [];
   topics.forEach((topic, index) => {
-    if (exclude.some((pattern) => pattern.test(topic.title))) return;
+    if (exclude.some((pattern) => matches(topic.title, pattern))) return;
     const weights = weigh(counts[index]);
     const shared = [...asked].flatMap(([word, weight]) => {
       const product = weight * (weights.get(word) ?? 0);

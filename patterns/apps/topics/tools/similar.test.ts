@@ -167,4 +167,14 @@ describe("similar", () => {
 
     expect(hits.map(({ topic }) => topic.number)).toEqual(["3", "4"]);
   });
+
+  it("leaves out every Topic a global pattern of `exclude` matches", () => {
+    const board = [
+      topicOf("1", "Oil fryer", "Oil."),
+      topicOf("2", "Oil glaze", "Oil."),
+      topicOf("3", "Sugar", "Sugar."),
+    ];
+
+    expect(similarTopics(board, "oil", { exclude: [/oil/gi] })).toEqual([]);
+  });
 });
