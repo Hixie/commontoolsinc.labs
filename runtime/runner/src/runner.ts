@@ -13,10 +13,10 @@ import {
   valueEqualByWalk,
 } from "@commonfabric/data-model";
 import { type ACL, aclDocId } from "@commonfabric/memory/acl";
-import { BoundedKeyMap } from "@commonfabric/utils/cache";
-import { deepEqual } from "@commonfabric/utils/deep-equal";
-import { getLogger } from "@commonfabric/utils/logger";
-import { backtickQuote } from "@commonfabric/utils/markdown";
+import { BoundedKeyMap } from "@commonfabric/collections/cache";
+import { deepEqual } from "@commonfabric/js-values/deep-equal";
+import { getLogger } from "@commonfabric/logger";
+import { backtickQuote } from "@commonfabric/text/markdown";
 
 import {
   requireLocalReadCondition,
@@ -54,7 +54,7 @@ import {
   isObjectNotArray,
   isObjectOrArray,
   isPlainObject,
-} from "@commonfabric/utils/types";
+} from "@commonfabric/js-values/types";
 
 import { isAliasBinding } from "./alias-binding.ts";
 import { runInFrameContext } from "./builder/frame-context.ts";

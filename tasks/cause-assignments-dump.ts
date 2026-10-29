@@ -19,7 +19,7 @@
 
 import { encodeHex } from "@std/encoding/hex";
 import { sha256 } from "@commonfabric/content-hash";
-import { utf8Compare } from "@commonfabric/utils/utf8";
+import { utf8Compare } from "@commonfabric/text/utf8";
 import { patternKey } from "./pattern-files.ts";
 import {
   assignmentLevels,
