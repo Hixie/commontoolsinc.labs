@@ -408,19 +408,35 @@ present, verify them and ensure consistency with ACL",
 The runtime's storage manager opens a session to a space with a
 `SessionPrincipal`, whose `authorizeSessionOpen` builds the signed invocation
 (`packages/runner/src/storage/v2-remote-session.ts`,
-`createSignedSessionOpenAuth`). The change is:
+`createSignedSessionOpenAuth`). The pieces are:
 
-- `createSignedSessionOpenAuth` takes an optional proof chain, puts its
-  hashes in `prf`, and attaches the proofs to the authorization.
-- The storage manager consults the delegation store, keyed by space DID,
-  when it mounts a space, and passes the chain it finds. A space with no
-  chain opens as it does today.
-- The memory client's session keeps the chain across reopens, as it keeps
-  `actingAs` and `readCeiling`, so a route replacement does not drop to the
-  core identity's own access.
-- The delegation store is populated from the Home space's profile list, and
-  by whatever later hands a runtime a delegation it did not create (an agent
-  given one by a user, for instance).
+- The remote session factory holds a delegation store
+  (`delegation-store.ts`), fed through `StorageManager.addDelegationChain`
+  with whole chains, root first, as a holder is handed them; the store
+  checks each link and that the links meet, and keeps the chain under the
+  space it is over. Asked for the chain to open a space as a key, it hands
+  back one it holds that ends at that key and whose links all hold at that
+  moment and cover a session open: one the space itself rooted if there is
+  one, and otherwise the chain added last. It assembles nothing from loose
+  delegations, since which root the access list grants is the server's to
+  know; the holder's latest addition is taken as its intent.
+- The `SessionPrincipal` the factory hands the memory client carries a
+  `proofs` function rather than a chain. The client calls it once per open
+  or reopen, so each presents the chain as the store holds it then: a
+  delegation added since is presented, and one that has expired is left out.
+  The same snapshot feeds the client's capability check and the open it
+  admits.
+- A signed open receives that chain through its context, names each proof's
+  CID in `prf`, and carries the bytes; an open naming a
+  connection-authenticated principal carries the bytes alone. A space with
+  no chain opens as it does today.
+- A client holding a chain refuses a server that does not advertise
+  `sessionOpenProofs` before opening, rather than open under the key's own
+  grant and be refused there.
+- The store is fed programmatically until profile creation records
+  delegations in the Home space; later, whatever hands a runtime a
+  delegation it did not create (an agent given one by a user, for instance)
+  feeds it the same way.
 
 ## Attribution and unlinkability
 
@@ -504,8 +520,17 @@ part of this design.
    registered in
    [`EXPERIMENTAL_OPTIONS.md`](../development/EXPERIMENTAL_OPTIONS.md) and
    off by default until the client ships.
-2. **Client presents proofs.** `createSignedSessionOpenAuth` and the storage
-   manager carry a chain for a space that has one; reopens keep it.
+2. **Client presents proofs.** Implemented. The remote session factory holds
+   a delegation store (`delegation-store.ts`), fed whole chains through
+   `StorageManager.addDelegationChain`, and every session it opens presents
+   the chain the store holds for the space and the opening key: a signed open
+   names the CIDs in `prf` and carries the bytes, and an open naming a
+   connection-authenticated principal carries the bytes alone. A reopen
+   presents the same chain, since it rides on the session's principal. A
+   client holding a chain refuses a server that does not advertise
+   `sessionOpenProofs` rather than opening under the key's own grant. The
+   store is fed programmatically until the next phase records delegations in
+   the Home space.
 3. **Profile identity at creation.** The profile creation path signs
    genesis as the profile key, issues the delegation, records it beside the
    link, and destroys the key once both have landed. `HOME_SPACE.md` and

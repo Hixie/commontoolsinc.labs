@@ -43,7 +43,7 @@ was last checked against the code.
 | [`localFold`](#localfold) | `EXPERIMENTAL_LOCAL_FOLD` env / shell build define, or `RuntimeOptions.experimental` | off | Robin McCollum (2026-10-14) | decide between the fold and reverting a refused derived write, then delete the flag and the losing arm | implemented, off by default |
 | [`instanceNames`](#instancenames) | `RuntimeOptions.experimental` only (mapped `null` in the canonical env registry); the shell adopts it from its deployment | off | Dan Bornstein (2026-10-23) | carry deployed children over to their names, exclude a runtime whose naming mode differs from its space's, turn it on, then delete the flag and the positional compile of `const`-bound instances | implemented, off by default; must not turn on before carry-over and that exclusion exist |
 | [`connectionAuth`](#connectionauth) | Memory hello capability | advertised by a host that verifies `connection.auth`; toolshed does under `sharedMemoryConnection` | Bernhard Seefeld (2026-09-29) | retain as protocol negotiation until signed `session.open` retires | optional capability |
-| [`sessionOpenProofs`](#sessionopenproofs) | Memory hello capability; toolshed advertises it under `MEMORY_ACL_DELEGATIONS` | off | Robin McCollum (2026-10-26) | turn on once a client presents a chain, then retain as protocol negotiation | implemented on the server, off by default; no client presents a chain yet |
+| [`sessionOpenProofs`](#sessionopenproofs) | Memory hello capability; toolshed advertises it under `MEMORY_ACL_DELEGATIONS` | off | Robin McCollum (2026-10-26) | turn on once profile creation records a delegation in the Home space, then retain as protocol negotiation | implemented on the server and in the runtime, off by default; a runtime presents a chain it was handed, and none is recorded durably yet |
 | [`agentBuiltin`](#agentbuiltin) | `EXPERIMENTAL_AGENT_BUILTIN` env, or `RuntimeOptions.experimental` | on | Bernhard Seefeld (agent requests stage 3) | delete the flag after the default-on posture soaks | implemented, on by default |
 | [`cfcEnforcementMode`](#cfcenforcementmode)                                 | `RuntimeOptions.cfcEnforcementMode` (`CF_CFC_MODE` in the cf-harness / fuse)                                                                    | `enforce-strict`                                                                     | Bernhard Seefeld (#3263)                              | the ladder stays; the default is at its top rung                                                                                                                                                                                  | implemented, on by default at the strictest rung                                |
 | [`cfcFlowLabels`](#cfcflowlabels)                                           | `RuntimeOptions.cfcFlowLabels`                                                                                                                  | `persist`                                                                            | Bernhard Seefeld (#4011)                              | move toward `persist`                                                                                                                                                                                                             | implemented, on by default at `persist`                                         |
@@ -1540,12 +1540,16 @@ the per-epic implementation notes).
   capability from the access list's grant to the chain's root issuer, while
   the session's principal stays the key that opened it. The design is
   [`profile-delegation.md`](../specs/profile-delegation.md).
-- **End state and removal:** turn on by default once a client presents a
-  chain (the design's second phase), then retain the negotiation while
-  deployments may contain servers that admit none.
-- **Status (2026-10-26):** implemented on the server and off by default. No
-  client presents a chain yet, so turning it on admits nothing today; it
-  exists so the server side can be deployed ahead of the client.
+- **End state and removal:** turn on by default once profile creation
+  records a delegation in the Home space (the design's third phase), then
+  retain the negotiation while deployments may contain servers that admit
+  none.
+- **Status (2026-10-27):** implemented on the server and off by default. A
+  runtime presents a chain for a space it holds one over, fed through
+  `StorageManager.addDelegationChain`, and refuses a server that does not
+  advertise the capability rather than opening under its own grant; no
+  delegation is recorded durably yet, so a deployment with the flag off
+  loses nothing until the third phase lands.
 
 ### `conflictAdmissionMode`
 
