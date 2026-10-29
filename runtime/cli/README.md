@@ -1802,6 +1802,8 @@ cf agent runner --identity ./my.key --api-url https://toolshed.example \
 | `--api-url`, `CF_API_URL`   | The toolshed serving that user's home space.                                                                                      |
 | `--local-api-url`           | The toolshed the runner sits beside, recorded as the runner's `host`. Defaults to `--api-url`.                                    |
 | `--loom-retrieval-config`   | The host-owned JSON file backing the read-only Loom tools. Without it the runner offers no `loom_*` tool.                         |
+| `--commands-url`            | The host's command endpoint behind `list_commands` and `run_command` for Fabric runs. Without it the runner offers neither.       |
+| `--commands-actor`          | The actor a Fabric run's commands run as, passed to the host as given. Goes with `--commands-url`.                                |
 | `--tools`                   | Comma-separated tool names the runner offers. Defaults to what its configuration backs.                                           |
 | `--max-concurrent`          | How many runs the process holds at once. Defaults to 1.                                                                           |
 | `--lease-seconds`           | How far a claim's lease reaches past the run's last durable write. Defaults to 300.                                               |
@@ -2138,11 +2140,11 @@ admitted host answer, limited to 500 characters. An answer withheld by CFC
 contributes no reason text or outputs. The job snapshot's `commands` array holds
 these same bodies in execution order.
 
-The lane binds each harness invocation to the stored job's `id`. A host command
-configuration may name `jobIdEnvVar`; command discovery and execution then
-receive that job id in the named variable of their cleared host environment. The
-request and model tool arguments cannot select the identity, and concurrent jobs
-have separate bindings.
+The lane binds each harness invocation to the stored job's `id`. When the
+profile names a command endpoint (`commands: {url, actor}`), every request to it
+carries that job id in the `X-Loom-Agent-Run-Id` header. The request and model
+tool arguments cannot select the identity, and concurrent jobs have separate
+bindings.
 
 A caller that can show a browser declares `browserHost: {}` on enqueue, under a
 profile that admits one, and the job browses through it: the lane adds
