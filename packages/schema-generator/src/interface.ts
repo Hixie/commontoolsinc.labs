@@ -242,11 +242,19 @@ export interface GenerationContext {
   nameAnonymousDefinition: () => string;
 
   /**
-   * Each value an intersection the checker gives `any` settled to that met a
-   * definition still being generated, checked once generation is done
+   * Each value an intersection the checker gives `any` settled to, or one an
+   * intersection that cannot be merged fell back to, that met a definition
+   * still being generated, checked once generation is done
    * (`assertAnyValuesKeptLabels()`).
    */
   anyValuesBesideUnwritten: AnyValueBesideUnwritten[];
+
+  /**
+   * Each fallback in `anyValuesBesideUnwritten` by its schema and by each copy
+   * of it a wrapper makes (`withValueRecordsOf()`), so that each position
+   * emitting it is checked with the restrictions stated there.
+   */
+  anyValuesBySchema?: WeakMap<object, AnyValueBesideUnwritten>;
 
   // Stack state (push/pop during recursion)
 

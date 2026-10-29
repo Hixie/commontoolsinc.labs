@@ -46,6 +46,7 @@ import {
   IntersectionFormatter,
   propertyScopesError,
   sharedPropertySchema,
+  unsupportedIntersectionSchema,
   withoutDocumentation,
 } from "./formatters/intersection-formatter.ts";
 import { isDefaultLibrarySourceFile } from "./typescript/default-library.ts";
@@ -1614,11 +1615,7 @@ function mergeValues(
     };
   }
   const unsupported = (reason: string): MutableJSONSchema => {
-    const schema: MutableJSONSchemaObj = {
-      type: "object",
-      additionalProperties: true,
-      $comment: `Unsupported intersection pattern: ${reason}`,
-    };
+    const schema = unsupportedIntersectionSchema(reason, reduced, context);
     context.schemaOrigins?.set(schema, {
       kind: "intersection",
       parts: () => reduced,
@@ -2081,6 +2078,7 @@ export class SchemaGenerator {
       nameAnonymousDefinition: () =>
         `AnonymousType_${++this.#anonymousNameCounter}`,
       anyValuesBesideUnwritten: [],
+      anyValuesBySchema: new WeakMap(),
       uninterpretedTypeNodes: unread,
 
       // Stack state
@@ -2151,7 +2149,11 @@ export class SchemaGenerator {
 
     settlePoliciesReadInPart(result);
     stateReferencedIfcLabels(result);
-    assertAnyValuesKeptLabels(context.anyValuesBesideUnwritten);
+    assertAnyValuesKeptLabels(
+      context.anyValuesBesideUnwritten,
+      result,
+      context.anyValuesBySchema,
+    );
     assertScopeDeclarationsAreReachable(result);
     return result;
   }

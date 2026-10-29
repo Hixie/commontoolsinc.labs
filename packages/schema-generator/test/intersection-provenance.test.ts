@@ -14,6 +14,16 @@ const UNSUPPORTED_NON_OBJECT: JSONSchema = {
 };
 
 /**
+ * The schema both paths give an intersection of an object and an array, which
+ * they cannot merge either.
+ */
+const UNSUPPORTED_INDEX_SIGNATURE: JSONSchema = {
+  type: "object",
+  additionalProperties: true,
+  $comment: "Unsupported intersection pattern: index signature on constituent",
+};
+
+/**
  * Declarations of the wrappers the intersections below write. CFC aliases are
  * recognized by name and `Default` by its marker's, so these stand for
  * `commonfabric`'s own.
@@ -567,6 +577,68 @@ describe("SchemaGenerator", () => {
           type M2 = string;
         `,
         { ...UNSUPPORTED_NON_OBJECT as object, ifc: labelS },
+      ],
+      [
+        "keeps a member's labels on the value constituents that cannot be merged fall back to",
+        `type M1 = { x: Confidential<string, readonly ["s"]> }; type M2 = string;`,
+        { ...UNSUPPORTED_NON_OBJECT as object, ifc: labelS },
+      ],
+      [
+        "keeps the labels of a primitive constituent a literal beside it narrows on the fallback",
+        `
+          type M1 = Confidential<string, readonly ["s"]> & "x";
+          type M2 = { y: string };
+        `,
+        { ...UNSUPPORTED_NON_OBJECT as object, ifc: labelS },
+      ],
+      [
+        "keeps a nested member's labels on the fallback beside an array",
+        `
+          type M1 = { a: { x: Confidential<string, readonly ["s"]> } };
+          type M2 = string[];
+        `,
+        { ...UNSUPPORTED_INDEX_SIGNATURE as object, ifc: labelS },
+      ],
+      [
+        "keeps an array's element labels on the fallback beside an object",
+        `type M1 = { y: string }; type M2 = Confidential<string, readonly ["s"]>[];`,
+        { ...UNSUPPORTED_INDEX_SIGNATURE as object, ifc: labelS },
+      ],
+      [
+        "combines the labels each constituent holds on the fallback",
+        `
+          type M1 = { x: Confidential<string, readonly ["s"]> };
+          type M2 = Confidential<number, readonly ["t"]>[];
+        `,
+        {
+          ...UNSUPPORTED_INDEX_SIGNATURE as object,
+          ifc: { confidentiality: ["s", "t"] },
+        },
+      ],
+      [
+        "keeps the labels a named definition holds on the fallback",
+        `
+          interface Secret { x: Confidential<string, readonly ["s"]> }
+          type M1 = Secret;
+          type M2 = string[];
+        `,
+        { ...UNSUPPORTED_INDEX_SIGNATURE as object, ifc: labelS },
+      ],
+      [
+        "keeps a member's evidence off the fallback",
+        `
+          type M1 = { x: Cfc<string, { integrity: readonly ["i"] }> };
+          type M2 = string[];
+        `,
+        UNSUPPORTED_INDEX_SIGNATURE,
+      ],
+      [
+        "keeps a member's labels on the fallback of a property several constituents declare",
+        `
+          type M1 = { a: { x: Confidential<string, readonly ["s"]> } };
+          type M2 = { a: string[] };
+        `,
+        propertyA({ ...UNSUPPORTED_INDEX_SIGNATURE as object, ifc: labelS }),
       ],
       [
         "keeps the scope of a declaration beside one typed as `any`",
@@ -1363,6 +1435,141 @@ describe("SchemaGenerator", () => {
       expect(byType).toThrow(message);
       expect(byNode).toThrow(message);
     });
+
+    it("throws where constituents that cannot be merged meet a definition whose labels they cannot read yet", async () => {
+      // `Node` is still being generated where its own member falls back, so
+      // the labels it states are read once generation is done.
+
+      const { byType, byNode } = await schemasOfBothPaths(
+        `
+          interface Node {
+            secret: Confidential<string, readonly ["s"]>;
+            child?: Node & string[];
+          }
+        `,
+        "Node",
+      );
+      const message = "An intersection whose constituents cannot be merged " +
+        "keeps the labels of its constituents, but it meets `Node` inside " +
+        "the definition of `Node`";
+
+      expect(byType).toThrow(message);
+      expect(byNode).toThrow(message);
+    });
+
+    it("keeps a fallback a wrapper labels where it meets a definition before it is written", async () => {
+      // The wrapper's labels go on a copy of the fallback, where it is
+      // emitted, so they count as kept.
+
+      const { byType, byNode } = await schemasOfBothPaths(
+        `
+          interface Node {
+            secret: Confidential<string, readonly ["s"]>;
+            child?: Confidential<Node & string[], readonly ["s"]>;
+          }
+        `,
+        "Node",
+      );
+      for (const read of [byType, byNode]) {
+        const schema = read() as {
+          $defs?: { Node?: { properties: Record<string, JSONSchema> } };
+          properties?: Record<string, JSONSchema>;
+        };
+        const node = schema.$defs?.Node ?? schema;
+        expect(node.properties?.child).toEqual({
+          ...UNSUPPORTED_INDEX_SIGNATURE as object,
+          ifc: labelS,
+        });
+      }
+    });
+
+    it("keeps a fallback an alias names where a wrapper labels its reference", async () => {
+      // The wrapper's labels go beside the reference to `Child`, where the
+      // fallback is used, so that use keeps them.
+
+      const { byType, byNode } = await schemasOfBothPaths(
+        `
+          type Child = Node & string[];
+          interface Node {
+            secret: Confidential<string, readonly ["s"]>;
+            child?: Confidential<Child, readonly ["s"]>;
+          }
+        `,
+        "Node",
+      );
+      for (const read of [byType, byNode]) {
+        const schema = read() as {
+          $defs: Record<string, { properties?: Record<string, JSONSchema> }>;
+        };
+
+        expect(schema.$defs.Node?.properties?.child).toEqual({
+          $ref: "#/$defs/Child",
+          ifc: labelS,
+        });
+        expect(schema.$defs.Child).toEqual(UNSUPPORTED_INDEX_SIGNATURE);
+      }
+    });
+
+    it("keeps a fallback an alias names and labels at a reference with no label", async () => {
+      const { byType, byNode } = await schemasOfBothPaths(
+        `
+          type Child = Confidential<Node & string[], readonly ["s"]>;
+          interface Node {
+            secret: Confidential<string, readonly ["s"]>;
+            child?: Child;
+          }
+        `,
+        "Node",
+      );
+      for (const read of [byType, byNode]) {
+        const schema = read() as {
+          $defs: Record<string, { properties?: Record<string, JSONSchema> }>;
+        };
+
+        expect(schema.$defs.Node?.properties?.child).toEqual({
+          $ref: "#/$defs/Child",
+        });
+        expect(schema.$defs.Child).toEqual({
+          ...UNSUPPORTED_INDEX_SIGNATURE as object,
+          ifc: labelS,
+        });
+      }
+    });
+
+    for (
+      const [order, members] of [
+        [
+          "the labeled one first",
+          `child?: Confidential<Child, readonly ["s"]>; other?: Child;`,
+        ],
+        [
+          "the unlabeled one first",
+          `other?: Child; child?: Confidential<Child, readonly ["s"]>;`,
+        ],
+      ]
+    ) {
+      it(`throws where a fallback an alias names has a reference without the labels beside a labeled one, ${order}`, async () => {
+        // A label beside one reference does not reach the other, which holds
+        // the fallback without it.
+
+        const { byType, byNode } = await schemasOfBothPaths(
+          `
+            type Child = Node & string[];
+            interface Node {
+              secret: Confidential<string, readonly ["s"]>;
+              ${members}
+            }
+          `,
+          "Node",
+        );
+        const message = "An intersection whose constituents cannot be " +
+          "merged keeps the labels of its constituents, but it meets `Node` " +
+          "inside the definition of `Node`";
+
+        expect(byType).toThrow(message);
+        expect(byNode).toThrow(message);
+      });
+    }
 
     it("keeps a value where `any` meets a definition before it is written with its labels", async () => {
       const { byType, byNode } = await schemasOfBothPaths(

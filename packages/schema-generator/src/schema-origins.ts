@@ -124,6 +124,15 @@ export function withValueRecordsOf(
   if (origin?.kind === "union" && isObjectOrArray(copy) && copy !== original) {
     context.schemaOrigins?.set(copy, origin);
   }
+  // A fallback left to be checked once generation is done is checked where
+  // it is emitted, which may be this copy, with the labels a wrapper placed
+  // on it.
+  const pending = isObjectOrArray(original)
+    ? context.anyValuesBySchema?.get(original)
+    : undefined;
+  if (pending && isObjectOrArray(copy) && copy !== original) {
+    context.anyValuesBySchema?.set(copy, pending);
+  }
   return withIndexKeysOf(copy, original, context);
 }
 

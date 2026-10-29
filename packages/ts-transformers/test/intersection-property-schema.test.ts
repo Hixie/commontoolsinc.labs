@@ -184,4 +184,50 @@ describe("intersection-property-schema", () => {
       scope: "user",
     });
   });
+
+  it("keeps a member's labels on the fallback for constituents that cannot be merged", async () => {
+    const [schema] = await schemasOf(`
+      import { toSchema } from "commonfabric";
+      import type { Confidential } from "commonfabric";
+      export const schema = toSchema<{
+        a: { x: Confidential<string, ["secret"]> } & string[];
+      }>();
+    `);
+
+    expect(propertyA(schema)).toEqual({
+      type: "object",
+      additionalProperties: true,
+      $comment:
+        "Unsupported intersection pattern: index signature on constituent",
+      ifc: { confidentiality: ["secret"] },
+    });
+  });
+
+  it("keeps the label beside a reference to a recursive fallback an alias names", async () => {
+    const [schema] = await schemasOf(`
+      import { toSchema } from "commonfabric";
+      import type { Confidential } from "commonfabric";
+      type Child = Node & string[];
+      interface Node {
+        secret: Confidential<string, ["s"]>;
+        child?: Confidential<Child, ["s"]>;
+      }
+      export const schema = toSchema<{ a: Node }>();
+    `);
+    const definitions = schema?.$defs as Record<
+      string,
+      { properties?: Record<string, unknown> }
+    >;
+
+    expect(definitions.Node?.properties?.child).toEqual({
+      $ref: "#/$defs/Child",
+      ifc: { confidentiality: ["s"] },
+    });
+    expect(definitions.Child).toEqual({
+      type: "object",
+      additionalProperties: true,
+      $comment:
+        "Unsupported intersection pattern: index signature on constituent",
+    });
+  });
 });
