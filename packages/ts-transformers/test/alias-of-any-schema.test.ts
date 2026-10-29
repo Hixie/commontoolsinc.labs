@@ -72,6 +72,65 @@ describe("alias-of-any-schema", () => {
         "Mine",
         { scope: "user" },
       ],
+      [
+        "a record's value",
+        `type Secret = Confidential<any, ["secret"]>;`,
+        "Record<string, Secret>",
+        {
+          type: "object",
+          properties: {},
+          additionalProperties: { ifc: { confidentiality: ["secret"] } },
+        },
+      ],
+      [
+        "the operand of `Partial`",
+        `type Secret = Confidential<any, ["secret"]>;`,
+        "Partial<Secret>",
+        {
+          type: "object",
+          properties: {},
+          additionalProperties: true,
+          ifc: { confidentiality: ["secret"] },
+        },
+      ],
+      [
+        "the operand of `Readonly`",
+        `type Secret = Confidential<any, ["secret"]>;`,
+        "Readonly<Secret>",
+        {
+          type: "object",
+          properties: {},
+          additionalProperties: true,
+          ifc: { confidentiality: ["secret"] },
+        },
+      ],
+      [
+        "a record's value on a named key union",
+        `type Secret = Confidential<any, ["secret"]>; type Keys = "x" | "y";`,
+        "Record<Keys, Secret>",
+        {
+          type: "object",
+          properties: {
+            x: { ifc: { confidentiality: ["secret"] } },
+            y: { ifc: { confidentiality: ["secret"] } },
+          },
+          required: ["x", "y"],
+        },
+      ],
+      [
+        "a tuple's element",
+        `type Secret = Confidential<any, ["secret"]>;`,
+        "[string, Secret]",
+        {
+          type: "array",
+          items: {
+            anyOf: [
+              { type: "string" },
+              { ifc: { confidentiality: ["secret"] } },
+            ],
+          },
+        },
+      ],
     ] as const
   ) {
     it(`keeps what ${written} wraps around \`any\` in a pattern's input`, async () => {
@@ -87,6 +146,25 @@ describe("alias-of-any-schema", () => {
         .toEqual([]);
     });
   }
+
+  it("keeps the label on the values of a record an alias declares, in the alias's definition", async () => {
+    const { input, diagnostics } = await patternInputOf(`
+      import { pattern } from "commonfabric";
+      import type { Confidential } from "commonfabric";
+      type Secret = Confidential<any, ["secret"]>;
+      type Dict = Record<string, Secret>;
+      export default pattern<{ a: Dict }>(() => ({}));
+    `);
+
+    expect(propertyA(input)).toEqual({ $ref: "#/$defs/Dict" });
+    expect((input.$defs as Record<string, unknown>).Dict).toEqual({
+      type: "object",
+      properties: {},
+      additionalProperties: { ifc: { confidentiality: ["secret"] } },
+    });
+    expect(diagnostics.filter(({ severity }) => severity === "error"))
+      .toEqual([]);
+  });
 
   it("keeps the label of a CFC alias over `any` imported from another module", async () => {
     const { input } = await patternInputOf(

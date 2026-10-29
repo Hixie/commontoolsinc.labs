@@ -159,7 +159,31 @@ that denote other nodes nests only as deep as those arguments, and keeps the
 label at each level: `Box<Box<string>>`, and `Wrap<Wrap<string>>` where
 `type Wrap<T> = Box<T>`, whose one reference to `Box` is read at each level.
 A recursion through a named definition is not one either: the definition's
-`$ref` ends it, and the alias is read afresh inside the definition. A plain generic declaration is read under
+`$ref` ends it, and the alias is read afresh inside the definition. The same
+wrapper written as a record's value or a tuple's element is lost to a reading
+by type, which holds `any` there and keeps no declaration naming it:
+`Record<string, Confidential<any, C>>` is a record of `any` to the checker,
+and `[Secret]` a tuple of `any`. So a reference to one of the default
+library's aliases above, or a tuple, with a part the checker reads as `any`
+that writes such a wrapper (`#holdsWrapperErasedByAny()`) is read by its
+syntax, from the type path as well: `{ a: Record<string, Secret> }` gives `a`
+`{ type: "object", properties: {}, additionalProperties: { ifc: … } }`,
+through `Readonly` and `Partial` too, and a tuple's items keep the wrapper. A
+record's keys are read as the checker reads them, so `Record<Keys, Secret>`
+for a named `type Keys = "x" | "y"`, and `Record<keyof Obj, Secret>`, keep the
+wrapper on each key as literal keys written in place do. A tuple or one of
+these aliases written in place is read so wherever it is; one an alias
+declares, `type Dict = Record<string, Secret>` or `type Pair = [Secret]`, is
+read so inside the alias's definition, whose `$ref` ends a recursion through
+it, as in `type List = [Secret, List?]`, and a reference to such an alias
+holds what it declares, so `Readonly<Pair>` is read so too. `Readonly`,
+`Partial`, `Required`, `Pick`, and `Omit` over an operand the checker reads
+as `any` map `any`'s keys, as the checker does, with the operand's labels on
+the whole: `Partial<Secret>` is
+`{ type: "object", properties: {}, additionalProperties: true, ifc: … }`, and
+`Pick<Secret, "x">` the object of a required `x` that accepts any value.
+Where the alias's rules do not apply, as to `Omit` with keys no literal names,
+the reference is read by its type. A plain generic declaration is read under
 bindings for every required parameter, taken from the reference's written
 arguments or preceding-parameter defaults (§4.1). A member the bindings cannot
 read, such as an indexed access with no checker-created instantiation, remains
@@ -433,9 +457,10 @@ stay on the property, because the runtime's policy merge refuses labels on one
 `required`. Explicit `T | undefined` and optional tuple elements also retain
 `undefined`.
 
-Library key arguments also read their bindings: `Pick<T, K>` and `Omit<T, K>`
-accept a `K` bound to a literal key union, and `Record<K, T>` accepts a bound
-string or number index type. This keeps intersection aliases such as
+Library key arguments are read as the checker reads them, bindings included:
+`Pick<T, K>` and `Omit<T, K>` accept a `K` that is a literal key union, named
+or bound, or `keyof` an object type, and `Record<K, T>` accepts the same keys
+or a bound string or number index type. This keeps intersection aliases such as
 `Omit<T, K> & Partial<Pick<T, K>>` readable without losing their enclosing
 shape. Concrete template-literal types remain readable beside generic members;
 an unrelated binding does not make such a type deferred.

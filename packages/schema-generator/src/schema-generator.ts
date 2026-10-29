@@ -140,6 +140,19 @@ const LIBRARY_ALIAS_NAMES = new Set([
 const MAX_BOUND_NESTING = 3;
 
 /**
+ * The default library's aliases that map their operand's members, which over
+ * an operand the checker reads as `any` map `any`'s keys
+ * (`SchemaGenerator.#analyzeLibraryAliasReference`).
+ */
+const MAPPING_ALIAS_NAMES: ReadonlySet<string> = new Set([
+  "Readonly",
+  "Partial",
+  "Required",
+  "Pick",
+  "Omit",
+]);
+
+/**
  * A CFC alias chain's reading in progress: the written reference it was
  * entered from, the type the checker instantiates there where that is known,
  * and the type and context its schema is being formatted with.
@@ -638,22 +651,20 @@ function unwrapTypeNode(node: ts.TypeNode): ts.TypeNode {
 
 /**
  * The string keys a `Pick`/`Omit`/`Record` key argument names: a string
- * literal or a union of them, including a parameter bound to those types.
- * Anything else is not a key list, and the caller takes the general path.
+ * literal or a union of them, as the checker reads the argument, so a named
+ * union, a `keyof` an object type, and a parameter bound to those types are
+ * one too, or as it is written, where the checker cannot read it. Anything
+ * else is not a key list, and the caller takes the general path.
  */
 function literalKeys(
   node: ts.TypeNode,
   context: GenerationContext,
 ): Set<string> | undefined {
-  if (context.boundTypeParameters) {
-    const type = readBoundTypeNode(node, context);
-    if ((type.flags & ts.TypeFlags.Never) !== 0) return new Set();
-    const members = type.isUnion() ? type.types : [type];
-    if (members.every((member) => member.isStringLiteral())) {
-      return new Set(
-        members.map((member) => member.value),
-      );
-    }
+  const type = readBoundTypeNode(node, context);
+  if ((type.flags & ts.TypeFlags.Never) !== 0) return new Set();
+  const read = type.isUnion() ? type.types : [type];
+  if (read.every((member) => member.isStringLiteral())) {
+    return new Set(read.map((member) => member.value));
   }
   const members = ts.isUnionTypeNode(node) ? node.types : [node];
   const keys = new Set<string>();
@@ -3610,7 +3621,11 @@ export class SchemaGenerator {
       if (formatter.supportsType(type, context)) {
         const result = formatter !== this.#commonFabricFormatter &&
             context.typeNode && !ts.isTypeLiteralNode(context.typeNode) &&
-            this.#readsBySyntax(context.typeNode, context)
+            (this.#readsBySyntax(context.typeNode, context) ||
+              this.#containerHoldingWrapperErasedByAny(
+                  context.typeNode,
+                  context,
+                ) !== undefined)
           ? this.#analyzeTypeNodeStructure(
             context.typeNode!,
             context.typeChecker,
@@ -4228,7 +4243,8 @@ export class SchemaGenerator {
     // `#readsBySyntax()` sends it here to be.
     const behind = this.#tupleBehind(typeNode, context);
     const tuple = ts.isTupleTypeNode(typeNode) ||
-        (behind && this.#holdsWriterQuery(behind, context))
+        (behind && (this.#holdsWriterQuery(behind, context) ||
+          this.#holdsWrapperErasedByAny(behind, context)))
       ? behind
       : undefined;
     if (tuple) {
@@ -4369,6 +4385,21 @@ export class SchemaGenerator {
     // Resolve by name from source scope as a fallback (e.g., PieceEntry in
     // Cell<PieceEntry[]>).
     if (ts.isTypeReferenceNode(typeNode)) {
+      // A non-generic alias declaring a default-library alias that holds a
+      // wrapper the checker erases around `any` is read as that alias is
+      // (`#containerHoldingWrapperErasedByAny()`), inside the definition its
+      // type gives it; one declaring a tuple is read above. An alias the
+      // checker could not type, as one that refers to itself is not, has no
+      // definition to end a recursion through it.
+      const container = (
+          (typeRegistry?.get(typeNode) ??
+            checker.getTypeFromTypeNode(typeNode)).flags & ts.TypeFlags.Any
+        ) === 0
+        ? this.#containerHoldingWrapperErasedByAny(typeNode, context)
+        : undefined;
+      if (container && !ts.isTupleTypeNode(container)) {
+        return this.#analyzeTypeNodeStructure(container, checker, context);
+      }
       if (detectWrapperViaNode(typeNode, checker)) {
         const wrapperType = typeRegistry?.get(typeNode) ??
           checker.getTypeFromTypeNode(typeNode);
@@ -4437,10 +4468,16 @@ export class SchemaGenerator {
       }
       if (resolved) {
         const { boundTypeParameters: _, ...unbound } = context;
+        const library = this.#namesLibraryAlias(typeNode, context);
+        // One read by its syntax for a wrapper the checker erases around
+        // `any` (`#readsBySyntax()`), whose rules do not apply, is read by its
+        // type, with no node to send it back to its syntax.
+        const readByType = library &&
+          this.#holdsWrapperErasedByAny(typeNode, context);
         return this.formatChildType(
           resolved,
-          this.#namesLibraryAlias(typeNode, context) ? unbound : context,
-          typeNode,
+          library ? unbound : context,
+          readByType ? undefined : typeNode,
           context.instantiatedAs,
         );
       }
@@ -5034,7 +5071,11 @@ export class SchemaGenerator {
    * writer as a `typeof` query is read by its syntax under no bindings too,
    * written out or declared by a non-generic alias a reference names
    * (`#tupleBehind()`): the checker's element types hold no declaration to
-   * name that writer by.
+   * name that writer by. So is a tuple written in place, or a default-library
+   * alias the node-based analyzer applies, with a part that writes a wrapper
+   * the checker erases around `any` (`#holdsWrapperErasedByAny()`), whose type
+   * holds `any` there; either one an alias declares is read so inside the
+   * alias's definition (`#containerHoldingWrapperErasedByAny()`).
    */
   #readsBySyntax(
     typeNode: ts.TypeNode | undefined,
@@ -5045,6 +5086,15 @@ export class SchemaGenerator {
     const written = unwrapTypeParentheses(typeNode);
     const tuple = this.#tupleBehind(written, context);
     if (tuple && this.#holdsWriterQuery(tuple, context)) return true;
+    const inPlace = unwrapTypeNode(written);
+    if (
+      ts.isTupleTypeNode(inPlace) &&
+      this.#holdsWrapperErasedByAny(inPlace, context)
+    ) return true;
+    if (
+      this.#namesLibraryAlias(written, context) &&
+      this.#holdsWrapperErasedByAny(written, context)
+    ) return true;
     if (!bound) return false;
     const structural = ts.isUnionTypeNode(written) ||
       ts.isIntersectionTypeNode(written) || ts.isTypeLiteralNode(written) ||
@@ -5204,6 +5254,72 @@ export class SchemaGenerator {
   }
 
   /**
+   * Whether a part of `node` the checker reads as `any` writes a wrapper the
+   * checker erases around `any` (`writesWrapperErasedByAny()`), as the value
+   * of `Record<string, Confidential<any, C>>` and the element of
+   * `[Confidential<any, C>]` do. The type of `node` then holds `any` there,
+   * and no declaration a member keeps, so only the written part holds the
+   * wrapper. A part read as anything else is looked into for one.
+   */
+  #holdsWrapperErasedByAny(
+    node: ts.TypeNode,
+    context: GenerationContext,
+  ): boolean {
+    const checker = context.typeChecker;
+    const read = new Set<ts.Node>();
+    const holds = (part: ts.Node): boolean => {
+      if (part !== node && ts.isTypeNode(part)) {
+        const type = context.typeRegistry?.get(part) ??
+          checker.getTypeFromTypeNode(part);
+        if ((type.flags & ts.TypeFlags.Any) !== 0) {
+          return writesWrapperErasedByAny(part, checker);
+        }
+        // A reference to a non-generic alias holds what its declaration
+        // does, as `Pair` in `Readonly<Pair>` holds `type Pair = [Secret]`'s
+        // element.
+        const behind = ts.isTypeReferenceNode(part)
+          ? this.#openTypeNode(part, checker, context, new Set()).node
+          : part;
+        if (behind !== part) {
+          if (read.has(behind)) return false;
+          read.add(behind);
+          return holds(behind);
+        }
+      }
+      return ts.forEachChild(part, (child) => holds(child) || undefined) ??
+        false;
+    };
+    return holds(node);
+  }
+
+  /**
+   * The tuple or the reference to a default-library alias the node-based
+   * analyzer applies that `typeNode`, a reference to a non-generic alias,
+   * declares, followed as `#openTypeNode()` follows one, where it holds a
+   * wrapper the checker erases around `any` (`#holdsWrapperErasedByAny()`),
+   * as `type Dict = Record<string, Secret>` does; `undefined` otherwise. Such
+   * a reference is read by its syntax inside the definition its name gives it
+   * (`#formatType()`), whose `$ref` ends a recursion through it, as
+   * `type List = [Secret, List?]` recurs; a container written in place has no
+   * name, and is read by its syntax wherever it is (`#readsBySyntax()`).
+   */
+  #containerHoldingWrapperErasedByAny(
+    typeNode: ts.TypeNode,
+    context: GenerationContext,
+  ): ts.TypeNode | undefined {
+    const written = unwrapTypeParentheses(typeNode);
+    if (!ts.isTypeReferenceNode(written)) return undefined;
+    const behind =
+      this.#openTypeNode(written, context.typeChecker, context, new Set()).node;
+    if (behind === written) return undefined;
+    const container = this.#tupleBehind(behind, context) ??
+      (this.#namesLibraryAlias(behind, context) ? behind : undefined);
+    return container && this.#holdsWrapperErasedByAny(container, context)
+      ? container
+      : undefined;
+  }
+
+  /**
    * A reference to one of the default library's generic aliases, with its
    * type arguments applied structurally. The general path resolves such a
    * reference by name to the alias's UNINSTANTIATED declared type — a mapped
@@ -5245,6 +5361,31 @@ export class SchemaGenerator {
     const instantiatedAs = context.instantiatedAs;
     const analyze = (node: ts.TypeNode, at: ts.Type | undefined = undefined) =>
       this.#analyzeChildNode(node, checker, context, at);
+    // An operand the checker reads as `any`, as it reads one that wraps a
+    // label around `any`, maps as `any` does: to an object of any values on
+    // every key, or on the keys `Pick` names, with the operand's labels on
+    // the whole, as a labeled operand's stay on the object it maps to.
+    if (
+      MAPPING_ALIAS_NAMES.has(name) &&
+      (readBoundTypeNode(first, context).flags & ts.TypeFlags.Any) !== 0 &&
+      writesWrapperErasedByAny(first, checker)
+    ) {
+      const keys = name === "Pick"
+        ? second && literalKeys(second, context)
+        : undefined;
+      if (name === "Pick" && keys === undefined) return undefined;
+      const mapped: MutableJSONSchemaObj = keys
+        ? {
+          type: "object",
+          properties: Object.fromEntries([...keys].map((key) => [key, true])),
+          required: [...keys],
+        }
+        : { type: "object", properties: {}, additionalProperties: true };
+      const operand = analyze(first, instantiatedAs);
+      return isObjectOrArray(operand) && !Array.isArray(operand)
+        ? { ...mapped, ...operand as MutableJSONSchemaObj }
+        : mapped;
+    }
     switch (name) {
       case "Readonly":
         return analyze(first, instantiatedAs);
