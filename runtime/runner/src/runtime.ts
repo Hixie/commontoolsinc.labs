@@ -34,11 +34,11 @@ import { StaticCache } from "@commonfabric/static";
 import {
   type AsyncLocalStore,
   FallbackAsyncLocalStore,
-} from "@commonfabric/utils/async-local-store";
-import { deepEqual } from "@commonfabric/utils/deep-equal";
-import { isDeno } from "@commonfabric/utils/env";
-import { getLogger } from "@commonfabric/utils/logger";
-import { isObjectOrArray } from "@commonfabric/utils/types";
+} from "@commonfabric/async/async-local-store";
+import { deepEqual } from "@commonfabric/js-values/deep-equal";
+import { isDeno } from "@commonfabric/platform/env";
+import { getLogger } from "@commonfabric/logger";
+import { isObjectOrArray } from "@commonfabric/js-values/types";
 
 import { PatternEnvironment, setPatternEnvironment } from "./builder/env.ts";
 import { popFrame, pushRuntimeDefaultFrame } from "./builder/pattern.ts";
@@ -258,8 +258,8 @@ const isFullNormalizedLinkShape = (
 };
 
 // Deno/Node `AsyncLocalStorage` when available, the promise-aware fallback
-// otherwise. The `await import` stays here (not in the shared utils module): a
-// top-level await in widely-imported utils stalls Deno module evaluation.
+// otherwise. The `await import` stays here (not in `@commonfabric/async`): a
+// top-level await in a widely-imported package stalls Deno module evaluation.
 const WriteDebugContextStorage = (isDeno()
   // deno-lint-ignore cf-imports/no-inline-module-import
   ? (await import("node:async_hooks")).AsyncLocalStorage

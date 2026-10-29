@@ -5,7 +5,7 @@ import {
   fabricFromConvertibleJsValue,
 } from "@commonfabric/data-model";
 import { Identity } from "@commonfabric/identity";
-import { getLoggerCountsBreakdown } from "@commonfabric/utils/logger";
+import { getLoggerCountsBreakdown } from "@commonfabric/logger";
 
 import {
   EmulatedStorageManager,
