@@ -203,9 +203,12 @@ interface DelegationPayload {
 }
 ```
 
-The delegation a profile issues at creation has `iss` and `sub` both the
-profile DID, `aud` the core identity, `cmd` of `/memory`, an empty `pol`,
-and `exp` of `null`. It has no expiry because the key that could renew it is
+The codec's payload type carries every field above as UCAN defines it, `sub`
+nullable and `pol` an array included, so an issuer sets `pol` to `[]` and
+the verifier refuses anything else; the shape stays closed while the type
+stays UCAN's. The delegation a profile issues at creation has `iss` and
+`sub` both the profile DID, `aud` the core identity, `cmd` of `/memory`, an
+empty `pol`, and `exp` of `null`. It has no expiry because the key that could renew it is
 destroyed. It is the one delegation most users ever hold for a profile, and
 it is what makes "open the profile as myself" work.
 
@@ -344,8 +347,8 @@ verifies the signature as it does now, then, when `prf` is present:
 3. Each proof's `sub` is the requested space.
 4. Each proof's `cmd` covers `/memory/session.open`: it is `/`, `/memory`, or
    `/memory/session.open`.
-5. Each proof is within `nbf` and `exp`, with the clock-skew grace the open
-   itself gets.
+5. Each proof is within `nbf` and `exp`, to the second, with no clock-skew
+   grace.
 6. Each proof's `pol` is empty (first slice).
 7. The chain links: `proofs[i].aud === proofs[i + 1].iss` for each `i`, and
    `proofs[last].aud === invocation.iss`.
@@ -491,15 +494,16 @@ part of this design.
 
 ## Phases
 
-1. **Server verifies proofs.** An in-house codec for the closed delegation
-   shape, with DAG-CBOR envelope encoding and decoding, CID computation, and
-   varsig signature verification, in the identity package or beside it, held
-   to reference test vectors byte for byte; `session-open-auth.ts` verifies
-   a chain with it and reports the root issuer; `server.ts` resolves the
-   capability for the root issuer. Behind a flag registered in
-   [`EXPERIMENTAL_OPTIONS.md`](../development/EXPERIMENTAL_OPTIONS.md) until
-   the client ships. Tests: chain verification, each refusal, and the
-   capability substitution, in the memory package's protocol tests.
+1. **Server verifies proofs.** Implemented. The identity package holds the
+   codec for the closed delegation shape (`delegation.ts` over
+   `dag-cbor.ts`): envelope encoding and decoding, CID computation, and
+   signature verification, pinned to a vector byte for byte.
+   `session-open-auth.ts` verifies a chain with it and reports the root
+   issuer, and `server.ts` resolves the capability for the root issuer. The
+   server advertises `sessionOpenProofs` when its policy admits delegations,
+   registered in
+   [`EXPERIMENTAL_OPTIONS.md`](../development/EXPERIMENTAL_OPTIONS.md) and
+   off by default until the client ships.
 2. **Client presents proofs.** `createSignedSessionOpenAuth` and the storage
    manager carry a chain for a space that has one; reopens keep it.
 3. **Profile identity at creation.** The profile creation path signs
