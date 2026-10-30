@@ -193,8 +193,15 @@ whoever else runs, a named `runsc` included, has pasta make a user namespace),
 runs runsc there through `setpriv --pdeathsig KILL` (util-linux, refused where
 no `setpriv` is on `PATH`) with `--network=host` and a bundle with no network
 namespace of its own, and binds a hosts file over `/etc/hosts` that names the
-gateway, which pasta maps to the host's loopback, `host.docker.internal`. The
-container has egress and the host, and sees none of the host's interfaces. Pasta
+gateway, which pasta maps to the host's loopback, `host.docker.internal`, and a
+resolver configuration over `/etc/resolv.conf` that names the gateway, where
+pasta answers DNS with the host's resolver. The container has egress, by address
+and by name, and the host, and sees none of the host's interfaces. Pasta shares
+its stderr with that command and writes to it before the command starts (root's
+two warnings about user mappings, and the one below), so under pasta the
+driver's shell is named for the call (`cf-harness-call:<call id>`), writes that
+name to stderr before it starts runsc, and the call's stderr is what follows it;
+where the line is missing, pasta stopped first, and all it wrote is kept. Pasta
 starts what it runs in a PID namespace of its own, so a session's container
 started under it would record pids that `exec` and the control commands, run
 outside it, cannot find: under pasta's network the runtime describes no
@@ -206,9 +213,9 @@ goes (a call's timeout, a close of the runtime, which stops each call in flight
 through its pasta), the first process of its PID namespace dies, and every
 process of the namespace, the container's included, with it. Each such container
 keeps its state in a runsc root of its own call's, which goes when the call
-ends. A mount at or over `/etc/hosts` is refused under pasta's network. `none`
-gives the container loopback alone, and `host` the host's own network, with no
-network namespace of its own either.
+ends. A mount at or over `/etc/hosts` or `/etc/resolv.conf` is refused under
+pasta's network. `none` gives the container loopback alone, and `host` the
+host's own network, with no network namespace of its own either.
 
 On Linux a run that lists host ports in `CFC_VM_FORWARD_PORTS` reaches those
 ports of the host's loopback and no other port of it, whether its `runsc` is
@@ -219,18 +226,26 @@ the entry. The run's network is pasta's, as above, where the network mode is
 unnamed or `bridge`; a named `runsc` takes pasta's network for such a run, with
 the same lookups and the same refusals, which then offer to forward no ports. A
 run that lists ports under `none` or `host`, which forward nothing, is refused.
-Pasta runs with `--no-map-gw`, so the gateway does not lead to the host's
-loopback; with `-T <ports>` in place of `-T none`, so pasta listens on each port
-at the container's loopback and forwards it to the host's, and a command in the
-container cannot listen on a forwarded port itself; and with
-`--dns-forward 10.0.2.2 --dns 10.0.2.2`, so the gateway answers DNS as it does
-for the default and pasta does not warn into the call's output that it finds no
-nameserver. The hosts file names the container's own loopback
-`host.docker.internal`. Egress is kept, so a service the host binds to an
-address of another interface is reached at that address, as from any other
-machine. Such a run offers no sandbox session, as any run under pasta's network
-does. On macOS the variable is the macOS `runsc`'s, which forwards the listed
-ports into its VM, and the selection does not read it.
+A named `runsc` under `bridge` takes the same network where the run lists no
+port, with `-T none`: egress, and no port of the host's loopback. runsc's own
+`sandbox` network is loopback alone there, and a rootless `runsc` refuses it, so
+`bridge` would otherwise give no egress. Its refusals name `bridge` as what
+needs pasta, and offer `none`. Pasta runs with `--no-map-gw`, so the gateway
+does not lead to the host's loopback; with `-T <ports>` in place of `-T none`,
+so pasta listens on each port at the container's loopback and forwards it to the
+host's, and a command in the container cannot listen on a forwarded port itself;
+and with `--dns-forward 10.0.2.2`, so the gateway answers DNS as it does for the
+default. It is given no `--dns`, because with one pasta (passt 2024-02, Ubuntu
+24.04's) forwards queries to the address `--dns` names rather than to the host's
+resolver, and none would be answered. Without it, on a host whose nameservers
+are all on its loopback, pasta warns before the call's command starts that it
+finds no nameserver to hand the container, and names resolve all the same. The
+hosts file names the container's own loopback `host.docker.internal`. Egress is
+kept, so a service the host binds to an address of another interface is reached
+at that address, as from any other machine. Such a run offers no sandbox
+session, as any run under pasta's network does. On macOS the variable is the
+macOS `runsc`'s, which forwards the listed ports into its VM, and the selection
+does not read it.
 
 The macOS default is refused for two more things, and the Linux default for the
 last, each checked before the pieces above:
@@ -363,7 +378,7 @@ unnamed one falls to differs:
 | CFC policy           | `--sandbox-cfc-policy` | `CF_HARNESS_RUNSC_CFC_POLICY`    | `$HOME/.local/share/runsc-cfc/cfc-policy.json` where that file exists, otherwise none.                                                                                                                                    | That file where it exists, otherwise `policy.json` in the store where that exists, otherwise the default is refused. | `cfc-policy.json` in the store, which is that file, where it exists; otherwise the default is refused.                 |
 | `runsc` binary       | none                   | `CF_HARNESS_RUNSC_BINARY`        | `runsc`, looked for on `PATH` when the configuration is resolved; the run is refused when no entry holds it.                                                                                                              | `bin/runsc` in the store.                                                                                            | `bin/runsc` in the store, with `--rootless` for a process that is not root, where the host allows it a user namespace. |
 | Network mode         | none                   | `CF_HARNESS_DOCKER_NETWORK_MODE` | `sandbox`.                                                                                                                                                                                                                | `sandbox`.                                                                                                           | `sandbox`, which pasta gives: egress and `host.docker.internal`.                                                       |
-| Forwarded host ports | none                   | `CFC_VM_FORWARD_PORTS`           | None. On Linux, listed ones give it pasta's network, which reaches those ports of the host's loopback alone.                                                                                                              | None; the macOS `runsc` reads the variable itself.                                                                   | None, so the gateway reaches every port of the host's loopback; listed ones are the only ports of it reached.          |
+| Forwarded host ports | none                   | `CFC_VM_FORWARD_PORTS`           | None. On Linux, listed ones give it pasta's network, which reaches those ports of the host's loopback alone, and `bridge` gives it that network with none.                                                                | None; the macOS `runsc` reads the variable itself.                                                                   | None, so the gateway reaches every port of the host's loopback; listed ones are the only ports of it reached.          |
 
 The macOS default requires a policy because a run enforces CFC unless told
 otherwise, and an enforcing run with none is refused as it starts. The selection
@@ -427,11 +442,14 @@ operator summary, as `runsc (default on macOS: the native store at <store>)`,
 `sandbox` is the driver's default network. On macOS it is the VM's network. On
 Linux under the platform default it is `pasta`'s network namespace, taken as
 runsc's host network, with egress and the host at `host.docker.internal`.
-Missing `pasta` refuses that default. A named Linux `runsc` using `sandbox`,
-with no `pasta` configured, uses runsc's own network stack, loopback alone.
-`none` and `host` bypass pasta and use their respective network modes.
-`CF_HARNESS_DOCKER_NETWORK_MODE` keeps the name and the vocabulary of the Docker
-driver it was first read by, which maps onto the driver's as follows:
+Missing `pasta` refuses that default. A named Linux `runsc` under `bridge` gets
+pasta's network forwarding the listed ports, none included. A named Linux
+`runsc` whose network is unnamed and that lists no port, with no `pasta`
+configured, uses runsc's own network stack, loopback alone; the platform default
+does not, and refuses without `pasta`. `none` and `host` bypass pasta and use
+their respective network modes. `CF_HARNESS_DOCKER_NETWORK_MODE` keeps the name
+and the vocabulary of the Docker driver it was first read by, which maps onto
+the driver's as follows:
 
 | `CF_HARNESS_DOCKER_NETWORK_MODE` | Network   |
 | -------------------------------- | --------- |
