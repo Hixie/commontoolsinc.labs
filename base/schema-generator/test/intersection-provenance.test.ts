@@ -1235,6 +1235,68 @@ describe("SchemaGenerator", () => {
         { ...objectX, asCell: [{ kind: "cell", scope: "user" }] },
       ],
       [
+        "caps the cell a scoped constituent meets apart from the scope of what it holds",
+        `
+          type M1 = PerUser<{ x: string }>;
+          type M2 = Cell<PerSession<{ x: string }>>;
+        `,
+        {
+          ...objectX,
+          scope: "session",
+          asCell: [{ kind: "cell", scope: "user" }],
+        },
+      ],
+      [
+        "keeps the scope of what a cell holds beside an array",
+        `type M1 = Cell<PerUser<string>>; type M2 = string[];`,
+        { type: "string", scope: "user", asCell: ["cell"] },
+      ],
+      [
+        "keeps the scope and default of what a cell holds beside an array",
+        `type M1 = Cell<PerUser<Default<string, "x">>>; type M2 = string[];`,
+        { type: "string", default: "x", scope: "user", asCell: ["cell"] },
+      ],
+      [
+        "keeps the scope of what a cell holds where another cell meets it",
+        `type M1 = { a: Cell<PerUser<string>> }; type M2 = { a: Cell<string> };`,
+        propertyA({ type: "string", scope: "user", asCell: ["cell"] }),
+      ],
+      [
+        "keeps the union a cell holds, and its scope, where another cell meets it",
+        `type M1 = Cell<PerUser<string | null>>; type M2 = Cell<string>;`,
+        {
+          anyOf: [{ type: "string" }, { type: "null" }],
+          scope: "user",
+          asCell: ["cell"],
+        },
+      ],
+      [
+        "keeps the union a capped cell holds where another cell meets it",
+        `type M1 = PerUser<Cell<string | null>>; type M2 = Cell<string>;`,
+        {
+          anyOf: [{ type: "string" }, { type: "null" }],
+          asCell: [{ kind: "cell", scope: "user" }],
+        },
+      ],
+      [
+        "keeps a cell's cap and the scope of what it holds beside an array",
+        `type M1 = PerUser<Cell<PerSession<string>>>; type M2 = string[];`,
+        {
+          type: "string",
+          scope: "session",
+          asCell: [{ kind: "cell", scope: "user" }],
+        },
+      ],
+      [
+        "keeps the scope of what an inner cell holds beside an array",
+        `type M1 = Cell<PerUser<Cell<PerSession<string>>>>; type M2 = string[];`,
+        {
+          type: "string",
+          scope: "session",
+          asCell: ["cell", { kind: "cell", scope: "user" }],
+        },
+      ],
+      [
         "joins the labels a labeled definition and the reference to it state",
         `
           type Secret = Confidential<{ x: string }, readonly ["inner"]>;
@@ -1292,6 +1354,16 @@ describe("SchemaGenerator", () => {
         { asCell: ["opaque"], ifc: labelS },
       ],
       [
+        "returns `undefined` for a union of `void` and an opaque cell beside it",
+        `type M1 = void | OpaqueCell<any>; type M2 = undefined;`,
+        { type: "undefined" },
+      ],
+      [
+        "returns `undefined` for a union of an opaque cell and `void` beside it",
+        `type M1 = OpaqueCell<any> | void; type M2 = undefined;`,
+        { type: "undefined" },
+      ],
+      [
         "labels the branded arms a labeled folded union keeps beside a primitive",
         `
           type Branded = (string & { a: 1 }) | (number & { b: 2 });
@@ -1324,6 +1396,83 @@ describe("SchemaGenerator", () => {
         expect(byNode()).toEqual(expected);
       });
     }
+
+    it("keeps the scope of what a cell holds where it names a union that folded", async () => {
+      // A reference with the cell written beside it holds the definition, and
+      // is not the union the definition's record says it folded from. The type
+      // path keeps the reference that the node path reads through.
+
+      const { byType, byNode } = await schemasOfBothPaths(`
+        type Branded = (string & { a: 1 }) | (string & { b: 2 });
+        type M1 = Cell<PerUser<Branded>>;
+        type M2 = Cell<string>;
+      `);
+
+      expect(byType()).toEqual({
+        $ref: "#/$defs/Branded",
+        asCell: ["cell"],
+        scope: "user",
+        $defs: { Branded: UNSUPPORTED_NON_OBJECT },
+      });
+      expect(byNode()).toEqual({
+        ...UNSUPPORTED_NON_OBJECT as object,
+        asCell: ["cell"],
+        scope: "user",
+      });
+    });
+
+    it("keeps the evidence on a cell that names a record on numeric keys, as the labeled constituent holds all of its data", async () => {
+      // The keys a signature applies to stay true of a cell around it, so the
+      // labeled record holds every key the cell's value does. The type path
+      // keeps the reference that the node path reads through.
+
+      const { byType, byNode } = await schemasOfBothPaths(`
+        type Numbered = Record<number, string>;
+        type M1 = Cfc<Numbered, { integrity: readonly ["v"] }>;
+        type M2 = Cell<Numbered>;
+      `);
+      const numbered = {
+        type: "object",
+        properties: {},
+        additionalProperties: { type: "string" },
+      } as const;
+
+      expect(byType()).toEqual({
+        $ref: "#/$defs/Numbered",
+        asCell: ["cell"],
+        ifc: { integrity: ["v"] },
+        $defs: { Numbered: numbered },
+      });
+      expect(byNode()).toEqual({
+        ...numbered,
+        asCell: ["cell"],
+        ifc: { integrity: ["v"] },
+      });
+    });
+
+    it("keeps the scope of what a cell holds where it names an intersection that fell back", async () => {
+      // A reference with the cell written beside it holds the fallback, and
+      // does not stand for the constituents the fallback hides. The type path
+      // keeps the reference that the node path reads through.
+
+      const { byType, byNode } = await schemasOfBothPaths(`
+        type Fallback = { x: string } & string[];
+        type M1 = Cell<PerUser<Fallback>>;
+        type M2 = Cell<string>;
+      `);
+
+      expect(byType()).toEqual({
+        $ref: "#/$defs/Fallback",
+        asCell: ["cell"],
+        scope: "user",
+        $defs: { Fallback: UNSUPPORTED_INDEX_SIGNATURE },
+      });
+      expect(byNode()).toEqual({
+        ...UNSUPPORTED_INDEX_SIGNATURE as object,
+        asCell: ["cell"],
+        scope: "user",
+      });
+    });
 
     it("keeps apart recursive merges of equal schemas from different types", async () => {
       // `A`'s and `C`'s schemas are equal, as both branded primitives fall
