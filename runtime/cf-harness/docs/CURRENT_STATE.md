@@ -780,12 +780,11 @@ The current package provides:
   persisted-policy alias and is normalized without rewriting old transcript or
   run-state evidence;
 - shared parent and opening-research guidance that distinguishes given inputs,
-  discovery within the granted scope, and unavailable actions before asking or
-  giving up. Private research identifies applicable space-search patterns for
-  the parent to execute under existing targeting and release rules. The agent
-  offers the closest achievable outcome, checks a send path before asking for a
-  recipient, and never asks for a nonexistent release permission. Targeted
-  research answers keep their focused question guidance;
+  discovery within the granted scope, and unavailable actions. Private research
+  can identify space-search patterns for the parent to execute under tool and
+  release rules. The agent offers the closest achievable outcome, checks a send
+  path before asking for a recipient, and never asks for a nonexistent release
+  permission. Targeted research answers keep their focused question guidance;
 - caller and profile return-schema definitions checked before child creation,
   with bounded argument errors for malformed contracts and unresolved
   references; valid child results remain schema-validated and sanitized, with
@@ -880,17 +879,12 @@ The current package provides:
   strings as `revealed`, their sites as `sites`, and the other tokens as
   `hidden`, and its run state carries no return referents. Children report
   blockers to the parent. Missing-input discovery distinguishes released
-  evidence, absence within an enumerated granted scope, and unknown reads; it
-  stops for input rather than repeating author delegation. Shared
-  target-selection guidance asks for an unnamed, unattached piece without a
-  registry read and preserves established conversation targets. The parent
-  resolves a user-supplied slug with `resolve_piece` before author delegation,
-  using the input-cell path's exact-address resolver and space restriction. Only
-  an opaque handle returns; source remains child-only. An unheld slug or a
-  readable target that is not a usable piece returns recoverable `not-found`. A
-  failed read returns `unavailable` and does not establish absence. A display
-  name without a slug permits at most one registry lookup; only a unique
-  released match allows work to proceed;
+  evidence, absence within an enumerated granted scope, and unknown reads. The
+  parent can resolve a slug with `resolve_piece`, using the input-cell path's
+  exact-address resolver and space restriction. Only an opaque handle returns;
+  source remains child-only. An unheld slug or a readable target that is not a
+  usable piece returns recoverable `not-found`. A failed read returns
+  `unavailable` and does not establish absence;
 - a session-local address handle table: deterministic `cfh:a:` tokens minted per
   run for cell addresses, recorded in `run-state.json`, carried across resume,
   and committed with an interactive session's checkpoint so each turn's run
